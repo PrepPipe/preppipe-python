@@ -3,6 +3,7 @@
 import typing
 import PIL.Image
 from enum import Enum
+import preppipe.commontypes
 
 class ParagraphElement:
   def __init__(self) -> None:
@@ -44,6 +45,9 @@ class Paragraph:
       print("\n" + "  "*(indent+1), end="")
       element.dump(indent+1)
     print("\n" + "  "*indent + "]", end="")
+    
+  def empty(self) -> bool:
+    return (len(self.element_list) == 0)
 
 class TextAttribute(Enum):
   Bold = 0
@@ -90,15 +94,15 @@ class TextAttributeSet:
     else:
       self.attributes[TextAttribute.Size] = size
   
-  def text_color(self) -> str:
+  def text_color(self) -> preppipe.commontypes.Color:
     if TextAttribute.TextColor in self.attributes:
       return self.attributes[TextAttribute.TextColor]
-    return ""
+    return preppipe.commontypes.Color()
   
   def background_color(self) -> str:
     if TextAttribute.BackgroundColor in self.attributes:
       return self.attributes[TextAttribute.BackgroundColor]
-    return ""
+    return preppipe.commontypes.Color()
   
   def has_text_color(self) -> bool:
     return TextAttribute.TextColor in self.attributes
@@ -106,14 +110,14 @@ class TextAttributeSet:
   def has_background_color(self) -> bool:
     return TextAttribute.BackgroundColor in self.attributes
   
-  def set_text_color(self, color: str) -> None:
-    if len(color) == 0 or color == "transparent":
+  def set_text_color(self, color: preppipe.commontypes.Color) -> None:
+    if color.transparent():
       self.attributes.pop(TextAttribute.TextColor, None)
     else:
       self.attributes[TextAttribute.TextColor] = color
   
-  def set_background_color(self, color: str) -> None:
-    if len(color) == 0 or color == "transparent":
+  def set_background_color(self, color: preppipe.commontypes.Color) -> None:
+    if color.transparent():
       self.attributes.pop(TextAttribute.BackgroundColor, None)
     else:
       self.attributes[TextAttribute.BackgroundColor] = color
@@ -173,6 +177,12 @@ class TextElement(ParagraphElement):
   
   def dump(self, indent: int = 0):
     print(self.__str__(), end="")
+    
+  def getText(self) -> str:
+    return self.text
+  
+  def getStyle(self) -> TextAttributeSet:
+    return self.style
 
 class ImageElement(ParagraphElement):
   image : PIL.Image
