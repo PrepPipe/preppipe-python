@@ -5,6 +5,7 @@ import typing
 import odf.opendocument
 
 import preppipe.documentmodel as documentmodel
+import preppipe.commontypes
 
 
 def import_odf(fileData : io.BufferedReader, filename : str) -> documentmodel.DocumentModel:
@@ -50,9 +51,9 @@ def import_odf(fileData : io.BufferedReader, filename : str) -> documentmodel.Do
               elif k[1] == "font-style" and property_node.attributes[k] == "italic":
                 override_style.set_italic(True)
               elif k[1] == "color":
-                override_style.set_text_color(property_node.attributes[k])
+                override_style.set_text_color(preppipe.commontypes.Color.get(property_node.attributes[k]))
               elif k[1] == "background-color":
-                override_style.set_background_color(property_node.attributes[k])
+                override_style.set_background_color(preppipe.commontypes.Color.get(property_node.attributes[k]))
         overall_style = documentmodel.get_merged_text_style(base_style, override_style)
         styledict[name] = overall_style
       else:
