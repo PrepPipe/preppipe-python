@@ -2,7 +2,10 @@
 
 import typing
 import PIL.Image
+import importlib
+import hashlib
 from enum import Enum
+
 import preppipe.commontypes
 
 class ParagraphElement:
@@ -184,17 +187,70 @@ class TextElement(ParagraphElement):
   def getStyle(self) -> TextAttributeSet:
     return self.style
 
-class ImageElement(ParagraphElement):
-  image : PIL.Image
+class ImageData:
+  index : int
+  image: typing.Any
+  checksum_md5: str
   
-  def __init__(self) -> None:
-    pass
+  def __init__(self, index : int, img: typing.Any) -> None:
+    self.index = index
+    self.image = img
+    self.checksum_md5 = hashlib.md5(self.image.tobytes()).hexdigest()
+  
+  def __str__(self) -> str:
+    result = "<#" + str(self.index) + " " + str(self.image.format) + str(self.image.size) + " MD5: " + self.checksum_md5 + ">"
+    return result
+  
+  def show(self) -> None:
+    try:
+      plt = importlib.import_module("matplotlib.pyplot") # do a testing first
+    except:
+      print("Image dump require matplotlib.pyplot package but the package import failed. Please ensure you have it installed.")
+      return
+    plt.imshow(self.image)
+    plt.show()
+
+  def __eq__(self, other: object) -> bool:
+    if self.checksum_md5 != other.checksum_md5:
+      return False
+    return (self.image.tobytes() == other.image.tobytes())
+
+class ImageReferenceElement(ParagraphElement):
+  imageref : ImageData
+  
+  def __init__(self, img : ImageData) -> None:
+    self.imageref = img
+  
+  def __str__(self) -> str:
+    return self.imageref.__str__()
+  
+  def show(self) -> None:
+    self.imageref.show()
 
 class DocumentModel:
   paragraph_list : typing.List[Paragraph] = []
+  image_dict : typing.Dict[int, ImageData] = {}
+  image_md5_dict : typing.Dict[str, typing.List[int]] = {}
 
   def __init__(self) -> None:
     self.paragraph_list = []
+  
+  def registerImage(self, image) -> ImageData :
+    id = len(self.image_dict)
+    data = ImageData(id, image)
+    md5 = data.checksum_md5
+    if md5 in self.image_md5_dict:
+      lst = self.image_md5_dict[md5]
+      for otherID in lst:
+        other = self.image_dict[otherID]
+        if data == other:
+          del data
+          return other
+      lst.append(id)
+    else:
+      self.image_md5_dict[md5] = id
+    self.image_dict[id] = data
+    return data
   
   def addParagraph(self, p : Paragraph) -> None:
     self.paragraph_list.append(p)
