@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
+
 import typing
+from enum import Enum
 
 class Color:
   """Uniformed representation; r,g,b,a all in range [0, 255]"""
@@ -81,4 +83,18 @@ class Color:
         a = t[3]
     else:
       raise AttributeError("Not a color: " + src)
-    return Color(r, g, b, a)    
+    return Color(r, g, b, a)
+  
+  def to_tuple(self):
+    if self.a == 255:
+      return (self.r, self.g, self.b)
+    return (self.r, self.g, self.b, self.a)
+  
+
+class FileType(Enum):
+  Text = 0  # both plain text and markdown / rich text
+  HTML = 1
+  Image = 2
+  Document = 3
+  Presentation = 4
+  Spreadsheet = 5
