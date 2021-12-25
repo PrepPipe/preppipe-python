@@ -1,31 +1,14 @@
 name: autotest
 
-on: [push, pull_request, workflow_call, workflow_dispatch]
+on: [push, pull_request, workflow_dispatch]
 
 jobs:
-  test:
+  autotest:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [ubuntu-latest]
     steps:
-      # checkout the repo
       - uses: actions/checkout@v2
-      - name: fetch tags
-        run: git fetch --prune --unshallow --tags
-      - name: environment dump
-        run: |
-          python3 --version
-          git --version
-          git describe --tags
-      - name: install dependencies
-        run: |
-          sudo apt-get install -y ffmpeg
-          sudo python3 -m pip install --upgrade build twine
-      - name: build
-        run: python3 -m build
-      - name: install
-        run: sudo python3 -m pip install dist/*.whl
-      - name: test
-        run: python3 -m unittest
+      - uses: ./.github/actions/test
 

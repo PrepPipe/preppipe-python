@@ -3,14 +3,14 @@ name: testpypi-publish
 on: [workflow_dispatch]
 
 jobs:
-  test:
+  publish:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [ubuntu-latest]
     steps:
       - uses: actions/checkout@v2
-      - uses: ./.github/actions/autotest@v1
+      - uses: ./.github/actions/test
       - name: publish to TestPyPI
         if: ${{ github.ref == 'refs/heads/main' }}
         uses: pypa/gh-action-pypi-publish@release/v1
