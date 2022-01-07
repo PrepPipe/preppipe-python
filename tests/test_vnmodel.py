@@ -58,19 +58,20 @@ class TestVNModel(unittest.TestCase):
     #   - exit: return
     # However, because the variable system (and therefore branching) is not implemented yet, we just use the same basic block for now
     func_start = vnmodel.add_function(preppipe.vnmodel.VNFunction("start"))
+    func_test = vnmodel.add_function(preppipe.vnmodel.VNFunction("test_main"))
+    
     func_start_entry_bb = func_start.add_basicblock(preppipe.vnmodel.VNBasicBlock("entry"))
-    func_start_entry_bb.add_instruction(preppipe.vnmodel.VNCallInst("test_main"))
+    func_start_entry_bb.add_instruction(preppipe.vnmodel.VNCallInst(func_test))
     func_start_entry_bb.add_instruction(preppipe.vnmodel.VNReturnInst())
     
-    func_test = vnmodel.add_function(preppipe.vnmodel.VNFunction("test_main"))
     test_entry_bb = func_test.add_basicblock(preppipe.vnmodel.VNBasicBlock("entry"))
-    test_entry_bb.add_instruction(preppipe.vnmodel.VNUpdateBackground(vnmodel.get_asset("classroom")))
-    test_entry_bb.add_instruction(preppipe.vnmodel.VNUpdateBGMInstr(vnmodel.get_asset("bgm4")))
+    test_entry_bb.add_instruction(preppipe.vnmodel.VNUpdateBackgroundInst(vnmodel.get_asset("classroom")))
+    test_entry_bb.add_instruction(preppipe.vnmodel.VNUpdateBGMInst(vnmodel.get_asset("bgm4")))
     test_entry_bb.add_instruction(preppipe.vnmodel.VNSayInst(narrator_sayer, preppipe.vnmodel.VNTextBlock("Silence")))
     
-    bob_decl = test_entry_bb.add_instruction(preppipe.vnmodel.VNSayerDeclInstr(bob_sayer))
+    bob_decl = test_entry_bb.add_instruction(preppipe.vnmodel.VNSayerDeclInst(bob_sayer))
     bob_say = test_entry_bb.add_instruction(preppipe.vnmodel.VNSayInst(bob_decl, preppipe.vnmodel.VNTextBlock("Test1"), vnmodel.get_asset("test1")))
-    alice_decl = test_entry_bb.add_instruction(preppipe.vnmodel.VNSayerDeclInstr(alice_sayer))
+    alice_decl = test_entry_bb.add_instruction(preppipe.vnmodel.VNSayerDeclInst(alice_sayer))
     alice_say = test_entry_bb.add_instruction(preppipe.vnmodel.VNSayInst(alice_decl, preppipe.vnmodel.VNTextBlock("Test2"), vnmodel.get_asset("test2")))
     test_entry_bb.add_instruction(preppipe.vnmodel.VNReturnInst())
     vnmodel.finalize()
@@ -81,7 +82,10 @@ class TestVNModel(unittest.TestCase):
     vnmodel = TestVNModel.get_vnmodel()
     with tempfile.TemporaryDirectory() as project_dir:
       print("TestVNModel.test_renpy_export(): export directory at "+ project_dir)
-      preppipe.enginesupport.renpy.RenpySupport.export(vnmodel, project_dir)
+      export_obj = preppipe.enginesupport.renpy.RenpySupport.get().start_export(project_dir)
+      export_obj.add(vnmodel)
+      export_obj.set_option("entryfunction", "start")
+      export_obj.do_export()
       print(util.collectDirectoryDataAsText(project_dir))
       util.copyTestDirIfRequested(project_dir, "TestVNModel.test_renpy_export")
     
