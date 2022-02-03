@@ -2,13 +2,13 @@
 
 import os
 import unittest
-import preppipe.documentimport.opendocument
+import preppipe.deprecated.documentimport.opendocument
 
 class TestOpenDocumentImport(unittest.TestCase):
   def helper_load(name):
     filename = os.path.dirname(os.path.realpath(__file__)) + "/" + name
     filedata = open(filename, "rb")
-    docmodel = preppipe.documentimport.opendocument.import_odf(filedata, filename)
+    docmodel = preppipe.deprecated.documentimport.opendocument.import_odf(filedata, filename)
     filedata.close()
     return docmodel
   
