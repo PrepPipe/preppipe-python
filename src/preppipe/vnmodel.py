@@ -1,4 +1,5 @@
-#!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2022 PrepPipe's Contributors
+# SPDX-License-Identifier: Apache-2.0
 
 import os
 import io
@@ -9,7 +10,8 @@ import pydub
 import pathlib
 import enum
 from enum import Enum
-import preppipe.commontypes
+
+from .commontypes import Color, FileType
 
 # IR design requirement:
 # 1. all control and dataflow dependence must be available in the "main" part, without involving attributes
@@ -889,7 +891,7 @@ class VNImageAsset(VNValue):
     """
     # None of these values can be None
     canvas_size : typing.Tuple[int, int] = None # (width, height)
-    background_color : preppipe.commontypes.Color = None # background color to fill
+    background_color : Color = None # background color to fill
     base_pos : typing.Tuple[int, int] = None # (xmin, ymin)
   
   autocrop : AutoCropInfo = None # not none if we are doing autocrop
@@ -1914,12 +1916,12 @@ class VNSourceLoc(VNAttribute):
   attr_name : typing.ClassVar[str] = "source_loc"
   
   file : str = ""
-  filetype: preppipe.commontypes.FileType
+  filetype: FileType
   
   def get_attr_name() -> str:
     return VNSourceLoc.attr_name
   
-  def __init__(self, src_file : str, src_filetype : preppipe.commontypes.FileType) -> None:
+  def __init__(self, src_file : str, src_filetype : FileType) -> None:
     self.file = src_file
     self.filetype = src_filetype
 
@@ -1931,7 +1933,7 @@ class VNSourceLoc_TextPosition(VNSourceLoc):
   line : int = 0
   column : int = 0
   
-  def __init__(self, src_file : str, src_filetype : preppipe.commontypes.FileType, src_line : int, src_column: int) -> None:
+  def __init__(self, src_file : str, src_filetype : FileType, src_line : int, src_column: int) -> None:
     super().__init__(src_file, src_filetype)
     self.line = src_line
     self.column = src_column
@@ -1943,7 +1945,7 @@ class VNSourceLoc_TextRange(VNSourceLoc):
   end_line: int = 0
   end_column : int = 0
   
-  def __init__(self, src_file : str, src_filetype : preppipe.commontypes.FileType, start_line : int, start_column: int, end_line : int, end_column : int) -> None:
+  def __init__(self, src_file : str, src_filetype : FileType, start_line : int, start_column: int, end_line : int, end_column : int) -> None:
     super().__init__(src_file, src_filetype)
     self.start_line = start_line
     self.start_column = start_column

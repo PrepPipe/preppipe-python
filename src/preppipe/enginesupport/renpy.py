@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2022 PrepPipe's Contributors
+# SPDX-License-Identifier: Apache-2.0
+
 from io import UnsupportedOperation
 from warnings import warn
 import os, sys
@@ -8,11 +11,9 @@ import pathlib
 from enum import Enum
 import enum
 from collections import deque
-import preppipe.commontypes
 
-from preppipe.vnmodel import *
-
-from preppipe.enginesupport.enginesupport import *
+from ..vnmodel import *
+from .enginesupport import *
 
 class RenpyExport(EngineExport):
   image_decl : typing.Dict[VNValue, str] # value -> export path

@@ -3,7 +3,7 @@
 from io import UnsupportedOperation
 from warnings import warn
 import os, sys, typing
-import preppipe.visualnovelmodel as visualnovelmodel
+import preppipe.deprecated.visualnovelmodel as visualnovelmodel
 
 def renpy_sanitize(text: str) -> str:
   result = ""
