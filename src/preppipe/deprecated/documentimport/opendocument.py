@@ -6,7 +6,7 @@ import PIL.Image
 
 import odf.opendocument
 
-import preppipe.documentmodel as documentmodel
+import preppipe.deprecated.documentmodel as documentmodel
 import preppipe.commontypes
 
 

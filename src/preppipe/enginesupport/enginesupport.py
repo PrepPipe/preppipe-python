@@ -1,4 +1,5 @@
-#!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2022 PrepPipe's Contributors
+# SPDX-License-Identifier: Apache-2.0
 
 from posixpath import basename
 import typing
@@ -6,8 +7,7 @@ import PIL.Image
 from enum import Enum
 import re
 
-import preppipe.commontypes
-from preppipe.vnmodel import *
+from ..vnmodel import *
 
 # ----------------------------------------------------------
 # Engine Model (EM) (like LLVM's MIR)

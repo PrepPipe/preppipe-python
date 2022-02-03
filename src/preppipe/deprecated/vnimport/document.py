@@ -3,8 +3,8 @@
 import io, sys
 import typing
 
-import preppipe.documentmodel as documentmodel
-import preppipe.visualnovelmodel as visualnovelmodel
+import preppipe.deprecated.documentmodel as documentmodel
+import preppipe.deprecated.visualnovelmodel as visualnovelmodel
 
 def get_visual_novel_model_from_document(doc : documentmodel.DocumentModel) -> visualnovelmodel.VisualNovelModel:
   """Convert a DocumentModel into a VisualNovelModel
