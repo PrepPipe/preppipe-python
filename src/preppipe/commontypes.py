@@ -686,8 +686,8 @@ class TextAttribute(enum.Enum):
   Italic = enum.auto()
   
   # text attributes with data
-  Size = enum.auto() # data: int representing size change; 0 is no change, + means increase size, - means decrease size
+  Size = enum.auto() # data: int representing size change; 0 is no change, + means increase size, - means decrease size; see preppipe.util.FontSizeConverter for more details
+
   TextColor = enum.auto() # data: foreground color
   BackgroundColor = enum.auto() # data: background color (highlight color)
   FontClass = enum.auto() # data: str representing font category (predefined: normal, fixedwidth)
-
