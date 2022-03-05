@@ -41,7 +41,60 @@ import enum
 
 from .commontypes import *
 
+class IMAttribute:
+  # support for using objects as key in dictionary / in set
+  def __hash__(self) -> int:
+    return hash(id(self))
+  
+  def __eq__(self, __o: object) -> bool:
+    return __o is self
+  
+  # get the name of attributes
+  def get_name() -> str:
+    return ""
+  
+  def to_string(self, indent : int) -> str:
+    return "<" + type(self).__name__ + ">"
+  
+  def __str__(self) -> str:
+    return self.to_string(0)
+
 class IMBase:
+  # attributes
+  _attributes : typing.List[IMAttribute]
+  
+  def __init__(self) -> None:
+    self._attributes = []
+    
+  @property
+  def attributes(self):
+    return self._attributes
+  
+  def add_attribute(self, attr : IMAttribute):
+    self._attributes.append(attr)
+  
+  def get_attribute(self, attribute_name : str) -> IMAttribute:
+    for attr in self._attributes:
+      if attr.get_name() == attribute_name:
+        return attr
+    return None
+  
+  def to_string(self, indent : int) -> str:
+    result = "<" + type(self).__name__
+    for attr in self.attributes:
+      result += " " + attr.to_string(indent)
+    result += ">"
+    return result
+  
+  def get_attribute_list_string(self):
+    return " ".join([attr.to_string(0) for attr in self.attributes])
+  
+  def __str__(self) -> str:
+    return self.to_string(0)
+  
+  def __str__(self) -> str:
+    return self.to_string(0)
+  
   # support for using objects as key in dictionary / in set
   def __hash__(self) -> int:
     return hash(id(self))
@@ -50,7 +103,8 @@ class IMBase:
     return __o is self
 
 class IMElement(IMBase):
-  pass
+  def __init__(self) -> None:
+    super().__init__()
 
 class IMAssetReference(IMElement):
   _symbol_entry : object # IMAssetSymbolEntry declared below
@@ -65,14 +119,22 @@ class IMAssetReference(IMElement):
   def get_symbol_entry(self):
     return self._symbol_entry
 
+  def to_string(self, indent : int) -> str:
+    result = type(self).__name__
+    attrs = self.get_attribute_list_string()
+    if len(attrs) > 0:
+      result += " [" + attrs + "]"
+    result += " -> " + self._symbol_entry.to_string(indent)
+    return result
 
 class IMAssetSymbolEntry(IMBase):
   # this belongs to InputModel's asset symbol table only
   asset : AssetBase
-  relpath : str
-  references : typing.List[IMAssetReference]
+  relpath : str # path relative to the root of the namespace
+  references : typing.List[IMAssetReference] # references to this entry
   
   def __init__(self, asset : AssetBase, relpath : str = ""):
+    super().__init__()
     self.asset = asset
     self.relpath = relpath
     self.references = []
@@ -81,16 +143,56 @@ class IMAssetSymbolEntry(IMBase):
     assert ref not in self.references
     self.references.append(ref)
 
+  def to_string(self, indent : int) -> str:
+    result = "IMAssetSymbolEntry "
+    if self.asset is None:
+      result += "<invalid>"
+    else:
+      result += str(id(self.asset))
+    attrs = self.get_attribute_list_string()
+    if len(attrs) > 0:
+      result += " [" + attrs + "]"
+    if len(self.relpath) > 0:
+      result += " at " + self.relpath
+    return result
 
 class IMTextElement(IMElement):
-  styles: TextAttribute
+  styles: typing.Any
   text : str
+  
+  def __init__(self, text : str, styles : typing.Any = None) -> None:
+    super().__init__()
+    self.text = text
+    self.styles = styles
+  
+  def to_string(self, indent : int) -> str:
+    result = "Text(\"" + self.text + "\""
+    if self.styles is not None:
+      result += ", style: " + str(self.styles)
+    result += ")"
+    attrs = self.get_attribute_list_string()
+    if len(attrs) > 0:
+      result += " [" + attrs + "]"
+    return result
 
 class IMImageElement(IMAssetReference):
   # TODO add additional metadata
   def __init__(self, symbol_entry : IMAssetSymbolEntry) -> None:
     super().__init__(symbol_entry)
     # TODO add metadata
+
+class IMFrameDefinitionElement(IMElement):
+  def __init__(self, frame) -> None:
+    super().__init__()
+    self.frame = frame
+  
+  def to_string(self, indent : int) -> str:
+    result = "FrameDefinition"
+    attrs = self.get_attribute_list_string()
+    if len(attrs) > 0:
+      result += " [" + attrs + "]"
+    result += " -> " + self.frame.to_string(indent)
+    return result
 
 class IMBlock(IMBase):
   """!
@@ -101,11 +203,27 @@ class IMBlock(IMBase):
   123
   """
   def __init__(self) -> None:
-    pass
+    super().__init__()
 
-class IMBlockList:
-  # one or more blocks; like a document but does not create scope
+class IMFrame(IMBase):
+  # one or more blocks; like a document but does not create (option, asset, ...) scope
   blocks: typing.List[IMBlock]
+  
+  def __init__(self) -> None:
+    super().__init__()
+    self.blocks = []
+  
+  def add_block(self, block : IMBlock):
+    self.blocks.append(block)
+  
+  def to_string(self, indent : int) -> str:
+    result = type(self).__name__
+    attrs = self.get_attribute_list_string()
+    if len(attrs) > 0:
+      result += " [" + attrs + "]"
+    for b in self.blocks:
+      result += "\n" + "  "*(indent+1) + b.to_string(indent+1)
+    return result
 
 class IMSpecialParagraphType(enum.Enum):
   Regular = 0
@@ -115,8 +233,27 @@ class IMSpecialParagraphType(enum.Enum):
 class IMParagraphBlock(IMBlock):
   paragraph_type : IMSpecialParagraphType
   element_list : typing.List[IMElement]
+  
+  def __init__(self) -> None:
+    super().__init__()
+    self.paragraph_type = IMSpecialParagraphType.Regular
+    self.element_list = []
+  
+  def add_element(self, element : IMElement):
+    self.element_list.append(element)
+    
+  def to_string(self, indent : int) -> str:
+    result = "Paragraph"
+    if self.paragraph_type != IMSpecialParagraphType.Regular:
+      result += "(" + str(self.paragraph_type) + ")"
+    attrs = self.get_attribute_list_string()
+    if len(attrs) > 0:
+      result += " [" + attrs + "]"
+    for e in self.element_list:
+      result += "\n" + "  "*(indent+1) + e.to_string(indent+1)
+    return result
 
-class IMCommandInput:
+class IMCommandInput(IMBase):
   positional_args = typing.List[IMElement]
   keyword_args = typing.Dict[str, IMElement]
 
@@ -124,10 +261,10 @@ class IMCommandBlock(IMBlock):
   arguments : IMCommandInput
   attributes : typing.Dict[str, IMCommandInput]
 
-class IMStructureItem:
+class IMStructureItem(IMBase):
   # an item in a list or a cell in a table
   header : IMBlock # first line after the item mark / in the cell. we only use this part to create summary.
-  children : IMBlockList # additional stuff (probably paragraphs) that comes after the the list item.
+  children : IMFrame # additional stuff (probably paragraphs) that comes after the the list item.
 
 class IMListBlock(IMBlock):
   # the content may be commands or normal text; context dependent
@@ -138,18 +275,19 @@ class IMListBlock(IMBlock):
 class IMTableBlock(IMBlock):
   table_cells: typing.List[typing.List[IMStructureItem]]
 
-class IMDocument(IMBlockList):
+class IMDocument(IMFrame):
   local_options: typing.Dict[str, typing.Any]
 
 class IMNamespace(IMBase):
-  # namespace: stand-alone package; only the global namespace (namespace = []) is always present.
-  # InputModel cannot assume namespace-d assets are always available.
+  # namespace: stand-alone package; only the global namespace (namespace = []) and parent namespace (namespace list is a substring) is always present.
+  # InputModel cannot assume other namespace-d assets are always available.
   namespace: typing.List[str]
   options: typing.Dict[str, typing.Any] # parsed from preppipe.json
   fileset: typing.Dict[str, IMDocument]
   asset_symbol_table : typing.List[IMAssetSymbolEntry]
   asset_path_dict : typing.Dict[str, IMAssetReference]
   asset_basepath_dict : typing.Dict[str, typing.List[str]]
+  invalid_asset_entry : IMAssetSymbolEntry # used to keep track of invalid entries
   # in the input model, we have not yet resolved any "asset name"; assets are only referenced by path
   # asset_path_dict maps from asset path to the concrete asset symbol entry (for the ones with backing store only)
   # we ensure that all files can be referenced by <namespace> + <path>
@@ -170,7 +308,15 @@ class IMNamespace(IMBase):
     self.asset_symbol_table = []
     self.asset_path_dict = {}
     self.asset_basepath_dict = {}
+    self.invalid_asset_entry = IMAssetSymbolEntry(None, "")
+    
+  def get_image_asset_entry_from_path(self, imagePath : str, mimetype : str) -> IMAssetSymbolEntry:
+    # TODO
+    return self.invalid_asset_entry
   
+  def get_image_asset_entry_from_inlinedata(self, data : bytes, mimetype : str, localname : str) -> IMAssetSymbolEntry:
+    # TODO
+    return self.invalid_asset_entry
 
 class InputModel(IMBase):
   global_options: typing.Dict[str, typing.Any]
