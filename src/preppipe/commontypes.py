@@ -686,8 +686,61 @@ class TextAttribute(enum.Enum):
   Italic = enum.auto()
   
   # text attributes with data
+  Hierarchy = enum.auto() # data: int representing the "level" of text; 0: normal text; 1: title; 2: Header1; 3: Header2; ...
   Size = enum.auto() # data: int representing size change; 0 is no change, + means increase size, - means decrease size; see preppipe.util.FontSizeConverter for more details
 
   TextColor = enum.auto() # data: foreground color
   BackgroundColor = enum.auto() # data: background color (highlight color)
-  FontClass = enum.auto() # data: str representing font category (predefined: normal, fixedwidth)
+  FontConstraint = enum.auto() # RESERVED: we currently do not handle font families or font language tag. we will try to address this later on
+
+class MessageImportance(enum.Enum):
+  Error = enum.auto()
+  CriticalWarning = enum.auto()
+  Warning = enum.auto()
+  Info = enum.auto()
+
+class MessageHandler:
+  _instance = None
+  
+  @staticmethod
+  def install_message_handler(handler):
+    # subclass MessageHandler and call this function to install the handler
+    assert isinstance(handler, MessageHandler)
+    MessageHandler._instance = handler
+  
+  def message(self, importance : MessageImportance, msg : str, file : str = "", location: str = ""):
+    locstring = ""
+    if len(file) > 0 and len(location) > 0:
+      locstring = file + ": " + location
+    elif len(file) > 0:
+      locstring = file
+    elif len(location) > 0:
+      locstring = location
+    
+    if len(locstring) > 0:
+      locstring = locstring + ": "
+    
+    print("[{imp}] {loc}: {msg}".format(imp=str(importance), loc=locstring, msg=msg))
+  
+  @staticmethod
+  def get():
+    if MessageHandler._instance is None:
+      MessageHandler._instance = MessageHandler()
+    return MessageHandler._instance
+  
+  @staticmethod
+  def info(msg : str, file : str = "", location: str = ""):
+    MessageHandler.get().message(MessageImportance.Info, msg, file, location)
+  
+  @staticmethod
+  def warning(msg : str, file : str = "", location: str = ""):
+    MessageHandler.get().message(MessageImportance.Warning, msg, file, location)
+  
+  @staticmethod
+  def critical_warning(msg : str, file : str = "", location: str = ""):
+    MessageHandler.get().message(MessageImportance.CriticalWarning, msg, file, location)
+  
+  @staticmethod
+  def error(msg : str, file : str = "", location: str = ""):
+    MessageHandler.get().message(MessageImportance.Error, msg, file, location)
+  
