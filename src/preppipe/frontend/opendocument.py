@@ -70,6 +70,7 @@ class _ODParseContext:
   # ------------------------------------------------------------------
   
   def __init__(self, parent : IMNamespace, filePath : str) -> None:
+    filePath = os.path.realpath(filePath)
     self.parent = parent
     self.filePath = filePath
     self.basedir = os.path.dirname(filePath)
@@ -148,7 +149,7 @@ class _ODParseContext:
   def create_image_reference(self, href : str) -> IMImageElement:
     if href in self.asset_reference_dict:
       return IMImageElement(self.asset_reference_dict[href])
-    entry : IMAssetReference = None
+    entry : IMAssetSymbolEntry = None
     if href in self.odfhandle.Pictures:
       (FilenameOrImage, data, mediatype) = self.odfhandle.Pictures[href]
       if FilenameOrImage == odf.opendocument.IS_FILENAME:
@@ -157,12 +158,14 @@ class _ODParseContext:
         entry = self.parent.get_image_asset_entry_from_path(imagePath, mediatype)
       elif FilenameOrImage == odf.opendocument.IS_IMAGE:
         # the image is embedded in the file
-        entry = self.parent.get_image_asset_entry_from_inlinedata(data, mediatype, href)
+        entry = self.parent.get_image_asset_entry_from_inlinedata(data, mediatype, self.filePath, href)
     else:
       # the image is a link to outside file
       imagePath = os.path.join(self.basedir, self.documentname, href)
       entry = self.parent.get_image_asset_entry_from_path(imagePath, mimetypes.guess_type(imagePath)[0])
     assert entry is not None
+    if not entry.valid():
+      MessageHandler.critical_warning("Cannot resolve reference to image \"" + href + "\" (please check file presence or security violation)", self.filePath)
     self.asset_reference_dict[href] = entry
     return IMImageElement(entry)
   
@@ -294,7 +297,7 @@ if __name__ == "__main__":
     print("please specify the input file!")
     sys.exit(1)
   infile = sys.argv[1]
-  parent = IMNamespace([])
+  parent = IMNamespace([], ".")
   doc = parse_odf(parent, infile)
   print(doc)
   
