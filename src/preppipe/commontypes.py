@@ -693,6 +693,86 @@ class TextAttribute(enum.Enum):
   BackgroundColor = enum.auto() # data: background color (highlight color)
   FontConstraint = enum.auto() # RESERVED: we currently do not handle font families or font language tag. we will try to address this later on
 
+
+class IRTypeObject:
+  def __init__(self) -> None:
+    super().__init__()
+  
+  def __str__(self) -> str:
+    return type(self).__name__
+  
+class IRAttribute:
+  def __init__(self) -> None:
+    super().__init__()
+  
+  def __str__(self) -> str:
+    return type(self).__name__
+  
+class IRValue:
+  # may or may not be an SSA
+  _attributes : typing.Dict[str, IRAttribute]
+  
+  def __init__(self) -> None:
+    super().__init__()
+    
+  # support for using VNValue as key in dictionary / in set
+  # no need to override in derived classes
+  def __hash__(self) -> int:
+    return hash(id(self))
+  
+  def __eq__(self, __o: object) -> bool:
+    return __o is self
+  
+  def to_string(self, indent = 0) -> str:
+    return type(self).__name__
+  
+  def __str__(self) -> str:
+    return self.to_string(0)
+  
+  def get_type_object(self) -> IRTypeObject:
+    raise NotImplementedError("IRValue not implementing get_type_object()!")
+
+class IRBlock:
+  _name : str
+  _ops : typing.List[typing.Any]
+  
+  def __init__(self, name : str) -> None:
+    # name should not have block prefix (something like '^')
+    self._name = name
+    self._ops = []
+  
+  @property
+  def name(self):
+    return self._name
+  
+  @name.setter
+  def name(self, new_name : str):
+    self._name = new_name
+
+  def to_string(self, indent = 0) -> str:
+    result = self.name + ":\n"
+    for op in self._ops:
+      result += "  "*(indent+1) + op.to_string(indent+1)+ "\n"
+    return result
+  
+  def __str__(self) -> str:
+    return self.to_string(0)
+  
+class IROp:
+  _name : str
+  _regions : typing.Dict[str, typing.List[IRBlock]]
+  
+  def to_string(self, indent = 0) -> str:
+    result = self.name + ":\n"
+    for region, blocks in self._regions.items():
+      result += "  "*(indent+1) + region + ":\n"
+      for b in blocks:
+        result += "  "*(indent+2) + b.to_string(indent+2)
+    return result
+  
+  def __str__(self) -> str:
+    return self.to_string(0)
+
 class MessageImportance(enum.Enum):
   Error = enum.auto()
   CriticalWarning = enum.auto()
