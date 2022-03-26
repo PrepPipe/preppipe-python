@@ -17,6 +17,7 @@ runs:
       shell: bash
     - name: install dependencies
       run: |
+        sudo apt-get update
         sudo apt-get install -y ffmpeg
         sudo python3 -m pip install --upgrade build twine
       shell: bash
