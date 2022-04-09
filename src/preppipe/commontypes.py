@@ -700,17 +700,11 @@ class IRTypeObject:
   
   def __str__(self) -> str:
     return type(self).__name__
-  
-class IRAttribute:
-  def __init__(self) -> None:
-    super().__init__()
-  
-  def __str__(self) -> str:
-    return type(self).__name__
-  
-class IRValue:
-  # may or may not be an SSA
-  _attributes : typing.Dict[str, IRAttribute]
+
+class IROp:
+  # some member functions are implemented in IROpRegistry
+  # these functions are declared in IROp base just for syntax highlighting in editors
+  # please make sure leaf IROp classes are decorated with IROpDecl
   
   def __init__(self) -> None:
     super().__init__()
@@ -729,49 +723,22 @@ class IRValue:
   def __str__(self) -> str:
     return self.to_string(0)
   
-  def get_type_object(self) -> IRTypeObject:
-    raise NotImplementedError("IRValue not implementing get_type_object()!")
+  def dummy(self, arg: int):
+    raise NotImplementedError("Forgetting to decorate " + type(self).__name__ + " with IROpDecl?")
 
-class IRBlock:
-  _name : str
-  _ops : typing.List[typing.Any]
-  
-  def __init__(self, name : str) -> None:
-    # name should not have block prefix (something like '^')
-    self._name = name
-    self._ops = []
-  
-  @property
-  def name(self):
-    return self._name
-  
-  @name.setter
-  def name(self, new_name : str):
-    self._name = new_name
+class IROpRegistry:
+  @staticmethod
+  def dummy(instance, arg: int):
+    return
 
-  def to_string(self, indent = 0) -> str:
-    result = self.name + ":\n"
-    for op in self._ops:
-      result += "  "*(indent+1) + op.to_string(indent+1)+ "\n"
-    return result
-  
-  def __str__(self) -> str:
-    return self.to_string(0)
-  
-class IROp:
-  _name : str
-  _regions : typing.Dict[str, typing.List[IRBlock]]
-  
-  def to_string(self, indent = 0) -> str:
-    result = self.name + ":\n"
-    for region, blocks in self._regions.items():
-      result += "  "*(indent+1) + region + ":\n"
-      for b in blocks:
-        result += "  "*(indent+2) + b.to_string(indent+2)
-    return result
-  
-  def __str__(self) -> str:
-    return self.to_string(0)
+# decorator for IROp
+def IROpDecl(Op: type, CoreMembers : typing.List[str], *, CreationFunc : str = "create"):
+  # CoreMembers: list of member variable names belonging to this Op. We will use reflection to get more info
+  # CreationFunc: name of a static method of Op responsible for creating the Op with arguments listed in CoreMembers
+  assert issubclass(Op, IROp)
+  # example on adding member to Op
+  setattr(Op, "dummy", IROpRegistry.dummy)
+  return Op;
 
 class MessageImportance(enum.Enum):
   Error = enum.auto()
