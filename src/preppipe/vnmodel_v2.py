@@ -107,7 +107,7 @@ class VNSoundComponentTrait:
 # ----------------------------------------------------------
 # Basic types
 # ----------------------------------------------------------
-class VNValue(IRValue):
+class VNValue(IROp):
   pass
 
 class VNInstruction(VNValue):
@@ -134,6 +134,16 @@ class VNThread(IROp):
 
 class VNNamespace(IROp):
   # hierarchical storage unit for output packaging. Child namespace can assume parent exist, but not its peers or children
+  # we have the following regions defined:
+  
+  pass
+
+class VNModel(IROp):
+  # top-level object for VNModels
+  # there is only one annonymous (name == "") region with a single block full of namespaces
+  # we define following regions in VNModel:
+  # "vnmodel": current IR (bunch of VNNamespace)
+  # "source": inputmodel Transformed in IR form
   pass
 
 # ----------------------------------------------------------
