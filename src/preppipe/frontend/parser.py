@@ -17,24 +17,85 @@ import string
 import enum
 from enum import Enum
 
-from ...commontypes import *
-from ...util import *
+from ..commontypes import *
+from ..util import *
 
-
-# if the last argument is annotated to have None type, the command argument parsing is stopped after previous commands are parsed
-# reserved keyword arguments:
-# parse_context: context object during parsing
-# paragraph
-
-class ParserSpecialTypes(Enum):
-  ParseMode = enum.auto()
-
+# a context object for commands handling
+# Derive from this class and implement at least these functions
+# probably include a reference to the parent parser object as well
 class ParseContextBase:
   def get_file_string(self) -> str:
     raise NotImplementedError("ParseContextBase.get_file_string() not implemented for " + type(self).__name__)
   
   def get_location_string(self) -> str:
     raise NotImplementedError("ParseContextBase.get_location_string() not implemented for " + type(self).__name__)
+  
+  def get_message_loc(self) -> typing.Tuple[str, str]:
+    return (self.get_file_string(), self.get_location_string())
+
+# base class for parser(s) taking InputModel as input (only VNModel parser for now)
+class ParserBase:
+  # class variables for commands registration
+  # in the constructor, these registry will be COPIED to instances
+  _cls_registered_parse_commands : typing.ClassVar[typing.List] = [] # list of CommandInfo
+  _cls_command_alias_dict : typing.ClassVar[typing.Dict[str, int]] # map from command alias names (including canonical names) to string
+  
+  # instance / member variables (copy of _cls*)
+  _registered_parse_commands : typing.List[typing.Any] = [] # list of CommandInfo
+  _command_alias_dict : typing.Dict[str, int] # map from command alias names (including canonical names) to string
+  
+  def __init__(self) -> None:
+    super().__init__()
+    self._registered_parse_commands = self._cls_registered_parse_commands.copy()
+    self._command_alias_dict = self._cls_command_alias_dict.copy()
+    
+  
+  def invoke(self, command : str, ctx : ParseContextBase, *args, **kwargs):
+    # the caller is expected to catch exception if the invocation failed
+    if command in self._command_alias_dict:
+      # command found; try to invoke
+      # we should have already checked the signature of the callback
+      info : CommandInfo = self._registered_parse_commands[self._command_alias_dict[command]]
+      
+      # for arguments in the kwargs, if they are from an alias, convert them to the canonical name
+      new_kwargs = {}
+      for param, value in kwargs.items():
+        # if the param is using the canonical name, just add to new_kwargs
+        # if not, try to convert to canonical name
+        # if the param name is not found, generate a warning
+        
+        if param in info._kwarg_rename_dict:
+          new_kwargs[info._kwarg_rename_dict[param]] = value
+        else:
+          # this parameter is not recognized and will be dropped
+          # print a warning and suggest alternatives with minimal edit distance
+          suggest = TypoSuggestion(param)
+          
+          for name in info._kwarg_rename_dict.keys():
+            suggest.add_candidate(name)
+          
+          file = ""
+          loc = ""
+          if ctx is not None:
+            file = ctx.get_file_string()
+            loc = ctx.get_location_string()
+          MessageHandler.warning("Unknown parameter \"" + param + "\" for command \"" + command + "\"; suggested alternative(s): [" + ",".join(suggest.get_result()) + "]", file, loc)
+      
+      # new_kwargs ready
+      return info._func(ctx, *args, **new_kwargs)
+    
+    # if the execution reaches here, the command is not found
+    suggest = TypoSuggestion(command)
+    suggest.add_candidate(self._command_alias_dict.keys())
+    results = suggest.get_result()
+    file = ""
+    loc = ""
+    if ctx is not None:
+      file = ctx.get_file_string()
+      loc = ctx.get_location_string()
+    MessageHandler.critical_warning("Unknown command \"" + command + "\"; suggested alternative(s): [" + ",".join(results) + "]", file, loc)
+    return None
+
 
 class KeywordArgumentInfo(typing.NamedTuple):
   canonical_name : str
@@ -43,10 +104,6 @@ class KeywordArgumentInfo(typing.NamedTuple):
   required : bool
 
 class CommandInfo:
-  # class variables
-  _registered_parse_commands : typing.ClassVar[typing.List] = [] # list of CommandInfo
-  _command_alias_dict : typing.ClassVar[typing.Dict[str, int]] # map from command alias names (including canonical names) to string
-  
   # data members
   # ones from input
   _func : callable
@@ -56,23 +113,42 @@ class CommandInfo:
   _kwarg_rename_dict : typing.Dict[str, str] # (non-)canonical name -> canonical name; canonical names are also included
   _kwargs_info : typing.List[KeywordArgumentInfo]
   _positional_type : type # None if not taking positional arguments, the type if it takes. This can be typing.Any.
+  _stage: typing.Any # when the commands are supposed to be executed
   
-  def __init__(self, func : callable, command : str, command_alias : typing.List[str], kwarg_rename_dict : typing.Dict[str, str], kwargs_info : typing.List[KeywordArgumentInfo], positional_type : type) -> None:
+  def __init__(self, func : callable, command : str, command_alias : typing.List[str], kwarg_rename_dict : typing.Dict[str, str], kwargs_info : typing.List[KeywordArgumentInfo], positional_type : type, stage: typing.Any) -> None:
     self._func = func
     self._command = command
     self._command_alias = command_alias
     self._kwarg_rename_dict = kwarg_rename_dict
     self._kwargs_info = kwargs_info
     self._positional_type = positional_type
+    self._stage = stage
   
   @staticmethod
   def _is_type_annotation_supported(ty : type) -> bool:
     return True
   
   @staticmethod
-  def _register(func : callable, command : str, command_alias : typing.List[str], parameter_alias : typing.Dict[str, typing.List[str]], kwargs_decl : typing.Dict[str, typing.List[str]]):
+  def _register_custom_parsing_command(func: callable, command : str, command_alias : typing.List[str], ParserType: type, stage: typing.Any):
+    assert inspect.isclass(ParserType) and issubclass(ParserType, ParserBase)
+    raise NotImplementedError("Unimplemented")
+    pass
+  
+  @staticmethod
+  def _register(func : callable, command : str, command_alias : typing.List[str], parameter_alias : typing.Dict[str, typing.List[str]], kwargs_decl : typing.Dict[str, typing.List[str]], ParserType: type, stage: typing.Any, *, custom_command_parsing : False):
     # if there is a validation problem, we generate an error message and do nothing, instead of possibly crashing
     # (will be annoying if importing library causing crashing)
+    
+    # ParserType: class object of the parser (should be derived from ParserBase)
+    # stage: a (parser-defined) value indicating when should the command be evaluated
+    assert inspect.isclass(ParserType) and issubclass(ParserType, ParserBase)
+    
+    # special case handling first
+    if custom_command_parsing:
+      # warn when not used
+      if len(parameter_alias) > 0 or len(kwargs_decl) > 0:
+        MessageHandler.warning("Registering command \"" + command + "\" with custom parsing: parameter_alias and/or kwargs_decl specified but ignored")
+      return CommandInfo._register_custom_parsing_command(func, command, command_alias, ParserType, stage)
     
     error_list = [] # list of error strings
     result_info : CommandInfo = None
@@ -194,13 +270,13 @@ class CommandInfo:
         error_list.append("function not taking any parameter")
       
       # check whether there is a name clash
-      if command in CommandInfo._command_alias_dict:
+      if command in ParserType._cls_command_alias_dict:
         error_list.append("Command \"" + command + "\" is already declared")
       else:
         # we only check aliases if the canonical name is available
         # (if the canonical name is in use, the aliases are likely also in use)
         for alias in command_alias:
-          if alias in CommandInfo._command_alias_dict:
+          if alias in ParserType._cls_command_alias_dict:
             error_list.append("Alias \"" + alias + "\" is already in use")
       
       # all validation completed
@@ -208,7 +284,7 @@ class CommandInfo:
         break
       
       # no error encountered; create registration entry
-      result_info = CommandInfo(func, command, command_alias, kwarg_rename_dict, kwargs_info, positional_type)
+      result_info = CommandInfo(func, command, command_alias, kwarg_rename_dict, kwargs_info, positional_type, stage)
       
       # we MUST have a break here to exit the loop
       break
@@ -217,71 +293,21 @@ class CommandInfo:
       MessageHandler.critical_warning("Registering handler for command \"" + command + "\" failed:\n  " + "\n  ".join(error_list))
       return
     
-    index = len(CommandInfo._registered_parse_commands)
-    CommandInfo._registered_parse_commands.append(result_info)
-    CommandInfo._command_alias_dict[command] = index
+    index = len(ParserType._cls_registered_parse_commands)
+    ParserType._cls_registered_parse_commands.append(result_info)
+    ParserType._cls_command_alias_dict[command] = index
     for alias in command_alias:
-      CommandInfo._command_alias_dict[alias] = index
+      ParserType._cls_command_alias_dict[alias] = index
     
     # done
     return
-  
-  @staticmethod
-  def _get_message_loc(ctx : ParseContextBase) -> typing.Tuple[str, str]:
-    file = ""
-    loc = ""
-    if not isinstance(ctx, None):
-      file = ctx.get_file_string()
-      loc = ctx.get_location_string()
-    return (file, loc)
-  
-  @staticmethod
-  def invoke(command : str, ctx : ParseContextBase, *args, **kwargs):
-    # the caller is expected to catch exception if the invocation failed
-    if command in CommandInfo._command_alias_dict:
-      # command found; try to invoke
-      # we should have already checked the signature of the callback
-      info : CommandInfo = CommandInfo._registered_parse_commands[CommandInfo._command_alias_dict[command]]
-      
-      # for arguments in the kwargs, if they are from an alias, convert them to the canonical name
-      new_kwargs = {}
-      for param, value in kwargs.items():
-        # if the param is using the canonical name, just add to new_kwargs
-        # if not, try to convert to canonical name
-        # if the param name is not found, generate a warning
-        
-        if param in info._kwarg_rename_dict:
-          new_kwargs[info._kwarg_rename_dict[param]] = value
-        else:
-          # this parameter is not recognized and will be dropped
-          # print a warning and suggest alternatives with minimal edit distance
-          suggest = TypoSuggestion(param)
-          
-          for name in info._kwarg_rename_dict.keys():
-            suggest.add_candidate(name)
-          
-          file, loc = CommandInfo._get_message_loc(ctx)
-          MessageHandler.warning("Unknown parameter \"" + param + "\" for command \"" + command + "\"; suggested alternative(s): [" + ",".join(suggest.get_result()) + "]", file, loc)
-          pass
-      
-      # new_kwargs ready
-      return info._func(ctx, *args, **new_kwargs)
-    
-    # if the execution reaches here, the command is not found
-    suggest = TypoSuggestion(command)
-    suggest.add_candidate(CommandInfo._command_alias_dict.keys)
-    results = suggest.get_result()
-    file, loc = CommandInfo._get_message_loc(ctx)
-    MessageHandler.critical_warning("Unknown command \"" + command + "\"; suggested alternative(s): [" + ",".join(results) + "]", file, loc)
-    return None
-    
 
 # decorator for parse commands
 # reference: https://realpython.com/primer-on-python-decorators/#decorators-with-arguments
-def parsecommand(command : str, command_alias : typing.List[str] = [], parameter_alias : typing.Dict[str, typing.List[str]] = {}, kwargs_decl : typing.Dict[str, typing.List[str]] = {}):
+def frontendcommand(ParserType: type, stage: typing.Any, command : str, command_alias : typing.List[str] = [], parameter_alias : typing.Dict[str, typing.List[str]] = {}, kwargs_decl : typing.Dict[str, typing.List[str]] = {}, *, **kwargs):
   def decorator_parsecommand(func):
     # register the command
-    CommandInfo._register(func, command, command_alias, parameter_alias, kwargs_decl)
+    CommandInfo._register(func, command, command_alias, parameter_alias, kwargs_decl, ParserType, stage, **kwargs)
     
     # later on we may add debugging code to the wrapper... nothing for now
     @functools.wraps(func)
