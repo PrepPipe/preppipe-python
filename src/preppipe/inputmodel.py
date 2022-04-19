@@ -224,6 +224,10 @@ class IMAssetSymbolEntry(IMBase):
     return result
 
 class IMTextElement(IMElement):
+  # element of a general text
+
+  # declare styles as typing.Any so that the code creating IMTextElement can use internal representation initially.
+  # After parsing, all styles should be typing.Dict[TextAttribute, typing.Any]
   styles: typing.Any
   text : str
   
@@ -235,6 +239,7 @@ class IMTextElement(IMElement):
   def to_string(self, indent : int) -> str:
     result = "Text(\"" + self.text + "\""
     if self.styles is not None:
+      # should be typing.Dict[TextAttribute, typing.Any]
       result += ", style: " + str(self.styles)
     result += ")"
     attrs = self.get_attribute_list_string()
@@ -343,13 +348,28 @@ class IMTableBlock(IMBlock):
   table_cells: typing.List[typing.List[IMStructureItem]]
 
 class IMDocument(IMFrame):
-  local_options: typing.Dict[str, typing.Any]
+  _local_options: typing.Dict[str, typing.Any]
+  _relative_path : str # relative to namespace root; contains file extension
+  _document_name : str # name of the document
+
+  def __init__(self, document_name: str, relative_path : str) -> None:
+    super().__init__()
+    self._document_name = document_name
+    self._relative_path = relative_path
+  
+  @property
+  def relative_path(self):
+    return self._relative_path
+  
+  @property
+  def document_name(self):
+    return self._document_name
 
 class IMNamespace(IMBase):
   # namespace: stand-alone package; only the global namespace (namespace = []) and parent namespace (namespace list is a substring) is always present.
   # InputModel cannot assume other namespace-d assets are always available.
-  namespace: typing.List[str]
-  root_real_path : str # real path of this namespace
+  _namespace: IRNamespaceIdentifier
+  _root_real_path : str # real path of this namespace
   hash_algorithm : str # hash algorithm used for uniquing assets
   options: typing.Dict[str, typing.Any] # parsed from preppipe.json
   fileset: typing.Dict[str, IMDocument]
@@ -387,9 +407,17 @@ class IMNamespace(IMBase):
     hasher.update(snapshot)
     return hasher.digest()
   
-  def __init__(self, namespace : typing.List[str], rootpath : str) -> None:
-    self.namespace = namespace
-    self.root_real_path = IMNamespace._canonicalize_path(rootpath)
+  @property
+  def namespace(self):
+    return self._namespace
+  
+  @property
+  def root_real_path(self):
+    return self._root_real_path
+
+  def __init__(self, namespace : IRNamespaceIdentifier, rootpath : str) -> None:
+    self._namespace = namespace
+    self._root_real_path = IMNamespace._canonicalize_path(rootpath)
     self.hash_algorithm = IMNamespace._default_hash_algorithm
     self.options = {}
     self.fileset = {}
@@ -402,8 +430,8 @@ class IMNamespace(IMBase):
     
   @staticmethod
   def _canonicalize_path(path : str) -> str:
-    path = os.path.expanduser(path);
-    path = os.path.expandvars(path);
+    path = os.path.expanduser(path)
+    path = os.path.expandvars(path)
     path = os.path.realpath(path)
     return path
   
@@ -424,8 +452,8 @@ class IMNamespace(IMBase):
   
   def _canonialize_namespace_relative_path(self, path: str) -> str:
     # return none if path invalid (cannot resolve to a relative path under the root directory)
-    path = os.path.expanduser(path);
-    path = os.path.expandvars(path);
+    path = os.path.expanduser(path)
+    path = os.path.expandvars(path)
     path = os.path.normpath(os.path.join(self.root_real_path, path))
     return self.resolve_to_relative_path(path)
   
@@ -547,13 +575,21 @@ class IMNamespace(IMBase):
   def get_image_asset_entry_from_inlinedata(self, data : bytes, mimetype : str, inlinedDocumentRealPath: str, localref : str) -> IMAssetSymbolEntry:
     return self.get_asset_symbol_entry_from_inlinedata(data, mimetype, inlinedDocumentRealPath, localref, ImageAsset)
 
+  def add_document(self, doc : IMDocument) -> None:
+    assert doc.relative_path not in self.fileset
+    self.fileset[doc.relative_path] = doc
+
 class InputModel(IMBase):
   global_options: typing.Dict[str, typing.Any]
-  namespaces : typing.Dict[typing.List[str], IMNamespace]
+  namespaces : typing.Dict[IRNamespaceIdentifier, IMNamespace]
   
   def __init__(self) -> None:
     self.global_options = {}
     self.namespaces = {}
+  
+  def add_namespace(self, ns : IMNamespace):
+    assert ns.namespace not in self.namespaces
+    self.namespaces[ns.namespace] = ns
 
 # UPDATE: now IMNamespaceBuilder is dead; please just create IMNamespace and add stuff on it
 class IMNamespaceBuilder:

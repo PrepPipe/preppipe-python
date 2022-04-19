@@ -738,7 +738,32 @@ def IROpDecl(Op: type, CoreMembers : typing.List[str], *, CreationFunc : str = "
   assert issubclass(Op, IROp)
   # example on adding member to Op
   setattr(Op, "dummy", IROpRegistry.dummy)
-  return Op;
+  return Op
+
+# class for namespace indentifier
+class IRNamespaceIdentifier:
+  _identifier : typing.List[str]
+
+  @property
+  def identifier(self) -> typing.List[str]:
+    return self._identifier
+  
+  def __init__(self, identifier : typing.List[str] = []) -> None:
+    self._identifier = identifier.copy()
+  
+  def __eq__(self, __o: object) -> bool:
+    if isinstance(__o, typing.List[str]):
+      return self.identifier == __o
+    if isinstance(__o, IRNamespaceIdentifier):
+      return self.identifier == __o.identifier
+    return False
+  
+  def to_string(self) -> str:
+    return ".".join(self.identifier)
+  
+  def __hash__(self) -> int:
+    return hash(self.to_string())
+
 
 class MessageImportance(enum.Enum):
   Error = enum.auto()

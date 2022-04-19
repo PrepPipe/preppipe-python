@@ -44,6 +44,10 @@ class VNParser(ParserBase):
     pass
   def run_to_stage(self, stage : VNParsingStage) -> None:
     pass
+  def run(self) -> None:
+    # run all the stages
+    self.run_to_stage(VNParsingStage.CodeGeneration)
+
   @staticmethod
   def parse(model: InputModel) -> VNModel:
     parser : VNParser = VNParser()
@@ -51,9 +55,13 @@ class VNParser(ParserBase):
     return parser.get_result()
   
 
-
 # comment not implemented yet
-# @parsecommand("Comment")
-# def Comment(ctx : ParseContextBase) -> None:
-#   return
+@frontendcommand(ParserType=VNParser, stage=VNParsingStage.MacroExpansion, command="Comment", command_alias=["注释"], custom_command_parsing=True)
+def cmd_Comment(ctx : ParseContextBase) -> None:
+  return
+
+@frontendcommand(ParserType=VNParser, stage=VNParsingStage.FunctionBoundaryResolution, command="Label", command_alias=["标签"])
+def cmd_Label(ctx: ParseContextBase, name: str) -> None:
+  return
+
 
