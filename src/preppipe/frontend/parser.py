@@ -7,8 +7,6 @@ import io
 import pathlib
 import typing
 import PIL.Image
-from matplotlib.pyplot import annotate
-from numpy import empty
 import pydub
 import pathlib
 import functools

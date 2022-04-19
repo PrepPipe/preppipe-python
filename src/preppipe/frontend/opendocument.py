@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import io, sys, os
-from re import T
 import typing
 from warnings import warn
 import PIL.Image
@@ -88,7 +87,7 @@ class _ODParseContext:
   def _get_element_attribute(node: odf.element.Element, attr: str) -> str:
     for k in node.attributes.keys():
       if (k[1] == attr):
-        return node.attributes[k];
+        return node.attributes[k]
     return ""
   
   def _populate_style_data(self, node: odf.element.Element):
@@ -98,12 +97,12 @@ class _ODParseContext:
         name = self._get_element_attribute(child, "name")
         # should not happen, but just in case
         if len(name) == 0:
-          continue;
+          continue
         # if we have a parent-style-name, we need to modify from the parent style
         parent_style = self._get_element_attribute(child, "parent-style-name")
         current_style = _TextStyleInfo()
         if len(parent_style) > 0:
-          current_style = _TextStyleInfo(self.style_data[parent_style]);
+          current_style = _TextStyleInfo(self.style_data[parent_style])
         # we should have child nodes of type text-properties
         # we don't care about paragraph-properties for now
         for property_node in child.childNodes:
