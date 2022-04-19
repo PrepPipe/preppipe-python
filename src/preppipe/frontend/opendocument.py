@@ -283,8 +283,9 @@ class _ODParseContext:
     self.last_paragraph_text = ""
     self.num_paragraph_past_last_text = 0
     
-    result : IMDocument = IMDocument()
+    result : IMDocument = IMDocument(self.documentname, parent.resolve_to_relative_path(self.filePath))
     self.odf_parse_frame(result, self.odfhandle.text, False)
+    self.parent.add_document(result)
     return result
 
 def parse_odf(parent: IMNamespace, filePath : str):
@@ -297,7 +298,7 @@ if __name__ == "__main__":
     print("please specify the input file!")
     sys.exit(1)
   infile = sys.argv[1]
-  parent = IMNamespace([], ".")
+  parent = IMNamespace(IRNamespaceIdentifier([]), ".")
   doc = parse_odf(parent, infile)
   print(doc)
   
