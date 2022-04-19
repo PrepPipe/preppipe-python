@@ -17,6 +17,8 @@ import string
 import enum
 from enum import Enum
 
+from preppipe.inputmodel import IMParagraphBlock
+
 from ..commontypes import *
 from ..util import *
 
@@ -38,7 +40,7 @@ class ParserBase:
   # class variables for commands registration
   # in the constructor, these registry will be COPIED to instances
   _cls_registered_parse_commands : typing.ClassVar[typing.List] = [] # list of CommandInfo
-  _cls_command_alias_dict : typing.ClassVar[typing.Dict[str, int]] # map from command alias names (including canonical names) to string
+  _cls_command_alias_dict : typing.ClassVar[typing.Dict[str, int]] = {} # map from command alias names (including canonical names) to string
   
   # instance / member variables (copy of _cls*)
   _registered_parse_commands : typing.List[typing.Any] = [] # list of CommandInfo
@@ -103,7 +105,19 @@ class KeywordArgumentInfo(typing.NamedTuple):
   annotation : type
   required : bool
 
+class CustomParseParameterType(typing.NamedTuple):
+  command_block: IMParagraphBlock # the command block that this command have
+
+  # position of the first unparsed text (leading whitespace stripped)
+  element_index: int # index to the element
+  character_index: int # index to the (first unparsed) text
+
 class CommandInfo:
+  class CustomParsingParameterOption(enum.Enum):
+    NotCustomParsing = enum.auto()
+    Full = enum.auto() # parameter is CustomParseParameterType
+    PlainText = enum.auto() # parameter is str
+
   # data members
   # ones from input
   _func : callable
@@ -114,8 +128,9 @@ class CommandInfo:
   _kwargs_info : typing.List[KeywordArgumentInfo]
   _positional_type : type # None if not taking positional arguments, the type if it takes. This can be typing.Any.
   _stage: typing.Any # when the commands are supposed to be executed
+  _custom_parsing_parameter_option : CustomParsingParameterOption
   
-  def __init__(self, func : callable, command : str, command_alias : typing.List[str], kwarg_rename_dict : typing.Dict[str, str], kwargs_info : typing.List[KeywordArgumentInfo], positional_type : type, stage: typing.Any) -> None:
+  def __init__(self, func : callable, command : str, command_alias : typing.List[str], kwarg_rename_dict : typing.Dict[str, str], kwargs_info : typing.List[KeywordArgumentInfo], positional_type : type, stage: typing.Any, *, custom_parsing_parameter_option : CustomParsingParameterOption = CustomParsingParameterOption.NotCustomParsing) -> None:
     self._func = func
     self._command = command
     self._command_alias = command_alias
@@ -123,19 +138,80 @@ class CommandInfo:
     self._kwargs_info = kwargs_info
     self._positional_type = positional_type
     self._stage = stage
+    self._custom_parsing_parameter_option = custom_parsing_parameter_option
   
   @staticmethod
   def _is_type_annotation_supported(ty : type) -> bool:
     return True
+
+  @staticmethod
+  def _do_register_command(result_info, ParserType: type, command : str, command_alias : typing.List[str]):
+    assert inspect.isclass(ParserType) and issubclass(ParserType, ParserBase)
+    index = len(ParserType._cls_registered_parse_commands)
+    ParserType._cls_registered_parse_commands.append(result_info)
+    ParserType._cls_command_alias_dict[command] = index
+    for alias in command_alias:
+      ParserType._cls_command_alias_dict[alias] = index
   
   @staticmethod
   def _register_custom_parsing_command(func: callable, command : str, command_alias : typing.List[str], ParserType: type, stage: typing.Any):
+    # registration of commands that require custom parsing (after the command name is handled)
+    # example commands requiring custom parsing: comment ("[Comment: xxx]"), expression evaluation ("[Expression hp-1]")
+    # beside the parse context, we expect the function callable to take one of the following set of parameters:
+    # 1. single str: we will call the function with all the text element converted to str (discarding all styles and non-text elements)
+    # 2. CustomParseParameterType: we call the function with full details populated in the struct
+    # reminder that command registration should not fault
     assert inspect.isclass(ParserType) and issubclass(ParserType, ParserBase)
-    raise NotImplementedError("Unimplemented")
-    pass
+    sig = inspect.signature(func)
+    error_list = [] # list of error strings
+    if len(sig.parameters) != 2:
+      err = "Registering command \"" + command + "\" with custom parsing: unexpected number of parameters (should be 2 instead of "+ str(len(sig.parameters))+ ")"
+      error_list.append(err)
+    
+    isPlainTextArg = False
+    numParamParsed = 0
+    
+    for param in sig.parameters.values():
+      numParamParsed += 1
+      if numParamParsed == 1:
+        # this is the context parameter
+        # we check that if its type is annotated, it should be subclass of parse context
+        if param.annotation != inspect.Parameter.empty:
+          if not isinstance(param.annotation, ParseContextBase):
+            err = "Context parameter \"" + param.name + "\" annotated with type " + str(param.annotation) + ", not derived from ParseContextBase"
+            error_list.append(err)
+      elif numParamParsed == 2:
+        # if we have type annotation, make sure it is either str or CustomParseParameterType
+        if param.annotation != inspect.Parameter.empty:
+          if isinstance(param.annotation, str):
+            isPlainTextArg = True
+          elif isinstance(param.annotation, CustomParseParameterType):
+            isPlainTextArg = False
+          else:
+            err = "Raw text parameter \"" + param.name + "\" annotated with type " + str(param.annotation) + ", not in [str, CustomParseParameterType]"
+            error_list.append(err)
+    
+    # check whether there is a name clash
+      if command in ParserType._cls_command_alias_dict:
+        error_list.append("Command \"" + command + "\" is already declared")
+      else:
+        # we only check aliases if the canonical name is available
+        # (if the canonical name is in use, the aliases are likely also in use)
+        for alias in command_alias:
+          if alias in ParserType._cls_command_alias_dict:
+            error_list.append("Alias \"" + alias + "\" is already in use")
+    
+    if len(error_list) > 0:
+      MessageHandler.critical_warning("Registering handler for command \"" + command + "\" failed:\n  " + "\n  ".join(error_list))
+      return
+    
+    custom_parsing_parameter_option = CommandInfo.CustomParsingParameterOption.PlainText if isPlainTextArg else CommandInfo.CustomParsingParameterOption.Full
+    result_info = CommandInfo(func, command, command_alias, {}, [], None, stage, custom_parsing_parameter_option=custom_parsing_parameter_option)
+    CommandInfo._do_register_command(result_info, ParserType, command, command_alias)
+    return
   
   @staticmethod
-  def _register(func : callable, command : str, command_alias : typing.List[str], parameter_alias : typing.Dict[str, typing.List[str]], kwargs_decl : typing.Dict[str, typing.List[str]], ParserType: type, stage: typing.Any, *, custom_command_parsing : False):
+  def _register(func : callable, command : str, command_alias : typing.List[str], parameter_alias : typing.Dict[str, typing.List[str]], kwargs_decl : typing.Dict[str, typing.List[str]], ParserType: type, stage: typing.Any, *, custom_command_parsing : bool = False):
     # if there is a validation problem, we generate an error message and do nothing, instead of possibly crashing
     # (will be annoying if importing library causing crashing)
     
@@ -228,7 +304,7 @@ class CommandInfo:
         
         param_info = KeywordArgumentInfo(
           canonical_name = param.name,
-          aliases = [] if param.name in parameter_alias else parameter_alias[param.name],
+          aliases = [] if param.name not in parameter_alias else parameter_alias[param.name],
           annotation = typing.Any if param.annotation == inspect.Parameter.empty else param.annotation,
           required = (param.kind == inspect.Parameter.POSITIONAL_OR_KEYWORD)
         )
@@ -293,21 +369,15 @@ class CommandInfo:
       MessageHandler.critical_warning("Registering handler for command \"" + command + "\" failed:\n  " + "\n  ".join(error_list))
       return
     
-    index = len(ParserType._cls_registered_parse_commands)
-    ParserType._cls_registered_parse_commands.append(result_info)
-    ParserType._cls_command_alias_dict[command] = index
-    for alias in command_alias:
-      ParserType._cls_command_alias_dict[alias] = index
-    
-    # done
+    CommandInfo._do_register_command(result_info, ParserType, command, command_alias)
     return
 
 # decorator for parse commands
 # reference: https://realpython.com/primer-on-python-decorators/#decorators-with-arguments
-def frontendcommand(ParserType: type, stage: typing.Any, command : str, command_alias : typing.List[str] = [], parameter_alias : typing.Dict[str, typing.List[str]] = {}, kwargs_decl : typing.Dict[str, typing.List[str]] = {}, *, **kwargs):
+def frontendcommand(ParserType: type, stage: typing.Any, command : str, command_alias : typing.List[str] = [], parameter_alias : typing.Dict[str, typing.List[str]] = {}, kwargs_decl : typing.Dict[str, typing.List[str]] = {}, *args, **kwargs):
   def decorator_parsecommand(func):
     # register the command
-    CommandInfo._register(func, command, command_alias, parameter_alias, kwargs_decl, ParserType, stage, **kwargs)
+    CommandInfo._register(func, command, command_alias, parameter_alias, kwargs_decl, ParserType, stage, *args, **kwargs)
     
     # later on we may add debugging code to the wrapper... nothing for now
     @functools.wraps(func)
