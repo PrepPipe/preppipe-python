@@ -279,21 +279,25 @@ class IMBlock(IMBase):
 
 class IMFrame(IMBase):
   # one or more blocks; like a document but does not create (option, asset, ...) scope
-  blocks: typing.List[IMBlock]
+  _blocks: typing.List[IMBlock]
   
   def __init__(self) -> None:
     super().__init__()
-    self.blocks = []
+    self._blocks = []
+  
+  @property
+  def blocks(self):
+    return self._blocks
   
   def add_block(self, block : IMBlock):
-    self.blocks.append(block)
+    self._blocks.append(block)
   
   def to_string(self, indent : int) -> str:
     result = type(self).__name__
     attrs = self.get_attribute_list_string()
     if len(attrs) > 0:
       result += " [" + attrs + "]"
-    for b in self.blocks:
+    for b in self._blocks:
       result += "\n" + "  "*(indent+1) + b.to_string(indent+1)
     return result
 
@@ -303,25 +307,33 @@ class IMSpecialParagraphType(enum.Enum):
   Code = enum.auto() # treated as assets; probably lowered to a text displayable centered on the screen
 
 class IMParagraphBlock(IMBlock):
-  paragraph_type : IMSpecialParagraphType
-  element_list : typing.List[IMElement]
+  _paragraph_type : IMSpecialParagraphType
+  _element_list : typing.List[IMElement]
+
+  @property
+  def element_list(self):
+    return self._element_list
+
+  @property
+  def paragraph_type(self):
+    return self._paragraph_type
   
   def __init__(self) -> None:
     super().__init__()
-    self.paragraph_type = IMSpecialParagraphType.Regular
-    self.element_list = []
+    self._paragraph_type = IMSpecialParagraphType.Regular
+    self._element_list = []
   
   def add_element(self, element : IMElement):
-    self.element_list.append(element)
+    self._element_list.append(element)
     
   def to_string(self, indent : int) -> str:
     result = "Paragraph"
-    if self.paragraph_type != IMSpecialParagraphType.Regular:
-      result += "(" + str(self.paragraph_type) + ")"
+    if self._paragraph_type != IMSpecialParagraphType.Regular:
+      result += "(" + str(self._paragraph_type) + ")"
     attrs = self.get_attribute_list_string()
     if len(attrs) > 0:
       result += " [" + attrs + "]"
-    for e in self.element_list:
+    for e in self._element_list:
       result += "\n" + "  "*(indent+1) + e.to_string(indent+1)
     return result
 
@@ -372,7 +384,7 @@ class IMNamespace(IMBase):
   _root_real_path : str # real path of this namespace
   hash_algorithm : str # hash algorithm used for uniquing assets
   options: typing.Dict[str, typing.Any] # parsed from preppipe.json
-  fileset: typing.Dict[str, IMDocument]
+  _fileset: typing.Dict[str, IMDocument]
   asset_symbol_table : typing.List[IMAssetSymbolEntry]
   asset_path_dict : typing.Dict[str, IMAssetSymbolEntry]
   asset_basepath_dict : typing.Dict[str, typing.List[str]]
@@ -415,12 +427,16 @@ class IMNamespace(IMBase):
   def root_real_path(self):
     return self._root_real_path
 
+  @property
+  def fileset(self):
+    return self._fileset
+
   def __init__(self, namespace : IRNamespaceIdentifier, rootpath : str) -> None:
     self._namespace = namespace
     self._root_real_path = IMNamespace._canonicalize_path(rootpath)
     self.hash_algorithm = IMNamespace._default_hash_algorithm
     self.options = {}
-    self.fileset = {}
+    self._fileset = {}
     self.asset_symbol_table = []
     self.asset_path_dict = {}
     self.asset_basepath_dict = {}
@@ -576,20 +592,29 @@ class IMNamespace(IMBase):
     return self.get_asset_symbol_entry_from_inlinedata(data, mimetype, inlinedDocumentRealPath, localref, ImageAsset)
 
   def add_document(self, doc : IMDocument) -> None:
-    assert doc.relative_path not in self.fileset
-    self.fileset[doc.relative_path] = doc
+    assert doc.relative_path not in self._fileset
+    self._fileset[doc.relative_path] = doc
 
 class InputModel(IMBase):
   global_options: typing.Dict[str, typing.Any]
-  namespaces : typing.Dict[IRNamespaceIdentifier, IMNamespace]
+  _namespaces : typing.Dict[IRNamespaceIdentifier, IMNamespace]
   
   def __init__(self) -> None:
+    super().__init__()
     self.global_options = {}
-    self.namespaces = {}
+    self._namespaces = {}
+  
+  @property
+  def namespaces(self):
+    return self._namespaces
   
   def add_namespace(self, ns : IMNamespace):
-    assert ns.namespace not in self.namespaces
-    self.namespaces[ns.namespace] = ns
+    assert ns.namespace not in self._namespaces
+    self._namespaces[ns.namespace] = ns
+  
+  def merge_with(self, other) -> None:
+    assert isinstance(other, InputModel)
+    raise NotImplementedError()
 
 # UPDATE: now IMNamespaceBuilder is dead; please just create IMNamespace and add stuff on it
 class IMNamespaceBuilder:

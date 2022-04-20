@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2022 PrepPipe's Contributors
 # SPDX-License-Identifier: Apache-2.0
-
+from __future__ import annotations
 import os
 import io
 import pathlib
@@ -107,10 +107,17 @@ class VNSoundComponentTrait:
 # ----------------------------------------------------------
 # Basic types
 # ----------------------------------------------------------
-class VNValue(IROp):
+
+# we have three types of IRValue:
+# 1. instruction. always available, local scope
+# 2. assets. file based, not always available (we can have declarations only)
+# 3. records. special data (position, transition effect, sayer info, etc), always available. ODR by default.
+# we have symbol tables for (1) assets, and (2) functions
+
+class VNInstruction(IROp):
   pass
 
-class VNInstruction(VNValue):
+class VNRecord(IROp):
   pass
 
 class VNStep(IROp):
@@ -126,7 +133,15 @@ class VNStep(IROp):
 
 class VNFunction(IROp):
   # unit of gameplay sharing and individual entry point
-  pass
+  _name : str
+
+  @property
+  def name(self):
+    return self._name
+  
+  def __init__(self) -> None:
+    super().__init__()
+    self._name = ""
 
 class VNThread(IROp):
   # highest unit of story line where there is a "per-saving" state. (Each game save file = state of a thread)
@@ -134,17 +149,65 @@ class VNThread(IROp):
 
 class VNNamespace(IROp):
   # hierarchical storage unit for output packaging. Child namespace can assume parent exist, but not its peers or children
-  # we have the following regions defined:
+  _namespace: IRNamespaceIdentifier
+
+  # we have the following regions defined: (during export they should be sorted)
+  _functions : dict[str, VNFunction]
+  _assets : dict[str, AssetBase]
+  _records : dict[str, VNRecord]
+  # symbol tables (including both internally defined and externally declared)
+  _function_symbols : dict[str, IRSymbolTableEntry]
+  _asset_symbols : dict[str, IRSymbolTableEntry]
+
+  def __init__(self, ns : IRNamespaceIdentifier) -> None:
+    super().__init__()
+    self._namespace = ns
+    self._functions = {}
+    self._assets = {}
+    self._records = {}
+    self._function_symbols = {}
+    self._asset_symbols = {}
+
+  @property
+  def namespace(self):
+    return self._namespace
   
-  pass
+  def name(self) -> str:
+    return self.namespace.to_string()
+  
+  def get_region_dict(self) -> typing.Dict[str, typing.Any]:
+    return {
+      "functions": self._functions.values(),
+      "assets": self._assets.values(),
+      "records": self._records.values()
+    }
+  
+  def temp_add_function_nocheck(self, func : VNFunction):
+    # only used when we are doing construction
+    assert func.name not in self._functions
+    self._functions[func.name] = func
+
 
 class VNModel(IROp):
   # top-level object for VNModels
   # there is only one annonymous (name == "") region with a single block full of namespaces
-  # we define following regions in VNModel:
-  # "vnmodel": current IR (bunch of VNNamespace)
-  # "source": inputmodel Transformed in IR form
-  pass
+  _namespaces : typing.Dict[IRNamespaceIdentifier, VNNamespace]
+
+  def __init__(self) -> None:
+    super().__init__()
+    self._namespaces = {}
+  
+  @property
+  def namespaces(self):
+    return self._namespaces
+  
+  def add_namespace(self, ns : VNNamespace):
+    assert ns.namespace not in self._namespaces
+    self._namespaces[ns.namespace] = ns
+  
+  def get_region_dict(self) -> typing.Dict[str, typing.Any]:
+    return {"": self._namespaces.values()}
+  
 
 # ----------------------------------------------------------
 # Instructions
