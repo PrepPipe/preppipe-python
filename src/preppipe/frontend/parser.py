@@ -39,6 +39,11 @@ class ParserBase:
   # in the constructor, these registry will be COPIED to instances
   _cls_registered_parse_commands : typing.ClassVar[typing.List] = [] # list of CommandInfo
   _cls_command_alias_dict : typing.ClassVar[typing.Dict[str, int]] = {} # map from command alias names (including canonical names) to string
+
+  # class variables for syntax
+  _cls_command_start : typing.ClassVar[typing.Tuple] = ('[', '【')
+  _cls_command_end   : typing.ClassVar[typing.Tuple] = (']', '】')
+  _cls_command_name_suffix : typing.ClassVar[typing.Tuple] = (':', '：')
   
   # instance / member variables (copy of _cls*)
   _registered_parse_commands : typing.List[typing.Any] = [] # list of CommandInfo
@@ -175,15 +180,15 @@ class CommandInfo:
         # this is the context parameter
         # we check that if its type is annotated, it should be subclass of parse context
         if param.annotation != inspect.Parameter.empty:
-          if not isinstance(param.annotation, ParseContextBase):
+          if not issubclass(param.annotation, ParseContextBase):
             err = "Context parameter \"" + param.name + "\" annotated with type " + str(param.annotation) + ", not derived from ParseContextBase"
             error_list.append(err)
       elif numParamParsed == 2:
         # if we have type annotation, make sure it is either str or CustomParseParameterType
         if param.annotation != inspect.Parameter.empty:
-          if isinstance(param.annotation, str):
+          if param.annotation is str:
             isPlainTextArg = True
-          elif isinstance(param.annotation, CustomParseParameterType):
+          elif param.annotation is CustomParseParameterType:
             isPlainTextArg = False
           else:
             err = "Raw text parameter \"" + param.name + "\" annotated with type " + str(param.annotation) + ", not in [str, CustomParseParameterType]"
@@ -273,7 +278,7 @@ class CommandInfo:
           isFirstIteration = False
           # we also check that if its type is annotated, it should be subclass of parse context
           if param.annotation != inspect.Parameter.empty:
-            if not isinstance(param.annotation, ParseContextBase):
+            if not issubclass(param.annotation, ParseContextBase):
               err = "Context parameter \"" + param.name + "\" annotated with type " + str(param.annotation) + ", not derived from ParseContextBase"
               error_list.append(err)
           continue

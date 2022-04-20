@@ -693,52 +693,9 @@ class TextAttribute(enum.Enum):
   BackgroundColor = enum.auto() # data: background color (highlight color)
   FontConstraint = enum.auto() # RESERVED: we currently do not handle font families or font language tag. we will try to address this later on
 
-
-class IRTypeObject:
-  def __init__(self) -> None:
-    super().__init__()
-  
-  def __str__(self) -> str:
-    return type(self).__name__
-
-class IROp:
-  # some member functions are implemented in IROpRegistry
-  # these functions are declared in IROp base just for syntax highlighting in editors
-  # please make sure leaf IROp classes are decorated with IROpDecl
-  
-  def __init__(self) -> None:
-    super().__init__()
-    
-  # support for using VNValue as key in dictionary / in set
-  # no need to override in derived classes
-  def __hash__(self) -> int:
-    return hash(id(self))
-  
-  def __eq__(self, __o: object) -> bool:
-    return __o is self
-  
-  def to_string(self, indent = 0) -> str:
-    return type(self).__name__
-  
-  def __str__(self) -> str:
-    return self.to_string(0)
-  
-  def dummy(self, arg: int):
-    raise NotImplementedError("Forgetting to decorate " + type(self).__name__ + " with IROpDecl?")
-
-class IROpRegistry:
-  @staticmethod
-  def dummy(instance, arg: int):
-    return
-
-# decorator for IROp
-def IROpDecl(Op: type, CoreMembers : typing.List[str], *, CreationFunc : str = "create"):
-  # CoreMembers: list of member variable names belonging to this Op. We will use reflection to get more info
-  # CreationFunc: name of a static method of Op responsible for creating the Op with arguments listed in CoreMembers
-  assert issubclass(Op, IROp)
-  # example on adding member to Op
-  setattr(Op, "dummy", IROpRegistry.dummy)
-  return Op
+# ----------------------------------------------------------
+# SSA definition
+# ----------------------------------------------------------
 
 # class for namespace indentifier
 class IRNamespaceIdentifier:
@@ -763,6 +720,180 @@ class IRNamespaceIdentifier:
   
   def __hash__(self) -> int:
     return hash(self.to_string())
+
+class IRTypeObject:
+  def __init__(self) -> None:
+    super().__init__()
+  
+  def __str__(self) -> str:
+    return type(self).__name__
+
+class IRUse(typing.NamedTuple):
+  # SSA use list node
+  value : typing.Any # IRValue
+  user : typing.Any # IRValue
+  operand : typing.Any # an "IRUse.user"-specific value (likely a enum) that tells how this value is used
+
+class IRValue:
+  _uses : typing.List[IRUse] # use list for each value
+  _value_type : IRTypeObject
+  _source : typing.Any # IROp
+  _name : str # can be empty
+
+  def __init__(self, value_type : IRTypeObject, source : typing.Any, name : str) -> None:
+    self._uses = []
+    self._value_type = value_type
+    self._source = source
+    self._name = name
+  
+  def to_string(self, indent = 0) -> str:
+    if self._source is None:
+      return ""
+    assert isinstance(self._source, IROp)
+    result = "%" + self._source.name()
+    if len(self._name) > 0:
+      result += "." + self._name
+    return result
+  
+  @property
+  def uses(self):
+    return self._uses
+  
+  @property
+  def value_type(self):
+    return self._value_type
+  
+  def add_use(self, user : typing.Any, operand : typing.Any) -> IRUse:
+    u = IRUse(self, user, operand)
+    assert u not in self._uses
+    self._uses.append(u)
+    return u
+
+class IRSymbolTableEntry(IRValue):
+  _name : str # name of the value being accessed
+  _namespace : IRNamespaceIdentifier # if this is a reference to entity outside current namespace, which namespace it is for
+  _definition : typing.Any # actual data of the entry. can be None
+
+class IRValueDecl(typing.NamedTuple):
+  # declaration of IRValues consumed / produced by the Op
+  # note that if the ty field is a list, we can have multiple values
+  name: str # name of the parameter / return value
+  ty : type # type of the value
+  attributes : typing.List[typing.Any] # additional attributes attached
+
+# ----------------------------------------------------------
+# IROp definition
+# ----------------------------------------------------------
+
+class IROp:
+  # some member functions are implemented in IROpRegistry
+  # these functions are declared in IROp base just for syntax highlighting in editors
+  # please make sure leaf IROp classes are decorated with IROpDecl
+  
+  def __init__(self) -> None:
+    super().__init__()
+    
+  # support for using VNValue as key in dictionary / in set
+  # no need to override in derived classes
+  def __hash__(self) -> int:
+    return hash(id(self))
+  
+  def __eq__(self, __o: object) -> bool:
+    return __o is self
+  
+  def name(self) -> str:
+    return "<"+str(id(self))+">"
+
+  def to_string(self, indent = 0) -> str:
+    result : str = type(self).__name__
+    output_decl = self.get_output_values()
+    if len(output_decl) > 0:
+      output_comp = "%{}.".format(self.name())
+      if len(output_decl) == 1:
+        output_comp += output_decl[0].name
+      else:
+        output_comp += "[" + ", ".join([o.name for o in output_decl]) + "]"
+      result = output_comp + " = " + result
+    input_decl = self.get_input_arguments()
+    if len(input_decl) > 0:
+      input_comp = []
+      for iv in input_decl:
+        v = self.get_input_value(iv.name)
+        if isinstance(v, list):
+          frag = []
+          for item in v:
+            assert isinstance(item, IRValue)
+            frag.append(item.to_string())
+          input_comp.append("[" + ", ".join(frag) + "]")
+        elif isinstance(v, IRValue):
+          input_comp.append(v.to_string())
+        else:
+          input_comp.append("<Unknown value " + type(v).__name__ + " " + str(id(v)) + ">")
+      result += "(" + ", ".join(input_comp) + ")"
+    regions = self.get_region_dict()
+    if len(regions) > 0:
+      body = []
+      for region_name, region_body in regions.items():
+        region_title = "  "*indent + region_name + "{"
+        if len(region_body) == 0:
+          body.append(region_title + "}")
+        else:
+          body.append(region_title)
+          for block_or_op in region_body:
+            if isinstance(block_or_op, IROp):
+              body.append("  "*(indent+1) + block_or_op.to_string(indent+1))
+            else:
+              # for IRBlock types, we also require it to have to_string() function
+              # TODO use inspection to verify the signature
+              body.append("  "*(indent+1) + block_or_op.to_string(indent+1))
+          body.append("  "*indent + "}")
+      result += "\n" + "\n".join(body)
+    return result
+  
+  def __str__(self) -> str:
+    return self.to_string(0)
+  
+  def get_region_dict(self) -> typing.Dict[str, typing.Any]:
+    # the value (region body) should be one of the following:
+    # 1. a sequence/iterable of blocks (the block should also have to_string() function)
+    # 2. a sequence/iterable of IROps (there is only a single block for the region)
+    # caller of this function must be aware of possibility of different types
+    return {}
+
+  @classmethod
+  def get_input_arguments(cls) -> typing.List[IRValueDecl]:
+    return []
+  
+  @classmethod
+  def get_output_values(cls) -> typing.List[IRValueDecl]:
+    return []
+  
+  def get_input_value(self, name : str):
+    # if the input value name does not exist, raise exception
+    # if the name corresponds to a list of value, return typing.List[IRValue]
+    # if the name corresponds to a single value, return the single value
+    raise RuntimeError("Input value " + name + " not found")
+
+  def dummy(self, arg: int):
+    raise NotImplementedError("Forgetting to decorate " + type(self).__name__ + " with IROpDecl?")
+
+class IROpRegistry:
+  @staticmethod
+  def dummy(instance, arg: int):
+    return
+
+# decorator for IROp
+def IROpDecl(Op: type, *, CreationFunc : str = "create"):
+  # CreationFunc: name of a static method of Op responsible for creating the Op with arguments listed in CoreMembers
+  if not isinstance(Op, type):
+    MessageHandler.critical_warning("IROpDecl applied to non-type value, IROpDecl ignored: "+ str(Op))
+    return Op
+  if not issubclass(Op, IROp):
+    MessageHandler.critical_warning("Op "+ Op.__name__ + " is not an IROp, IROpDecl ignored")
+    return Op
+  # example on adding member to Op
+  setattr(Op, "dummy", IROpRegistry.dummy)
+  return Op
 
 
 class MessageImportance(enum.Enum):
