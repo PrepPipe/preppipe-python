@@ -35,5 +35,7 @@ class TestVNFrontEnd(unittest.TestCase):
     parser.add(im)
     parser.run()
     result = parser.get_result()
+    print("TestVNFrontEnd.test_vnmodel_parse() result:")
     print(result.__str__())
+    print("TestVNFrontEnd.test_vnmodel_parse() result finished")
 
