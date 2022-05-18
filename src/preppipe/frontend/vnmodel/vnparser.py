@@ -35,22 +35,167 @@ class VNParsingStage(enum.Enum):
   # declare all rest of commands in CodeGeneration stage
 
   def next(self):
-    if self == VNParsingStage.Initialization:
-      return   VNParsingStage.MacroExpansion
-    if self == VNParsingStage.MacroExpansion:
-      return   VNParsingStage.GlobalSettingResolution
-    if self == VNParsingStage.GlobalSettingResolution:
-      return   VNParsingStage.EnvironmentResolution
-    if self == VNParsingStage.EnvironmentResolution:
-      return   VNParsingStage.FunctionBoundaryResolution
-    if self == VNParsingStage.FunctionBoundaryResolution:
-      return   VNParsingStage.AssetHandling
-    if self == VNParsingStage.AssetHandling:
-      return   VNParsingStage.CodeGeneration
-    if self == VNParsingStage.CodeGeneration:
-      return   VNParsingStage.Completed
-    raise NotImplementedError("Unhandled parsing stage " + str(self))
+    match self:
+      case VNParsingStage.Initialization:
+        return VNParsingStage.MacroExpansion
+      case VNParsingStage.MacroExpansion:
+        return VNParsingStage.GlobalSettingResolution
+      case VNParsingStage.GlobalSettingResolution:
+        return VNParsingStage.EnvironmentResolution
+      case VNParsingStage.EnvironmentResolution:
+        return VNParsingStage.FunctionBoundaryResolution
+      case VNParsingStage.FunctionBoundaryResolution:
+        return VNParsingStage.AssetHandling
+      case VNParsingStage.AssetHandling:
+        return VNParsingStage.CodeGeneration
+      case VNParsingStage.CodeGeneration:
+        return VNParsingStage.Completed
+      case _:
+        raise NotImplementedError("Unhandled parsing stage " + str(self))
   
+# ------------------------------------------------------------------------------
+# helper types
+# ------------------------------------------------------------------------------
+class VNPBlockBase:
+  # wrapper for IMBlock in VNParser
+  _block : IMBlock
+
+  def __init__(self, block : IMBlock) -> None:
+    super().__init__()
+    self._block = block
+
+  def to_string(self, indent=0) -> str:
+    return self._block.to_string(indent)
+
+class VNPParagraphBlock(VNPBlockBase):
+  # this is basically a parsed version of an IMParagraphBlock
+  # all non-text elements are collected separately and we have a uniformed string representation in "text"
+  # these non-text elements are replaced by "element_replacement_symbol" inside the "text", and "element_replacement_symbol" is guaranteed not to clash with existing contents
+  # for implementation ease, non-text elements before the first piece of text or after the last piece of text will not have replacement symbol in the text
+  # if there is no non-text elements, "element_replacement_symbol" will be empty
+  # text is strip()ed and will not have leading/trailing whitespaces
+  _text : str
+  _element_replacement_symbol : str
+  _nontext_elements_intext : typing.List[IMElement]
+  _nontext_elements_beforetext : typing.List[IMElement]
+  _nontext_elements_aftertext : typing.List[IMElement]
+
+  def __init__(self, block: IMParagraphBlock, text : str, element_replacement_symbol: str, nontext_elements_intext : typing.List[IMElement], nontext_elements_beforetext : typing.List[IMElement], nontext_elements_aftertext : typing.List[IMElement]) -> None:
+    super().__init__(block)
+    self._text = text
+    self._element_replacement_symbol = element_replacement_symbol
+    self._nontext_elements_intext = nontext_elements_intext
+    self._nontext_elements_beforetext = nontext_elements_beforetext
+    self._nontext_elements_aftertext = nontext_elements_aftertext
+
+  @property
+  def text(self):
+    return self._text
+
+  @property
+  def element_replacement_symbol(self):
+    return self._element_replacement_symbol
+
+  @property
+  def nontext_elements_intext(self):
+    return self._nontext_elements_intext
+
+  @property
+  def nontext_elements_beforetext(self):
+    return self._nontext_elements_beforetext
+
+  @property
+  def nontext_elements_aftertext(self):
+    return self._nontext_elements_aftertext
+
+  @staticmethod
+  def create(block: IMParagraphBlock):
+    # step 1: from beginning to end, find the first text element with non-whitespace content
+    pos_first_text = 0
+    first_text : str = ""
+    elements_beforetext : typing.List[IMElement] = []
+    for i in range(len(block.element_list)):
+      element = block.element_list[i]
+      if isinstance(element, IMTextElement):
+        first_text = element.text.lstrip()
+        if len(first_text) > 0:
+          pos_first_text = i
+          break
+      else:
+        elements_beforetext.append(element)
+
+    if len(first_text) == 0:
+      # this block has no non-empty text elements
+      # all elements are considered in text
+      return VNPParagraphBlock(block, text="", element_replacement_symbol="", nontext_elements_intext=elements_beforetext, nontext_elements_beforetext=[], nontext_elements_aftertext=[])
+
+    # step 2: from end to beginning, find the last text element with non-whitespace content
+    pos_last_text = 0
+    last_text : str = ""
+    elements_aftertext : typing.List[IMElement] = []
+    for i in range(len(block.element_list), 0, -1):
+      idx = i-1
+      element = block.element_list[idx]
+      if isinstance(element, IMTextElement):
+        if idx == pos_first_text:
+          # only a single non-empty text element
+          text = first_text.rstrip()
+          return VNPParagraphBlock(block, text, element_replacement_symbol="", nontext_elements_intext=[], nontext_elements_beforetext=elements_beforetext, nontext_elements_aftertext=elements_aftertext)
+        else:
+          last_text = element.text.rstrip()
+          if len(last_text) > 0:
+            pos_last_text = idx
+            break
+      else:
+        elements_aftertext.append(element)
+
+    # step 3: separate text elements from other elements in the middle
+    # consecutive text elements are concatenated
+    assert pos_last_text > pos_first_text
+    text_list : typing.List[str] = [first_text]
+    elements_intext : typing.List[IMElement] = []
+    pending_str : str | None = None
+    for i in range(pos_first_text+1, pos_last_text, 1):
+      element = block.element_list[i]
+      if isinstance(element, IMTextElement):
+        if pending_str is None:
+          pending_str = element.text
+        else:
+          pending_str += element.text
+      else:
+        elements_intext.append(element)
+        # if there are multiple elements back to back, we need to insert empty strings
+        # so that correct number of replacement symbols appear in output string
+        if pending_str is None:
+          text_list.append("")
+        else:
+          text_list.append(pending_str)
+          pending_str = None
+    if pending_str is not None:
+      text_list.append(pending_str + last_text)
+    else:
+      text_list.append(last_text)
+
+    # step 4: determine the symbol for non-text elements
+    # the string must not be a substring of any one in the text_list
+    # we always use <E> as baseline, then add characters ('-' for now) between 'E' and '>' to avoid collisions
+    max_len = 0
+    for s in text_list:
+      max_len = max(max_len, len(s))
+
+    replacememt_symbol = ""
+    for i in range(max_len):
+      replacememt_symbol = "<E" + "-"*i + ">"
+      hasCollision = False
+      for s in text_list:
+        if s.find(replacememt_symbol) >= 0:
+          hasCollision = True
+          break
+      if not hasCollision:
+        break
+
+    # done!
+    return VNPParagraphBlock(block, text=replacememt_symbol.join(text_list), element_replacement_symbol=replacememt_symbol, nontext_elements_intext=elements_intext, nontext_elements_beforetext=elements_beforetext, nontext_elements_aftertext=elements_aftertext)
 
 # ------------------------------------------------------------------------------
 # Temporary IROps etc for parsing
@@ -72,11 +217,22 @@ class VNPCustomParsedCommandOp(VNPCommandOpBase):
   pass
 
 @IROpDecl
+class VNPUnknownCommandOp(VNPCommandOpBase):
+  # commands that are not recognized
+  pass
+
+@IROpDecl
+class VNPBadCallCommandOp(VNPCommandOpBase):
+  # commands that are recognized but the parameter parsing failed
+  pass
+
+
+@IROpDecl
 class VNPGenericBlockOp(IROp):
   # generic paragraph / block
-  _block : IMBlock
+  _block : VNPBlockBase
 
-  def __init__(self, block : IMBlock) -> None:
+  def __init__(self, block : VNPBlockBase) -> None:
     super().__init__()
     self._block = block
   
@@ -134,87 +290,31 @@ class VNParser(ParserBase):
 
   def get_result(self) -> VNModel:
     # TODO finalize
-    # assert self.current_stage == VNParsingStage.Completed
+    assert self.current_stage == VNParsingStage.Completed
     return self.model
-  
-  def _normalize_text_from_block(self, block: IMParagraphBlock):
-    result = []
-    last_str = ""
-    for element in block.element_list:
-      if isinstance(element, IMTextElement):
-        # text element encountered
-        last_str += element.text
-      else:
-        # non-text element encountered
-        if len(last_str) > 0:
-          result.append(last_str)
-        last_str = ""
-        result.append(element)
-    if len(last_str) > 0:
-      result.append(last_str)
-    return result
 
-  def _create_block_handle_command_block(self, block : IMParagraphBlock, body : list) -> IROp:
-    # TODO handle non-text elements in command block
-    assert len(body) == 1
-    full_str : str = body[0]
-    # TODO actually do the parsing
-    # find substr in self._cls_command_name_suffix (which should contain all variants of ':') or whitespace to extract the command name
-    # lookup the input parsing requirement, if it requires custom parsing then we are done
-    # otherwise we parse all the parameters and populate the result op
-    # print("Command found: "+full_str)
-    return VNPGenericBlockOp(block)
+  def _create_blocks_handle_command_block(self, command_info : ParsedCommandInfo) -> IROp:
+    raise NotImplementedError("_create_blocks_handle_command_block not implemented yet")
 
-  def _create_block(self, block : IMBlock) -> IROp:
-    # if we can parse the text block as a command block, return a command block
+  def _create_blocks(self, block : IMBlock) -> typing.List[IROp]:
+    # if we can parse the text block as commands, return a list of command block
     # otherwise just treat as a generic block
+    blockwrap : VNPBlockBase = None
     if isinstance(block, IMParagraphBlock):
-      if block.paragraph_type == IMSpecialParagraphType.Regular:
-        contents = self._normalize_text_from_block(block)
-        if len(contents) > 0 and isinstance(contents[0],str):
-          if len(contents) == 1:
-            # single string paragraph
-            content_str : str = contents[0].strip()
-            isStartMatch = content_str.startswith(self._cls_command_start)
-            isEndMatch = content_str.endswith(self._cls_command_end)
-            if isStartMatch and isEndMatch:
-              # we found a command paragraph
-              # try to get the command name
-              start_pos = 0
-              for start in self._cls_command_start:
-                if content_str.startswith(start):
-                  start_pos = len(start)
-                  break
-              assert start_pos > 0
-              end_pos = len(content_str)
-              for end in self._cls_command_end:
-                if content_str.endswith(end):
-                  end_pos -= len(end)
-                  break
-              return self._create_block_handle_command_block(block, [content_str[start_pos:end_pos]])
-            elif isStartMatch or isEndMatch:
-              # either the beginning or end is missing
-              MessageHandler.warning("ParagraphBlock has command start/end symbol but not considered as command")
-          else:
-            # front_str : str = contents[0].lstrip()
-            # TODO unimplemented
-            raise NotImplementedError("We cannot handle non-text element in command block yet")
-        elif len(contents) > 0:
-          # the first element is not text
-          # we may have images, etc as the first element that could block our search of commands
-          # if the first text element starts with a command start symbol, we create a warning
-          first_text_element_idx = 0
-          for i in range(len(contents)):
-            if isinstance(contents[i], str):
-              first_text_element_idx = i
-              break
-          if first_text_element_idx > 0:
-            first_text = content_str[first_text_element_idx].lstrip()
-            if first_text.startswith(self._cls_command_start):
-              MessageHandler.warning("ParagraphBlock has leading non-text element before command start/end symbol; command (if present) will not be parsed")
-
-
-    return VNPGenericBlockOp(block)
+      blockwrap = VNPParagraphBlock.create(block)
+      assert isinstance(blockwrap, VNPParagraphBlock)
+      if block.paragraph_type == IMSpecialParagraphType.Regular and len(blockwrap.text) > 0:
+        content_str = blockwrap.text
+        command_scan_result = self.scanCommandFromText(content_str)
+        if command_scan_result is not None:
+          result_list = []
+          for command_info in command_scan_result:
+            command_op = self._create_blocks_handle_command_block(command_info)
+            result_list.append(command_op)
+          return result_list
+    if blockwrap is None:
+      blockwrap = VNPBlockBase(block)
+    return [VNPGenericBlockOp(blockwrap)]
 
   def _run_initialization(self):
     # populate MLIR-like IR in this stage
@@ -229,24 +329,73 @@ class VNParser(ParserBase):
         doc = VNPGenericDocumentOp(name)
         ns.temp_add_function_nocheck(doc)
         for imb in imdoc.blocks:
-          block = self._create_block(imb)
-          doc.add(block)
-
+          blocklist = self._create_blocks(imb)
+          for block in blocklist:
+            doc.add(block)
+    # use the next() method to update current stage so that we can add stages in a simpler manner
     self.current_stage = self.current_stage.next()
 
   def _run_macro_expansion(self):
-    pass
+    assert self.current_stage == VNParsingStage.MacroExpansion
+    # use the next() method to update current stage so that we can add stages in a simpler manner
+    self.current_stage = self.current_stage.next()
+
+  def _run_global_setting_resolution(self):
+    assert self.current_stage == VNParsingStage.GlobalSettingResolution
+    # use the next() method to update current stage so that we can add stages in a simpler manner
+    self.current_stage = self.current_stage.next()
+
+  def _run_environment_resolution(self):
+    assert self.current_stage == VNParsingStage.EnvironmentResolution
+    # use the next() method to update current stage so that we can add stages in a simpler manner
+    self.current_stage = self.current_stage.next()
+
+  def _run_function_boundary_resolution(self):
+    assert self.current_stage == VNParsingStage.FunctionBoundaryResolution
+    # use the next() method to update current stage so that we can add stages in a simpler manner
+    self.current_stage = self.current_stage.next()
+
+  def _run_asset_handling(self):
+    assert self.current_stage == VNParsingStage.AssetHandling
+    # use the next() method to update current stage so that we can add stages in a simpler manner
+    self.current_stage = self.current_stage.next()
+
+  def _run_code_generation(self):
+    assert self.current_stage == VNParsingStage.CodeGeneration
+    # use the next() method to update current stage so that we can add stages in a simpler manner
+    self.current_stage = self.current_stage.next()
 
   def run_to_stage(self, stage : VNParsingStage) -> None:
     assert self.current_stage.value <= stage.value
-    while self.current_stage.value <= stage.value and self.current_stage.value < VNParsingStage.Completed.value:
-      # TODO use python 3.10 pattern matching instead
-      if self.current_stage == VNParsingStage.Initialization:
-        self._run_initialization()
-        return
-      
+    while self.current_stage.value <= stage.value:
+      match self.current_stage:
+        case VNParsingStage.Initialization:
+          self._run_initialization()
+          continue
+        case VNParsingStage.MacroExpansion:
+          self._run_macro_expansion()
+          continue
+        case VNParsingStage.GlobalSettingResolution:
+          self._run_global_setting_resolution()
+          continue
+        case VNParsingStage.EnvironmentResolution:
+          self._run_environment_resolution()
+          continue
+        case VNParsingStage.FunctionBoundaryResolution:
+          self._run_function_boundary_resolution()
+          continue
+        case VNParsingStage.AssetHandling:
+          self._run_asset_handling()
+          continue
+        case VNParsingStage.CodeGeneration:
+          self._run_code_generation()
+          continue
+        case VNParsingStage.Completed:
+          # we are done if we reach here
+          break
+        case _:
+          raise NotImplementedError("Unknown parsing stage " + str(self.current_stage))
 
-    pass
   def run(self) -> None:
     # run all the stages
     self.run_to_stage(VNParsingStage.CodeGeneration)
