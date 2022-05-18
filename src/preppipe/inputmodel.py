@@ -62,23 +62,33 @@ class IMAttribute:
 class IMBase:
   # attributes
   _attributes : typing.List[IMAttribute]
-  
+  _debugloc : DebugLoc
+
   def __init__(self) -> None:
     self._attributes = []
-    
+    self._debugloc = None
+
   @property
   def attributes(self):
     return self._attributes
-  
+
   def add_attribute(self, attr : IMAttribute):
     self._attributes.append(attr)
-  
+
   def get_attribute(self, attribute_name : str) -> IMAttribute:
     for attr in self._attributes:
       if attr.get_name() == attribute_name:
         return attr
     return None
-  
+
+  @property
+  def debugloc(self):
+    return self._debugloc
+
+  @debugloc.setter
+  def debugloc(self, loc : DebugLoc):
+    self._debugloc = loc
+
   def to_string(self, indent : int) -> str:
     result = "<" + type(self).__name__
     for attr in self.attributes:
@@ -271,7 +281,7 @@ class IMBlock(IMBase):
   @~english @brief Base class for all block level constructs
   @~chinese @brief 所有区块类的基类
   @~
-  
+
   123
   """
   def __init__(self) -> None:
