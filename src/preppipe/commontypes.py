@@ -239,6 +239,43 @@ class FileType(enum.Enum):
       return FileType.Video
     return FileType.Unknown
 
+
+class DebugLoc:
+  # base class of debug locations
+  def __init__(self) -> None:
+    super().__init__()
+  def __str__(self):
+    pass
+
+class WordDocumentDebugLoc:
+  _filepath : str
+  _line : int
+  _column : int
+
+  def __init__(self, filepath : str, line : int, column : int) -> None:
+    super().__init__()
+    self._filepath = filepath
+    self._line = line
+    self._column = column
+
+  @property
+  def filepath(self):
+    return self._filepath
+
+  @property
+  def line(self):
+    return self._line
+
+  def toString(self, indent : int) -> str:
+    return self._filepath + ": " + str(self._line) + ": " + str(self._column)
+
+  def __str__(self) -> str:
+    return self.toString(0)
+
+# ----------------------------------------------------------
+# Data and Assets
+# ----------------------------------------------------------
+
 class AssetBase:
   """!
   @~english @brief Base class for all assets (the non-code portion that we don't interpret)
@@ -789,18 +826,28 @@ class IROp:
   # some member functions are implemented in IROpRegistry
   # these functions are declared in IROp base just for syntax highlighting in editors
   # please make sure leaf IROp classes are decorated with IROpDecl
-  
+  _debugloc : DebugLoc
+
   def __init__(self) -> None:
     super().__init__()
-    
+    self._debugloc = None
+
+  @property
+  def debugloc(self):
+    return self._debugloc
+
+  @debugloc.setter
+  def debugloc(self, loc : DebugLoc):
+    self._debugloc = loc
+
   # support for using VNValue as key in dictionary / in set
   # no need to override in derived classes
   def __hash__(self) -> int:
     return hash(id(self))
-  
+
   def __eq__(self, __o: object) -> bool:
     return __o is self
-  
+
   def name(self) -> str:
     return "<"+str(id(self))+">"
 

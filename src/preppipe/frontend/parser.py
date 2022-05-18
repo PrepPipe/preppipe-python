@@ -19,6 +19,7 @@ from preppipe.inputmodel import IMParagraphBlock
 
 from ..commontypes import *
 from ..util import *
+from .commandastparser import create_command_ast
 
 # a context object for commands handling
 # Derive from this class and implement at least these functions
@@ -32,6 +33,32 @@ class ParseContextBase:
   
   def get_message_loc(self) -> typing.Tuple[str, str]:
     return (self.get_file_string(), self.get_location_string())
+
+class ParsedCommandInfo:
+  # ----------------------------------------------------------------------------
+  # the following fields are populated as long as the boundary of commands can be found
+  # ----------------------------------------------------------------------------
+  command_range : typing.Tuple[int,int] # begin / end pos of command (from the start of string, including the square bracket)
+  command_body : str # body of command (everything excluding the square bracket)
+  command_body_range : typing.Tuple[int,int] # begin / end pos of command body (includes command name and all parameters)
+
+  # ----------------------------------------------------------------------------
+  # the following fields are populated if and only if the command "name" can be extracted
+  # ----------------------------------------------------------------------------
+  command_name : str # name of command
+  command_index : int # index of command in the parser; -1 if the command is not recognized
+  argument_text : str # text of argument
+  argument_text_range: typing.Tuple[int,int] # begin / end pos of command body (only includes all parameters)
+
+  # ----------------------------------------------------------------------------
+  # the following fields are populated if the parameters can be parsed
+  # if the command is known doing custom parsing, we do not do the parsing
+  # if the command name is not recognized, we still attempt to parse it
+  # ----------------------------------------------------------------------------
+  arguments : typing.Dict[str, typing.Any] | None # parsed parameters
+  is_arguments_good : bool # true if (1) the command is recognized, (2) the arguments passed in satisfy the spec from the command info
+  # note that some value references can be string type and we basically only check if the argument names are good (i.e., little check on argument value)
+
 
 # base class for parser(s) taking InputModel as input (only VNModel parser for now)
 class ParserBase:
@@ -100,6 +127,15 @@ class ParserBase:
       loc = ctx.get_location_string()
     MessageHandler.critical_warning("Unknown command \"" + command + "\"; suggested alternative(s): [" + ",".join(results) + "]", file, loc)
     return None
+
+  @staticmethod
+  def scanCommandFromText(text : str) -> typing.List[ParsedCommandInfo]:
+    # update: we will handle commands resolution here
+    # commandastparser.py isolates core logic from (antlr4-related) parser code
+    # TODO think how to deal with text between commands (maybe just ignore them? or treat them as separate text?)
+    # TODO use commandastparser.create_command_ast() to do the work
+    # raise NotImplementedError("scanCommandFromText() unimplemented")
+    return []
 
 
 class KeywordArgumentInfo(typing.NamedTuple):
