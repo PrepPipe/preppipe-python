@@ -236,9 +236,9 @@ class IMAssetSymbolEntry(IMBase):
 class IMTextElement(IMElement):
   # element of a general text
 
-  # declare styles as typing.Any so that the code creating IMTextElement can use internal representation initially.
+  # declare styles as supporting typing.Any so that the code creating IMTextElement can use internal representation initially.
   # After parsing, all styles should be typing.Dict[TextAttribute, typing.Any]
-  styles: typing.Any
+  styles: typing.Dict[TextAttribute, typing.Any] | typing.Any
   text : str
   
   def __init__(self, text : str, styles : typing.Any = None) -> None:
