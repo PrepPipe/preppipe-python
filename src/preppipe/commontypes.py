@@ -929,8 +929,11 @@ class IROpRegistry:
   def dummy(instance, arg: int):
     return
 
+# use a type variable so that syntax highlighting, etc works properly on annotated classes
+_OP = typing.TypeVar('_OP')
+
 # decorator for IROp
-def IROpDecl(Op: type, *, CreationFunc : str = "create"):
+def IROpDecl(Op: _OP, *, CreationFunc : str = "create") -> _OP:
   # CreationFunc: name of a static method of Op responsible for creating the Op with arguments listed in CoreMembers
   if not isinstance(Op, type):
     MessageHandler.critical_warning("IROpDecl applied to non-type value, IROpDecl ignored: "+ str(Op))

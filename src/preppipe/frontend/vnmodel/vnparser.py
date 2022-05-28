@@ -293,29 +293,6 @@ class VNParser(ParserBase):
     assert self.current_stage == VNParsingStage.Completed
     return self.model
 
-  def _create_blocks_handle_command_block(self, command_info : ParsedCommandInfo) -> IROp:
-    raise NotImplementedError("_create_blocks_handle_command_block not implemented yet")
-
-  def _create_blocks(self, block : IMBlock) -> typing.List[IROp]:
-    # if we can parse the text block as commands, return a list of command block
-    # otherwise just treat as a generic block
-    blockwrap : VNPBlockBase = None
-    if isinstance(block, IMParagraphBlock):
-      blockwrap = VNPParagraphBlock.create(block)
-      assert isinstance(blockwrap, VNPParagraphBlock)
-      if block.paragraph_type == IMSpecialParagraphType.Regular and len(blockwrap.text) > 0:
-        content_str = blockwrap.text
-        command_scan_result = self.scanCommandFromText(content_str)
-        if command_scan_result is not None:
-          result_list = []
-          for command_info in command_scan_result:
-            command_op = self._create_blocks_handle_command_block(command_info)
-            result_list.append(command_op)
-          return result_list
-    if blockwrap is None:
-      blockwrap = VNPBlockBase(block)
-    return [VNPGenericBlockOp(blockwrap)]
-
   def _run_initialization(self):
     # populate MLIR-like IR in this stage
     assert self.input is not None
@@ -328,10 +305,9 @@ class VNParser(ParserBase):
       for name, imdoc in inputNS.fileset.items():
         doc = VNPGenericDocumentOp(name)
         ns.temp_add_function_nocheck(doc)
-        for imb in imdoc.blocks:
-          blocklist = self._create_blocks(imb)
-          for block in blocklist:
-            doc.add(block)
+        blocklist = self.parse_blocks(imdoc.blocks)
+        for block in blocklist:
+          doc.add(block)
     # use the next() method to update current stage so that we can add stages in a simpler manner
     self.current_stage = self.current_stage.next()
 
