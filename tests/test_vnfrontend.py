@@ -25,8 +25,8 @@ class TestVNFrontEnd(unittest.TestCase):
     TestVNFrontEnd._add_puretext_paragraph(doc, "This is a text paragraph of unknown speaker.")
     TestVNFrontEnd._add_puretext_paragraph(doc, "Alice: \"This is Alice speaking!\"")
     TestVNFrontEnd._add_puretext_paragraph(doc, "Bob: \"This is Bob speaking!\"")
-    TestVNFrontEnd._add_puretext_paragraph(doc, "[Comment: These text are all comments now and should be ignored]")
-    # TestVNFrontEnd._add_puretext_paragraph(doc, "[SoundEffect HelloWorld.ogg]")
+    TestVNFrontEnd._add_puretext_paragraph(doc, "[# These text are all comments now and should be ignored]")
+    TestVNFrontEnd._add_puretext_paragraph(doc, "[SoundEffect HelloWorld.ogg][SoundEffect hood][Label hoo] # emm")
     return im
 
   def test_vnmodel_parse(self):

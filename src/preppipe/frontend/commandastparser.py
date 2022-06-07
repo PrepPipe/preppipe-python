@@ -266,7 +266,7 @@ def _handleScanResult(text : str, info : _InitParsedCommandInfo) -> ASTNodeBase 
   
   # if this is a comment block, we don't need to run the next stage parser
   if info.is_comment:
-    return CommentNode(start=command_total_start, end=command_total_end, text=text[command_total_start:command_total_end])
+    return CommentNode(start=command_body_start, end=command_body_end, text=command_body_text)
   
   istream = antlr4.InputStream(command_body_text)
   error_listener = _CommandParseErrorListener()
