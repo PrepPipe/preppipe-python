@@ -533,6 +533,61 @@ def frontendcommand(ParserType: type, stage: typing.Any, command : str, command_
     return wrapper
   return decorator_parsecommand
 
+# helper class to register multiple commands more conveniently
+class FrontendCommandRegisterHelper:
+  _ParserType : type
+  _stage : typing.Any
+  _common_param_alias : typing.Dict[str, typing.List[str]]
+
+  def __init__(self, ParserType: type, stage: typing.Any = None) -> None:
+    self._ParserType = ParserType
+    self._stage = stage
+    self._common_param_alias = {}
+  
+  def set_stage(self, stage : typing.Any) -> None:
+    self._stage = stage
+  
+  def add_common_alias_entry(self, name : str, alias : typing.list[str]) -> None:
+    assert isinstance(name, str)
+    assert isinstance(alias, list)
+    self._common_param_alias[name] = alias
+  
+  def add_common_alias_dict(self, aliases : typing.Dict[str, typing.List[str]]) -> None:
+    assert isinstance(aliases, dict)
+    for name, alias in aliases.items():
+      assert isinstance(name, str)
+      assert isinstance(alias, list)
+      for s in alias:
+        assert isinstance(s, str)
+    self._common_param_alias.update(aliases)
+
+  def collect_alias(self, decllist : typing.Iterable[str], preserve_empty_key : bool = False) -> typing.Dict[str, typing.List[str]]:
+    result : typing.Dict[str, typing.List[str]] = {}
+    for param in decllist:
+      # exclude all special parameters defined by preppipe
+      if param.startswith('_'):
+        continue
+      if param in self._common_param_alias:
+        result[param] = self._common_param_alias.get(param)
+      elif preserve_empty_key:
+        result[param] = []
+    return result
+  
+  def register(self, func : callable, command_name : str, command_alias : typing.List[str] = [], kwarglist : typing.List[str] = [], *args, **kwargs) -> None:
+    sig = inspect.signature(func)
+    parameter_aliases = self.collect_alias(sig.parameters.keys())
+    kwargs_decl : typing.Dict[str, typing.List[str]] = {}
+    if len(kwarglist) > 0:
+      kwargs_decl = self.collect_alias(kwarglist, preserve_empty_key = True)
+    CommandInfo._register(func, command_name, command_alias, parameter_aliases, kwargs_decl, self._ParserType, self._stage, *args, **kwargs)
+
+# decorator for use with registration helper
+def register(helper : FrontendCommandRegisterHelper, command_name : str, command_alias : typing.List[str] = [], *args, **kwargs):
+  def decorator_parsecommand(func):
+    helper.register(func, command_name, command_alias, *args, **kwargs)
+    return func
+  return decorator_parsecommand
+
 # ------------------------------------------------------------------------------
 # Initial AST-like generic IR definition
 # ------------------------------------------------------------------------------
@@ -596,7 +651,8 @@ class ParserParagraphBlockOp(IROp):
 @IROpDecl
 class ParserCommentOp(ParserParagraphBlockOp):
   # just use a different class to emphasize that this is comment
-  pass
+  def __init__(self, members: typing.List[ParserElementBase] = [], text: str = "") -> None:
+    super().__init__(members, text)
 
 class ParserCommandArgumentInfo:
   positionals : typing.List[ParserElementBase] # all values are constrained to be single-element; if the text has inconsistent styles, we will do majority vote to get a single style
@@ -665,9 +721,8 @@ class ParserCommandBase(ParserParagraphBlockOp):
 
 @IROpDecl
 class ParserUnrecognizedCommandOp(ParserCommandBase):
-  def __init__(self, raw_arg_info : ParserParagraphBlockOp) -> None:
-    super().__init__()
-    super().set_raw_argument_block(raw_arg_info)
+  def __init__(self, members: typing.List[ParserElementBase] = [], text: str = "") -> None:
+    super().__init__(members, text)
 
 @IROpDecl
 class ParserCommandOp(ParserCommandBase):
@@ -676,7 +731,6 @@ class ParserCommandOp(ParserCommandBase):
   # (in vnparser, they will be expanded/checked right before they being evaluated so that commands in earlier stages have chance to update the arguments)
   def __init__(self) -> None:
     super().__init__()
-
 
 @IROpDecl
 class ParserInputOp(IROp):
@@ -734,6 +788,44 @@ def _create_command_blocks(element_lookup_dict : typing.Dict[int, int], element_
       newtext = element_data.text[trimlen_left:]
     newTextElement = IMTextElement(newtext, element_data.styles)
     return ParserTextElementOp(newTextElement)
+  
+  def get_member_list_and_text(v : ASTNodeBase) -> typing.Tuple[typing.List[ParserElementBase], str]:
+    cur_member_list : typing.List[ParserElementBase] = []
+    cur_text : str = ""
+    cur_start = v.start
+    while cur_start < v.end:
+      exact_start_pos = max(k for k in element_lookup_dict if k <= cur_start)
+      element_index = element_lookup_dict.get(exact_start_pos, -1)
+      cur_element_text = '\0'
+      cur_element_len = 1
+      cur_element = element_list[element_index]
+      if isinstance(cur_element, ParserTextElementOp):
+        cur_text_imelement : IMTextElement = cur_element.element_data
+        cur_element_text = cur_text_imelement.text
+        cur_element_len = len(cur_element_text)
+      # most common case: the current element is exactly inside the range
+      if exact_start_pos == cur_start and cur_start + cur_element_len <= v.end:
+        cur_member_list.append(cur_element)
+        cur_text += cur_element_text
+        cur_start += cur_element_len
+      else:
+        # we need to trim part of the element
+        assert isinstance(cur_element, ParserTextElementOp)
+        cur_text_imelement : IMTextElement = cur_element.element_data
+        start_trim_len = cur_start - exact_start_pos
+        new_text = cur_text_imelement.text
+        if start_trim_len > 0:
+          # this should only be possible in the first iteration
+          assert len(cur_member_list) == 0
+          new_text = cur_text_imelement.text[start_trim_len:]
+        end_trim_len = exact_start_pos + cur_element_len - v.end
+        if end_trim_len > 0:
+          new_text = new_text[:-end_trim_len]
+        new_text_element = IMTextElement(new_text, cur_text_imelement.styles)
+        cur_member_list.append(new_text_element)
+        cur_text += new_text
+        cur_start += len(new_text)
+    return cur_member_list, cur_text
 
   for body in ast.bodylist:
     if isinstance(body, CommandNode):
@@ -813,9 +905,13 @@ def _create_command_blocks(element_lookup_dict : typing.Dict[int, int], element_
       # we will do this after the arguments are handled properly
     elif isinstance(body, UnrecognizedPartNode):
       # we are guaranteed not having the name field
-      raise NotImplementedError()
+      op_members, op_text = get_member_list_and_text(body)
+      cur_element = ParserUnrecognizedCommandOp(op_members, op_text)
+      result.append(cur_element)
     elif isinstance(body, CommentNode):
-      raise NotImplementedError()
+      op_members, op_text = get_member_list_and_text(body)
+      cur_element = ParserCommentOp(op_members, op_text)
+      result.append(cur_element)
   return result
 
 def _parser_parse_blocks_impl(parser : ParserBase, blocklist : typing.List[IMBlock]) -> typing.List[IROp]:
