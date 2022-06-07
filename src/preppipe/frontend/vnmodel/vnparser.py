@@ -52,199 +52,12 @@ class VNParsingStage(enum.Enum):
         return VNParsingStage.Completed
       case _:
         raise NotImplementedError("Unhandled parsing stage " + str(self))
-  
-# ------------------------------------------------------------------------------
-# helper types
-# ------------------------------------------------------------------------------
-class VNPBlockBase:
-  # wrapper for IMBlock in VNParser
-  _block : IMBlock
-
-  def __init__(self, block : IMBlock) -> None:
-    super().__init__()
-    self._block = block
-
-  def to_string(self, indent=0) -> str:
-    return self._block.to_string(indent)
-
-class VNPParagraphBlock(VNPBlockBase):
-  # this is basically a parsed version of an IMParagraphBlock
-  # all non-text elements are collected separately and we have a uniformed string representation in "text"
-  # these non-text elements are replaced by "element_replacement_symbol" inside the "text", and "element_replacement_symbol" is guaranteed not to clash with existing contents
-  # for implementation ease, non-text elements before the first piece of text or after the last piece of text will not have replacement symbol in the text
-  # if there is no non-text elements, "element_replacement_symbol" will be empty
-  # text is strip()ed and will not have leading/trailing whitespaces
-  _text : str
-  _element_replacement_symbol : str
-  _nontext_elements_intext : typing.List[IMElement]
-  _nontext_elements_beforetext : typing.List[IMElement]
-  _nontext_elements_aftertext : typing.List[IMElement]
-
-  def __init__(self, block: IMParagraphBlock, text : str, element_replacement_symbol: str, nontext_elements_intext : typing.List[IMElement], nontext_elements_beforetext : typing.List[IMElement], nontext_elements_aftertext : typing.List[IMElement]) -> None:
-    super().__init__(block)
-    self._text = text
-    self._element_replacement_symbol = element_replacement_symbol
-    self._nontext_elements_intext = nontext_elements_intext
-    self._nontext_elements_beforetext = nontext_elements_beforetext
-    self._nontext_elements_aftertext = nontext_elements_aftertext
-
-  @property
-  def text(self):
-    return self._text
-
-  @property
-  def element_replacement_symbol(self):
-    return self._element_replacement_symbol
-
-  @property
-  def nontext_elements_intext(self):
-    return self._nontext_elements_intext
-
-  @property
-  def nontext_elements_beforetext(self):
-    return self._nontext_elements_beforetext
-
-  @property
-  def nontext_elements_aftertext(self):
-    return self._nontext_elements_aftertext
-
-  @staticmethod
-  def create(block: IMParagraphBlock):
-    # step 1: from beginning to end, find the first text element with non-whitespace content
-    pos_first_text = 0
-    first_text : str = ""
-    elements_beforetext : typing.List[IMElement] = []
-    for i in range(len(block.element_list)):
-      element = block.element_list[i]
-      if isinstance(element, IMTextElement):
-        first_text = element.text.lstrip()
-        if len(first_text) > 0:
-          pos_first_text = i
-          break
-      else:
-        elements_beforetext.append(element)
-
-    if len(first_text) == 0:
-      # this block has no non-empty text elements
-      # all elements are considered in text
-      return VNPParagraphBlock(block, text="", element_replacement_symbol="", nontext_elements_intext=elements_beforetext, nontext_elements_beforetext=[], nontext_elements_aftertext=[])
-
-    # step 2: from end to beginning, find the last text element with non-whitespace content
-    pos_last_text = 0
-    last_text : str = ""
-    elements_aftertext : typing.List[IMElement] = []
-    for i in range(len(block.element_list), 0, -1):
-      idx = i-1
-      element = block.element_list[idx]
-      if isinstance(element, IMTextElement):
-        if idx == pos_first_text:
-          # only a single non-empty text element
-          text = first_text.rstrip()
-          return VNPParagraphBlock(block, text, element_replacement_symbol="", nontext_elements_intext=[], nontext_elements_beforetext=elements_beforetext, nontext_elements_aftertext=elements_aftertext)
-        else:
-          last_text = element.text.rstrip()
-          if len(last_text) > 0:
-            pos_last_text = idx
-            break
-      else:
-        elements_aftertext.append(element)
-
-    # step 3: separate text elements from other elements in the middle
-    # consecutive text elements are concatenated
-    assert pos_last_text > pos_first_text
-    text_list : typing.List[str] = [first_text]
-    elements_intext : typing.List[IMElement] = []
-    pending_str : str | None = None
-    for i in range(pos_first_text+1, pos_last_text, 1):
-      element = block.element_list[i]
-      if isinstance(element, IMTextElement):
-        if pending_str is None:
-          pending_str = element.text
-        else:
-          pending_str += element.text
-      else:
-        elements_intext.append(element)
-        # if there are multiple elements back to back, we need to insert empty strings
-        # so that correct number of replacement symbols appear in output string
-        if pending_str is None:
-          text_list.append("")
-        else:
-          text_list.append(pending_str)
-          pending_str = None
-    if pending_str is not None:
-      text_list.append(pending_str + last_text)
-    else:
-      text_list.append(last_text)
-
-    # step 4: determine the symbol for non-text elements
-    # the string must not be a substring of any one in the text_list
-    # we always use <E> as baseline, then add characters ('-' for now) between 'E' and '>' to avoid collisions
-    max_len = 0
-    for s in text_list:
-      max_len = max(max_len, len(s))
-
-    replacememt_symbol = ""
-    for i in range(max_len):
-      replacememt_symbol = "<E" + "-"*i + ">"
-      hasCollision = False
-      for s in text_list:
-        if s.find(replacememt_symbol) >= 0:
-          hasCollision = True
-          break
-      if not hasCollision:
-        break
-
-    # done!
-    return VNPParagraphBlock(block, text=replacememt_symbol.join(text_list), element_replacement_symbol=replacememt_symbol, nontext_elements_intext=elements_intext, nontext_elements_beforetext=elements_beforetext, nontext_elements_aftertext=elements_aftertext)
-
-# ------------------------------------------------------------------------------
-# Temporary IROps etc for parsing
-# ------------------------------------------------------------------------------
-
-class VNPCommandOpBase(IROp):
-  # base class for pending command handler calls
-  handle_event_id : int # the index of handler call, used to tell the relative order of command handling.
-  pass
-
-@IROpDecl
-class VNPParsedCommandOp(VNPCommandOpBase):
-  # commands that the parser is responsible for setting up the operands
-  pass
-
-@IROpDecl
-class VNPCustomParsedCommandOp(VNPCommandOpBase):
-  # commands that the command will parse the operands from input
-  pass
-
-@IROpDecl
-class VNPUnknownCommandOp(VNPCommandOpBase):
-  # commands that are not recognized
-  pass
-
-@IROpDecl
-class VNPBadCallCommandOp(VNPCommandOpBase):
-  # commands that are recognized but the parameter parsing failed
-  pass
-
-
-@IROpDecl
-class VNPGenericBlockOp(IROp):
-  # generic paragraph / block
-  _block : VNPBlockBase
-
-  def __init__(self, block : VNPBlockBase) -> None:
-    super().__init__()
-    self._block = block
-  
-  def to_string(self, indent=0) -> str:
-    return self._block.to_string(indent)
-
 
 @IROpDecl
 class VNPGenericDocumentOp(VNFunction):
   # generic document op
   _document_name : str # name (without suffix) of the doc
-  _content : typing.List[IROp] # [VNPParsedCommandOp, VNPCustomParsedCommandOp, VNPGenericBlockOp]
+  _content : typing.List[IROp]
   
   def __init__(self, document_name : str) -> None:
     super().__init__()
@@ -381,15 +194,27 @@ class VNParser(ParserBase):
     parser : VNParser = VNParser()
     parser.add(model)
     return parser.get_result()
-  
 
-# comment not implemented yet
-@frontendcommand(ParserType=VNParser, stage=VNParsingStage.MacroExpansion, command="Comment", command_alias=["注释"], custom_command_parsing=True)
-def cmd_Comment(ctx : VNParserContext, input : CustomParseParameterType) -> None:
-  return
 
-@frontendcommand(ParserType=VNParser, stage=VNParsingStage.FunctionBoundaryResolution, command="Label", command_alias=["标签"])
-def cmd_Label(ctx: VNParserContext, name: str) -> None:
-  return
+
+
+_rh : FrontendCommandRegisterHelper = FrontendCommandRegisterHelper(VNParser)
+_rh.add_common_alias_dict({
+  "name": ['名称']
+})
+_rh.set_stage(VNParsingStage.Initialization)
+_rh.set_stage(VNParsingStage.MacroExpansion)
+_rh.set_stage(VNParsingStage.GlobalSettingResolution)
+_rh.set_stage(VNParsingStage.EnvironmentResolution)
+_rh.set_stage(VNParsingStage.FunctionBoundaryResolution)
+
+@register(_rh, "Label", ["标签"])
+def cmd_label(_ctx : VNParserContext, name : str) -> None:
+  pass
+
+_rh.set_stage(VNParsingStage.AssetHandling)
+_rh.set_stage(VNParsingStage.CodeGeneration)
+
+del _rh
 
 
