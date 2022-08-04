@@ -114,11 +114,28 @@ class IListNode(typing.Generic[T], llist.dllistnode):
     super().__init__(**kwargs)
   
   def insert_before(self, ip : IListNode[T]) -> None:
-    ip.owner.insert(ip, self)
+    if self.owner is not None:
+      self.node_removed(self.parent)
+      self.owner.remove(self)
+    self.node_inserted(self.parent)
+    ip.owner.insertnode(ip, self)
   
   # erase_from_parent() includes self cleanup; it should be defined in derived classes
   def remove_from_parent(self):
-    self.owner.remove(self)
+    if self.owner is not None:
+      self.node_removed(self.parent)
+      self.owner.remove(self)
+  
+  # if a derived class want to execute code before inserting or removing from list,
+  # override these member functions
+
+  def node_inserted(self, parent):
+    # parent is the new parent after insertion
+    pass
+
+  def node_removed(self, parent):
+    # parent is the one that is no longer the parent after the removal
+    pass
   
   @property
   def prev(self) -> T:
@@ -221,6 +238,10 @@ class Location:
   
   def __str__(self) -> str:
     return type(self).__name__
+  
+  @staticmethod
+  def getNullLocation(ctx: Context):
+    return ctx.null_location
 
 class ValueType:
   _context : Context
@@ -485,8 +506,28 @@ class Operation(IListNode):
     self._regions[name] = r
     return r
   
+  def get_or_create_region(self, name : str = '') -> Region:
+    if name in self._regions:
+      return self._regions[name]
+    return self._add_region(name)
+  
+  def _add_symbol_table(self, name : str = '') -> SymbolTableRegion:
+    r = SymbolTableRegion(self._loc.context)
+    self._regions[name] = r
+    return r
+  
   def get_region(self, name : str) -> Region:
     return self._regions.get(name)
+  
+  def get_num_regions(self) -> int:
+    return len(self._regions)
+  
+  def get_region_names(self) -> typing.Iterable[str]:
+    return self._regions.keys()
+  
+  @property
+  def regions(self) -> typing.Iterable[Region]:
+    return self._regions.values()
   
   def drop_all_references(self) -> None:
     # drop all references to outside values; required before erasing
@@ -534,7 +575,7 @@ class Operation(IListNode):
   # TODO clone interface
 
   @property
-  def block(self) -> Block:
+  def parent_block(self) -> Block:
     return self.parent
   
   @property
@@ -543,8 +584,13 @@ class Operation(IListNode):
   
   @location.setter
   def location(self, loc : Location):
+    assert self._loc.context is loc.context
     self._loc = loc
   
+  @property
+  def context(self) -> Context:
+    return self._loc.context
+
   @property
   def parent_region(self) -> Region:
     if self.parent is not None:
@@ -557,6 +603,28 @@ class Operation(IListNode):
     if parent_region is not None:
       return parent_region.parent
     return None
+
+class Symbol(Operation):
+  def __init__(self, name: str, loc: Location, **kwargs) -> None:
+    super().__init__(name, loc, **kwargs)
+  
+  @Operation.name.setter
+  def name(self, n : str):
+    if self.parent is not None:
+      table : SymbolTableRegion = self.parent.parent
+      assert isinstance(table, SymbolTableRegion)
+      table._rename_symbol(self, n)
+    self._name = n
+  
+  def node_inserted(self, parent : Block):
+    table : SymbolTableRegion = parent.parent
+    assert isinstance(table, SymbolTableRegion)
+    table._add_symbol(self)
+  
+  def node_removed(self, parent : Block):
+    table : SymbolTableRegion = parent.parent
+    assert isinstance(table, SymbolTableRegion)
+    table._drop_symbol(self.name)
 
 class Block(Value, IListNode):
   _ops : IList[Operation, Block]
@@ -585,6 +653,10 @@ class Block(Value, IListNode):
   @property
   def arguments(self) -> IList[BlockArgument, Block]:
     return self._args
+
+  @property
+  def body(self) -> IList[Operation, Block]:
+    return self._ops
   
   def add_argument(self, ty : ValueType):
     arg = BlockArgument(ty)
@@ -593,6 +665,9 @@ class Block(Value, IListNode):
   def drop_all_references(self) -> None:
     for op in self._ops:
       op.drop_all_references()
+  
+  def push_back(self, op : Operation):
+    self._ops.push_back(op)
 
 class Region(NameDictNode):
   _blocks : IList[Block, Region]
@@ -618,6 +693,66 @@ class Region(NameDictNode):
   @property
   def entry_block(self) -> Block:
     return self._blocks.front
+  
+  @property
+  def parent(self) -> Operation:
+    return super().parent
+  
+  def add_block(self, name : str = '') -> Block:
+    block = Block(name, self.parent.context)
+    self._blocks.push_back(block)
+    return block
+
+class SymbolTableRegion(Region, collections.abc.Sequence):
+  # if a region is a symbol table, it will always have one block
+  _lookup_dict : dict[str, Symbol]
+  _block : Block
+  _anonymous_count : int # we use numeric default names if a symbol without name is added
+  
+  def __init__(self, context : Context) -> None:
+    super().__init__()
+    self._block = Block("", context)
+    self.push_back(self._block)
+    self._anonymous_count = 0
+  
+  def _get_anonymous_name(self):
+    result = str(self._anonymous_count)
+    self._anonymous_count += 1
+    return result
+  
+  def _drop_symbol(self, name : str):
+    self._lookup_dict.pop(name, None)
+  
+  def _add_symbol(self, symbol : Symbol):
+    # make sure _add_symbol is called BEFORE adding the symbol to list
+    # to avoid infinite recursion
+    if len(symbol.name) == 0:
+      symbol.name = self._get_anonymous_name()
+    assert symbol.name not in self._lookup_dict
+    self._lookup_dict[symbol.name] = symbol
+  
+  def _rename_symbol(self, symbol : Symbol, newname : str):
+    assert newname not in self._lookup_dict
+    self._lookup_dict.pop(symbol.name, None)
+    self._lookup_dict[newname] = symbol
+  
+  def __getitem__(self, key : str) -> Symbol:
+    return self.get(key, None)
+  
+  def get(self, key : str) -> Symbol:
+    return self._lookup_dict.get(key, None)
+  
+  def __iter__(self):
+    return iter(self._lookup_dict.values())
+  
+  def __len__(self):
+    return len(self._lookup_dict)
+  
+  def __contains__(self, value: Symbol) -> bool:
+    return self._lookup_dict.get(value.name, None) == value
+  
+  def add(self, symbol : Symbol):
+    self._block.push_back(symbol)
 
 class Context:
   # the object that we use to keep track of unique constructs (types, constant expressions, file assets)
@@ -626,7 +761,9 @@ class Context:
   _constant_dict : dict[type, dict[typing.Any, typing.Any]] # <ConstantType> -> <ConstantDataValue> -> ConstantDataObject
   _asset_data_list : IList[AssetData]
   _asset_temp_dir : tempfile.TemporaryDirectory # created on-demand
-  _undef_location : Location # a dummy location value with only a reference to the context
+  _null_location : Location # a dummy location value with only a reference to the context
+  _difile_dict : dict[str, DIFile] # from filepath string to the DIFile object
+  _diloc_dict : dict[DIFile, dict[tuple[int, int], DILocation]]
 
   def __init__(self) -> None:
     self._stateless_type_dict = {}
@@ -634,7 +771,9 @@ class Context:
     self._asset_data_list = IList(self)
     self._asset_temp_dir = None
     self._constant_dict = {}
-    self._undef_location = Location(self)
+    self._null_location = Location(self)
+    self._difile_dict = {}
+    self._diloc_dict = {}
 
   def get_stateless_type(self, ty : type) -> typing.Any:
     if ty in self._stateless_type_dict:
@@ -674,15 +813,28 @@ class Context:
     self._asset_data_list.push_back(asset)
   
   @property
-  def undef_location(self) -> Location:
-    return self._undef_location
+  def null_location(self) -> Location:
+    return self._null_location
   
-  #def add_asset_data(self, path : str, asset_type : type, **kwargs) -> AssetData:
-  #  assert self._asset_temp_dir is not None
-  #  assert issubclass(asset_type, AssetData)
-  #  data = asset_type(context=self, backing_store_path=path, **kwargs)
-  #  return data
-    # if path.startswith(os.path.abspath(self._asset_temp_dir.name)+os.sep):
+  def get_DIFile(self, path : str) -> DIFile:
+    if path in self._difile_dict:
+      return self._difile_dict[path]
+    result = DIFile(self, path)
+    self._difile_dict[path] = result
+    return result
+  
+  def get_DILocation(self, file : str | DIFile, row : int, column: int) -> DILocation:
+    difile : DIFile = file
+    if isinstance(file, str):
+      difile = self.get_DIFile(file)
+    assert isinstance(difile, DIFile)
+    assert difile.context is self
+    key = (row, column)
+    if key in self._diloc_dict:
+      return self._diloc_dict[key]
+    result = DILocation(self, row, column)
+    self._diloc_dict[key] = result
+    return result
 
 class AssetData(Value, IListNode):
   # an asset data represent a pure asset; no (IR-related) metadata
@@ -880,3 +1032,37 @@ class AssetBase(User):
     # should be implemented in derived classes
     raise NotImplementedError("AssetBase.set_data() not overriden in " + type(self).__name__)
 
+class DIFile(Location):
+  _path : str
+
+  def __init__(self, ctx: Context, path : str) -> None:
+    super().__init__(ctx)
+    self._path = path
+  
+  @property
+  def filepath(self) -> str:
+    return self._path
+
+class DILocation(Location):
+  _file : DIFile
+  _row : int
+  _col : int
+
+  def __init__(self, file : DIFile, row : int, column : int) -> None:
+    ctx = file.context
+    super().__init__(ctx)
+    self._file = file
+    self._row = row
+    self._col = column
+  
+  @property
+  def file(self) -> DIFile:
+    return self._file
+  
+  @property
+  def row(self) -> int:
+    return self._row
+  
+  @property
+  def column(self) -> int:
+    return self._col
