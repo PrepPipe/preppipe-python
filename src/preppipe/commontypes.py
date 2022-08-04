@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: 2022 PrepPipe's Contributors
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
 import mimetypes
 import os, io, gc
 import pathlib
@@ -729,6 +730,12 @@ class TextAttribute(enum.Enum):
   TextColor = enum.auto() # data: foreground color
   BackgroundColor = enum.auto() # data: background color (highlight color)
   FontConstraint = enum.auto() # RESERVED: we currently do not handle font families or font language tag. we will try to address this later on
+
+  # 提供比较运算符，这样可以把它们和值一起放到元组里排序
+  def __lt__(self, rhs : TextAttribute) -> bool:
+    if self.__class__ is rhs.__class__:
+      return self.value < rhs.value
+    raise NotImplementedError("无法将文本属性与其他类型的值进行比较")
 
 # ----------------------------------------------------------
 # SSA definition

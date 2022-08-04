@@ -56,18 +56,29 @@ class VNIntType(VNType):
     super().__init__(context)
   
   def __str__(self) -> str:
-    return "int"
+    return "整数类型"
   
   @staticmethod
   def get(ctx : Context) -> VNIntType:
     return ctx.get_stateless_type(VNIntType)
+
+class VNFloatType(VNType):
+  def __init__(self, context: Context) -> None:
+    super().__init__(context)
+  
+  def __str__(self) -> str:
+    return "浮点数类型"
+  
+  @staticmethod
+  def get(ctx : Context) -> VNFloatType:
+    return ctx.get_stateless_type(VNFloatType)
 
 class VNBoolType(VNType):
   def __init__(self, context: Context) -> None:
     super().__init__(context)
   
   def __str__(self) -> str:
-    return "bool"
+    return "逻辑类型"
   
   @staticmethod
   def get(ctx : Context) -> VNBoolType:
@@ -79,40 +90,44 @@ class VNStringType(VNType):
     super().__init__(context)
   
   def __str__(self) -> str:
-    return "string"
+    return "字符串类型"
   
   @staticmethod
   def get(ctx : Context) -> VNStringType:
     return ctx.get_stateless_type(VNStringType)
 
 class VNDisplayableType(VNType):
-  # image, text, or anything that has a visual display
+  # 可显示类型不仅包含显示的内容（如图片、文字内容等），还包含显示内容的位置、大小、转场（入场出场）等所有确定该内容显示方式的信息
+  # 同一个内容可以对应无数个可显示类型记录
+  # 可显示类型的转场信息应该包含“转场需要多久”
   def __init__(self, context: Context) -> None:
     super().__init__(context)
 
   def __str__(self) -> str:
-    return "Displayable"
+    return "可显示类型"
   
-  # no other members
+  @staticmethod
+  def get(ctx : Context) -> VNDisplayableType:
+    return ctx.get_stateless_type(VNDisplayableType)
 
-class VNTextType(VNDisplayableType):
+class VNTextType(VNType):
   # string + style (style can be empty)
   def __init__(self, context: Context) -> None:
     super().__init__(context)
   
   def __str__(self) -> str:
-    return "Text"
+    return "文本类型"
   
   @staticmethod
   def get(ctx : Context) -> VNTextType:
     return ctx.get_stateless_type(VNTextType)
 
-class VNImageType(VNDisplayableType):
+class VNImageType(VNType):
   def __init__(self, context: Context) -> None:
     super().__init__(context)
   
   def __str__(self) -> str:
-    return "Image"
+    return "图片类型"
   
   @staticmethod
   def get(ctx : Context) -> VNImageType:
@@ -123,44 +138,33 @@ class VNAudioType(VNType):
     super().__init__(context)
   
   def __str__(self) -> str:
-    return "Audio"
+    return "声音类型"
   
   @staticmethod
   def get(ctx : Context) -> VNAudioType:
     return ctx.get_stateless_type(VNAudioType)
 
-class VNTimeType(VNType):
+class VNTimeOrderType(VNType):
   def __init__(self, context: Context) -> None:
     super().__init__(context)
   
   def __str__(self) -> str:
-    return "Time"
+    return "时间顺序类型"
   
   @staticmethod
-  def get(ctx : Context) -> VNTimeType:
-    return ctx.get_stateless_type(VNTimeType)
+  def get(ctx : Context) -> VNTimeOrderType:
+    return ctx.get_stateless_type(VNTimeOrderType)
 
 class VNNamespaceReferenceType(VNType):
   def __init__(self, context: Context) -> None:
     super().__init__(context)
   
   def __str__(self) -> str:
-    return "NamespaceRef"
+    return "命名空间引用类型"
   
   @staticmethod
   def get(ctx : Context) -> VNNamespaceReferenceType:
     return ctx.get_stateless_type(VNNamespaceReferenceType)
-
-class VNDevicePathType(VNType):
-  def __init__(self, context: Context) -> None:
-    super().__init__(context)
-  
-  def __str__(self) -> str:
-    return "DevicePath"
-  
-  @staticmethod
-  def get(ctx : Context) -> VNDevicePathType:
-    return ctx.get_stateless_type(VNDevicePathType)
 
 class VNDeviceReferenceType(VNParameterizedType):
   _data_type : VNType # what kinds of data can be written to the device
@@ -174,7 +178,7 @@ class VNDeviceReferenceType(VNParameterizedType):
     return self._data_type
   
   def __str__(self) -> str:
-    return "Device<" + str(self._data_type) + ">"
+    return "设备<" + str(self._data_type) + ">"
   
   @staticmethod
   def get(data_type : VNType) -> VNDeviceReferenceType:
@@ -201,7 +205,7 @@ class VNHandleType(VNParameterizedType):
     return self._data_type
   
   def __str__(self) -> str:
-    return "Handle<" + str(self._data_type) + ">"
+    return "句柄<" + str(self._data_type) + ">"
   
   @staticmethod
   def get(data_type : VNType) -> VNHandleType:
@@ -224,7 +228,7 @@ class VNOptionalType(VNParameterizedType):
     self._depend_type = ty
   
   def __str__(self) -> str:
-    return "Optional<" + str(self._depend_type) + ">"
+    return "可选<" + str(self._depend_type) + ">"
   
   @property
   def element_type(self) -> VNType:
@@ -251,14 +255,27 @@ class VNCharacterDeclType(VNType):
     super().__init__(context)
   
   def __str__(self) -> str:
-    return "CharacterDecl"
+    return "人物声明类型"
   
   @staticmethod
   def get(ctx : Context) -> VNCharacterDeclType:
     return ctx.get_stateless_type(VNCharacterDeclType)
 
+class VNFunctionReferenceType(VNType):
+  # the value type for VNFunction
+  # all VNFunctions take no arguments; all states passed through variables, so this is a stateless type
+  def __init__(self, context: Context) -> None:
+    super().__init__(context)
+  
+  def __str__(self) -> str:
+    return "函数类型"
+  
+  @staticmethod
+  def get(ctx : Context) -> VNFunctionReferenceType:
+    return ctx.get_stateless_type(VNFunctionReferenceType)
+
 class VNDataFunctionType(VNType):
-  # the function type for data evaluation
+  # the function type for VNLambdaRecord data evaluation
   _return_type : tuple[VNType] # tuple of zero or more types
   _argument_type : tuple[VNType] # tuple of zero or more types
   
@@ -272,7 +289,7 @@ class VNDataFunctionType(VNType):
       assert isinstance(arg, VNType)
   
   def __str__(self) -> str:
-    return_type_str = 'void'
+    return_type_str = '空'
     if len(self._return_type) > 0:
       if len(self._return_type) == 1:
         return_type_str = str(self._return_type[0])
@@ -303,6 +320,9 @@ class VNVariableReferenceType(VNParameterizedType):
   @property
   def variable_type(self) -> VNType:
     return self._variable_type
+  
+  def __str__(self) -> str:
+    return "变量引用<" + str(self._variable_type) + ">"
   
   @staticmethod
   def get(variable_type : VNType) -> VNVariableReferenceType:
