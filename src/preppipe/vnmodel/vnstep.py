@@ -19,7 +19,7 @@ class VNRegularStep(VNStep):
     r = self._add_region()
     self._body = Block('', loc.context)
     r.push_back(self._body)
-    self._body.add_argument(time_type)
+    self._body.add_argument('开始时间', time_type)
   
   @property
   def body(self) -> Block:
@@ -41,6 +41,10 @@ class VNCallStep(VNStep):
   def callee(self, v : Value) -> None:
     assert isinstance(v.valuetype, VNFunctionReferenceType)
     self._callee.set_operand(0, v)
+  
+  @callee.deleter
+  def callee(self):
+    self._callee.drop_all_uses()
 
 class VNReturnStep(VNStep):
   def __init__(self, name: str, loc: Location, **kwargs) -> None:

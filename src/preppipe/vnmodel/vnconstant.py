@@ -65,6 +65,19 @@ class VNConstantBool(VNConstant):
   def get(value : bool, context : Context) -> VNConstantBool:
     return VNConstant._get_constant_impl(VNConstantBool, value, context)
 
+class VNConstantFloat(VNConstant):
+  def __init__(self, context : Context, value: float, **kwargs) -> None:
+    ty = VNFloatType.get(context)
+    super().__init__(ty, value, **kwargs)
+  
+  @property
+  def value(self) -> float:
+    return super().value
+  
+  @staticmethod
+  def get(value : float, context : Context) -> VNConstantFloat:
+    return VNConstant._get_constant_impl(VNConstantFloat, value, context)
+
 class VNConstantString(VNConstant):
   # 字符串常量的值不包含样式等信息，就是纯字符串
   def __init__(self, context : Context, value: str, **kwargs) -> None:
@@ -158,3 +171,15 @@ class VNConstantText(VNConstant):
   def get(context : Context, value : typing.Iterable[VNConstantTextFragment]) -> VNConstantText:
     value_tuple = tuple(value)
     return VNConstant._get_constant_impl(VNConstantText, value_tuple, context)
+
+class VNConstantScreenCoordinate(VNConstant):
+  # 屏幕坐标常量是一对整数型值<x,y>，坐标原点是屏幕左上角，x沿右边增加，y向下方增加，单位都是像素值
+  # 根据使用场景，坐标常量有可能被当做大小、偏移量，或是其他值来使用
+  def __init__(self, context : Context, value: tuple[int, int], **kwargs) -> None:
+    assert isinstance(value, tuple) and len(value) == 2 and isinstance(value[0], int) and isinstance(value[1], int)
+    ty = VNScreenCoordinateType.get(context)
+    super().__init__(ty, value, **kwargs)
+  
+  @staticmethod
+  def get(context : Context, value : tuple[int, int]) -> VNConstantScreenCoordinate:
+    return VNConstant._get_constant_impl(VNConstantScreenCoordinate, value, context)

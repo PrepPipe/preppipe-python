@@ -145,6 +145,7 @@ class VNAudioType(VNType):
     return ctx.get_stateless_type(VNAudioType)
 
 class VNTimeOrderType(VNType):
+  # 时间顺序类型，不是一个具体的值，由该型输入输出所形成的依赖关系链条决定了指令间的顺序
   def __init__(self, context: Context) -> None:
     super().__init__(context)
   
@@ -336,4 +337,30 @@ class VNVariableReferenceType(VNParameterizedType):
     d[reprstr] = result
     return result
 
+class VNScreenCoordinateType(VNType):
+  # 屏幕坐标类型，一对整数型值<x,y>，坐标原点是屏幕左上角，x沿右边增加，y向下方增加，单位都是像素值
+  # 根据使用场景，坐标有可能被当做大小、偏移量，或是其他值来使用
 
+  def __init__(self, context: Context) -> None:
+    super().__init__(context)
+  
+  def __str__(self) -> str:
+    return "屏幕坐标类型"
+  
+  @staticmethod
+  def get(ctx : Context) -> VNScreenCoordinateType:
+    return ctx.get_stateless_type(VNScreenCoordinateType)
+
+class VNEffectFunctionType(VNType):
+  # 特效函数类型，所有的转场（入场、出场等）函数记录都用这种类型
+  # 特效函数可能带有额外的参数需要指定，我们不在该类型里包含这些信息
+
+  def __init__(self, context: Context) -> None:
+    super().__init__(context)
+  
+  def __str__(self) -> str:
+    return "特效函数类型"
+  
+  @staticmethod
+  def get(ctx : Context) -> VNEffectFunctionType:
+    return ctx.get_stateless_type(VNEffectFunctionType)
