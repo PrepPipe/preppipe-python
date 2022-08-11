@@ -398,6 +398,8 @@ class OpOperand(User, NameDictNode):
     if index is not None:
       return super().get_operand(index)
     return super().get_operand(0)
+  
+  # 可以调用 User.drop_all_uses() 来取消所有引用
 
 class OpResult(NameReferencedValue):
   def __init__(self, ty: ValueType) -> None:
@@ -437,6 +439,10 @@ class OpTerminatorInfo(User):
 class BlockArgument(NameReferencedValue):
   def __init__(self, ty: ValueType) -> None:
     super().__init__(ty)
+  
+  @property
+  def parent(self) -> Block:
+    return super().parent
 
 # reference: https://mlir.llvm.org/doxygen/classmlir_1_1Operation.html
 class Operation(IListNode):
@@ -628,14 +634,14 @@ class Symbol(Operation):
 
 class Block(Value, IListNode):
   _ops : IList[Operation, Block]
-  _args : IList[BlockArgument, Block]
+  _args : NameDict[BlockArgument]
   _name : str
 
   def __init__(self, name : str, context : Context) -> None:
     ty = BlockReferenceType.get(context)
     super().__init__(ty)
     self._ops = IList(self)
-    self._args = IList(self)
+    self._args = NameDict(self)
     self._name = name
   
   @property
@@ -651,16 +657,22 @@ class Block(Value, IListNode):
     return super().parent
   
   @property
-  def arguments(self) -> IList[BlockArgument, Block]:
+  def arguments(self) -> NameDict[BlockArgument]:
     return self._args
 
   @property
   def body(self) -> IList[Operation, Block]:
     return self._ops
   
-  def add_argument(self, ty : ValueType):
+  def add_argument(self, name : str, ty : ValueType) -> BlockArgument:
     arg = BlockArgument(ty)
-    self._args.push_back(arg)
+    self._args[name] = arg
+    return arg
+  
+  def get_or_create_argument(self, name : str, ty : ValueType) -> BlockArgument:
+    if name in self._args:
+      return self._args[name]
+    return self.add_argument(name, ty)
 
   def drop_all_references(self) -> None:
     for op in self._ops:
