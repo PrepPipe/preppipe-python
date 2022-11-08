@@ -20,17 +20,17 @@ class VNNamespace(Operation, Value):
   _record_region : Region
   _asset_region : Region
 
-  def __init__(self, name: str, loc: Location, parent : VNNamespace) -> None:
+  def __init__(self, name: str, loc: Location) -> None:
     ty = VNNamespaceReferenceType.get(loc.context)
     super().__init__(name = name, loc = loc, ty = ty)
-    self._add_operand_with_value('parent', parent)
     self._function_region = self._add_region('functions')
     self._record_region = self._add_region('records')
     self._asset_region = self._add_region('assets')
 
-  def parent_namespace(self) -> VNNamespace:
-    # the inherited parent attribute is the parent block for the operation
-    # use this function to get the parent namespace
-    return self.get_operand('parent')
+class VNModel(Operation):
+  _namespace_region : SymbolTableRegion
+  def __init__(self, name: str, loc: Location, **kwargs) -> None:
+    super().__init__(name, loc, **kwargs)
+    self._namespace_region = self._add_symbol_table('namespaces')
   
 

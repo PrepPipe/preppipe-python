@@ -724,7 +724,7 @@ class TextAttribute(enum.Enum):
   Italic = enum.auto()
   
   # text attributes with data
-  Hierarchy = enum.auto() # data: int representing the "level" of text; 0: normal text; 1: title; 2: Header1; 3: Header2; ...
+  Hierarchy = enum.auto() # data: int representing the "level" of text; 0: normal text; 1: title; 2: Header1; 3: Header2; ... UPDATE: this will be dropped
   Size = enum.auto() # data: int representing size change; 0 is no change, + means increase size, - means decrease size; see preppipe.util.FontSizeConverter for more details
 
   TextColor = enum.auto() # data: foreground color
