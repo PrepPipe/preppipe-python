@@ -17,6 +17,10 @@ import bidict
 import PIL.Image
 import pydub
 import shutil
+import webbrowser
+import io
+
+from .commontypes import TextAttribute, Color
 
 # ------------------------------------------------------------------------------
 # ADT needed for IR
@@ -31,41 +35,38 @@ import shutil
 
 T = typing.TypeVar('T') # typevar for the node subclass
 
-class IList(typing.Generic[T]):
-  _ilist : llist.dllist
-
+class IList(typing.Generic[T], llist.dllist):
+  _parent : typing.Any
   def __init__(self, parent : typing.Any) -> None:
     super().__init__()
-    self._ilist = llist.dllist()
-    setattr(self._ilist, "parent", parent)
-    setattr(self._ilist, "ilistref", self)
+    self._parent = parent
   
   @property
   def size(self) -> int:
-    return self._ilist.size
+    return super().size
   
   @property
   def front(self) -> T:
     # return the first node if available, None if not
-    return self._ilist.first
+    return super().first
   
   @property
   def empty(self) -> bool:
-    return self._ilist.first is None
+    return super().first is None
   
   @property
   def back(self) -> T:
     # return the last node if available, None if not
-    return self._ilist.last
+    return super().last
   
   def insert(self, where : T, node : T):
-    self._ilist.insertnodebefore(node, where)
+    super().insertnodebefore(node, where)
   
   def push_back(self, node : T):
-    self._ilist.appendnode(node)
+    super().appendnode(node)
   
   def push_front(self, node : T):
-    self._ilist.insertnodebefore(node, self._ilist.first)
+    super().insertnodebefore(node, super().first)
   
   def get_index_of(self, node : T) -> int:
     # -1 if node not found, node index if found
@@ -80,17 +81,17 @@ class IList(typing.Generic[T]):
   def merge_into(self, dest : IList[T]):
     while self.front is not None:
       v = self.front
-      self._ilist.remove(v)
+      super().remove(v)
       dest.push_back(v)
   
   def __iter__(self) -> IListIterator[T]:
-    return IListIterator(self._ilist.first)
+    return IListIterator(super().first)
 
   def __len__(self) -> int:
     return self.size
   
   def __getitem__(self, index : int) -> T:
-    return self._ilist[index]
+    return super().__getitem__[index]
 
 class IListIterator(typing.Generic[T]):
   _node : T
@@ -149,14 +150,12 @@ class IListNode(typing.Generic[T], llist.dllistnode):
   def parent(self):
     # return the parent of the list
     # to get a type hint, override this method in derived class to add it
-    return self.owner.parent
-  
-  @property
-  def ilistref(self) -> IList[T]:
-    return self.owner.ilistref
+    if self.owner is not None:
+      return self.owner.parent
+    return None
 
   def get_index(self):
-    return self.ilistref.get_index_of(self)
+    return self.owner.get_index_of(self)
 
 class NameDict(collections.abc.MutableMapping, typing.Generic[T]):
   _parent : typing.Any
@@ -167,8 +166,11 @@ class NameDict(collections.abc.MutableMapping, typing.Generic[T]):
     self._parent = parent
     self._dict = collections.OrderedDict()
   
+  def __contains__(self, key : str) -> bool:
+    return self._dict.__contains__(key)
+  
   def __getitem__(self, key : str) -> T:
-    return self._dict[key]
+    return self._dict.__getitem__(key)
   
   def __setitem__(self, key : str, value : T) -> None:
     if value.dictref is not None:
@@ -186,6 +188,10 @@ class NameDict(collections.abc.MutableMapping, typing.Generic[T]):
   
   def __len__(self):
     return len(self._dict)
+
+  @property
+  def empty(self):
+    return len(self._dict) == 0
   
   @property
   def parent(self):
@@ -220,7 +226,7 @@ class NameDictNode(typing.Generic[T]):
     return None
 
 # ------------------------------------------------------------------------------
-# IR types
+# IR classes
 # ------------------------------------------------------------------------------
 
 class Location:
@@ -243,6 +249,10 @@ class Location:
   def getNullLocation(ctx: Context):
     return ctx.null_location
 
+# ------------------------------------------------------------------------------
+# Types
+# ------------------------------------------------------------------------------
+
 class ValueType:
   _context : Context
 
@@ -258,6 +268,86 @@ class ValueType:
   
   def __str__(self) -> str:
     return type(self).__name__
+
+class ParameterizedType(ValueType):
+  # parameterized types are considered different if the parameters (can be types or literal values) are different
+  _parameters : typing.List[ValueType | int | str | bool | None] # None for separator
+
+  def __init__(self, context: Context, parameters : typing.Iterable[ValueType | int | str | bool | None]) -> None:
+    super().__init__(context)
+    self._parameters = list(parameters)
+  
+  @staticmethod
+  def _get_parameter_repr(parameters : typing.List[ValueType | int | str | bool | None]):
+    result = ''
+    isFirst = True
+    for v in parameters:
+      if isFirst:
+        isFirst = False
+      else:
+        result += ', '
+      if isinstance(v, ValueType):
+        result += repr(v)
+      elif isinstance(v, str):
+        result += '"' + v + '"'
+      elif v is None:
+        # this is a separator
+        result += '---'
+      else: # int or bool
+        result += str(v)
+    return result
+
+  def __repr__(self) -> str:
+    return  type(self).__name__ + '<' + ParameterizedType._get_parameter_repr(self._parameters) + '>'
+
+class OptionalType(ParameterizedType):
+  # dependent type that is optional of the specified type (either have the data or None)
+  # likely used for a PHI for handles
+  _depend_type : ValueType
+
+  def __init__(self, ty : ValueType) -> None:
+    super().__init__(ty.context, [ty])
+    self._depend_type = ty
+  
+  def __str__(self) -> str:
+    return "可选<" + str(self._depend_type) + ">"
+  
+  @property
+  def element_type(self) -> ValueType:
+    return self._depend_type
+
+  @staticmethod
+  def get(ty : ValueType) -> OptionalType:
+    # skip degenerate case
+    if isinstance(ty, OptionalType):
+      return ty
+    return ty.context.get_parameterized_type_dict(OptionalType).get_or_create([ty], lambda : OptionalType(ty))
+
+class ParameterizedTypeUniquingDict:
+  # this class is used by Context to manage all parameterized type objects
+  _pty : type # type object of the parameterized type
+  _instance_dict : dict[str, ValueType]
+  def __init__(self, pty : type) -> None:
+    self._instance_dict = {}
+    self._pty = pty
+    assert isinstance(pty, type)
+  
+  def get_or_create(self, parameters : typing.List[ValueType | int | str | bool | None], ctor : callable):
+    reprstr = ParameterizedType._get_parameter_repr(parameters)
+    if reprstr in self._instance_dict:
+      return self._instance_dict[reprstr]
+    inst = None
+    if callable(ctor):
+      inst = ctor()
+    else:
+      inst = self._pty(parameters)
+    self._instance_dict[reprstr] = inst
+    return inst
+
+
+# ------------------------------------------------------------------------------
+# Actual value types
+# ------------------------------------------------------------------------------
 
 class BlockReferenceType(ValueType):
   def __init__(self, context: Context) -> None:
@@ -278,6 +368,113 @@ class _AssetDataReferenceType(ValueType):
   def get(ctx : Context) -> _AssetDataReferenceType:
     return ctx.get_stateless_type(_AssetDataReferenceType)
 
+class IntType(ValueType):
+  def __init__(self, context: Context) -> None:
+    super().__init__(context)
+  
+  def __str__(self) -> str:
+    return "整数类型"
+  
+  @staticmethod
+  def get(ctx : Context) -> IntType:
+    return ctx.get_stateless_type(IntType)
+
+class FloatType(ValueType):
+  def __init__(self, context: Context) -> None:
+    super().__init__(context)
+  
+  def __str__(self) -> str:
+    return "浮点数类型"
+  
+  @staticmethod
+  def get(ctx : Context) -> FloatType:
+    return ctx.get_stateless_type(FloatType)
+
+class BoolType(ValueType):
+  def __init__(self, context: Context) -> None:
+    super().__init__(context)
+  
+  def __str__(self) -> str:
+    return "逻辑类型"
+  
+  @staticmethod
+  def get(ctx : Context) -> BoolType:
+    return ctx.get_stateless_type(BoolType)
+
+class StringType(ValueType):
+  # any string
+  def __init__(self, context: Context) -> None:
+    super().__init__(context)
+  
+  def __str__(self) -> str:
+    return "字符串类型"
+  
+  @staticmethod
+  def get(ctx : Context) -> StringType:
+    return ctx.get_stateless_type(StringType)
+
+class TextStyleType(ValueType):
+  # text styles
+  def __init__(self, context: Context) -> None:
+    super().__init__(context)
+  
+  def __str__(self) -> str:
+    return "文本格式类型"
+  
+  @staticmethod
+  def get(ctx : Context) -> TextStyleType:
+    return ctx.get_stateless_type(TextStyleType)
+
+class TextType(ValueType):
+  # string + style (style can be empty)
+  def __init__(self, context: Context) -> None:
+    super().__init__(context)
+  
+  def __str__(self) -> str:
+    return "文本类型"
+  
+  @staticmethod
+  def get(ctx : Context) -> TextType:
+    return ctx.get_stateless_type(TextType)
+
+class ImageType(ValueType):
+  def __init__(self, context: Context) -> None:
+    super().__init__(context)
+  
+  def __str__(self) -> str:
+    return "图片类型"
+  
+  @staticmethod
+  def get(ctx : Context) -> ImageType:
+    return ctx.get_stateless_type(ImageType)
+
+class AudioType(ValueType):
+  def __init__(self, context: Context) -> None:
+    super().__init__(context)
+  
+  def __str__(self) -> str:
+    return "声音类型"
+  
+  @staticmethod
+  def get(ctx : Context) -> AudioType:
+    return ctx.get_stateless_type(AudioType)
+
+class AggregateTextType(ValueType):
+  # 列表，表格，代码段等结构化的文本内容
+  def __init__(self, context: Context) -> None:
+    super().__init__(context)
+  
+  def __str__(self) -> str:
+    return "结构文本类型"
+  
+  @staticmethod
+  def get(ctx : Context) -> AggregateTextType:
+    return ctx.get_stateless_type(AggregateTextType)
+
+# ------------------------------------------------------------------------------
+# Major classes
+# ------------------------------------------------------------------------------
+
 class Attribute(NameDictNode):
   _data : typing.Any
 
@@ -286,12 +483,39 @@ class Attribute(NameDictNode):
     self._data = data
   
   @property
+  def value(self) -> typing.Any:
+    return self._data
+  
+  @value.setter
+  def value(self, v : typing.Any) -> None:
+    self._data = v
+  
+  @property
   def data(self) -> typing.Any:
     return self._data
+  
+  @data.setter
+  def data(self, v : typing.Any) -> None:
+    self._data = v
   
   @property
   def parent(self) -> Operation:
     return super().parent
+
+class IntrinsicAttribute(Attribute):
+  # use intrinsic attributes for class data members
+  _attrname : str
+  def __init__(self, attrname : str) -> None:
+    super().__init__(data=None)
+    self._attrname = attrname
+  
+  @property
+  def value(self) -> typing.Any:
+    return getattr(super().parent, self._attrname)
+  
+  @value.setter
+  def value(self, v : typing.Any) -> None:
+    setattr(super().parent, self._attrname, v)
 
 class Value:
   # value is either a block argument or an operation result
@@ -358,33 +582,36 @@ class Use(IListNode):
       v._uselist.push_back(self)
 
 class User:
-  _uselist : list[Use]
+  _operandlist : list[Use]
 
   def __init__(self, **kwargs) -> None:
     # passthrough kwargs for cooperative multiple inheritance
     super().__init__(**kwargs)
-    self._uselist = []
+    self._operandlist = []
   
   def get_operand(self, index : int) -> Value:
-    return self._uselist[index].value
+    return self._operandlist[index].value
   
   def set_operand(self, index : int, value : Value) -> None:
-    if len(self._uselist) == index:
+    if len(self._operandlist) == index:
       return self.add_operand(value)
-    self._uselist[index].set_value(value)
+    self._operandlist[index].set_value(value)
   
   def add_operand(self, value : Value) -> None:
-    u = Use(self, len(self._uselist))
-    self._uselist.append(u)
+    u = Use(self, len(self._operandlist))
+    self._operandlist.append(u)
     u.set_value(value)
   
   def get_num_operands(self) -> int:
-    return len(self._uselist)
+    return len(self._operandlist)
+  
+  def operanduses(self) -> typing.Iterable[Use]:
+    return self._operandlist
   
   def drop_all_uses(self) -> None:
-    for u in self._uselist:
+    for u in self._operandlist:
       u.set_value(None)
-    self._uselist.clear()
+    self._operandlist.clear()
 
 class OpOperand(User, NameDictNode):
   def __init__(self) -> None:
@@ -462,6 +689,7 @@ class Operation(IListNode):
     self._operands = NameDict(self)
     self._results = NameDict(self)
     self._attributes = NameDict(self)
+    self._regions = NameDict(self)
     self._terminator_info = None
   
   def _set_is_terminator(self):
@@ -472,6 +700,18 @@ class Operation(IListNode):
     r = OpResult(ty)
     self._results[name] = r
     return r
+  
+  @property
+  def operands(self):
+    return self._operands
+  
+  @property
+  def results(self):
+    return self._results
+  
+  @property
+  def attributes(self):
+    return self._attributes
   
   def _add_operand(self, name : str) -> OpOperand:
     o = OpOperand()
@@ -499,9 +739,20 @@ class Operation(IListNode):
       return o.get()
     return None
   
-  def set_attr(self, name : str, value: typing.Any) -> Attribute:
-    a = Attribute(value)
+  def _add_intrinsic_attr(self, name : str, attrname : str) -> IntrinsicAttribute:
+    assert name not in self._attributes
+    a = IntrinsicAttribute(attrname)
     self._attributes[name] = a
+    return a
+  
+  def set_attr(self, name : str, value: typing.Any) -> Attribute:
+    a : Attribute = None
+    if name in self._attributes:
+      a = self._attributes[name]
+      a.data = value
+    else:
+      a = Attribute(value)
+      self._attributes[name] = a
     return a
   
   def get_attr(self, name : str) -> Attribute:
@@ -609,6 +860,14 @@ class Operation(IListNode):
     if parent_region is not None:
       return parent_region.parent
     return None
+  
+  def view(self) -> None:
+    # for debugging
+    _view_operation_impl(self)
+  
+  def dump(self) -> None:
+    # for debugging
+    _dump_operation_impl(self)
 
 class Symbol(Operation):
   def __init__(self, name: str, loc: Location, **kwargs) -> None:
@@ -766,16 +1025,49 @@ class SymbolTableRegion(Region, collections.abc.Sequence):
   def add(self, symbol : Symbol):
     self._block.push_back(symbol)
 
+class Constant(Value):
+  _value : typing.Any
+  def __init__(self, ty: ValueType, value : typing.Any, **kwargs) -> None:
+    super().__init__(ty, **kwargs)
+    self._value = value
+  
+  @property
+  def value(self) -> typing.Any:
+    return self._value
+  
+  def get_context(self) -> Context:
+    return self.valuetype.context
+  
+  @staticmethod
+  def _get_constant_impl(cls : type, value : typing.Any, context : Context) -> typing.Any:
+    return context.get_constant_uniquing_dict(cls).get_or_create(value, lambda : cls(context, value))
+  
+class ConstantUniquingDict:
+  _ty : type
+  _inst_dict : dict[typing.Any, typing.Any]
+  
+  def __init__(self, ty : type) -> None:
+    self._ty = ty
+    self._inst_dict = {}
+  
+  def get_or_create(self, data : typing.Any, ctor : callable) -> Value:
+    if data in self._inst_dict:
+      return self._inst_dict[data]
+    inst = ctor()
+    self._inst_dict[data] = inst
+    return inst
+  
+
 class Context:
   # the object that we use to keep track of unique constructs (types, constant expressions, file assets)
   _stateless_type_dict : dict[type, ValueType]
-  _parameterized_type_dict : dict[type, dict[str, ValueType]] # for each parameterized type, the key for each instance is the string representation of the parameters
-  _constant_dict : dict[type, dict[typing.Any, typing.Any]] # <ConstantType> -> <ConstantDataValue> -> ConstantDataObject
+  _parameterized_type_dict : dict[type, ParameterizedTypeUniquingDict]
+  _constant_dict : dict[type, ConstantUniquingDict]
   _asset_data_list : IList[AssetData]
   _asset_temp_dir : tempfile.TemporaryDirectory # created on-demand
   _null_location : Location # a dummy location value with only a reference to the context
   _difile_dict : dict[str, DIFile] # from filepath string to the DIFile object
-  _diloc_dict : dict[DIFile, dict[tuple[int, int], DILocation]]
+  _diloc_dict : dict[DIFile, dict[tuple[int, int, int], DILocation]] # <file> -> <page, row, column> -> DILocation
 
   def __init__(self) -> None:
     self._stateless_type_dict = {}
@@ -794,10 +1086,10 @@ class Context:
     self._stateless_type_dict[ty] = instance
     return instance
   
-  def get_parameterized_type_dict(self, ty : type) -> dict[str, ValueType]:
+  def get_parameterized_type_dict(self, ty : type) -> ParameterizedTypeUniquingDict:
     if ty in self._parameterized_type_dict:
       return self._parameterized_type_dict[ty]
-    result = {}
+    result = ParameterizedTypeUniquingDict(ty)
     self._parameterized_type_dict[ty] = result
     return result
   
@@ -812,10 +1104,10 @@ class Context:
     os.close(fd)
     return path
   
-  def get_constant_uniquing_dict(self, ty : type) -> dict:
+  def get_constant_uniquing_dict(self, ty : type) -> ConstantUniquingDict:
     if ty in self._constant_dict:
       return self._constant_dict[ty]
-    result = {}
+    result = ConstantUniquingDict(ty)
     self._constant_dict[ty] = result
     return result
   
@@ -835,18 +1127,22 @@ class Context:
     self._difile_dict[path] = result
     return result
   
-  def get_DILocation(self, file : str | DIFile, row : int, column: int) -> DILocation:
+  def get_DILocation(self, file : str | DIFile, page : int, row : int, column: int) -> DILocation:
     difile : DIFile = file
     if isinstance(file, str):
       difile = self.get_DIFile(file)
     assert isinstance(difile, DIFile)
     assert difile.context is self
-    key = (row, column)
+    key = (page, row, column)
     if key in self._diloc_dict:
       return self._diloc_dict[key]
-    result = DILocation(self, row, column)
+    result = DILocation(difile, page, row, column)
     self._diloc_dict[key] = result
     return result
+
+# ------------------------------------------------------------------------------
+# Assets
+# ------------------------------------------------------------------------------
 
 class AssetData(Value, IListNode):
   # an asset data represent a pure asset; no (IR-related) metadata
@@ -898,6 +1194,13 @@ class AssetData(Value, IListNode):
       os.remove(old_name)
     else:
       os.rename(tmpfilepath, exportpath)
+
+  # make AssetData usable for dict key
+  def __eq__(self, __o: object) -> bool:
+    return __o is self
+  
+  def __hash__(self) -> int:
+    return hash(id(self))
 
 class BytesAssetData(AssetData):
   _backing_store_path : str
@@ -1044,6 +1347,10 @@ class AssetBase(User):
     # should be implemented in derived classes
     raise NotImplementedError("AssetBase.set_data() not overriden in " + type(self).__name__)
 
+# ------------------------------------------------------------------------------
+# Debug info (DI)
+# ------------------------------------------------------------------------------
+
 class DIFile(Location):
   _path : str
 
@@ -1056,14 +1363,21 @@ class DIFile(Location):
     return self._path
 
 class DILocation(Location):
+  # 描述一个文档位置
+  # 对于文档而言，页数可以用 page breaks 来定 （ODF 有 <text:soft-page-break/>）
+  # 对于表格而言，页数相当于 sheet 的序号
+  # 所有信息如果有的话就从1开始，没有就用0
+  # 目前我们的 DILocation 只用于给用户指出位置，暂时不会有源到源的转换，所以这里有信息损失不是大事
   _file : DIFile
+  _page : int
   _row : int
   _col : int
 
-  def __init__(self, file : DIFile, row : int, column : int) -> None:
+  def __init__(self, file : DIFile, page : int, row : int, column : int) -> None:
     ctx = file.context
     super().__init__(ctx)
     self._file = file
+    self._page = page
     self._row = row
     self._col = column
   
@@ -1072,9 +1386,574 @@ class DILocation(Location):
     return self._file
   
   @property
+  def page(self) -> int:
+    return self._page
+  
+  @property
   def row(self) -> int:
     return self._row
   
   @property
   def column(self) -> int:
     return self._col
+
+  def __str__(self) -> str:
+    return self.file.filepath + '[' + str(self.page) + ']:' + str(self.row) + ':' + str(self.column)
+
+# ------------------------------------------------------------------------------
+# Constants
+# ------------------------------------------------------------------------------
+
+
+  
+  #@staticmethod
+  #def get(value: typing.Any, context : Context) -> typing.Any:
+  #  if isinstance(value, int):
+  #    return VNConstantInt.get(value, context)
+  #  if isinstance(value, bool):
+  #    return VNConstantBool.get(value, context)
+  #  raise RuntimeError("Unknown value type for constant creation")
+  
+class ConstantInt(Constant):
+  def __init__(self, context : Context, value : int, **kwargs) -> None:
+    # should not be called by user code
+    assert isinstance(value, int)
+    ty = IntType.get(context)
+    super().__init__(ty, value, **kwargs)
+  
+  @property
+  def value(self) -> int:
+    return super().value
+  
+  @staticmethod
+  def get(value : int, context : Context) -> ConstantInt:
+    return Constant._get_constant_impl(ConstantInt, value, context)
+
+class ConstantBool(Constant):
+  def __init__(self, context : Context, value: bool, **kwargs) -> None:
+    assert isinstance(value, bool)
+    ty = BoolType.get(context)
+    super().__init__(ty, value, **kwargs)
+  
+  @property
+  def value(self) -> bool:
+    return super().value
+  
+  @staticmethod
+  def get(value : bool, context : Context) -> ConstantBool:
+    return Constant._get_constant_impl(ConstantBool, value, context)
+
+class ConstantFloat(Constant):
+  def __init__(self, context : Context, value: float, **kwargs) -> None:
+    ty = FloatType.get(context)
+    super().__init__(ty, value, **kwargs)
+  
+  @property
+  def value(self) -> float:
+    return super().value
+  
+  @staticmethod
+  def get(value : float, context : Context) -> ConstantFloat:
+    return Constant._get_constant_impl(ConstantFloat, value, context)
+
+class ConstantString(Constant):
+  # 字符串常量的值不包含样式等信息，就是纯字符串
+  def __init__(self, context : Context, value: str, **kwargs) -> None:
+    assert isinstance(value, str)
+    ty = StringType.get(context)
+    super().__init__(ty, value, **kwargs)
+  
+  @property
+  def value(self) -> str:
+    return super().value
+  
+  @staticmethod
+  def get(value : str, context : Context) -> ConstantString:
+    return Constant._get_constant_impl(ConstantString, value, context)
+
+class ConstantTextStyle(Constant):
+  # 文字样式常量只包含文字样式信息
+  def __init__(self, context : Context, value: tuple[tuple[TextAttribute, typing.Any]], **kwargs) -> None:
+    ty = TextStyleType.get(context)
+    super().__init__(ty, value, **kwargs)
+  
+  @property
+  def value(self) -> tuple[tuple[TextAttribute, typing.Any]]:
+    return super().value
+  
+  @staticmethod
+  def get(value : tuple[tuple[TextAttribute, typing.Any]] | dict[TextAttribute, typing.Any], context : Context) -> ConstantTextStyle:
+    if isinstance(value, dict):
+      value = ConstantTextStyle.get_style_tuple(value)
+    assert isinstance(value, tuple)
+    return Constant._get_constant_impl(ConstantTextStyle, value, context)
+  
+  @staticmethod
+  def get_style_tuple(styles : dict[TextAttribute, typing.Any]):
+    stylelist = []
+    for attr, v in styles:
+      # 检查样式的值是否符合要求
+      # 同时忽略部分VNModel不支持的属性
+      isDiscard = False
+      match attr:
+        case TextAttribute.Bold:
+          if v is not None:
+            raise RuntimeError("文本属性“加粗”不应该带参数，但现有参数：" + str(v) + "<类型：" + str(type(v).__name__))
+        case TextAttribute.Italic:
+          if v is not None:
+            raise RuntimeError("文本属性“斜体”不应该带参数，但现有参数：" + str(v) + "<类型：" + str(type(v).__name__))
+        case TextAttribute.Hierarchy:
+          # VNModel不支持该属性
+          isDiscard = True
+        case TextAttribute.Size:
+          if not isinstance(v, int):
+            raise RuntimeError("文本属性“大小”应该带一个整数型参数，但现有参数：" + str(v) + "<类型：" + str(type(v).__name__))
+        case TextAttribute.TextColor:
+          if not isinstance(v, Color):
+            raise RuntimeError("文本属性“文本颜色”应该带一个颜色类型的参数，但现有参数：" + str(v) + "<类型：" + str(type(v).__name__))
+        case TextAttribute.BackgroundColor:
+          if not isinstance(v, Color):
+            raise RuntimeError("文本属性“背景颜色”应该带一个颜色类型的参数，但现有参数：" + str(v) + "<类型：" + str(type(v).__name__))
+        case _:
+          isDiscard = True
+      if not isDiscard:
+        entry_tuple = (attr, v)
+        stylelist.append(entry_tuple)
+    # 所有样式信息检查完毕后即可开始生成结果
+    stylelist.sort()
+    styletuple = tuple(stylelist)
+    return styletuple
+  
+  def __len__(self):
+    return len(self.value)
+  
+  def __getitem__(self, attr : TextAttribute) -> typing.Any:
+    for e in self.value:
+      if e[0] == attr:
+        if e[1] is None:
+          return True
+        return e[1]
+    return None
+
+class ConstantTextFragment(Constant, User):
+  # 文本常量的值包含字符串以及样式信息（大小字体、字体颜色、背景色（高亮颜色），或是附注（Ruby text））
+  # 单个文本片段常量内容所使用的样式需是一致的，如果不一致则可以把内容进一步切分，按照样式来进行分节
+  # 文本片段常量的“值”（value）是【对字符串常量的引用】+【样式信息元组】的元组(tuple)
+  # 样式信息元组内的每一项都是(样式，值)组成的元组，这些项将根据样式的枚举值进行排序
+
+  def __init__(self, context : Context, string : ConstantString, styles : ConstantTextStyle, **kwargs) -> None:
+    # value 应为 ConstantTextFragment.get_value_tuple() 的结果
+    ty = TextType.get(context)
+    super().__init__(ty = ty, value = (string, styles), **kwargs)
+    self.add_operand(string)
+    self.add_operand(styles)
+  
+  @property
+  def value(self) -> tuple[ConstantString, ConstantTextStyle]:
+    return super().value
+  
+  @property
+  def content(self) -> ConstantString:
+    return self.get_operand(0)
+  
+  @property
+  def style(self) -> ConstantTextStyle:
+    return self.get_operand(1)
+  
+  @staticmethod
+  def get(context : Context, string : ConstantString, styles : ConstantTextStyle) -> ConstantTextFragment:
+    if not isinstance(string, ConstantString):
+      raise RuntimeError("string 参数应为对字符串常量的引用")
+    if not isinstance(styles, ConstantTextStyle):
+      raise RuntimeError("styles 参数应为对文本样式常量的引用")
+    return context.get_constant_uniquing_dict(ConstantTextFragment).get_or_create((string, styles), lambda : ConstantTextFragment(context, string, styles))
+
+class ConstantText(Constant, User):
+  # 文本常量是一个或多个文本片段常量组成的串
+
+  def __init__(self, context : Context, value: tuple[ConstantTextFragment], **kwargs) -> None:
+    ConstantText._check_value_tuple(value)
+    ty = TextType.get(context)
+    super().__init__(ty, value, **kwargs)
+    for frag in value:
+      self.add_operand(frag)
+  
+  @staticmethod
+  def _check_value_tuple(value: tuple[ConstantTextFragment]) -> None:
+    isCheckFailed = False
+    if not isinstance(value, tuple):
+      isCheckFailed = True
+    else:
+      for v in value:
+        if not isinstance(v, ConstantTextFragment):
+          isCheckFailed = True
+    if isCheckFailed:
+      raise RuntimeError("文本常量的值应为仅由文本片段常量组成的元组")
+  
+  @staticmethod
+  def get(context : Context, value : typing.Iterable[ConstantTextFragment]) -> ConstantText:
+    value_tuple = tuple(value)
+    return Constant._get_constant_impl(ConstantText, value_tuple, context)
+
+class ConstantTextList(Constant, User):
+  # 文本列表常量对应文档中列表的一层
+  def __init__(self, context : Context, value: tuple[ConstantText | ConstantTextList], **kwargs) -> None:
+    ty = AggregateTextType.get(context)
+    super().__init__(ty, value, **kwargs)
+    for element in value:
+      self.add_operand(element)
+  
+  @property
+  def value(self) -> tuple[ConstantText | ConstantTextList]:
+    return super().value
+  
+  def __len__(self):
+    return len(self.value)
+  
+  def __getitem__(self, index : int) -> ConstantText | ConstantTextList:
+    return self.value.__getitem__(index)
+  
+  @staticmethod
+  def get(context : Context, value : typing.Iterable[ConstantText | ConstantTextList]) -> ConstantTextList:
+    value_tuple = tuple(value)
+    return Constant._get_constant_impl(ConstantTextList, value_tuple, context)
+
+class ConstantTable(Constant, User):
+  def __init__(self, context : Context, nrows : int, ncols : int, value: tuple[tuple[ConstantText]], **kwargs) -> None:
+    ty = AggregateTextType.get(context)
+    super().__init__(ty = ty, value = (nrows, ncols, value), **kwargs)
+    for rows in value:
+      for cell in rows:
+        self.add_operand(cell)
+  
+  @property
+  def value(self) -> tuple(int, int, tuple[tuple[ConstantText]]):
+    return super().value
+  
+  @property
+  def rowcount(self) -> int:
+    return self.value[0]
+  
+  @property
+  def columncount(self) -> int:
+    return self.value[1]
+  
+  @property
+  def cells(self) -> tuple[tuple[ConstantText]]:
+    return self.value[2]
+  
+  def get_cell(self, row : int, col : int) -> ConstantText:
+    return self.value[2][row][col]
+
+  @staticmethod
+  def get(context : Context, nrows : int, ncols : int, value: tuple[tuple[ConstantText]]) -> ConstantTable:
+    return context.get_constant_uniquing_dict(ConstantTable).get_or_create((nrows, ncols, value), lambda : ConstantTable(context, nrows, ncols, value))
+
+# ------------------------------------------------------------------------------
+# IR dumping
+# ------------------------------------------------------------------------------
+
+class IRWriter:
+  _ctx : Context
+  _asset_pin_dict : dict[AssetData, str]
+  _asset_export_dict : dict[str, AssetData]
+  _asset_export_cache : dict[AssetData, bytes] # exported HTML expression for the asset
+  _asset_index_dict : dict[AssetData, int] # index of the asset in the context
+  _output_body : io.BytesIO # the <body> part
+  _output_asset : io.BytesIO # the <style> part
+  _max_indent_level : int # maximum indent level; we need this to create styles for text with different indents
+  
+  def __init__(self, ctx : Context, asset_pin_dict : dict[AssetData, str], asset_export_dict : dict[str, AssetData] | None) -> None:
+    # assets in asset_pin_dict are already exported and we can simply use the mapped value to reference the specified asset
+    # if asset_export_dict is not None, the printer expect all remaining assets to be exported with path as key and content as value
+    # if asset_export_dict is None, then the printer writes all remaining assets embedded in the export HTML
+    # https://stackoverflow.com/questions/38014918/how-to-reuse-base64-image-repeatedly-in-html-file
+    self._ctx = ctx
+    self._output_body = io.BytesIO()
+    self._output_asset = io.BytesIO()
+    self._asset_pin_dict = asset_pin_dict
+    self._asset_export_dict = asset_export_dict
+    self._asset_export_cache = {}
+    self._asset_index_dict = None
+    self._max_indent_level = 0
+    
+  def escape(self, htmlstring):
+    escapes = {'\"': '&quot;',
+              '\'': '&#39;',
+              '<': '&lt;',
+              '>': '&gt;'}
+    # This is done first to prevent escaping other escapes.
+    htmlstring = htmlstring.replace('&', '&amp;')
+    for seq, esc in escapes.items():
+      htmlstring = htmlstring.replace(seq, esc)
+    return htmlstring
+  
+  def _write_body(self, content : str):
+    self._output_body.write(content.encode('utf-8'))
+  
+  def _index_assets(self) -> dict[AssetData, int]:
+    if self._asset_index_dict is not None:
+      return self._asset_index_dict
+    # populate self._asset_index_dict
+    self._asset_index_dict = {}
+    num = 0
+    for asset in self._ctx._asset_data_list:
+      self._asset_index_dict[asset] = num
+      num += 1
+    return self._asset_index_dict
+  
+  def _emit_asset_reference_to_path(self, asset : AssetData, path : str) -> bytes:
+    pass
+  
+  def _emit_asset(self, asset : AssetData) -> bytes:
+    # TODO actually implement this function
+    # for now we don't try to emit any asset; just print their ID as a text element and done
+    id = self._index_assets()[asset]
+    asset_name = type(asset).__name__
+    s = "<span class=\"AssetPlaceholder\">#" + str(id) + " " + asset_name + "</span>"
+    return s.encode('utf-8')
+    
+    # check if we have already exported it
+    if asset in self._asset_export_cache:
+      return self._asset_export_cache[asset]
+    
+    # if the asset is already exported (i.e., it is in self._asset_pin_dict), just use the expression there
+    if self._asset_pin_dict is not None and asset in self._asset_pin_dict:
+      asset_path = self._asset_pin_dict[asset]
+      result = self._emit_asset_reference_to_path(asset, asset_path)
+      self._asset_export_cache[asset] = result
+      return result
+    
+    # otherwise, if we export the asset as separate files (self._asset_export_dict not None), we do that
+    if self._asset_export_dict is not None:
+      pass
+    # otherwise, we emit the expression in self._output_asset
+    pass
+  
+  def _get_indent_stylename(self, level : int) -> str:
+    return 'dump_indent_level_' + str(level)
+  
+  def _get_operation_short_name(self, op : Operation) -> str:
+    return '[' + str(id(op)) + ' ' + type(op).__name__ + ']\"' + op.name + '"'
+  
+  def _get_text_style_str(self, style : ConstantTextStyle) -> str:
+    value : tuple[tuple[TextAttribute, typing.Any]] = style.value
+    result = '('
+    for t in value:
+      attr = t[0]
+      v = t[1]
+      match attr:
+        case TextAttribute.Bold if v == True:
+          result += 'bold,'
+        case TextAttribute.Italic if v == True:
+          result += 'italic,'
+        case TextAttribute.Size if isinstance(v, int):
+          result += 'size=' + str(v) + ','
+        case TextAttribute.TextColor if isinstance(v, Color):
+          result += 'textcolor=' + str(v) + ','
+        case TextAttribute.BackgroundColor  if isinstance(v, Color):
+          result += 'backgroundcolor=' + str(v) + ','
+        case _:
+          result += 'UnknownAttribute[' + str(attr) + ':' + str(v) + '],'
+    result += ')'
+    return result
+  
+  def _walk_value(self, value : Value) -> bytes | None:
+    # write the current value to body. if the content is too big (e.g., a table), a stub is written first and the return value is the full content
+    # we must be in a <p> element
+    if isinstance(value, OpResult):
+      self._write_body(self.escape(self._get_operation_short_name(value.parent) + '.' + value.name))
+      return None
+    if isinstance(value, BlockArgument):
+      raise NotImplementedError('TODO')
+    if isinstance(value, Constant):
+      if isinstance(value, ConstantBool):
+        if value.value == True:
+          self._write_body('true')
+        else:
+          self._write_body('false')
+        return None
+      elif isinstance(value, ConstantFloat):
+        self._write_body(self.escape(str(value.value)))
+        return None
+      elif isinstance(value, ConstantInt):
+        self._write_body(self.escape(str(value.value)))
+        return None
+      elif isinstance(value, ConstantString):
+        self._write_body(self.escape('"' + value.value + '"'))
+        return None
+      elif isinstance(value, ConstantTextFragment):
+        self._write_body(self.escape('TextFrag["' + value.content.value + '",' + self._get_text_style_str(value.style) + ']'))
+        return None
+      elif isinstance(value, ConstantTextStyle):
+        self._write_body(self.escape(self._get_text_style_str(value)))
+        return None
+      elif isinstance(value, ConstantText):
+        self._write_body(self.escape('Text{'))
+        for u in value.operanduses():
+          res = self._walk_value(u.value)
+          assert res is None
+          self._write_body(',')
+        self._write_body(self.escape('}'))
+        return None
+      elif isinstance(value, ConstantTextList):
+        raise NotImplementedError('TODO')
+      elif isinstance(value, ConstantTable):
+        raise NotImplementedError('TODO')
+      else:
+        raise NotImplementedError('Unexpected constant type for dumping')
+    # unknown value types
+    self._write_body(self.escape('[#' + str(id(value)) + ' ' + type(value).__name__ + ']'))
+    return None
+  
+  def _walk_operation(self, op : Operation, level : int) -> None:
+    # [#<id> ClassName]"Name"(operand=...) -> (result)[attr=...]<loc>
+    #   <regions>
+    self._write_body('<p class=\"' + self._get_indent_stylename(level) + '">')
+    self._write_body(self.escape(self._get_operation_short_name(op))) # [#<id> ClassName]"Name"
+    
+    # operands
+    self._write_body(self.escape('('))
+    isFirst = True
+    for operand_name in op.operands:
+      operand = op.get_operand_inst(operand_name)
+      if isFirst:
+        isFirst = False
+      else:
+        self._write_body(',')
+      self._write_body(self.escape(operand_name+'=['))
+      numvalues = operand.get_num_operands()
+      isFirstValue = True
+      for i in range(0, numvalues):
+        if isFirstValue:
+          isFirstValue = False
+        else:
+          self._write_body(',')
+        delayed_content = self._walk_value(operand.get_operand(i))
+        if delayed_content is not None:
+          raise NotImplementedError('TODO')
+      self._write_body(self.escape(']'))
+    self._write_body(self.escape(')'))
+    
+    # results
+    if not op.results.empty:
+      self._write_body(self.escape('->('))
+      isFirst = True
+      for result_name in op.results:
+        if isFirst:
+          isFirst = False
+        else:
+          self._write_body(',')
+        rv = op.results[result_name]
+        self._write_body(self.escape(str(rv.valuetype) + ' ' + result_name))
+      self._write_body(self.escape(')'))
+    
+    # attributes
+    if not op.attributes.empty:
+      self._write_body(self.escape('['))
+      isFirst = True
+      for attribute_name in op.attributes:
+        if isFirst:
+          isFirst = False
+        else:
+          self._write_body(',')
+        attr = op.get_attr(attribute_name)
+        self._write_body(self.escape(attribute_name + '=' + str(attr.value)))
+      self._write_body(self.escape(']'))
+    
+    # loc
+    self._write_body(self.escape('<' + str(op.location) + '>'))
+    self._write_body('</p>\n')
+    
+    # TODO write terminator info
+    
+    # regions
+    body_level = level + 2
+    if self._max_indent_level < body_level:
+      self._max_indent_level = body_level
+    
+    for r in op.regions:
+      self._write_body('<p class=\"' + self._get_indent_stylename(level) + '">')
+      self._write_body(self.escape(r.name + ':') + '</p>\n')
+      for b in r.blocks:
+        self._write_body('<p class=\"' + self._get_indent_stylename(level+1) + '">')
+        # TODO write body arguments
+        self._write_body(self.escape(b.name + ':')+'</p>\n')
+        for o in b.body:
+          self._walk_operation(o, body_level)
+        
+    # done!
+    return None
+  
+  def print(self, op : Operation) -> bytes:
+    # perform an HTML export with op as the top-level Operation. The return value is the HTML
+    content = io.BytesIO()
+    content.write(b'''<!DOCTYPE html>
+<html>
+<head>
+''')
+    title = 'Anonymous dump'
+    if len(op.name) > 0:
+      title = op.name
+      assert isinstance(title, str)
+    content.write(b'<title>' + title.encode('utf-8') + b'</title>')
+    self._output_asset.write(b'<style>\n')
+    self._output_asset.write(b'''.AssetPlaceholder {
+  border-width: 1px;
+  border-style: solid;
+  border-color: black;
+  text-align: center;
+}
+''')
+    self._output_body.write(b'<body>\n')
+    self._walk_operation(op, 0)
+    self._output_body.write(b'</body>')
+    
+    # TODO write styles for indent levels
+    self._output_asset.write(b'</style>')
+    content.write(self._output_asset.getbuffer())
+    content.write(self._output_body.getbuffer())
+    content.write(b'</html>\n')
+    return content.getvalue()
+
+def _dump_operation_impl(op : Operation) -> None:
+  raise NotImplementedError('Use view() instead')
+
+def _view_operation_impl(op : Operation) -> None:
+  writer = IRWriter(op.context, None, None)
+  dump = writer.print(op)
+  file = tempfile.NamedTemporaryFile('w+b', suffix='_viewdump.html', prefix='preppipe_', delete=False)
+  file.write(dump)
+  file.close()
+  path = os.path.abspath(file.name)
+  print('Opening HTML dump at ' + path)
+  webbrowser.open_new_tab('file:///' + path)
+
+# ------------------------------------------------------------------------------
+# IR verification
+# ------------------------------------------------------------------------------
+
+class IRVerifier:
+  _ostream : typing.Any # either a file-like object that we can write(), or None, in which case we just print
+  _error_encountered : bool
+  
+  def __init__(self, ostream) -> None:
+    self._ostream = ostream
+    self._error_encountered = False
+  
+  def _report_error(self, msg : str):
+    if self._ostream is not None:
+      self._ostream.write(msg + '\n')
+    else:
+      print(msg)
+    self._error_encountered = True
+  
+  def verify(self, op : Operation) -> bool:
+    # verify the input operation; return True if error found, false otherwise
+    # TODO
+    return self._error_encountered
+  
+  @staticmethod
+  def verifyOperation(op : Operation, ostream) -> bool:
+    verifier = IRVerifier(ostream)
+    return verifier.verify(op)
