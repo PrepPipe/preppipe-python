@@ -117,20 +117,20 @@ class IMListOp(Operation):
 
 class IMDocumentOp(IMFrameOp):
   # 该类代表一个完整的文档
-  _namespace : str # 该文档所处的命名空间
+  #_namespace : str # 该文档所处的命名空间
   
   def __init__(self, name: str, loc: Location, **kwargs) -> None:
     # loc 包含了该文档文件的路径； name 被作为默认工程名或函数名使用
     super().__init__(name, loc, **kwargs)
-    self._add_intrinsic_attr('Namespace', 'namespace')
+  #  self._add_intrinsic_attr('Namespace', 'namespace')
   
-  @property
-  def namespace(self):
-    return self._namespace
+  #@property
+  #def namespace(self):
+  #  return self._namespace
   
-  @namespace.setter
-  def namespace(self, v : str):
-    self._namespace = v
+  #@namespace.setter
+  #def namespace(self, v : str):
+  #  self._namespace = v
 
 class InputModelV2(Operation):
   _content : Region
