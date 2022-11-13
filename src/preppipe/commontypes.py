@@ -969,18 +969,18 @@ class MessageHandler:
     MessageHandler._instance = handler
   
   def message(self, importance : MessageImportance, msg : str, file : str = "", location: str = ""):
+    # usually the location string contains the file path
+    # use location if available
     locstring = ""
-    if len(file) > 0 and len(location) > 0:
-      locstring = file + ": " + location
+    if len(location) > 0:
+      locstring = location
     elif len(file) > 0:
       locstring = file
-    elif len(location) > 0:
-      locstring = location
     
     if len(locstring) > 0:
-      locstring = locstring + ": "
+      locstring = ' ' + locstring + ': '
     
-    print("[{imp}] {loc}: {msg}".format(imp=str(importance), loc=locstring, msg=msg))
+    print("[{imp}]{loc}{msg}".format(imp=str(importance), loc=locstring, msg=msg))
   
   @staticmethod
   def get():
