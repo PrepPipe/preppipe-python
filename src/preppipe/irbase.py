@@ -42,6 +42,10 @@ class IList(typing.Generic[T], llist.dllist):
     self._parent = parent
   
   @property
+  def parent(self) -> typing.Any:
+    return self._parent
+  
+  @property
   def size(self) -> int:
     return super().size
   
@@ -114,18 +118,30 @@ class IListNode(typing.Generic[T], llist.dllistnode):
     # passthrough kwargs for cooperative multiple inheritance
     super().__init__(**kwargs)
   
-  def insert_before(self, ip : IListNode[T]) -> None:
+  def _try_get_owner(self):
+    # first, weakref itself can be None if it never referenced another object
+    # second, weakref may lose reference to the target
+    # we use this function to dereference a weakref
     if self.owner is not None:
+      return self.owner()
+    return None
+  
+  def insert_before(self, ip : IListNode[T]) -> None:
+    owner = self._try_get_owner()
+    ipowner = ip._try_get_owner()
+    assert ipowner is not None
+    if owner is not None:
       self.node_removed(self.parent)
-      self.owner.remove(self)
+      owner.remove(self)
     self.node_inserted(self.parent)
-    ip.owner.insertnode(ip, self)
+    ipowner.insertnode(ip, self)
   
   # erase_from_parent() includes self cleanup; it should be defined in derived classes
   def remove_from_parent(self):
-    if self.owner is not None:
+    owner = self._try_get_owner()
+    if owner is not None:
       self.node_removed(self.parent)
-      self.owner.remove(self)
+      owner.remove(self)
   
   # if a derived class want to execute code before inserting or removing from list,
   # override these member functions
@@ -150,12 +166,15 @@ class IListNode(typing.Generic[T], llist.dllistnode):
   def parent(self):
     # return the parent of the list
     # to get a type hint, override this method in derived class to add it
-    if self.owner is not None:
-      return self.owner.parent
+    owner = self._try_get_owner()
+    if owner is not None:
+      return owner.parent
     return None
 
   def get_index(self):
-    return self.owner.get_index_of(self)
+    owner = self._try_get_owner()
+    assert owner is not None
+    return owner.get_index_of(self)
 
 class NameDict(collections.abc.MutableMapping, typing.Generic[T]):
   _parent : typing.Any
@@ -916,8 +935,11 @@ class Block(Value, IListNode):
     return super().parent
   
   @property
-  def arguments(self) -> NameDict[BlockArgument]:
+  def args(self) -> NameDict[BlockArgument]:
     return self._args
+  
+  def arguments(self) -> typing.Iterable[BlockArgument]:
+    return self._args.values()
 
   @property
   def body(self) -> IList[Operation, Block]:
@@ -1113,7 +1135,7 @@ class Context:
   
   def _add_asset_data(self, asset : AssetData):
     # should only be called from the constructor of AssetData
-    assert asset.owner is None
+    asset.remove_from_parent()
     self._asset_data_list.push_back(asset)
   
   @property
@@ -1361,6 +1383,9 @@ class DIFile(Location):
   @property
   def filepath(self) -> str:
     return self._path
+  
+  def __str__(self) -> str:
+    return self._path
 
 class DILocation(Location):
   # 描述一个文档位置
@@ -1398,7 +1423,7 @@ class DILocation(Location):
     return self._col
 
   def __str__(self) -> str:
-    return self.file.filepath + '[' + str(self.page) + ']:' + str(self.row) + ':' + str(self.column)
+    return str(self.file) + '[' + str(self.page) + ']:' + str(self.row) + ':' + str(self.column)
 
 # ------------------------------------------------------------------------------
 # Constants
@@ -1710,7 +1735,7 @@ class IRWriter:
     # for now we don't try to emit any asset; just print their ID as a text element and done
     id = self._index_assets()[asset]
     asset_name = type(asset).__name__
-    s = "<span class=\"AssetPlaceholder\">#" + str(id) + " " + asset_name + "</span>"
+    s = "<span class=\"AssetPlaceholder\">#" + hex(id) + " " + asset_name + "</span>"
     return s.encode('utf-8')
     
     # check if we have already exported it
@@ -1734,7 +1759,7 @@ class IRWriter:
     return 'dump_indent_level_' + str(level)
   
   def _get_operation_short_name(self, op : Operation) -> str:
-    return '[' + str(id(op)) + ' ' + type(op).__name__ + ']\"' + op.name + '"'
+    return '[' + hex(id(op)) + ' ' + type(op).__name__ + ']\"' + op.name + '"'
   
   def _get_text_style_str(self, style : ConstantTextStyle) -> str:
     value : tuple[tuple[TextAttribute, typing.Any]] = style.value
@@ -1877,8 +1902,20 @@ class IRWriter:
       self._write_body(self.escape(r.name + ':') + '</p>\n')
       for b in r.blocks:
         self._write_body('<p class=\"' + self._get_indent_stylename(level+1) + '">')
-        # TODO write body arguments
-        self._write_body(self.escape(b.name + ':')+'</p>\n')
+        body_header = '<anon>'
+        if len(b.name) > 0:
+          body_header = '"' + b.name + '"'
+        
+        # now prepare body arguments
+        arg_name_list = []
+        for arg in b.arguments():
+          if len(arg.name) == 0:
+            arg_name_list.append('<anon>')
+          else:
+            arg_name_list.append(arg.name)
+        body_header = hex(id(b)) + ' ' + body_header + '(' + ','.join(arg_name_list) + '):'
+        self._write_body(self.escape(body_header))
+        self._write_body('</p>\n')
         for o in b.body:
           self._walk_operation(o, body_level)
         
@@ -1909,7 +1946,10 @@ class IRWriter:
     self._walk_operation(op, 0)
     self._output_body.write(b'</body>')
     
-    # TODO write styles for indent levels
+    # write styles for indent levels
+    for curlevel in range(0, self._max_indent_level):
+      stylestr = 'p.' + self._get_indent_stylename(curlevel) + '{ text-indent: ' + str(curlevel * 15) + 'px}\n'
+      self._output_asset.write(stylestr.encode())
     self._output_asset.write(b'</style>')
     content.write(self._output_asset.getbuffer())
     content.write(self._output_body.getbuffer())
