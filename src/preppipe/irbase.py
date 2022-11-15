@@ -1834,7 +1834,27 @@ class IRWriter:
   def _walk_operation(self, op : Operation, level : int) -> None:
     # [#<id> ClassName]"Name"(operand=...) -> (result)[attr=...]<loc>
     #   <regions>
-    self._write_body('<p class=\"' + self._get_indent_stylename(level) + '">')
+    
+    isHasBody = op.get_num_regions() > 0
+    # step 1: write the operation header
+    optail = ''
+    if level == 0:
+      # this is the top-level op
+      # we just use <p> to wrap it
+      self._write_body('<p>')
+      optail = '</p>'
+    else:
+      # this is an internal op
+      # create a list item where itself is also a list
+      if isHasBody:
+        self._write_body('<li><details open><summary>')
+        optail = '</summary>'
+      else:
+        self._write_body('<li>')
+        optail = ''
+      
+    # old version that do not use list
+    # self._write_body('<p class=\"' + self._get_indent_stylename(level) + '">')
     self._write_body(self.escape(self._get_operation_short_name(op))) # [#<id> ClassName]"Name"
     
     # operands
@@ -1888,37 +1908,91 @@ class IRWriter:
     
     # loc
     self._write_body(self.escape('<' + str(op.location) + '>'))
-    self._write_body('</p>\n')
+    self._write_body(optail + '\n')
     
     # TODO write terminator info
     
     # regions
-    body_level = level + 2
-    if self._max_indent_level < body_level:
-      self._max_indent_level = body_level
-    
-    for r in op.regions:
-      self._write_body('<p class=\"' + self._get_indent_stylename(level) + '">')
-      self._write_body(self.escape(r.name + ':') + '</p>\n')
-      for b in r.blocks:
-        self._write_body('<p class=\"' + self._get_indent_stylename(level+1) + '">')
-        body_header = '<anon>'
-        if len(b.name) > 0:
-          body_header = '"' + b.name + '"'
+    if isHasBody:
+      body_level = level + 2
+      if self._max_indent_level < body_level:
+        self._max_indent_level = body_level
+      regions_end = ''
+      if level == 0:
+        # starting a top-level list
+        self._write_body('<ul class="tree">')
+        regions_end = '</ul>'
+      else:
+        # starting a nested list
+        self._write_body('<ul>')
+        regions_end = '</ul></details>'
+      
+      for r in op.regions:
+        region_title = hex(id(r)) + ' ' + type(r).__name__ + ' "' + r.name + '"'
         
-        # now prepare body arguments
-        arg_name_list = []
-        for arg in b.arguments():
-          if len(arg.name) == 0:
-            arg_name_list.append('<anon>')
-          else:
-            arg_name_list.append(arg.name)
-        body_header = hex(id(b)) + ' ' + body_header + '(' + ','.join(arg_name_list) + '):'
-        self._write_body(self.escape(body_header))
-        self._write_body('</p>\n')
-        for o in b.body:
-          self._walk_operation(o, body_level)
+        #self._write_body('<p class=\"' + self._get_indent_stylename(level) + '">')
+        self._write_body('<li>')
+        if r.blocks.empty:
+          # this is an empty region
+          self._write_body(self.escape(region_title))
+        else:
+          # this region have body
+          # use nested list
+          self._write_body('<details open><summary>')
+          self._write_body(self.escape(region_title))
+          self._write_body('</summary><ul>')
+          for b in r.blocks:
+            self._write_body('<li>')
+            block_end = ''
+            block_title_end = ''
+            if b.body.empty:
+              # no child for this block; just a normal list item
+              block_end = '</li>'
+            else:
+              # there are children for this block; use nested list
+              self._write_body('<details open><summary>')
+              block_title_end = '</summary><ul>'
+              block_end = '</ul></details></li>'
+            
+            #self._write_body('<p class=\"' + self._get_indent_stylename(level+1) + '">')
+            body_header = '<anon>'
+            if len(b.name) > 0:
+              body_header = '"' + b.name + '"'
+            
+            # now prepare body arguments
+            arg_name_list = []
+            for arg in b.arguments():
+              if len(arg.name) == 0:
+                arg_name_list.append('<anon>')
+              else:
+                arg_name_list.append(arg.name)
+            body_header = hex(id(b)) + ' ' + body_header + '(' + ','.join(arg_name_list) + ')'
+            self._write_body(self.escape(body_header))
+            if len(block_title_end) > 0:
+              self._write_body(block_title_end)
+            for o in b.body:
+              self._walk_operation(o, body_level)
+            self._write_body(block_end)
+            
+          self._write_body('</ul></details>')
+        #self._write_body(self.escape(r.name + ':'))
+        #self._write_body('</p>\n')
         
+        # finishing current region
+        self._write_body('</li>')
+      
+      # done traversing all regions
+      self._write_body(regions_end + '\n')
+    # done writing regions
+    if level == 0:
+      # this is the top-level op
+      # just do nothing here
+      pass
+    else:
+      # this is a nested op
+      # write the enclosing mark
+      self._write_body('</li>\n')
+      pass
     # done!
     return None
   
@@ -1947,9 +2021,94 @@ class IRWriter:
     self._output_body.write(b'</body>')
     
     # write styles for indent levels
-    for curlevel in range(0, self._max_indent_level):
-      stylestr = 'p.' + self._get_indent_stylename(curlevel) + '{ text-indent: ' + str(curlevel * 15) + 'px}\n'
-      self._output_asset.write(stylestr.encode())
+    #for curlevel in range(0, self._max_indent_level):
+    #  stylestr = 'p.' + self._get_indent_stylename(curlevel) + '{ text-indent: ' + str(curlevel * 15) + 'px}\n'
+    #  self._output_asset.write(stylestr.encode())
+    
+    # write styles for lists
+    # https://iamkate.com/code/tree-views/
+    self._output_asset.write(b'''
+.tree{
+  --spacing : 1.5rem;
+  --radius  : 10px;
+}
+
+.tree li{
+  display      : block;
+  position     : relative;
+  padding-left : calc(2 * var(--spacing) - var(--radius) - 2px);
+  margin-top: 10px;
+}
+
+.tree ul{
+  margin-left  : calc(var(--radius) - var(--spacing));
+  padding-left : 0;
+}
+
+.tree ul li{
+  border-left : 2px solid #ddd;
+}
+
+.tree ul li:last-child{
+  border-color : transparent;
+}
+
+.tree ul li::before{
+  content      : '';
+  display      : block;
+  position     : absolute;
+  top          : calc(var(--spacing) / -2);
+  left         : -2px;
+  width        : calc(var(--spacing) + 2px);
+  height       : calc(var(--spacing) + 1px);
+  border       : solid #ddd;
+  border-width : 0 0 2px 2px;
+}
+
+.tree summary{
+  display : block;
+  cursor  : pointer;
+}
+
+.tree summary::marker,
+.tree summary::-webkit-details-marker{
+  display : none;
+}
+
+.tree summary:focus{
+  outline : none;
+}
+
+.tree summary:focus-visible{
+  outline : 1px dotted #000;
+}
+
+.tree li::after,
+.tree summary::before{
+  content       : '';
+  display       : block;
+  position      : absolute;
+  top           : calc(var(--spacing) / 2 - var(--radius));
+  left          : calc(var(--spacing) - var(--radius) - 1px);
+  width         : calc(2 * var(--radius));
+  height        : calc(2 * var(--radius));
+  border-radius : 50%;
+  background    : #ddd;
+}
+
+.tree summary::before{
+  content     : '+';
+  z-index     : 1;
+  background  : #696;
+  color       : #fff;
+  line-height : calc(2 * var(--radius) - 2px);
+  text-align  : center;
+}
+
+.tree details[open] > summary::before{
+  content : '-';
+}
+''')
     self._output_asset.write(b'</style>')
     content.write(self._output_asset.getbuffer())
     content.write(self._output_body.getbuffer())
