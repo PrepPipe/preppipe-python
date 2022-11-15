@@ -1423,7 +1423,7 @@ class DILocation(Location):
     return self._col
 
   def __str__(self) -> str:
-    return str(self.file) + '[' + str(self.page) + ']:' + str(self.row) + ':' + str(self.column)
+    return str(self.file) + '#P' + str(self.page) + ':' + str(self.row) + ':' + str(self.column)
 
 # ------------------------------------------------------------------------------
 # Constants

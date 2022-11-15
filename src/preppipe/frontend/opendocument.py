@@ -217,6 +217,10 @@ class _ODParseContext:
     self.asset_reference_dict[href] = value
     return IMElementOp(name = '', loc = loc, content = value)
   
+  def _get_unsupported_element_op(self, element : odf.element.Element) -> IMUnsupportedElementOp:
+    loc = self.get_DILocation(self.cur_page_count, self.cur_row_count, self.cur_column_count)
+    return IMUnsupportedElementOp(name = str(element.qname), loc = loc, content = ConstantString.get(str(element), self.ctx))
+  
   def odf_parse_paragraph(self, rootnode : odf.element.Element, isInFrame : bool, default_style: str = "") -> Block:
     def populate_paragraph(paragraph: Block, rootnode : odf.element.Element, default_style: str, isInFrame : bool) -> None:
       for element in rootnode.childNodes:
@@ -228,6 +232,7 @@ class _ODParseContext:
             # TODO update the location info
             element_node = self.create_text_element(text, default_style, loc)
             paragraph.push_back(element_node)
+            self.cur_column_count += len(text)
         elif element.nodeType == 1:
           if element.qname[1] == "span":
             # this is a node with attribute
@@ -283,10 +288,17 @@ class _ODParseContext:
                 self.odf_parse_frame(frame, firstChild, True, style)
                 paragraph.push_back(frame)
             else:
-              print("Warning: unhandled node type in frame: " + str(element.qname) + ": " + str(element))
-              pass
+              paragraph.push_back(self._get_unsupported_element_op(element))
+              # print("Warning: unhandled node type in frame: " + str(element.qname) + ": " + str(element))
+            # end of elements in frame
+          elif element.qname[1] == "soft-page-break":
+            # entering a new page
+            self.cur_page_count += 1
+            self.cur_row_count = 1
+            self.cur_column_count = 1
           else:
-            MessageHandler.warning("Warning: unhandled node type in frame: " + str(element.qname) + ": " + str(element), self.filePath, str(loc))
+            paragraph.push_back(self._get_unsupported_element_op(element))
+            # MessageHandler.warning("Warning: unhandled node type in frame: " + str(element.qname) + ": " + str(element), self.filePath, str(loc))
         else:
           MessageHandler.warning("Warning: unhandled node type " + str(element.qname) + ": " + str(element), self.filePath, str(loc))
       # done!
@@ -295,6 +307,9 @@ class _ODParseContext:
     if len(default_style_read) > 0:
       default_style = default_style_read
     populate_paragraph(paragraph, rootnode, default_style, isInFrame)
+    # exiting the current paragraph; reset column
+    self.cur_row_count += 1
+    self.cur_column_count = 1
     return paragraph
   
   def odf_parse_frame(self, result : IMFrameOp, rootnode : odf.element.Element, isInFrame : bool, default_style : str = ""):
@@ -312,16 +327,51 @@ class _ODParseContext:
     for node in rootnode.childNodes:
       nodetype = node.qname[1]
       # skip sequence-decls
-      if nodetype == "sequence-decls":
-        continue
-      if nodetype == "p":
+      #if nodetype == "sequence-decls":
+      #  continue
+      #if nodetype == "p":
         # paragraph
-        paragraph = self.odf_parse_paragraph(node, isInFrame, default_style)
-        result.body.push_back(paragraph)
-        continue
-      # node type not recognized
-      loc = self.get_DILocation(self.cur_page_count, self.cur_row_count, self.cur_column_count)
-      MessageHandler.warning("Element unrecognized and ignored: " + nodetype, self.filePath, str(loc))
+      #  paragraph = self.odf_parse_paragraph(node, isInFrame, default_style)
+      #  result.body.push_back(paragraph)
+      #  continue
+      match nodetype:
+        case "sequence-decls":
+          # do nothing
+          pass
+        case "p":
+          # paragraph
+          paragraph = self.odf_parse_paragraph(node, isInFrame, default_style)
+          result.body.push_back(paragraph)
+        case 'list':
+          # list is in parallel with paragraph in odf
+          listop = IMListOp('', self.get_DILocation(self.cur_page_count, self.cur_row_count, self.cur_column_count))
+          for listnode in node.childNodes:
+            listnodetype = listnode.qname[1]
+            match listnodetype:
+              case 'list-header':
+                # should appear before all the list item
+                # treat it as a new paragraph
+                # (this part is not tested)
+                paragraph = self.odf_parse_paragraph(node, isInFrame, default_style)
+                result.body.push_back(paragraph)
+              case 'list-item':
+                # basically each list item should be in parallel with a frame, but we expect most of them to only contain one paragraph
+                # so we first create a dummy frame to parse the children, then extract the paragraphs and add to frame
+                dummy_frame = IMFrameOp('', self.get_DILocation(self.cur_page_count, self.cur_row_count, self.cur_column_count))
+                self.odf_parse_frame(dummy_frame, listnode, False, default_style)
+                #if dummy_frame.body.blocks.size >= 2:
+                #  MessageHandler.warning('List contains multiple blocks (len={0}, frame_id={1})'.format(str(dummy_frame.body.blocks.size), hex(id(listop))), location=str(dummy_frame.location))
+                while not dummy_frame.body.blocks.empty:
+                  frontblock =  dummy_frame.body.blocks.front
+                  frontblock.remove_from_parent()
+                  listop.body.push_back(frontblock)
+          container_paragraph = Block('', self.ctx)
+          container_paragraph.body.push_back(listop)
+          result.body.push_back(container_paragraph)
+        case _:
+          # node type not recognized
+          loc = self.get_DILocation(self.cur_page_count, self.cur_row_count, self.cur_column_count)
+          MessageHandler.warning("Element unrecognized and ignored: " + nodetype, self.filePath, str(loc))
   
   def parse_odf(self) -> IMDocumentOp:
     self._populate_style_data(self.odfhandle.styles)

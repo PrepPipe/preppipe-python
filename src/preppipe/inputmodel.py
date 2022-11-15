@@ -65,7 +65,12 @@ class IMErrorElementOp(IMElementOp):
   @property
   def error(self):
     return self._error_operand
-  
+
+class IMUnsupportedElementOp(IMElementOp):
+  # keep a string representation for stuff we don't recognize for now
+  def __init__(self, name: str, loc: Location, content: Value, **kwargs) -> None:
+    super().__init__(name, loc, content, **kwargs)
+
 class IMFrameOp(Operation):
   # frame 代表一个文档或文本框的顶层结构
   # 我们使用 IR 的 block 来代表文档内的一个 block，所以不需要专门的类；这些 block 将直接在 body 区内
@@ -83,7 +88,7 @@ class IMListOp(Operation):
   # 该类代表一个列表(bullet point list / numbered list)
   # 虽然list也可作为资源（asset），但由于这样的列表可能会生成不同的结构（比如分支选项等），我们在前端先用这个类来表述，之后如果确定以资源的方式生成的话再把它们打包成资源。
   # 大部分的列表应该会被生成成其他东西，以表格活不到VNModel
-  _body : Region # 该区只有一个块，每个块是一个框结构(frame)
+  _body : Region # 该区只有一个块，每个成员是一个框结构(frame)
   _listlevel : int # 嵌套层级；如果没被嵌套则为零
   _is_numbered : bool # is the list element numbered (i.e., instead of bulleted)
   
