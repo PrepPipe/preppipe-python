@@ -88,25 +88,19 @@ class IMListOp(Operation):
   # 该类代表一个列表(bullet point list / numbered list)
   # 虽然list也可作为资源（asset），但由于这样的列表可能会生成不同的结构（比如分支选项等），我们在前端先用这个类来表述，之后如果确定以资源的方式生成的话再把它们打包成资源。
   # 大部分的列表应该会被生成成其他东西，以表格活不到VNModel
-  _body : Region # 该区只有一个块，每个成员是一个框结构(frame)
-  _listlevel : int # 嵌套层级；如果没被嵌套则为零
+  # 每个选项均是一个区
   _is_numbered : bool # is the list element numbered (i.e., instead of bulleted)
   
   def __init__(self, name: str, loc: Location, **kwargs) -> None:
     super().__init__(name, loc, **kwargs)
-    self._body = self._add_region('body')
-    self._listlevel = 0
     self._is_numbered = False
-    self._add_intrinsic_attr('Level', 'level')
     self._add_intrinsic_attr('IsNumbered', 'is_numbered')
   
-  @property
-  def level(self) -> int:
-    return self._listlevel
-  
-  @level.setter
-  def level(self, v : int) -> None:
-    self._listlevel = v
+  def get_item_region_name(self, index : int) -> str:
+    return str(index)
+
+  def get_num_items(self) -> int:
+    return self.get_num_regions()
   
   @property
   def is_numbered(self) -> bool:
@@ -115,6 +109,13 @@ class IMListOp(Operation):
   @is_numbered.setter
   def is_numbered(self, v : bool) -> None:
     self._is_numbered = v
+  
+  def add_list_item(self) -> Region:
+    name = str(self.get_num_items())
+    return self._add_region(name)
+  
+  def get_item(self, index : int) -> Region:
+    return self.get_region(self.get_item_region_name(index))
   
   @property
   def body(self):

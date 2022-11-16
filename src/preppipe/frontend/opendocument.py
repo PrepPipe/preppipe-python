@@ -285,7 +285,7 @@ class _ODParseContext:
                 if (style == ""):
                   style = default_style
                 frame = IMFrameOp('', loc)
-                self.odf_parse_frame(frame, firstChild, True, style)
+                self.odf_parse_frame(frame.body, firstChild, True, style)
                 paragraph.push_back(frame)
             else:
               paragraph.push_back(self._get_unsupported_element_op(element))
@@ -312,7 +312,7 @@ class _ODParseContext:
     self.cur_column_count = 1
     return paragraph
   
-  def odf_parse_frame(self, result : IMFrameOp, rootnode : odf.element.Element, isInFrame : bool, default_style : str = ""):
+  def odf_parse_frame(self, result : Region, rootnode : odf.element.Element, isInFrame : bool, default_style : str = ""):
     # isInFrame is false if this part is inside the flow of the document,
     # and is true if this is outside the document flow.
     # if it is inside the flow:
@@ -326,22 +326,15 @@ class _ODParseContext:
     # We don't consider images, etc as frame even if they have a frame in the source doc
     for node in rootnode.childNodes:
       nodetype = node.qname[1]
-      # skip sequence-decls
-      #if nodetype == "sequence-decls":
-      #  continue
-      #if nodetype == "p":
-        # paragraph
-      #  paragraph = self.odf_parse_paragraph(node, isInFrame, default_style)
-      #  result.body.push_back(paragraph)
-      #  continue
       match nodetype:
         case "sequence-decls":
+          # skip sequence-decls
           # do nothing
           pass
         case "p":
           # paragraph
           paragraph = self.odf_parse_paragraph(node, isInFrame, default_style)
-          result.body.push_back(paragraph)
+          result.push_back(paragraph)
         case 'list':
           # list is in parallel with paragraph in odf
           listop = IMListOp('', self.get_DILocation(self.cur_page_count, self.cur_row_count, self.cur_column_count))
@@ -351,23 +344,14 @@ class _ODParseContext:
               case 'list-header':
                 # should appear before all the list item
                 # treat it as a new paragraph
-                # (this part is not tested)
+                # (this part is not tested; I don't even know how to create a list-header..)
                 paragraph = self.odf_parse_paragraph(node, isInFrame, default_style)
-                result.body.push_back(paragraph)
+                result.push_back(paragraph)
               case 'list-item':
-                # basically each list item should be in parallel with a frame, but we expect most of them to only contain one paragraph
-                # so we first create a dummy frame to parse the children, then extract the paragraphs and add to frame
-                dummy_frame = IMFrameOp('', self.get_DILocation(self.cur_page_count, self.cur_row_count, self.cur_column_count))
-                self.odf_parse_frame(dummy_frame, listnode, False, default_style)
-                #if dummy_frame.body.blocks.size >= 2:
-                #  MessageHandler.warning('List contains multiple blocks (len={0}, frame_id={1})'.format(str(dummy_frame.body.blocks.size), hex(id(listop))), location=str(dummy_frame.location))
-                while not dummy_frame.body.blocks.empty:
-                  frontblock =  dummy_frame.body.blocks.front
-                  frontblock.remove_from_parent()
-                  listop.body.push_back(frontblock)
+                self.odf_parse_frame(listop.add_list_item(), listnode, False, default_style)
           container_paragraph = Block('', self.ctx)
           container_paragraph.body.push_back(listop)
-          result.body.push_back(container_paragraph)
+          result.push_back(container_paragraph)
         case _:
           # node type not recognized
           loc = self.get_DILocation(self.cur_page_count, self.cur_row_count, self.cur_column_count)
@@ -382,7 +366,7 @@ class _ODParseContext:
     assert self.cur_column_count == 1
     
     result : IMDocumentOp = IMDocumentOp(self.documentname, self.difile)
-    self.odf_parse_frame(result, self.odfhandle.text, False)
+    self.odf_parse_frame(result.body, self.odfhandle.text, False)
     return result
 
 def parse_odf(ctx : Context, settings : IMSettings, cache : IMParseCache, filePath : str):
