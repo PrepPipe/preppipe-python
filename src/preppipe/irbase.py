@@ -778,9 +778,15 @@ class Operation(IListNode):
     return self._attributes[name]
   
   def _add_region(self, name : str = '') -> Region:
+    assert name not in self._regions
     r = Region()
     self._regions[name] = r
     return r
+  
+  def _take_region(self, r : Region, name : str = ''):
+    assert name not in self._regions
+    assert r.parent is None
+    self._regions[name] = r
   
   def get_or_create_region(self, name : str = '') -> Region:
     if name in self._regions:
