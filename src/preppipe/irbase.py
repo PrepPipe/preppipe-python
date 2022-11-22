@@ -134,7 +134,7 @@ class IListNode(typing.Generic[T], llist.dllistnode):
       self.node_removed(self.parent)
       owner.remove(self)
     self.node_inserted(self.parent)
-    ipowner.insertnode(ip, self)
+    ipowner.insertnode(self, ip)
   
   # erase_from_parent() includes self cleanup; it should be defined in derived classes
   def remove_from_parent(self):
@@ -774,8 +774,13 @@ class Operation(IListNode):
       self._attributes[name] = a
     return a
   
-  def get_attr(self, name : str) -> Attribute:
-    return self._attributes[name]
+  def get_attr(self, name : str) -> Attribute | None:
+    if name in self._attributes:
+      return self._attributes[name]
+    return None
+
+  def has_attr(self, name : str) -> bool:
+    return name in self._attributes
   
   def _add_region(self, name : str = '') -> Region:
     assert name not in self._regions
@@ -807,6 +812,9 @@ class Operation(IListNode):
   def get_region_names(self) -> typing.Iterable[str]:
     return self._regions.keys()
   
+  def get_next_node(self) -> Operation:
+    return self.next
+  
   @property
   def regions(self) -> typing.Iterable[Region]:
     return self._regions.values()
@@ -818,6 +826,13 @@ class Operation(IListNode):
       operand.drop_all_uses()
     if self._terminator_info is not None:
       self._terminator_info.drop_all_uses()
+  
+  def erase_from_parent(self) -> Operation:
+    # return the next op
+    retval = self.get_next_node()
+    self.remove_from_parent()
+    self.drop_all_references()
+    return retval
   
   @property
   def terminator_info(self) -> OpTerminatorInfo:
@@ -964,6 +979,12 @@ class Block(Value, IListNode):
   def drop_all_references(self) -> None:
     for op in self._ops:
       op.drop_all_references()
+  
+  def erase_from_parent(self) -> Block:
+    retval = self.next
+    self.remove_from_parent()
+    self.drop_all_references()
+    return retval
   
   def push_back(self, op : Operation):
     self._ops.push_back(op)
@@ -1522,17 +1543,21 @@ class ConstantTextStyle(Constant):
   @staticmethod
   def get_style_tuple(styles : dict[TextAttribute, typing.Any]):
     stylelist = []
-    for attr, v in styles:
+    for attr, v in styles.items():
       # 检查样式的值是否符合要求
       # 同时忽略部分VNModel不支持的属性
       isDiscard = False
       match attr:
         case TextAttribute.Bold:
-          if v is not None:
+          if v is not None and v is not True:
             raise RuntimeError("文本属性“加粗”不应该带参数，但现有参数：" + str(v) + "<类型：" + str(type(v).__name__))
+          if v is None:
+            v = True
         case TextAttribute.Italic:
-          if v is not None:
+          if v is not None and v is not True:
             raise RuntimeError("文本属性“斜体”不应该带参数，但现有参数：" + str(v) + "<类型：" + str(type(v).__name__))
+          if v is None:
+            v = True
         case TextAttribute.Hierarchy:
           # VNModel不支持该属性
           isDiscard = True
