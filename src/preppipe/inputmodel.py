@@ -158,7 +158,7 @@ class IMSettings:
   
   def add_search_path(self, v : str):
     if os.path.isdir(v):
-      self.append(os.path.abspath(v))
+      self._accessible_directories_whitelist.append(os.path.abspath(v))
   
   def search(self, querypath : str, basepath : str, filecheckCB : callable) -> typing.Any:
     # querypath 是申请访问的文件名（来自文档内容，不可信），可能含后缀也可能不含，可能是绝对路径也可能是相对路径

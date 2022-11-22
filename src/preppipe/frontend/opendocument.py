@@ -138,7 +138,7 @@ class _ODParseContext:
                 current_style.set_background_color(Color.get(property_node.attributes[k]))
               elif k[1] == "text-line-through-style":
                 current_style.set_strike_through(property_node.attributes[k] != 'none')
-                # TODO other attrs
+                # add other attrs here if needed
         self.style_data[name] = current_style
       else:
         # not a style node; just recurse
@@ -153,14 +153,30 @@ class _ODParseContext:
   def get_DILocation(self, page : int, row : int, column : int) -> DILocation:
     return self.ctx.get_DILocation(self.difile, page, row, column)
   
-  def create_text_element(self, text:str, style_name:str, loc : DILocation) -> IMElementOp:
+  def create_text_element(self, text:str, style_name:str, loc : DILocation) -> IMElementOp | typing.Tuple[IMElementOp, IMErrorElementOp]:
     """Create the text element with the provided text and style name.
     The flags for the text element will be set from the style name
     """
+    # 如果文本被划掉（有strikethrough），则我们在此添加一个StrikeThrough的属性，这个 IMElementOp 会在之后的 transform_pass_fix_text_elements() 中消耗掉
     content = ConstantString.get(text, self.ctx)
+    error_op = None
+    cstyle = None
+    is_strike_through = False
+    if style_name in self.style_data:
+      style = self.style_data[style_name]
+      if style.is_strike_through:
+        is_strike_through = True
+      cstyle = ConstantTextStyle.get(style.style, self.ctx)
+    else:
+      cstyle = ConstantTextStyle.get(style.style, self.ctx)
+      error_op = IMErrorElementOp(name = '', loc = loc, content = content, error = ConstantString.get('Cannot find style name \"' + style_name + '"', self.ctx))
+    content = ConstantTextFragment.get(self.ctx, content, cstyle)
     node = IMElementOp(name = '', loc = loc, content = content)
-    node.set_attr('TextStyle', style_name)
-    return node
+    if is_strike_through:
+      node.set_attr('StrikeThrough', True)
+    if error_op is None:
+      return node
+    return (node, error_op)
     
     #if style_name in self.style_data:
     #  style = self.style_data[style_name]
@@ -229,9 +245,14 @@ class _ODParseContext:
           # this is a text node
           text = str(element)
           if len(text) > 0:
-            # TODO update the location info
-            element_node = self.create_text_element(text, default_style, loc)
-            paragraph.push_back(element_node)
+            element_node_or_pair = self.create_text_element(text, default_style, loc)
+            if isinstance(element_node_or_pair, tuple):
+              # an IMElementOp and an IMErrorElementOp
+              for e in element_node_or_pair:
+                paragraph.push_back(e)
+            else:
+              assert isinstance(element_node_or_pair, IMElementOp)
+              paragraph.push_back(element_node_or_pair)
             self.cur_column_count += len(text)
         elif element.nodeType == 1:
           if element.qname[1] == "span":
@@ -357,6 +378,163 @@ class _ODParseContext:
           loc = self.get_DILocation(self.cur_page_count, self.cur_row_count, self.cur_column_count)
           MessageHandler.warning("Element unrecognized and ignored: " + nodetype, self.filePath, str(loc))
   
+  def transform_pass_fix_text_elements(self, doc : IMDocumentOp):
+    # 把所有文本的字体转换为符合IR的形式：
+    # （误）1. 将 ODF 的 styles 转换为IR的格式，确定所有字体大小
+    # （误）2. 将对 ConstantString 的引用转换为 ConstantText
+    # 3. 合并相邻的、文本格式相同的纯文本单元
+    # 原本打算统计各个字体的最大众的大小，然后以此为基准大小来计算其他字符的标准大小，但是这样有如下问题无法解决：
+    # 1. 对"每个字体"的定义可能不尽相同，以什么为边界来确定字体大小很难决定。
+    #    如果有人在文本内包含引用等，并使用与本文相同的字体，我们很可能希望即使它们实际大小不一，导出时大小也一致
+    #    （此时理想的边界是引用的范围，但是一般而言引用只会有缩进等“提示”，这些提示同样会被用到非引用的内容中）
+    # 2. 字体的大小成为了非局部的属性，容易产生意外结果
+    # 因此，即使IR支持字体大小，我们也在此将丢弃所有大小信息，只将不会引起误判的内容（颜色，加粗，斜体等）加进去
+    # 更新：放弃使用字体大小后，我们现在在生成阶段就直接在 IMElementOp 中生成符合要求的内容，因此在此处我们目前只合并相邻的、样式相同的文本
+    def walk_region(region : Region):
+      blocks_to_delete = []
+      for b in region.blocks:
+        first_text_op : IMElementOp = None
+        last_text_op : IMElementOp = None
+        # 尝试合并从 first_text_op 到 last_text_op 间的所有文本内容
+        # 相同字体的内容合并为同一个 ConstantTextFragment
+        # 不同字体的内容合并为一个 ConstantText，内容为多个 ConstantTextFragment
+        def coalesce():
+          nonlocal first_text_op
+          nonlocal last_text_op
+          # skip degenerate cases
+          if first_text_op is None or last_text_op is None or first_text_op is last_text_op:
+            first_text_op = None
+            last_text_op = None
+            return
+          cur_text = ''
+          cur_style = None
+          fragment_list = []
+          end_op = last_text_op.get_next_node()
+          cur_op = first_text_op
+          while cur_op is not end_op:
+            assert type(cur_op) == IMElementOp
+            # 加上这条检查，这样万一以后在首次生成 IMElementOp 时沾上属性后，我们可以在这里添加对属性的合并
+            assert cur_op.attributes.empty
+            cur_content = cur_op.content.get()
+            assert isinstance(cur_content, ConstantTextFragment)
+            if cur_style is None:
+              # this is the first time we visit an element
+              cur_text = cur_content.content.value
+              assert len(cur_text) > 0
+              cur_style = cur_content.style
+            elif cur_content.style is cur_style:
+              # we get an fragment with the same style
+              cur_text += cur_content.content.value
+            else:
+              # we get an fragment with a different style
+              # first, end the last fragment
+              new_frag = ConstantTextFragment.get(self.ctx, ConstantString.get(cur_text, self.ctx), cur_style)
+              fragment_list.append(new_frag)
+              # now start the new one
+              cur_text = cur_content.content.value
+              assert len(cur_text) > 0
+              cur_style = cur_content.style
+            # finished handling current op
+            cur_op = cur_op.get_next_node()
+          # finished the first iteration
+          # end the last fragment
+          assert len(cur_text) > 0
+          new_frag = ConstantTextFragment.get(self.ctx, ConstantString.get(cur_text, self.ctx), cur_style)
+          # create the new element
+          new_content = None
+          if len(fragment_list) == 0:
+            new_content = new_frag
+          else:
+            fragment_list.append(new_frag)
+            new_content = ConstantText.get(self.ctx, fragment_list)
+          newop  = IMElementOp(first_text_op.name, first_text_op.location, new_content)
+          # now replace the current ops
+          newop.insert_before(first_text_op)
+          cur_op = first_text_op
+          while cur_op is not end_op:
+            cur_op = cur_op.erase_from_parent()
+          # done for this helper
+
+        for op in b.body:
+          if op.get_num_regions() > 0:
+            assert not isinstance(op, IMElementOp)
+            coalesce()
+            for r in op.regions:
+              walk_region(r)
+          elif type(op) == IMElementOp:
+            content = op.content.get()
+            if isinstance(content, ConstantTextFragment) and not op.has_attr('StrikeThrough'):
+              # we do found a fragment
+              if first_text_op is None:
+                first_text_op = op
+                last_text_op = op
+              else:
+                last_text_op = op
+            else:
+              # it is some other content (cannot merge)
+              coalesce()
+          else:
+            # this is not an IMElementOp
+            coalesce()
+        # we walked through all the ops of the body
+        coalesce()
+        # 如果一个段落里全是被删除的文本，则我们在此也将把该段落去掉
+        if not b.body.empty:
+          is_all_strikethrough = True
+          for op in b.body:
+            if type(op) == IMElementOp and op.get_attr('StrikeThrough') is not None:
+              pass
+            else:
+              is_all_strikethrough = False
+              break
+          if is_all_strikethrough:
+            blocks_to_delete.append(b)
+        # finished this block
+      if len(blocks_to_delete) > 0:
+        for b in blocks_to_delete:
+          b.erase_from_parent()
+      # end of the helper function
+    walk_region(doc.body)
+  
+  def transform_pass_reassociate_lists(self, doc : IMDocumentOp):
+    # 对所有的 IMListOp 进行重组，以解决以下问题：
+    # 1.  目前当不同种类的列表相互嵌套（比如有数字的和没数字的）时，如果有以下列表：
+    #     <L1> * A
+    #          * B
+    #        <L2> 1. x
+    #             2. y
+    #        </L2>
+    #     </L1>
+    #     则实际在文件中会以如下形式表达：
+    #     <L1> * A
+    #          * B
+    #     </L1>
+    #     <L2><L'>  1. x
+    #               2. y
+    #     </L'></L2>
+    #     我们需要重组列表来把 L2 放到 L1 的B项下。
+    #
+    # 2.  当列表内容含有其他内容（比如文字、图片等）时，列表也会被中断，比如如果我们有如下内容：
+    #     <L1> * A
+    #            关于A的描述
+    #          * B
+    #     </L1>
+    #     则内容很有可能表述为如下形式：
+    #     <L1> * A
+    #     </L1>
+    #     <p> 关于A的描述 </p>
+    #     <L2> * B
+    #     </L2>
+    #     如下情况发生时，我们需要把L2合并到L1中。
+    #     由于在“吸收”列表内最后一项的额外内容时有可能将不属于该项的内容包含进来，我们使用如下偏保守的启发式算法：
+    #     我们仅在最后一项有内容时吸收新内容，若最后一项没有文字内容则不进行重整
+    #     (有这样的空项的话我们也把空项去掉)
+    #     项内有内容时，我们吸收“一自然段”的内容（图片等占满整“行”的也视为属于上一段），直到以下情况发生：
+    #     (a) 有一个空段落
+    #     (b) 内容后开始了一个新列表，该新列表与目前的列表不匹配所以无法合并
+    #         （不匹配指该新列表的样式（有无数字，有数字的话也包含数字的值）与其缩进等级对应的现列表的样式不同）
+    pass
+  
   def parse_odf(self) -> IMDocumentOp:
     self._populate_style_data(self.odfhandle.styles)
     self._populate_style_data(self.odfhandle.automaticstyles)
@@ -367,6 +545,8 @@ class _ODParseContext:
     
     result : IMDocumentOp = IMDocumentOp(self.documentname, self.difile)
     self.odf_parse_frame(result.body, self.odfhandle.text, False)
+    self.transform_pass_fix_text_elements(result)
+    self.transform_pass_reassociate_lists(result)
     return result
 
 def parse_odf(ctx : Context, settings : IMSettings, cache : IMParseCache, filePath : str):
@@ -374,7 +554,7 @@ def parse_odf(ctx : Context, settings : IMSettings, cache : IMParseCache, filePa
   pc = _ODParseContext(ctx = ctx, settings = settings, cache = cache, filePath = filePath)
   return pc.parse_odf()
 
-if __name__ == "__main__":
+def _main():
   if len(sys.argv) < 2 or len(sys.argv[1]) == 0:
     print("please specify the input file!")
     sys.exit(1)
@@ -385,5 +565,6 @@ if __name__ == "__main__":
   doc = parse_odf(ctx, settings, cache, filePath)
   doc.view()
   
-
+if __name__ == "__main__":
+  _main()
 
