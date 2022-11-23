@@ -45,7 +45,25 @@ class _TextStyleInfo:
   
   def set_strike_through(self, v : bool):
     self.is_strike_through = v
+
+class _ListStyleInfo:
+  is_numbered : bool # true if the list use numbers instead of bullet points
+  start_value : int # usually 1
   
+  def __init__(self, src = None) -> None:
+    self.is_numbered = False
+    self.start_value = 1
+    if src is not None:
+      assert isinstance(src, _ListStyleInfo)
+      self.is_numbered = src.is_numbered
+      self.start_value = src.start_value
+  
+  def set_numbered(self, v : bool):
+    self.is_numbered = v
+  
+  def set_start_value(self, v : int):
+    self.start_value = v
+
 class _ODParseContext:
   # how many characters in a paragraph makes the paragraph considered long enough (for debugging purpose)
   _NUM_CHARS_LONG_PARAGRAPH : typing.ClassVar[int] = 10
@@ -63,7 +81,7 @@ class _ODParseContext:
   documentname : str
   
   style_data : typing.Dict[str, _TextStyleInfo]
-  missing_style_list : typing.List[str]
+  list_style_data : typing.Dict[str, _ListStyleInfo]
   asset_reference_dict : typing.Dict[str, AssetData | typing.Tuple[ConstantString, ConstantString]] # cache asset request results; either the asset or the error tuple
   cur_page_count : int
   cur_row_count : int
@@ -91,7 +109,7 @@ class _ODParseContext:
     self.difile = ctx.get_DIFile(filePath)
     
     self.style_data = {}
-    self.missing_style_list = []
+    self.list_style_data = {}
     self.asset_reference_dict = {}
     self.documentname = os.path.splitext(os.path.basename(filePath))[0]
     
@@ -113,7 +131,7 @@ class _ODParseContext:
   def _populate_style_data(self, node: odf.element.Element):
     for child in node.childNodes:
       if child.qname[1] == "style":
-        # we found a style entry
+        # we found a text style entry
         name = self._get_element_attribute(child, "name")
         # should not happen, but just in case
         if len(name) == 0:
@@ -140,6 +158,31 @@ class _ODParseContext:
                 current_style.set_strike_through(property_node.attributes[k] != 'none')
                 # add other attrs here if needed
         self.style_data[name] = current_style
+      elif child.qname[1] == "list-style":
+        # we found a list style entry
+        name = self._get_element_attribute(child, "name")
+        # should not happen, but just in case
+        if len(name) == 0:
+          continue
+        is_numbered = False
+        start_value = 1
+        first_child = child.childNodes[0]
+        if first_child.qname[1] == 'list-level-style-bullet':
+          is_numbered = False
+        elif first_child.qname[1] == 'list-level-style-number':
+          is_numbered = True
+          start_value_attr = self._get_element_attribute(first_child, "start-value")
+          if len(start_value_attr) > 0:
+            start_value = int(start_value_attr)
+        else:
+          raise RuntimeError('Unexpected child ' + first_child.qname[1] + ' in list-style node')
+        current_style = _ListStyleInfo()
+        if is_numbered:
+          current_style.set_numbered(True)
+          current_style.set_start_value(start_value)
+        else:
+          current_style.set_numbered(False)
+        self.list_style_data[name] = current_style
       else:
         # not a style node; just recurse
         if (len(child.childNodes) > 0):
@@ -359,6 +402,35 @@ class _ODParseContext:
         case 'list':
           # list is in parallel with paragraph in odf
           listop = IMListOp('', self.get_DILocation(self.cur_page_count, self.cur_row_count, self.cur_column_count))
+          start_base = 1
+          list_style = self._get_element_attribute(node, 'style-name')
+          list_error_op = None
+          if list_style in self.list_style_data:
+            list_style_entry = self.list_style_data[list_style]
+            listop.is_numbered = list_style_entry.is_numbered
+            if list_style_entry.is_numbered and list_style_entry.start_value != 1:
+              listop.set_attr('StartValue', list_style_entry.start_value)
+              start_base = list_style_entry.start_value
+          else:
+            is_emit_error = True
+            if len(list_style) == 0:
+              # this usually happens in a nested list
+              # we need to get the style info from the parent list op
+              parent_op = result.parent
+              while parent_op is not None and not isinstance(parent_op, IMListOp):
+                parent_op = parent_op.parent_op
+              if isinstance(parent_op, IMListOp):
+                is_emit_error = False
+                if parent_op.is_numbered:
+                  listop.is_numbered = True
+                  if parent_op.has_attr('StartValue'):
+                    startvalue = parent_op.get_attr('StartValue').data
+                    assert isinstance(startvalue, int)
+                    listop.set_attr('StartValue', startvalue)
+                else:
+                  listop.is_numbered = False
+            if is_emit_error:
+              list_error_op = IMErrorElementOp('', listop.location, content = ConstantString.get(list_style, self.ctx), error = ConstantString.get('Cannot get list style', self.ctx))
           for listnode in node.childNodes:
             listnodetype = listnode.qname[1]
             match listnodetype:
@@ -369,9 +441,11 @@ class _ODParseContext:
                 paragraph = self.odf_parse_paragraph(node, isInFrame, default_style)
                 result.push_back(paragraph)
               case 'list-item':
-                self.odf_parse_frame(listop.add_list_item(), listnode, False, default_style)
+                self.odf_parse_frame(listop.add_list_item(start_base), listnode, False, default_style)
           container_paragraph = Block('', self.ctx)
           container_paragraph.body.push_back(listop)
+          if list_error_op is not None:
+            container_paragraph.body.push_back(list_error_op)
           result.push_back(container_paragraph)
         case _:
           # node type not recognized
@@ -390,7 +464,9 @@ class _ODParseContext:
     # 2. 字体的大小成为了非局部的属性，容易产生意外结果
     # 因此，即使IR支持字体大小，我们也在此将丢弃所有大小信息，只将不会引起误判的内容（颜色，加粗，斜体等）加进去
     # 更新：放弃使用字体大小后，我们现在在生成阶段就直接在 IMElementOp 中生成符合要求的内容，因此在此处我们目前只合并相邻的、样式相同的文本
-    def walk_region(region : Region):
+    
+    def walk_region(region : Region) -> bool:
+      # 如果该区内所有的内容都被去除，则返回 True,否则返回 False
       blocks_to_delete = []
       for b in region.blocks:
         first_text_op : IMElementOp = None
@@ -455,12 +531,32 @@ class _ODParseContext:
             cur_op = cur_op.erase_from_parent()
           # done for this helper
 
+        op_to_delete = []
         for op in b.body:
           if op.get_num_regions() > 0:
             assert not isinstance(op, IMElementOp)
             coalesce()
+            emptied_regions : typing.List[Region] = []
             for r in op.regions:
-              walk_region(r)
+              ret = walk_region(r)
+              if ret:
+                emptied_regions.append(r)
+            if len(emptied_regions) > 0:
+              # 查看我们是否允许在该操作符内删掉区，甚至删除整个操作符
+              delete_op_if_empty = False
+              if isinstance(op, IMListOp):
+                # 列表下任意区都可以删
+                # 如果所有区都没了，列表也可以删
+                delete_op_if_empty = True
+              else:
+                # 默认什么区都不能删
+                # 如果以后有其他操作符可以删区，则在此处更新
+                emptied_regions.clear()
+              if len(emptied_regions) > 0:
+                for r in emptied_regions:
+                  r.erase_from_parent()
+                if op.get_num_regions() == 0 and delete_op_if_empty:
+                  op_to_delete.append(op)
           elif type(op) == IMElementOp:
             content = op.content.get()
             if isinstance(content, ConstantTextFragment) and not op.has_attr('StrikeThrough'):
@@ -478,6 +574,8 @@ class _ODParseContext:
             coalesce()
         # we walked through all the ops of the body
         coalesce()
+        for op in op_to_delete:
+          op.erase_from_parent()
         # 如果一个段落里全是被删除的文本，则我们在此也将把该段落去掉
         if not b.body.empty:
           is_all_strikethrough = True
@@ -493,8 +591,12 @@ class _ODParseContext:
       if len(blocks_to_delete) > 0:
         for b in blocks_to_delete:
           b.erase_from_parent()
+        if region.blocks.empty:
+          return True
+      return False
       # end of the helper function
     walk_region(doc.body)
+    # 我们不会删除文档的 body 区，所以此处不检查返回值
   
   def transform_pass_reassociate_lists(self, doc : IMDocumentOp):
     # 对所有的 IMListOp 进行重组，以解决以下问题：
@@ -533,7 +635,157 @@ class _ODParseContext:
     #     (a) 有一个空段落
     #     (b) 内容后开始了一个新列表，该新列表与目前的列表不匹配所以无法合并
     #         （不匹配指该新列表的样式（有无数字，有数字的话也包含数字的值）与其缩进等级对应的现列表的样式不同）
-    pass
+    #     在列表层级高于一层时，我们不使用文本的缩进来确定其属于哪个列表项，固定认为它们属于嵌套最深层的部分。原因如下：
+    #     (a) 使用文本编辑器的缩进层级时，除非是嵌套最深层的，否则有时很难让其对准自己想要的列表层级，不稳定
+    #     (b) 从文本样式中（我认为）比较难找到对应的列表层级，并且如果文本缩进不对应任何列表层级时的处理比较难选择最好的策略
+    #     (c) 暂时没有任何需要使用这种表述形式的场景，如果真的需要大列表嵌套小列表然后再后接内容的话，完全可以把后接的内容也变成列表项
+    def should_absorb_content(list : IMListOp):
+      # 检查一个列表是否应该“吸收”其他内容
+      # 一般来说，如果列表每一项都只有一行内容，我们不应该把后面一段的内容并入该列表最后一项中
+      # 如果列表最后一项是空的，则我们也不应该将之后的内容并入
+      # 只有当列表某一项有其他内容时（这种时候一般每一项都会有点内容），我们才做这种合并
+      # （如果目前该列表只有一项且该项不为空，则我们也认为可以吸收内容，不然所有的列表都会无法吸收内容，因为连第一项也没法收。。）
+
+      # 不应该发生这种情况，仅作检查
+      if list.get_num_regions() == 0:
+        return False
+      # 如果最后一项为空，则不合并内容
+      last_region = list.get_last_region()
+      if last_region.blocks.empty or last_region.blocks.back.body.empty:
+        return False
+      # 在之前的检查后，如果只有一项内容，则可以合并
+      if list.get_num_regions() == 1:
+        return True
+      # 检查每一项是否有除一个内容段落、一个列表操作项之外的其他内容，如果有的话就可以吸收
+      for r in list.regions:
+        is_first_content_block_found = False
+        is_first_list_block_found = False
+        for b in r.blocks:
+          if b.body.empty:
+            continue
+          if isinstance(b.body.front, IMListOp):
+            if is_first_list_block_found is True:
+              return True
+            is_first_list_block_found = True
+          else:
+            if is_first_content_block_found is True:
+              return True
+            is_first_content_block_found = True
+      return False
+
+    def walk_frame(frame : IMFrameOp):
+      # cur_listop_stack 维护一个当前 IMListOp 嵌套层级的栈
+      # 当我们不能再继续合并列表内容时，该栈清空
+      # 当我们需要合并一个段落到当前访问的列表时，我们把该段划分给栈顶的列表
+      # 但我们需要合并一个新的列表时，我们根据该列表的嵌套层级来进行合并
+      cur_listop_stack : typing.List[IMListOp] = []
+      cur_block = frame.body.blocks.front
+      while cur_block is not None:
+        if cur_block.body.empty:
+          # 遇到一个空段落
+          # 如果此时我们正在尝试合并，则立即停止
+          cur_listop_stack = []
+          cur_block = cur_block.get_next_node()
+          continue
+        # 该段落有内容
+        # 如果我们有 IMListOp，则该操作项一般独占一段（除非有错误）
+        # 如果这段是一个列表操作项，则我们首先尝试将其合并入当前的列表栈
+        # 如果可以的话就合并，不行的话就在合适的地方“断开”
+        # 如果这段不是一个列表操作项，则如果栈非空，就把该段内容“嫁接”到当前栈顶的列表操作项中
+        # 如果空栈，则继续寻找第一个列表项
+        if cur_block.body.size == 1 and isinstance(cur_block.body.front, IMListOp):
+          # 这段是一个列表操作项
+          if len(cur_listop_stack) > 0:
+            cur_list : IMListOp = cur_block.body.front
+            num_nest = 0
+            # 展开所有嵌套
+            # 如果该列表只有一个区，并且其内容也是一个列表，则我们视其为一重嵌套
+            while cur_list.get_num_regions() == 1:
+              first_region = cur_list.get_first_region()
+              if first_region.blocks.size == 1:
+                first_block = first_region.blocks.front
+                if first_block.body.size == 1 and isinstance(first_block.body.front, IMListOp):
+                  cur_list : IMListOp = first_block.body.front
+                  num_nest += 1
+                  continue
+              break
+            if num_nest > len(cur_listop_stack):
+              # 正常情况下不应该出现这样的情况（也许用户是故意的？）
+              # 放弃挣扎，跳过这个列表
+              # something weird is happening (maybe the user is intentionally doing the wrong thing?)
+              # just stop and skip this list
+              cur_listop_stack = []
+              cur_block = cur_block.get_next_node()
+              continue
+            if num_nest == len(cur_listop_stack):
+              # 开启一个新的层叠层级
+              # 将当前列表添加到栈顶列表最后一项的区中
+              # we are opening a new nest level
+              # move the current list to the stack top
+              cur_parent_block = cur_list.parent_block
+              assert cur_parent_block is not cur_block
+              cur_parent_block.remove_from_parent()
+              last_list = cur_listop_stack[-1]
+              last_listitem = last_list.get_last_region()
+              last_listitem.push_back(cur_parent_block)
+              cur_listop_stack.append(cur_list)
+              # 把 cur_block 删了然后继续
+              cur_block = cur_block.erase_from_parent()
+              continue
+            # 当前列表的层级与已有的列表相同，需要进行合并
+            # 首先检查两列表是否兼容：
+            # 如果列表使用点(Bullet point)，则必定兼容
+            # 如果列表使用数字，则所有区的名字不应重复
+            # 若列表不兼容，则重新开始
+            # 不管怎样，我们不会再需要层级更高的项
+            if len(cur_listop_stack) > num_nest+1:
+              cur_listop_stack = cur_listop_stack[0:num_nest+1]
+            is_compatible = False
+            existing_list = cur_listop_stack[num_nest]
+            if existing_list.is_numbered == cur_list.is_numbered:
+              is_compatible = True
+              if existing_list.is_numbered:
+                for r in cur_list.regions:
+                  if existing_list.get_region(r.name) is not None:
+                    is_compatible = False
+                    break
+              # 如果使用的是点，那么一定兼容，不需要额外检查
+              if is_compatible:
+                # 进行合并，这里我们只需将所有区搬迁到目标列表即可
+                region_to_move = cur_list.get_first_region()
+                while region_to_move is not None:
+                  existing_list.take_list_item(region_to_move)
+                  region_to_move = cur_list.get_first_region()
+                # 删除当前列表
+                cur_list.erase_from_parent()
+                # 把 cur_block 删了然后继续
+                cur_block = cur_block.erase_from_parent()
+                continue
+            # 这是列表不兼容的情况
+            cur_listop_stack = []
+            if num_nest == 0:
+              cur_listop_stack.append(cur_list)
+          else:
+            cur_listop_stack.append(cur_block.body.front)
+          cur_block = cur_block.get_next_node()
+          continue
+        # 该段有内容且不是op
+        # 把内容整合进栈顶列表的最后一项
+        while len(cur_listop_stack) > 0 and not should_absorb_content(cur_listop_stack[-1]):
+          cur_listop_stack.pop()
+        if len(cur_listop_stack) > 0:
+          block_to_move = cur_block
+          cur_block = cur_block.get_next_node()
+          block_to_move.remove_from_parent()
+          cur_listop_stack[-1].get_last_region().push_back(block_to_move)
+          continue
+          
+        # 有内容且不是列表项、目前栈为空，则继续寻找第一个列表
+        cur_block = cur_block.get_next_node()
+        continue
+          
+    # end of the helper
+    walk_frame(doc)
   
   def parse_odf(self) -> IMDocumentOp:
     self._populate_style_data(self.odfhandle.styles)

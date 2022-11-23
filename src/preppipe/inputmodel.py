@@ -110,12 +110,26 @@ class IMListOp(Operation):
   def is_numbered(self, v : bool) -> None:
     self._is_numbered = v
   
-  def add_list_item(self) -> Region:
-    name = str(self.get_num_items())
-    return self._add_region(name)
+  def add_list_item(self, start_base : int = 1) -> Region:
+    index = self.get_num_items() + start_base
+    return self._add_region(str(index))
   
   def get_item(self, index : int) -> Region:
     return self.get_region(self.get_item_region_name(index))
+  
+  def take_list_item(self, list_item : Region):
+    name = ''
+    if list_item.parent is not None:
+      name = list_item.name
+      list_item.remove_from_parent()
+    if len(name) == 0 or name in self._regions:
+      # create a new name
+      index = self.get_num_items() + 1
+      name = str(index)
+      while name in self._regions:
+        index += 1
+        name = str(index)
+    self._take_region(list_item, name)
   
   @property
   def body(self):

@@ -205,6 +205,9 @@ class NameDict(collections.abc.MutableMapping, typing.Generic[T]):
   def __iter__(self):
     return iter(self._dict)
   
+  def __reversed__(self):
+    return reversed(self._dict)
+  
   def __len__(self):
     return len(self._dict)
 
@@ -233,6 +236,9 @@ class NameDictNode(typing.Generic[T]):
   def _update_parent_info(self, parent: NameDict[T], name : str) -> None:
     self._dictref = parent
     self._name = name
+  
+  def remove_from_parent(self):
+    self.dictref.__delitem__(self.name)
   
   @property
   def dictref(self) -> NameDict[T]:
@@ -819,6 +825,18 @@ class Operation(IListNode):
   def regions(self) -> typing.Iterable[Region]:
     return self._regions.values()
   
+  def get_first_region(self) -> Region:
+    try:
+      return next(iter(self._regions.values()))
+    except StopIteration:
+      return None
+  
+  def get_last_region(self) -> Region:
+    try:
+      return self._regions[next(reversed(self._regions))]
+    except StopIteration:
+      return None
+  
   def drop_all_references(self) -> None:
     # drop all references to outside values; required before erasing
     for operand in self._operands.values():
@@ -903,11 +921,15 @@ class Operation(IListNode):
   
   def view(self) -> None:
     # for debugging
-    _view_operation_impl(self)
+    writer = IRWriter(self.context, True, None, None)
+    dump = writer.write_op(self)
+    _view_content_helper(dump, self.name)
   
   def dump(self) -> None:
     # for debugging
-    _dump_operation_impl(self)
+    writer = IRWriter(self.context, False, None, None)
+    dump = writer.write_op(self)
+    print(dump.decode('utf-8'))
 
 class Symbol(Operation):
   def __init__(self, name: str, loc: Location, **kwargs) -> None:
@@ -944,6 +966,10 @@ class Block(Value, IListNode):
     self._name = name
   
   @property
+  def context(self) -> Context:
+    return self.valuetype.context
+  
+  @property
   def name(self) -> str:
     return self._name
   
@@ -965,6 +991,9 @@ class Block(Value, IListNode):
   @property
   def body(self) -> IList[Operation, Block]:
     return self._ops
+  
+  def get_next_node(self) -> Block:
+    return self.next
   
   def add_argument(self, name : str, ty : ValueType) -> BlockArgument:
     arg = BlockArgument(ty)
@@ -988,6 +1017,17 @@ class Block(Value, IListNode):
   
   def push_back(self, op : Operation):
     self._ops.push_back(op)
+  
+  def view(self) -> None:
+    # for debugging
+    writer = IRWriter(self.context, True, None, None)
+    dump = writer.write_block(self)
+    _view_content_helper(dump, self.name)
+  
+  def dump(self) -> None:
+    writer = IRWriter(self.context, False, None, None)
+    dump = writer.write_block(self)
+    print(dump.decode('utf-8'))
 
 class Region(NameDictNode):
   _blocks : IList[Block, Region]
@@ -995,6 +1035,14 @@ class Region(NameDictNode):
   def __init__(self) -> None:
     super().__init__()
     self._blocks = IList(self)
+  
+  @property
+  def context(self) -> Context | None:
+    if not self._blocks.empty:
+      return self._blocks.front.context
+    if self.parent is not None:
+      return self.parent.context
+    return None
   
   def push_back(self, block : Block) -> None:
     self._blocks.push_back(block)
@@ -1010,6 +1058,10 @@ class Region(NameDictNode):
     for b in self._blocks:
       b.drop_all_references()
   
+  def erase_from_parent(self) -> None:
+    self.remove_from_parent()
+    self.drop_all_references()
+  
   @property
   def entry_block(self) -> Block:
     return self._blocks.front
@@ -1019,9 +1071,32 @@ class Region(NameDictNode):
     return super().parent
   
   def add_block(self, name : str = '') -> Block:
-    block = Block(name, self.parent.context)
+    ctx = self.context
+    if ctx is None:
+      raise RuntimeError('Cannot find context')
+    block = Block(name, ctx)
     self._blocks.push_back(block)
     return block
+  
+  def view(self) -> None:
+    # for debugging
+    ctx = self.context
+    if ctx is None:
+      print('Region.view(): empty region, cannot get context')
+      return
+    writer = IRWriter(ctx, True, None, None)
+    dump = writer.write_region(self)
+    _view_content_helper(dump, self.name)
+  
+  def dump(self) -> None:
+    # for debugging
+    ctx = self.context
+    if ctx is None:
+      print('Region.view(): empty region, cannot get context')
+      return
+    writer = IRWriter(ctx, False, None, None)
+    dump = writer.write_region(self)
+    print(dump.decode('utf-8'))
 
 class SymbolTableRegion(Region, collections.abc.Sequence):
   # if a region is a symbol table, it will always have one block
@@ -1718,8 +1793,9 @@ class IRWriter:
   _output_body : io.BytesIO # the <body> part
   _output_asset : io.BytesIO # the <style> part
   _max_indent_level : int # maximum indent level; we need this to create styles for text with different indents
+  _html_dump : bool # True: output HTML; False: output text dump
   
-  def __init__(self, ctx : Context, asset_pin_dict : dict[AssetData, str], asset_export_dict : dict[str, AssetData] | None) -> None:
+  def __init__(self, ctx : Context, html_dump : bool, asset_pin_dict : dict[AssetData, str], asset_export_dict : dict[str, AssetData] | None) -> None:
     # assets in asset_pin_dict are already exported and we can simply use the mapped value to reference the specified asset
     # if asset_export_dict is not None, the printer expect all remaining assets to be exported with path as key and content as value
     # if asset_export_dict is None, then the printer writes all remaining assets embedded in the export HTML
@@ -1732,8 +1808,11 @@ class IRWriter:
     self._asset_export_cache = {}
     self._asset_index_dict = None
     self._max_indent_level = 0
+    self._html_dump = html_dump
     
   def escape(self, htmlstring):
+    if not self._html_dump:
+      return htmlstring
     escapes = {'\"': '&quot;',
               '\'': '&#39;',
               '<': '&lt;',
@@ -1746,6 +1825,10 @@ class IRWriter:
   
   def _write_body(self, content : str):
     self._output_body.write(content.encode('utf-8'))
+  
+  def _write_body_html(self, content : str):
+    if self._html_dump:
+      self._write_body(content)
   
   def _index_assets(self) -> dict[AssetData, int]:
     if self._asset_index_dict is not None:
@@ -1766,7 +1849,10 @@ class IRWriter:
     # for now we don't try to emit any asset; just print their ID as a text element and done
     id = self._index_assets()[asset]
     asset_name = type(asset).__name__
-    s = "<span class=\"AssetPlaceholder\">#" + hex(id) + " " + asset_name + "</span>"
+    body_str = '#' + hex(id) + " " + asset_name
+    if not self._html_dump:
+      return body_str
+    s = "<span class=\"AssetPlaceholder\">" + self.escape(body_str) + "</span>"
     return s.encode('utf-8')
     
     # check if we have already exported it
@@ -1867,23 +1953,27 @@ class IRWriter:
     #   <regions>
     
     isHasBody = op.get_num_regions() > 0
-    # step 1: write the operation header
     optail = ''
-    if level == 0:
-      # this is the top-level op
-      # we just use <p> to wrap it
-      self._write_body('<p>')
-      optail = '</p>'
-    else:
-      # this is an internal op
-      # create a list item where itself is also a list
-      if isHasBody:
-        self._write_body('<li><details open><summary>')
-        optail = '</summary>'
+    # step 1: write the operation header
+    if self._html_dump:
+      if level == 0:
+        # this is the top-level op
+        # we just use <p> to wrap it
+        self._write_body('<p>')
+        optail = '</p>'
       else:
-        self._write_body('<li>')
-        optail = ''
-      
+        # this is an internal op
+        # create a list item where itself is also a list
+        if isHasBody:
+          self._write_body('<li><details open><summary>')
+          optail = '</summary>'
+        else:
+          self._write_body('<li>')
+          optail = ''
+    else:
+      # text dump
+      if level > 0:
+        self._write_body('  '*level)
     # old version that do not use list
     # self._write_body('<p class=\"' + self._get_indent_stylename(level) + '">')
     self._write_body(self.escape(self._get_operation_short_name(op))) # [#<id> ClassName]"Name"
@@ -1949,71 +2039,23 @@ class IRWriter:
       if self._max_indent_level < body_level:
         self._max_indent_level = body_level
       regions_end = ''
-      if level == 0:
-        # starting a top-level list
-        self._write_body('<ul class="tree">')
-        regions_end = '</ul>'
-      else:
-        # starting a nested list
-        self._write_body('<ul>')
-        regions_end = '</ul></details>'
+      if self._html_dump:
+        if level == 0:
+          # starting a top-level list
+          self._write_body('<ul class="tree">')
+          regions_end = '</ul>'
+        else:
+          # starting a nested list
+          self._write_body('<ul>')
+          regions_end = '</ul></details>'
+      # no need for anything here in text dump
       
       for r in op.regions:
-        region_title = hex(id(r)) + ' ' + type(r).__name__ + ' "' + r.name + '"'
-        
-        #self._write_body('<p class=\"' + self._get_indent_stylename(level) + '">')
-        self._write_body('<li>')
-        if r.blocks.empty:
-          # this is an empty region
-          self._write_body(self.escape(region_title))
-        else:
-          # this region have body
-          # use nested list
-          self._write_body('<details open><summary>')
-          self._write_body(self.escape(region_title))
-          self._write_body('</summary><ul>')
-          for b in r.blocks:
-            self._write_body('<li>')
-            block_end = ''
-            block_title_end = ''
-            if b.body.empty:
-              # no child for this block; just a normal list item
-              block_end = '</li>'
-            else:
-              # there are children for this block; use nested list
-              self._write_body('<details open><summary>')
-              block_title_end = '</summary><ul>'
-              block_end = '</ul></details></li>'
-            
-            #self._write_body('<p class=\"' + self._get_indent_stylename(level+1) + '">')
-            body_header = '<anon>'
-            if len(b.name) > 0:
-              body_header = '"' + b.name + '"'
-            
-            # now prepare body arguments
-            arg_name_list = []
-            for arg in b.arguments():
-              if len(arg.name) == 0:
-                arg_name_list.append('<anon>')
-              else:
-                arg_name_list.append(arg.name)
-            body_header = hex(id(b)) + ' ' + body_header + '(' + ','.join(arg_name_list) + ')'
-            self._write_body(self.escape(body_header))
-            if len(block_title_end) > 0:
-              self._write_body(block_title_end)
-            for o in b.body:
-              self._walk_operation(o, body_level)
-            self._write_body(block_end)
-            
-          self._write_body('</ul></details>')
-        #self._write_body(self.escape(r.name + ':'))
-        #self._write_body('</p>\n')
-        
-        # finishing current region
-        self._write_body('</li>')
+        retval = self._walk_region(r, level+1)
+        assert retval is None
       
       # done traversing all regions
-      self._write_body(regions_end + '\n')
+      self._write_body(regions_end)
     # done writing regions
     if level == 0:
       # this is the top-level op
@@ -2022,22 +2064,85 @@ class IRWriter:
     else:
       # this is a nested op
       # write the enclosing mark
-      self._write_body('</li>\n')
+      self._write_body_html('</li>\n')
       pass
     # done!
     return None
   
-  def print(self, op : Operation) -> bytes:
-    # perform an HTML export with op as the top-level Operation. The return value is the HTML
-    content = io.BytesIO()
+  def _walk_region(self, r : Region, level : int) -> None:
+    # for HTML dump, this should be in a <ul> element
+    region_title = hex(id(r)) + ' ' + type(r).__name__ + ' "' + r.name + '"'
+    
+    #self._write_body('<p class=\"' + self._get_indent_stylename(level) + '">')
+    if self._html_dump:
+      self._write_body('<li>')
+    else:
+      self._write_body('  '*level)
+    if r.blocks.empty:
+      # this is an empty region
+      self._write_body(self.escape(region_title))
+      self._write_body('\n')
+    else:
+      # this region have body
+      # use nested list
+      self._write_body_html('<details open><summary>')
+      self._write_body(self.escape(region_title))
+      self._write_body_html('</summary><ul>')
+      self._write_body('\n')
+      for b in r.blocks:
+        self._walk_block(b, level+1)
+      self._write_body_html('</ul></details>')
+    #self._write_body(self.escape(r.name + ':'))
+    #self._write_body('</p>\n')
+    
+    # finishing current region
+    self._write_body_html('</li>')
+    return None
+  
+  def _walk_block(self, b : Block, level : int) -> None:
+    # for HTML dump, this should be in a <ul> element
+    self._write_body_html('<li>')
+    block_end = ''
+    block_title_end = ''
+    if self._html_dump:
+      if b.body.empty:
+        # no child for this block; just a normal list item
+        block_end = '</li>'
+      else:
+        # there are children for this block; use nested list
+        self._write_body('<details open><summary>')
+        block_title_end = '</summary><ul>'
+        block_end = '</ul></details></li>'
+    else:
+      self._write_body('  '*level)
+    
+    body_header = '<anon>'
+    if len(b.name) > 0:
+      body_header = '"' + b.name + '"'
+    
+    # now prepare body arguments
+    arg_name_list = []
+    for arg in b.arguments():
+      if len(arg.name) == 0:
+        arg_name_list.append('<anon>')
+      else:
+        arg_name_list.append(arg.name)
+    body_header = hex(id(b)) + ' ' + body_header + '(' + ','.join(arg_name_list) + ')'
+    self._write_body(self.escape(body_header) + block_title_end + '\n')
+    for o in b.body:
+      self._walk_operation(o, level+1)
+    self._write_body(block_end)
+    return None
+  
+  def write_html_boilerplate(self, content : io.BytesIO, name : str) -> None:
+    title = 'Anonymous dump'
+    if len(name) > 0:
+      assert isinstance(name, str)
+      title = self.escape(name)
     content.write(b'''<!DOCTYPE html>
 <html>
 <head>
 ''')
-    title = 'Anonymous dump'
-    if len(op.name) > 0:
-      title = op.name
-      assert isinstance(title, str)
     content.write(b'<title>' + title.encode('utf-8') + b'</title>')
     self._output_asset.write(b'<style>\n')
     self._output_asset.write(b'''.AssetPlaceholder {
@@ -2048,9 +2153,6 @@ class IRWriter:
 }
 ''')
     self._output_body.write(b'<body>\n')
-    self._walk_operation(op, 0)
-    self._output_body.write(b'</body>')
-    
     # write styles for indent levels
     #for curlevel in range(0, self._max_indent_level):
     #  stylestr = 'p.' + self._get_indent_stylename(curlevel) + '{ text-indent: ' + str(curlevel * 15) + 'px}\n'
@@ -2140,19 +2242,64 @@ class IRWriter:
   content : '-';
 }
 ''')
+  
+  def write_html_end(self, content : io.BytesIO):
     self._output_asset.write(b'</style>')
+    self._output_body.write(b'</body>')
     content.write(self._output_asset.getbuffer())
     content.write(self._output_body.getbuffer())
     content.write(b'</html>\n')
+  
+  def write_op_html(self, op : Operation) -> bytes:
+    # perform an HTML export with op as the top-level Operation. The return value is the HTML
+    content = io.BytesIO()
+    self.write_html_boilerplate(content, op.name)
+    self._walk_operation(op, 0)
+    self.write_html_end(content)
     return content.getvalue()
+  
+  def write_op(self, op : Operation) -> bytes:
+    assert isinstance(op, Operation)
+    if self._html_dump:
+      return self.write_op_html(op)
+    self._walk_operation(op, 0)
+    return self._output_body.getvalue()
+  
+  def write_region(self, r : Region) -> bytes:
+    assert isinstance(r, Region)
+    if self._html_dump:
+      content = io.BytesIO()
+      self.write_html_boilerplate(content, r.name)
+      self._write_body_html('<ul class="tree">')
+      self._walk_region(r, 0)
+      self._write_body_html('</ul>')
+      self.write_html_end(content)
+      return content.getvalue()
+    # text dump
+    self._walk_region(r, 0)
+    return self._output_body.getvalue()
+  
+  def write_block(self, b : Block) -> bytes:
+    assert isinstance(b, Block)
+    if self._html_dump:
+      content = io.BytesIO()
+      self.write_html_boilerplate(content, b.name)
+      self._write_body_html('<ul class="tree">')
+      self._walk_block(b, 0)
+      self._write_body_html('</ul>')
+      self.write_html_end(content)
+      return content.getvalue()
+    # text dump
+    self._walk_block(b, 0)
+    return self._output_body.getvalue()
 
-def _dump_operation_impl(op : Operation) -> None:
-  raise NotImplementedError('Use view() instead')
-
-def _view_operation_impl(op : Operation) -> None:
-  writer = IRWriter(op.context, None, None)
-  dump = writer.print(op)
-  file = tempfile.NamedTemporaryFile('w+b', suffix='_viewdump.html', prefix='preppipe_', delete=False)
+def _view_content_helper(dump : bytes, name : str):
+  name_portion = 'anon'
+  if len(name) > 0:
+    sanitized_name = get_sanitized_filename(name)
+    if len(sanitized_name) > 0:
+      name_portion = sanitized_name
+  file = tempfile.NamedTemporaryFile('w+b', suffix='_viewdump.html', prefix='preppipe_' + name_portion + '_', delete=False)
   file.write(dump)
   file.close()
   path = os.path.abspath(file.name)
@@ -2187,3 +2334,11 @@ class IRVerifier:
   def verifyOperation(op : Operation, ostream) -> bool:
     verifier = IRVerifier(ostream)
     return verifier.verify(op)
+
+# ------------------------------------------------------------------------------
+# Utility
+# ------------------------------------------------------------------------------
+
+def get_sanitized_filename(s : str) -> str:
+  illegal_chars = ['#', '%', '&', '{', '}', '\\', '/', ' ', '?', '*', '>', '<', '$', '!', "'", '"', ':', '@', '+', '`', '|', '=']
+  return s.translate({ord(c) : None for c in illegal_chars})
