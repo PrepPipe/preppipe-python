@@ -2,8 +2,20 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import typing
+import collections
+
+import antlr4
+from antlr4.error.ErrorListener import ErrorListener
+from antlr4.error.ErrorListener import ConsoleErrorListener
 
 from .commandast import *
+
+from ._antlr_generated.CommandScanLexer      import CommandScanLexer
+from ._antlr_generated.CommandScanParser     import CommandScanParser
+from ._antlr_generated.CommandScanListener   import CommandScanListener
+from ._antlr_generated.CommandParseLexer     import CommandParseLexer
+from ._antlr_generated.CommandParseParser    import CommandParseParser
+from ._antlr_generated.CommandParseListener  import CommandParseListener
 
 # this is the function to call for users
 def create_command_ast(text : str, debugloc : typing.Any) -> CommandAST:
@@ -12,19 +24,6 @@ def create_command_ast(text : str, debugloc : typing.Any) -> CommandAST:
 # ------------------------------------------------------------------------------
 # Implementation detail
 # ------------------------------------------------------------------------------
-
-import collections
-
-import antlr4
-from antlr4.error.ErrorListener import ErrorListener
-from antlr4.error.ErrorListener import ConsoleErrorListener
-
-from ._antlr_generated.CommandScanLexer      import CommandScanLexer
-from ._antlr_generated.CommandScanParser     import CommandScanParser
-from ._antlr_generated.CommandScanListener   import CommandScanListener
-from ._antlr_generated.CommandParseLexer     import CommandParseLexer
-from ._antlr_generated.CommandParseParser    import CommandParseParser
-from ._antlr_generated.CommandParseListener  import CommandParseListener
 
 def _strip_whitespaces(text: str) -> typing.Tuple[str, int, int]: # trimmed string, leading WS, terminating WS
   cur_text = text.lstrip()

@@ -22,6 +22,7 @@ COMMAOP      : ',' | '\uFF0C' ;
 // consider using environments if the use case cannot be supported
 QUOTEDSTR : '"' (~'"')*? '"' | '\'' (~'\'')*? '\'' | '\u201C' (~'\u201D')*? '\u201D' ;
 
+// NATURALTEXT excludes whitespaces, ',', '"', '\'', '=', '[', ']', ':', '#', and their unicode variants
 NATURALTEXT : (~[ \t\r\n\u00A0\u2000-\u200B\u202F\u205F\u3000\uFEFF,\uFF0C"'\u201C\u201D=\uFF1D[\u3010\]\u3011:\uFF1A#\uFF03])+ ;
 
 value  : NATURALTEXT | QUOTEDSTR | ELEMENT ;
