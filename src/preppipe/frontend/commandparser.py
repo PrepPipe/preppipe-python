@@ -211,10 +211,10 @@ class _CommandScanListener(CommandScanListener):
     
     self.commandinfo.append(result)
 
-    if result.is_comment:
-      print("Comment: \"" + result.body + "\" " + str(result.body_range) + " <- " + str(result.total_range))
-    else:
-      print("Command: \"" + result.body + "\" " + str(result.body_range) + " <- " + str(result.total_range))
+    # if result.is_comment:
+    #   print("Comment: \"" + result.body + "\" " + str(result.body_range) + " <- " + str(result.total_range))
+    # else:
+    #   print("Command: \"" + result.body + "\" " + str(result.body_range) + " <- " + str(result.total_range))
 
 @dataclasses.dataclass
 class _CommandParseErrorRecord:
@@ -362,8 +362,8 @@ class _CommandParseListenerImpl(CommandParseListener):
   is_in_positionals : bool
   kw_name : ElementValueNode | None
   kw_value : ElementValueNode | None
-  start : int
-  end : int
+  rawarg_start : int
+  rawarg_end : int
 
   def __init__(self, fulltext : str, global_offset : int, startloc : Location) -> None:
     super().__init__()
@@ -374,13 +374,15 @@ class _CommandParseListenerImpl(CommandParseListener):
     self.global_offset = global_offset
     self.kw_name = None
     self.kw_value = None
-    self.start = -1
-    self.end = -1
+    self.rawarg_start = -1
+    self.rawarg_end = -1
   
   def _get_loc(self, offset : int) -> Location:
     loc = self.startloc
     if isinstance(loc, DILocation):
-      loc = loc.context.get_DILocation(loc.file, loc.page, loc.row, offset)
+      offset_correction = loc.column - self.global_offset
+      assert offset_correction == 1
+      loc = loc.context.get_DILocation(loc.file, loc.page, loc.row, offset + offset_correction)
     return loc
   
   def _expand_value(self, node : ElementValueNode) -> typing.Tuple[Value, Location]:
@@ -409,10 +411,10 @@ class _CommandParseListenerImpl(CommandParseListener):
       assert self.kw_value is None
       self.kw_value = element
     # update start and end
-    if self.start == -1:
-      self.start = element.start
-    if self.end == -1 or self.end < element.end:
-      self.end = element.end
+    if self.rawarg_start == -1:
+      self.rawarg_start = element.start
+    if self.rawarg_end == -1 or self.rawarg_end < element.end:
+      self.rawarg_end = element.end
 
   def enterName(self, ctx: CommandParseParser.NameContext):
     name = _parseName(self.global_offset, ctx)
@@ -420,16 +422,19 @@ class _CommandParseListenerImpl(CommandParseListener):
       # 这是命令的名称
       nameval, nameloc = self._expand_value(name)
       self.commandop = GeneralCommandOp('', self.startloc, nameval, nameloc)
+      # 同时更新这个位置
+      self.rawarg_start = name.end
+      self.rawarg_end = name.end
       return
     # 不是命令名的话那就是 kwarg 的名了
     assert not self.is_in_positionals
     assert self.kw_name is None
     self.kw_name = name
     # update start and end
-    if self.start == -1:
-      self.start = name.start
-    if self.end == -1 or self.end < name.end:
-      self.end = name.end
+    if self.rawarg_start == -1:
+      self.rawarg_start = name.start
+    if self.rawarg_end == -1 or self.rawarg_end < name.end:
+      self.rawarg_end = name.end
   
   def exitKwvalue(self, ctx: CommandParseParser.KwvalueContext):
     assert self.kw_name is not None and self.kw_value is not None
@@ -441,8 +446,8 @@ class _CommandParseListenerImpl(CommandParseListener):
     self.kw_value = None
   
   def exitArgumentlist(self, ctx:CommandParseParser.ArgumentlistContext):
-    rawarg_start = self.start
-    rawarg_end = self.end
+    rawarg_start = self.rawarg_start
+    rawarg_end = self.rawarg_end
     rawarg_text = self.fulltext[rawarg_start:rawarg_end]
     self.commandop.set_raw_arg(ConstantString.get(rawarg_text, self.startloc.context), self._get_loc(rawarg_start))
     
