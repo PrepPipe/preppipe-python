@@ -212,7 +212,7 @@ class _ODParseContext:
       cstyle = ConstantTextStyle.get(style.style, self.ctx)
     else:
       cstyle = ConstantTextStyle.get(style.style, self.ctx)
-      error_op = IMErrorElementOp(name = '', loc = loc, content = content, error = ConstantString.get('Cannot find style name \"' + style_name + '"', self.ctx))
+      error_op = IMErrorElementOp(name = '', loc = loc, content = content, error_code='odf-bad-style-name', error_msg = ConstantString.get('Cannot find style name \"' + style_name + '"', self.ctx))
     content = ConstantTextFragment.get(self.ctx, content, cstyle)
     node = IMElementOp(name = '', loc = loc, content = content)
     if is_strike_through:
@@ -242,7 +242,7 @@ class _ODParseContext:
       else:
         content = value[0]
         err = value[1]
-        return IMErrorElementOp(name = '', loc = loc, content = content, error = err)
+        return IMErrorElementOp(name = '', loc = loc, content = content, error_code='odf-bad-image-ref', error_msg = err)
     
     value : Value = None
     if href in self.odfhandle.Pictures:
@@ -271,14 +271,14 @@ class _ODParseContext:
       textstr = ConstantString.get(href, self.ctx)
       msgstr = ConstantString.get(msg, self.ctx)
       self.asset_reference_dict[href] = (textstr, msgstr)
-      return IMErrorElementOp(name = '', loc = loc, content = textstr, error = msgstr)
+      return IMErrorElementOp(name = '', loc = loc, content = textstr, error_code='odf-bad-image-ref', error_msg = msgstr)
     
     self.asset_reference_dict[href] = value
     return IMElementOp(name = '', loc = loc, content = value)
   
-  def _get_unsupported_element_op(self, element : odf.element.Element) -> IMUnsupportedElementOp:
+  def _get_unsupported_element_op(self, element : odf.element.Element) -> IMErrorElementOp:
     loc = self.get_DILocation(self.cur_page_count, self.cur_row_count, self.cur_column_count)
-    return IMUnsupportedElementOp(name = str(element.qname), loc = loc, content = ConstantString.get(str(element), self.ctx))
+    return IMErrorElementOp(name = str(element.qname), loc = loc, content = ConstantString.get(str(element), self.ctx), error_code='unsupported-element')
   
   def odf_parse_paragraph(self, rootnode : odf.element.Element, isInFrame : bool, default_style: str = "") -> Block:
     def populate_paragraph(paragraph: Block, rootnode : odf.element.Element, default_style: str, isInFrame : bool) -> None:
@@ -341,7 +341,7 @@ class _ODParseContext:
               if isInFrame:
                 warn_str = "Frame (" + first_child_name +") is inside a framed environment, and is therefore ignored"
                 MessageHandler.warning(warn_str, self.filePath, str(loc))
-                paragraph.push_back(IMErrorElementOp('', loc, ConstantString.get("text-box", self.ctx), ConstantString.get(warn_str, self.ctx)))
+                paragraph.push_back(IMErrorElementOp('', loc, content= ConstantString.get("text-box", self.ctx), error_code='odf-nested-frame', error_msg= ConstantString.get(warn_str, self.ctx)))
               else:
                 # let's deal with this text box
                 # the default text style for textbox text is specified on the frame, instead of the text-box element
@@ -430,7 +430,7 @@ class _ODParseContext:
                 else:
                   listop.is_numbered = False
             if is_emit_error:
-              list_error_op = IMErrorElementOp('', listop.location, content = ConstantString.get(list_style, self.ctx), error = ConstantString.get('Cannot get list style', self.ctx))
+              list_error_op = IMErrorElementOp('', listop.location, content = ConstantString.get(list_style, self.ctx), error_code='odf-bad-list-style', error_msg = ConstantString.get('Cannot get list style', self.ctx))
           for listnode in node.childNodes:
             listnodetype = listnode.qname[1]
             match listnodetype:

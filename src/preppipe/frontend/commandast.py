@@ -15,7 +15,7 @@ class ASTNodeBase:
   end : int # index +1 of last character of this AST node
   text: str # content of this node
 
-  def to_string(self, indent : int) -> str:
+  def to_string(self, _indent : int) -> str:
     return '\"' + self.text + '\" ' + '[' + str(self.start) + ',' + str(self.end) + ']'
   
   def __str__(self) -> str:
@@ -89,7 +89,7 @@ class CommandAST:
   debugloc: typing.Any # debug location of this AST
   bodylist: typing.List[ASTNodeBase] # list of parsed command info
 
-  def to_string(self, indent: int) -> str:
+  def to_string(self, _indent: int) -> str:
     result = "CommandAST DebugLoc=" + str(self.debugloc)
     for body in self.bodylist:
       result += '\n' + '  ' + body.to_string(1)
