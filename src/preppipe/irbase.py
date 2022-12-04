@@ -953,6 +953,47 @@ class Symbol(Operation):
     assert isinstance(table, SymbolTableRegion)
     table._drop_symbol(self.name)
 
+class MetadataOp(Operation):
+  # 所有不带语义的操作项的基类（错误记录，注释，等等）
+  def __init__(self, name: str, loc: Location, **kwargs) -> None:
+    super().__init__(name, loc, **kwargs)
+
+class ErrorOp(MetadataOp):
+  # 错误项用以记录编译中遇到的错误
+  # 所有错误项需要(1)一个错误编号，(2)一个错误消息
+  # 一般来说所有转换都需要忽视这些错误项，把它们留在IR里不去动它们
+  _error_code : str
+  _error_message_operand : OpOperand
+  
+  def __init__(self, name : str, loc: Location, error_code : str, error_msg : ConstantString = None, **kwargs) -> None:
+    assert isinstance(error_code, str)
+    assert isinstance(error_msg, ConstantString)
+    super().__init__(name, loc, **kwargs)
+    self._error_code = error_code
+    self._error_message_operand = self._add_operand_with_value('message', error_msg)
+    self._add_intrinsic_attr('Code', 'error_code')
+  
+  @property
+  def error_code(self) -> str:
+    return self._error_code
+  
+  @property
+  def error_message(self) -> ConstantString:
+    return self._error_message_operand.get()
+
+class CommentOp(MetadataOp):
+  # 注释项用以保留源中的用户输入的注释
+  # 一般来说我们努力将其保留到输出源文件中
+  _comment_operand : OpOperand
+  
+  def __init__(self, name: str, loc: Location, comment : ConstantString, **kwargs) -> None:
+    super().__init__(name, loc, **kwargs)
+    self._comment_operand = self._add_operand_with_value('comment', comment)
+  
+  @property
+  def comment(self) -> ConstantString:
+    return self._comment_operand.get()
+
 class Block(Value, IListNode):
   _ops : IList[Operation, Block]
   _args : NameDict[BlockArgument]
@@ -1690,6 +1731,9 @@ class ConstantTextFragment(Constant, User):
   @property
   def style(self) -> ConstantTextStyle:
     return self.get_operand(1)
+
+  def get_string(self) -> str:
+    return self.content.value
   
   @staticmethod
   def get(context : Context, string : ConstantString, styles : ConstantTextStyle) -> ConstantTextFragment:
@@ -1708,6 +1752,14 @@ class ConstantText(Constant, User):
     super().__init__(ty, value, **kwargs)
     for frag in value:
       self.add_operand(frag)
+  
+  def get_string(self) -> str:
+    result = ''
+    for i in range(0, self.get_num_operands()):
+      v = self.get_operand(i)
+      assert isinstance(v, ConstantTextFragment)
+      result += v.content.value
+    return result
   
   @staticmethod
   def _check_value_tuple(value: tuple[ConstantTextFragment]) -> None:

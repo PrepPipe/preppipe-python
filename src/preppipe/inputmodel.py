@@ -53,23 +53,19 @@ class IMElementOp(Operation):
   def content(self):
     return self._content_operand
     
-class IMErrorElementOp(IMElementOp):
+class IMErrorElementOp(ErrorOp):
   # 该类代表读取中发生的错误
   # 内容项是对内容的最合适的形式的表述，错误项是关于该错误的字符串描述
-  _error_operand : OpOperand
+  #_error_operand : OpOperand
+  _content_operand : OpOperand
   
-  def __init__(self, name: str, loc: Location, content : Value, error : Value, **kwargs) -> None:
-    super().__init__(name = name, loc = loc, content = content, **kwargs)
-    self._error_operand = self._add_operand_with_value('error', error)
+  def __init__(self, name: str, loc: Location, content : Value, error_code : str, error_msg : ConstantString = None, **kwargs) -> None:
+    super().__init__(name = name, loc = loc, error_code=error_code, error_msg=error_msg, **kwargs)
+    self._content_operand = self._add_operand_with_value('content', content)
 
   @property
-  def error(self):
-    return self._error_operand
-
-class IMUnsupportedElementOp(IMElementOp):
-  # keep a string representation for stuff we don't recognize for now
-  def __init__(self, name: str, loc: Location, content: Value, **kwargs) -> None:
-    super().__init__(name, loc, content, **kwargs)
+  def content(self):
+    return self._content_operand
 
 class IMFrameOp(Operation):
   # frame 代表一个文档或文本框的顶层结构
