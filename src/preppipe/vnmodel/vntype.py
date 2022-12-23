@@ -94,6 +94,19 @@ class VNCharacterDeclType(ValueType):
   def get(ctx : Context) -> VNCharacterDeclType:
     return ctx.get_stateless_type(VNCharacterDeclType)
 
+class VNLocationDeclType(ValueType):
+  # for location identity
+  
+  def __init__(self, context: Context) -> None:
+    super().__init__(context)
+  
+  def __str__(self) -> str:
+    return "场景声明类型"
+  
+  @staticmethod
+  def get(ctx : Context) -> VNLocationDeclType:
+    return ctx.get_stateless_type(VNLocationDeclType)
+
 class VNFunctionReferenceType(ValueType):
   # the value type for VNFunction
   # all VNFunctions take no arguments; all states passed through variables, so this is a stateless type

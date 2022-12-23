@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # This is the latest (2022-11-30) version of command parser; commandast.py and commandastparser.py is obsolete
-
+from __future__ import annotations
 import typing
 import collections
+import dataclasses
 
 import antlr4
 from antlr4.error.ErrorListener import ErrorListener
@@ -20,6 +21,8 @@ from ._antlr_generated.CommandParseListener  import CommandParseListener
 from ..irbase import *
 from ..inputmodel import *
 
+# 命令扫描（语法分析阶段）
+  
 # ------------------------------------------------------------------------------
 # Command AST definition
 # ------------------------------------------------------------------------------
@@ -277,7 +280,6 @@ def _splitTextAsCommands(text : str) -> typing.List[_InitParsedCommandInfo] | _C
 
 # ------------------------------------------------------------------------------
 # 命令解析
-# TODO
 
 class _CommandParseErrorListener(_CommandCreationErrorListenerBase):
   pass
@@ -411,10 +413,10 @@ class _CommandParseListenerImpl(CommandParseListener):
       assert self.kw_value is None
       self.kw_value = element
     # update start and end
-    if self.rawarg_start == -1:
-      self.rawarg_start = element.start
-    if self.rawarg_end == -1 or self.rawarg_end < element.end:
-      self.rawarg_end = element.end
+    #if self.rawarg_start == -1:
+    #  self.rawarg_start = element.start
+    #if self.rawarg_end == -1 or self.rawarg_end < element.end:
+    #  self.rawarg_end = element.end
 
   def enterName(self, ctx: CommandParseParser.NameContext):
     name = _parseName(self.global_offset, ctx)
@@ -431,10 +433,21 @@ class _CommandParseListenerImpl(CommandParseListener):
     assert self.kw_name is None
     self.kw_name = name
     # update start and end
-    if self.rawarg_start == -1:
-      self.rawarg_start = name.start
-    if self.rawarg_end == -1 or self.rawarg_end < name.end:
-      self.rawarg_end = name.end
+    #if self.rawarg_start == -1:
+    #  self.rawarg_start = name.start
+    #if self.rawarg_end == -1 or self.rawarg_end < name.end:
+    #  self.rawarg_end = name.end
+  
+  def enterArgumentlist(self, ctx: CommandParseParser.ArgumentlistContext):
+    # 如果有参数列表的话，我们直接从这里提取 rawarg 的范围
+    raw_start = ctx.start.start
+    raw_end = ctx.stop.stop + 1
+    self.rawarg_start = raw_start + self.global_offset
+    self.rawarg_end = raw_end + self.global_offset
+    
+    # natural_text_token = natural_text_node.getSymbol()
+    # start = natural_text_token.start
+    # end = natural_text_token.stop + 1
   
   def exitKwvalue(self, ctx: CommandParseParser.KwvalueContext):
     assert self.kw_name is not None and self.kw_value is not None

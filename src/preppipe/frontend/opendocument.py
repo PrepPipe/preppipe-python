@@ -639,7 +639,9 @@ class _ODParseContext:
     #     (a) 使用文本编辑器的缩进层级时，除非是嵌套最深层的，否则有时很难让其对准自己想要的列表层级，不稳定
     #     (b) 从文本样式中（我认为）比较难找到对应的列表层级，并且如果文本缩进不对应任何列表层级时的处理比较难选择最好的策略
     #     (c) 暂时没有任何需要使用这种表述形式的场景，如果真的需要大列表嵌套小列表然后再后接内容的话，完全可以把后接的内容也变成列表项
-    def should_absorb_content(list : IMListOp):
+    #     更新：我们现在不再做这一项，如果有“关于A的描述”需要合并，用户可以给它们新建一层列表（即给A加一个列表，每段内容都作为列表项）
+    #     有这个转换的话容易把一些意外的内容并入
+    def _should_absorb_content(list : IMListOp):
       # 检查一个列表是否应该“吸收”其他内容
       # 一般来说，如果列表每一项都只有一行内容，我们不应该把后面一段的内容并入该列表最后一项中
       # 如果列表最后一项是空的，则我们也不应该将之后的内容并入
@@ -770,15 +772,17 @@ class _ODParseContext:
           cur_block = cur_block.get_next_node()
           continue
         # 该段有内容且不是op
+        # 清空当前栈
         # 把内容整合进栈顶列表的最后一项
-        while len(cur_listop_stack) > 0 and not should_absorb_content(cur_listop_stack[-1]):
-          cur_listop_stack.pop()
-        if len(cur_listop_stack) > 0:
-          block_to_move = cur_block
-          cur_block = cur_block.get_next_node()
-          block_to_move.remove_from_parent()
-          cur_listop_stack[-1].get_last_region().push_back(block_to_move)
-          continue
+        #while len(cur_listop_stack) > 0 and not should_absorb_content(cur_listop_stack[-1]):
+        #  cur_listop_stack.pop()
+        cur_listop_stack.clear()
+        #if len(cur_listop_stack) > 0:
+        #  block_to_move = cur_block
+        #  cur_block = cur_block.get_next_node()
+        #  block_to_move.remove_from_parent()
+        #  cur_listop_stack[-1].get_last_region().push_back(block_to_move)
+        #  continue
           
         # 有内容且不是列表项、目前栈为空，则继续寻找第一个列表
         cur_block = cur_block.get_next_node()

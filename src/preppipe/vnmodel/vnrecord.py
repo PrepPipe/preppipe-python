@@ -129,6 +129,11 @@ class VNCharacterRecord(VNRecord, Value):
     ty = VNCharacterDeclType.get(loc.context)
     super().__init__(name = name, loc = loc, ty = ty, **kwargs)
 
+class VNSceneRecord(VNRecord, Value):
+  def __init__(self, name: str, loc: Location, **kwargs) -> None:
+    ty = VNSceneDeclType.get(loc.context)
+    super().__init__(name = name, loc = loc, ty = ty, **kwargs)
+
 class VNDisplayableTransitionEffectRecord(VNRecord):
   # 可显示项的转场效果记录，类型都是特效函数类型（VNEffectFunctionType）
 

@@ -5,7 +5,7 @@ import sys
 
 from .inputmodel import Context, IMSettings, IMParseCache
 from .frontend.opendocument import parse_odf
-from .frontend.commandparser import perform_command_parse_transform
+from .frontend.commandsyntaxparser import perform_command_parse_transform
 
 def _testmain():
   if len(sys.argv) < 2 or len(sys.argv[1]) == 0:
