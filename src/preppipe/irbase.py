@@ -967,7 +967,8 @@ class ErrorOp(MetadataOp):
   
   def __init__(self, name : str, loc: Location, error_code : str, error_msg : ConstantString = None, **kwargs) -> None:
     assert isinstance(error_code, str)
-    assert isinstance(error_msg, ConstantString)
+    if error_msg is not None:
+      assert isinstance(error_msg, ConstantString)
     super().__init__(name, loc, **kwargs)
     self._error_code = error_code
     self._error_message_operand = self._add_operand_with_value('message', error_msg)
