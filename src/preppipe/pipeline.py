@@ -326,8 +326,9 @@ class TransformRegistration:
         # 把输出值赋过去
         output_path = ''
         if isinstance(value, list):
-          assert len(value) == 1
-          output_path = value[0]
+          assert len(value) < 2
+          if len(value) != 0:
+            output_path = value[0]
         else:
           output_path = value
         transform_inst.set_output_path(output_path)
@@ -380,9 +381,16 @@ class _LoadIR(TransformBase):
   def run(self) -> Operation | typing.List[Operation]:
     raise NotImplementedError()
 
+@BackendDecl('save', input_decl=Operation, output_decl=IODecl('IR file', nargs=1))
 class _SaveIR(TransformBase):
   def run(self) -> None:
     raise NotImplementedError()
+
+@BackendDecl('dump', input_decl=Operation, output_decl=IODecl('<No output>', nargs=0))
+class _DumpIR(TransformBase):
+  def run(self) -> None:
+    for op in self.inputs:
+      op.dump()
 
 def pipeline_main(args : typing.List[str] = None):
   # args 应该是不带 sys.argv[0] 的
