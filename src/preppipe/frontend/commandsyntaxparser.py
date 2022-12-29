@@ -20,6 +20,7 @@ from ._antlr_generated.CommandParseListener  import CommandParseListener
 
 from ..irbase import *
 from ..inputmodel import *
+from ..pipeline import TransformBase, MiddleEndDecl
 
 # 命令扫描（语法分析阶段）
   
@@ -114,6 +115,19 @@ def perform_command_parse_transform(op : Operation):
   for r in op.regions:
     for b in r.blocks:
       visit_block(b)
+
+@MiddleEndDecl('cmdsyntax', input_decl=IMDocumentOp, output_decl=IMDocumentOp)
+class CommandSyntaxAnalysisTransform(TransformBase):
+  def run(self) -> IMDocumentOp | typing.List[IMDocumentOp] | None:
+    if len(self.inputs) == 1:
+      op = self.inputs[0]
+      perform_command_parse_transform(op)
+      return op
+    result = []
+    for op in self.inputs:
+      perform_command_parse_transform(op)
+      result.append(op)
+    return result
 
 def check_is_command_start(b : Block, ctx: Context) -> typing.Tuple[str, typing.List[AssetData], IMElementOp, typing.List[IMElementOp]] | None:
   # 检查该段是否含有以 _command_start_text 中所标的字符开头并且是纯内容（不包含像是 IMFrameOp, IMListOp这种），是的话就返回:
