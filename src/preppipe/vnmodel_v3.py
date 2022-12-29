@@ -29,6 +29,8 @@ class VNNamespace(Operation, Value):
 
 class VNModel(Operation):
   _namespace_region : SymbolTableRegion
+  # 为了复用符号表的有关代码，我们把命名空间的不同部分用'/'分隔开，和目录一样，全局命名空间也有'/'
+  # 根据命名空间查找内容应该使用额外的手段（比如前段可以用 nameresolution 有关的实现）
   def __init__(self, name: str, loc: Location, **kwargs) -> None:
     super().__init__(name, loc, **kwargs)
     self._namespace_region = self._add_symbol_table('namespaces')
