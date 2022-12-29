@@ -9,6 +9,8 @@ import PIL.Image
 import odf.opendocument
 
 from ..inputmodel import *
+import argparse
+from ..pipeline import TransformBase, FrontendDecl, IODecl
 
 class _TextStyleInfo:
   # temporary structure for text style
@@ -809,6 +811,26 @@ def parse_odf(ctx : Context, settings : IMSettings, cache : IMParseCache, filePa
   # ctx : Context, settings : IMSettings, cache : IMParseCache, filePath : str
   pc = _ODParseContext(ctx = ctx, settings = settings, cache = cache, filePath = filePath)
   return pc.parse_odf()
+
+@FrontendDecl('odf', input_decl=IODecl('OpenDocument files', match_suffix=('.odf',), nargs='+'), output_decl=IMDocumentOp)
+class ReadOpenDocument(TransformBase):
+  _ctx : Context
+  _settings : IMSettings
+  _cache : IMParseCache
+  
+  def __init__(self, _ctx: Context) -> None:
+    super().__init__(_ctx)
+    self._ctx = _ctx
+    self._settings = IMSettings()
+    self._cache = IMParseCache(self._ctx)
+  
+  def run(self) -> IMDocumentOp | typing.List[IMDocumentOp]:
+    if len(self.inputs) == 1:
+      return parse_odf(self._ctx, self._settings, self._cache, self.inputs[0])
+    results = []
+    for f in self.inputs:
+      results.append(parse_odf(self._ctx, self._settings, self._cache, f))
+    return results
 
 def _main():
   if len(sys.argv) < 2 or len(sys.argv[1]) == 0:
