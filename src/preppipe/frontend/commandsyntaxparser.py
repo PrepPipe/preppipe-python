@@ -39,6 +39,10 @@ class CMDPositionalArgOp(Operation):
   def __init__(self, name: str, loc: Location, value : Value, **kwargs) -> None:
     super().__init__(name, loc, **kwargs)
     self._value_operand = self._add_operand_with_value('value', value)
+  
+  @property
+  def value(self):
+    return self._value_operand.get()
 
 class CMDValueSymbol(Symbol):
   # representing a value in the command, or an argument value
@@ -49,6 +53,10 @@ class CMDValueSymbol(Symbol):
   def __init__(self, name: str, loc: Location, value : Value, **kwargs) -> None:
     super().__init__(name, loc, **kwargs)
     self._value_operand = self._add_operand_with_value('value', value)
+  
+  @property
+  def value(self):
+    return self._value_operand.get()
 
 class GeneralCommandOp(Operation):
   # 所有能被识别的命令（能找到命令名以及参数列表）

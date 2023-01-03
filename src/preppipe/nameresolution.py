@@ -43,6 +43,9 @@ class _NameResolutionDataEntryKind(enum.Enum):
 class NameResolver(typing.Generic[T]):
   _root : NamespaceNode[T]
   
+  def set_root(self, r : NamespaceNode[T]):
+    self._root = r
+  
   def get_namespace_node(self, path : typing.Tuple[str]) -> NamespaceNode[T] | None:
     current_node = self._root
     for step in path:
@@ -132,6 +135,9 @@ class NamespaceNode(typing.Generic[T]):
         return self.namespace_tree.get_namespace_node(data)
       case _:
         raise NotImplementedError('Unexpected data entry kind')
+  
+  def unqualified_lookup(self, name : str, using_namespace_paths : typing.Iterable[typing.Tuple[str]]) -> NamespaceNode[T] | T | None:
+    return self.namespace_tree.unqualified_lookup(name, self.namespace_path, using_namespace_paths)
 
   def __init__(self,tree : NameResolver[T],  parent : NamespaceNode[T], cname : str | None) -> None:
     super().__init__()
@@ -159,7 +165,10 @@ class NamespaceNode(typing.Generic[T]):
     self._data_dict[cname] = (_NameResolutionDataEntryKind.CanonicalChild, child)
   
   def add_local_alias(self, name : str, alias : str) -> None:
-    assert name != alias
+    assert isinstance(name, str)
+    assert isinstance(alias, str)
+    if name == alias:
+      return
     if alias in self._data_dict:
       raise RuntimeError('given alias "' + alias + '" is already used:' + str(self._data_dict[alias]))
     resolved_name = name
