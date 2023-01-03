@@ -71,6 +71,10 @@ class TransformBase:
   def output(self):
     return self._output
   
+  @property
+  def context(self):
+    return self._ctx
+  
   def __str__(self) -> str:
     result = type(self).__name__
     iostr = ''

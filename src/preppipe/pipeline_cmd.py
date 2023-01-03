@@ -9,6 +9,7 @@ from .pipeline import pipeline_main
 
 from .frontend import opendocument
 from .frontend import commandsyntaxparser
+from .frontend.vnmodel import vnparser_v2
 
 if __name__ == "__main__":
   pipeline_main()

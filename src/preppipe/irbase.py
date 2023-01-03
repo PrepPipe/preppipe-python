@@ -65,12 +65,15 @@ class IList(typing.Generic[T], llist.dllist):
   
   def insert(self, where : T, node : T):
     super().insertnodebefore(node, where)
+    node.node_inserted(self.parent)
   
   def push_back(self, node : T):
     super().appendnode(node)
+    node.node_inserted(self.parent)
   
   def push_front(self, node : T):
     super().insertnodebefore(node, super().first)
+    node.node_inserted(self.parent)
   
   def get_index_of(self, node : T) -> int:
     # -1 if node not found, node index if found
@@ -85,6 +88,7 @@ class IList(typing.Generic[T], llist.dllist):
   def merge_into(self, dest : IList[T]):
     while self.front is not None:
       v = self.front
+      v.node_removed(self.parent)
       super().remove(v)
       dest.push_back(v)
   
@@ -812,6 +816,11 @@ class Operation(IListNode):
   def get_region(self, name : str) -> Region:
     return self._regions.get(name)
   
+  def get_symbol_table(self, name : str) -> SymbolTableRegion:
+    r = self.get_region(name)
+    assert isinstance(r, SymbolTableRegion)
+    return r
+  
   def get_num_regions(self) -> int:
     return len(self._regions)
   
@@ -918,6 +927,11 @@ class Operation(IListNode):
     if parent_region is not None:
       return parent_region.parent
     return None
+  
+  def __str__(self) -> str:
+    writer = IRWriter(self.context, False, None, None)
+    dump = writer.write_op(self)
+    return dump.decode('utf-8')
   
   def view(self) -> None:
     # for debugging
@@ -1096,6 +1110,9 @@ class Region(NameDictNode):
   def blocks(self) -> IList[Block, Region]:
     return self._blocks
   
+  def get_num_blocks(self) -> int:
+    return self._blocks.size
+  
   def drop_all_references(self) -> None:
     for b in self._blocks:
       b.drop_all_references()
@@ -1151,6 +1168,7 @@ class SymbolTableRegion(Region, collections.abc.Sequence):
     self._block = Block("", context)
     self.push_back(self._block)
     self._anonymous_count = 0
+    self._lookup_dict = {}
   
   def _get_anonymous_name(self):
     result = str(self._anonymous_count)

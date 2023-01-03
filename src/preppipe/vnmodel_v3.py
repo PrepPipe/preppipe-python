@@ -13,7 +13,7 @@ from enum import Enum
 
 from .commontypes import *
 from .irbase import *
-from vnmodel.vntype import *
+from .vnmodel.vntype import *
   
 class VNNamespace(Operation, Value):
   _function_region : Region
