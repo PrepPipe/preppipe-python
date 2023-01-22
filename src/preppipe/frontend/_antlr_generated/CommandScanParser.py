@@ -92,6 +92,12 @@ class CommandScanParser ( Parser ):
             if hasattr( listener, "exitCommand" ):
                 listener.exitCommand(self)
 
+        def accept(self, visitor:ParseTreeVisitor):
+            if hasattr( visitor, "visitCommand" ):
+                return visitor.visitCommand(self)
+            else:
+                return visitor.visitChildren(self)
+
 
 
 
@@ -161,6 +167,12 @@ class CommandScanParser ( Parser ):
             if hasattr( listener, "exitBody" ):
                 listener.exitBody(self)
 
+        def accept(self, visitor:ParseTreeVisitor):
+            if hasattr( visitor, "visitBody" ):
+                return visitor.visitBody(self)
+            else:
+                return visitor.visitChildren(self)
+
 
 
 
@@ -220,6 +232,12 @@ class CommandScanParser ( Parser ):
             if hasattr( listener, "exitCommands" ):
                 listener.exitCommands(self)
 
+        def accept(self, visitor:ParseTreeVisitor):
+            if hasattr( visitor, "visitCommands" ):
+                return visitor.visitCommands(self)
+            else:
+                return visitor.visitChildren(self)
+
 
 
 
@@ -278,6 +296,12 @@ class CommandScanParser ( Parser ):
         def exitRule(self, listener:ParseTreeListener):
             if hasattr( listener, "exitLine" ):
                 listener.exitLine(self)
+
+        def accept(self, visitor:ParseTreeVisitor):
+            if hasattr( visitor, "visitLine" ):
+                return visitor.visitLine(self)
+            else:
+                return visitor.visitChildren(self)
 
 
 
