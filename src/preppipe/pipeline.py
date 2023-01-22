@@ -396,6 +396,12 @@ class _DumpIR(TransformBase):
     for op in self.inputs:
       op.dump()
 
+@BackendDecl('view', input_decl=Operation, output_decl=IODecl('<No output>', nargs=0))
+class _ViewIR(TransformBase):
+  def run(self) -> None:
+    for op in self.inputs:
+      op.view()
+
 def pipeline_main(args : typing.List[str] = None):
   # args 应该是不带 sys.argv[0] 的
   # (pipeline_cmd.py 中，这个参数是 sys.argv[1:])
