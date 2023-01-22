@@ -8,6 +8,24 @@ else:
 # This class defines a complete listener for a parse tree produced by CommandParseParser.
 class CommandParseListener(ParseTreeListener):
 
+    # Enter a parse tree produced by CommandParseParser#evalue.
+    def enterEvalue(self, ctx:CommandParseParser.EvalueContext):
+        pass
+
+    # Exit a parse tree produced by CommandParseParser#evalue.
+    def exitEvalue(self, ctx:CommandParseParser.EvalueContext):
+        pass
+
+
+    # Enter a parse tree produced by CommandParseParser#callexpr.
+    def enterCallexpr(self, ctx:CommandParseParser.CallexprContext):
+        pass
+
+    # Exit a parse tree produced by CommandParseParser#callexpr.
+    def exitCallexpr(self, ctx:CommandParseParser.CallexprContext):
+        pass
+
+
     # Enter a parse tree produced by CommandParseParser#value.
     def enterValue(self, ctx:CommandParseParser.ValueContext):
         pass
@@ -50,6 +68,15 @@ class CommandParseListener(ParseTreeListener):
 
     # Exit a parse tree produced by CommandParseParser#kwargs.
     def exitKwargs(self, ctx:CommandParseParser.KwargsContext):
+        pass
+
+
+    # Enter a parse tree produced by CommandParseParser#arguments.
+    def enterArguments(self, ctx:CommandParseParser.ArgumentsContext):
+        pass
+
+    # Exit a parse tree produced by CommandParseParser#arguments.
+    def exitArguments(self, ctx:CommandParseParser.ArgumentsContext):
         pass
 
 

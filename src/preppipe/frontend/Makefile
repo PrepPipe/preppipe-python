@@ -20,7 +20,7 @@ $(GENDIR)/README.txt:
 
 $(GENDIR)/%.tokens: %.g4
 	mkdir -p $(GENDIR)
-	$(ANTLR4) -Dlanguage=Python3 $< -o $(GENDIR) -listener -no-visitor
+	$(ANTLR4) -Dlanguage=Python3 $< -o $(GENDIR) -listener -visitor
 
 rule: $(ALLTOKENOUTPUTS)
 

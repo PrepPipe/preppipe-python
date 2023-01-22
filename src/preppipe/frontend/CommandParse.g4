@@ -15,6 +15,8 @@ COMMANDSEP   : ':' | '\uFF1A' ;
 ASSIGNMENTOP : '=' | '\uFF1D' ;
 COMMAOP      : ',' | '\uFF0C' ;
 
+CALLSTART    : '(' | '\uff08' ;
+CALLEND      : ')' | '\uff09' ;
 
 // quoted strings ("text", 'text', “text”)
 // https://stackoverflow.com/questions/29800106/how-do-i-escape-an-escape-character-with-antlr-4
@@ -22,18 +24,25 @@ COMMAOP      : ',' | '\uFF0C' ;
 // consider using environments if the use case cannot be supported
 QUOTEDSTR : '"' (~'"')*? '"' | '\'' (~'\'')*? '\'' | '\u201C' (~'\u201D')*? '\u201D' ;
 
-// NATURALTEXT excludes whitespaces, ',', '"', '\'', '=', '[', ']', ':', '#', and their unicode variants
-NATURALTEXT : (~[ \t\r\n\u00A0\u2000-\u200B\u202F\u205F\u3000\uFEFF,\uFF0C"'\u201C\u201D=\uFF1D[\u3010\]\u3011:\uFF1A#\uFF03])+ ;
+// NATURALTEXT excludes whitespaces, ',', '"', '\'', '=', '[', ']', '(', ')', ':', '#', and their unicode variants
+NATURALTEXT : (~[ \t\r\n\u00A0\u2000-\u200B\u202F\u205F\u3000\uFEFF,\uFF0C"'\u201C\u201D=\uFF1D[\u3010\]\u3011(\uff08)\uff09:\uFF1A#\uFF03])+ ;
 
-value  : NATURALTEXT | QUOTEDSTR | ELEMENT ;
+// elementary value
+evalue : NATURALTEXT | QUOTEDSTR | ELEMENT ;
+
+// call expression as value
+callexpr : name CALLSTART arguments CALLEND ;
+
+value  : evalue | callexpr ;
 name   : NATURALTEXT | QUOTEDSTR ;
 
 kwvalue : name ASSIGNMENTOP value ;
 
-positionals : value (COMMAOP? value)* ;
-kwargs : kwvalue (COMMAOP? kwvalue)* ;
+positionals : (value COMMAOP?)+ ;
+kwargs : (kwvalue COMMAOP?)+ ;
 
-argumentlist : positionals? COMMAOP? kwargs? EOF ;
+arguments : positionals? kwargs? ;
+argumentlist : arguments EOF ;
 
 
 // we place EOF in the rule of argumentlist so that if the argument list cannot be properly parsed, we still get a valid command node with command name available
