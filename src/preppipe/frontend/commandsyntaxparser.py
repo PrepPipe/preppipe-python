@@ -77,6 +77,8 @@ class GeneralCommandOp(Operation):
   _keywordarg_region : SymbolTableRegion
   _nested_callexpr_region : Region # single block, list of inner GeneralCommandOp
   _nested_callexpr_block : Block
+  _extend_data_region : Region
+  _extend_data_block : Block
   _valueref : OpResult
   
   def __init__(self, name: str, loc: Location, name_value : ConstantString, name_loc : Location, **kwargs) -> None:
@@ -85,6 +87,7 @@ class GeneralCommandOp(Operation):
     self._positionalarg_region = self._add_region('positional_arg')
     self._keywordarg_region = self._add_symbol_table('keyword_arg')
     self._nested_callexpr_region = self._add_region('nested_calls')
+    self._extend_data_region = self._add_region('extend_data')
     self._valueref = self._add_result('', CommandCallReferenceType.get(self.context))
 
     # initialize the head region (name here)
@@ -95,6 +98,8 @@ class GeneralCommandOp(Operation):
     # no initialization for keyword args region
     # initialize the nested call region
     self._nested_callexpr_block = self._nested_callexpr_region.add_block('')
+    # initialize the extend data region
+    self._extend_data_block = self._extend_data_region.add_block('')
   
   def add_positional_arg(self, value: Value, loc : Location):
     argop = CMDPositionalArgOp('', loc, value)
@@ -110,6 +115,10 @@ class GeneralCommandOp(Operation):
 
   def add_nested_call(self, call : GeneralCommandOp):
     self._nested_callexpr_block.push_back(call)
+  
+  def add_extend_data(self, data : Operation):
+    assert self._extend_data_block.body.empty
+    self._extend_data_block.push_back(data)
 
   @property
   def valueref(self):
@@ -120,35 +129,57 @@ class GeneralCommandOp(Operation):
 # ------------------------------------------------------------------------------
 
 def perform_command_parse_transform(op : Operation):
-  def visit_block(b : Block):
-    # 如果该块的开头是以'['或'【'开始的文本或其他数据,则将所有内容重整为单个字符串（所有非字符内容，像图片、声音素材等，都会转化为'\0'来做特判）
-    # 否则遍历每个操作项，递归遍历每个块
-    result_tuple = check_is_command_start(b, op.context)
-    if result_tuple is None:
-      # 该块不是命令
-      # 递归遍历所有子项
-      for child_op in b.body:
-        if isinstance(child_op, MetadataOp):
-          continue
-        for r in child_op.regions:
-          for b in r.blocks:
-            visit_block(b)
-      # 不是命令的情况处理完毕
-      return
-    # 如果是命令的话就调用下面的具体实现
-    # 在第一个字符元素前添加命令操作项
-    _visit_command_block_impl(b, op.context, result_tuple[0], result_tuple[1], result_tuple[2])
-    # 然后把该块内y用于生成命令的所有内容清除
-    consumed_ops = result_tuple[3]
-    for deadop in consumed_ops:
-      deadop.erase_from_parent()
-    
   # 开始递归
   # 输入的 op 应该是像类似 IMDocumentOp 那样的顶层结构，虽然更小范围的也没有问题
+  blocks_to_remove : list[Block] = []
   assert not isinstance(op, GeneralCommandOp)
   for r in op.regions:
+    prev_command = None
     for b in r.blocks:
-      visit_block(b)
+      prev_command = _visit_block(b, prev_command, blocks_to_remove, op.context)
+    if len(blocks_to_remove) > 0:
+      for b in blocks_to_remove:
+        b.erase_from_parent()
+      blocks_to_remove.clear()
+
+def _visit_block(hostblock : Block, prev_command : GeneralCommandOp, blocks_to_remove : list[Block], ctx : Context):
+  # 如果该块的开头是以'['或'【'开始的文本或其他数据,则将所有内容重整为单个字符串（所有非字符内容，像图片、声音素材等，都会转化为'\0'来做特判）
+  # 否则遍历每个操作项，递归遍历每个块
+  result_tuple = check_is_command_start(hostblock, ctx)
+  if result_tuple is None:
+    # 该块不是命令
+    # 递归遍历所有子项
+    for child_op in hostblock.body:
+      if isinstance(child_op, MetadataOp):
+        continue
+      for r in child_op.regions:
+        prev = None
+        for b in r.blocks:
+          prev = _visit_block(b, prev, blocks_to_remove, ctx)
+    # 然后看看该项是不是列表、表格、特殊块，并且前面有一个命令
+    # (目前只有列表已经实现，其他的都还没做。。。)
+    if prev_command is not None:
+      first_child = None
+      for child_op in hostblock.body:
+        if isinstance(child_op, MetadataOp):
+          continue
+        first_child = child_op
+        break
+      if isinstance(first_child, IMListOp):
+        first_child.remove_from_parent()
+        prev_command.add_extend_data(first_child)
+        if hostblock.body.empty:
+          blocks_to_remove.append(hostblock)
+    # 不是命令的情况处理完毕
+    return None
+  # 如果是命令的话就调用下面的具体实现
+  # 在第一个字符元素前添加命令操作项
+  last_command = _visit_command_block_impl(hostblock, ctx, result_tuple[0], result_tuple[1], result_tuple[2])
+  # 然后把该块内y用于生成命令的所有内容清除
+  consumed_ops = result_tuple[3]
+  for deadop in consumed_ops:
+    deadop.erase_from_parent()
+  return last_command
 
 @MiddleEndDecl('cmdsyntax', input_decl=IMDocumentOp, output_decl=IMDocumentOp)
 class CommandSyntaxAnalysisTransform(TransformBase):
@@ -496,8 +527,8 @@ class _CommandParseVisitorImpl(CommandParseVisitor):
 #  body : str # content of the body (leading and terminating whitespace trimmed)
 #  body_range : typing.Tuple[int, int] # start and end position of the body text
 
-def _visit_command_block_impl(b : Block, ctx : Context, command_str : str, asset_list : typing.List[AssetData], insert_before_op : IMElementOp) -> None:
-  
+def _visit_command_block_impl(b : Block, ctx : Context, command_str : str, asset_list : typing.List[AssetData], insert_before_op : IMElementOp) -> GeneralCommandOp | None:
+  # 如果生成了命令的话，返回最后一个生成的命令
   # 帮助生成位置信息
   headloc = insert_before_op.location
   def get_loc_at_offset(offset : int):
@@ -521,7 +552,7 @@ def _visit_command_block_impl(b : Block, ctx : Context, command_str : str, asset
     return
   
   # 开始处理
-  # num_commands_created = 0 # 如果我们最后一个命令都没有生成，那就
+  last_command = None
   assert isinstance(infolist, list)
   for info in infolist:
     # total_range = info.total_range
@@ -560,5 +591,6 @@ def _visit_command_block_impl(b : Block, ctx : Context, command_str : str, asset
     cmd_visitor.visit(tree)
     result_command_op = cmd_visitor.commandop
     result_command_op.insert_before(insert_before_op)
+    last_command = result_command_op
     continue
-    
+  return last_command
