@@ -1072,6 +1072,8 @@ class Block(Value, IListNode):
     return retval
   
   def push_back(self, op : Operation):
+    if op.parent is not None:
+      raise RuntimeError('Cannot add operation with parent')
     self._ops.push_back(op)
   
   def view(self) -> None:
