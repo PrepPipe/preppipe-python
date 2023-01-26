@@ -1656,6 +1656,9 @@ class ConstantString(Constant):
   def value(self) -> str:
     return super().value
   
+  def get_string(self) -> str:
+    return self.value
+  
   @staticmethod
   def get(value : str, context : Context) -> ConstantString:
     return Constant._get_constant_impl(ConstantString, value, context)

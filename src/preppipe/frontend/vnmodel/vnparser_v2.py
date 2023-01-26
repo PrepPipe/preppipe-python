@@ -119,13 +119,13 @@ def cmd_variable_decl(parser: VNParser, commandop : GeneralCommandOp, name : str
 @CommandDecl(vn_command_ns, _imports, 'DeclCharacter', alias={
   '声明角色' : {'name': '姓名'}, # zh_CN
 })
-def cmd_character_decl(parser: VNParser, commandop : GeneralCommandOp, name : str):
+def cmd_character_decl(parser: VNParser, commandop : GeneralCommandOp, name : str, ext : ListExprOperand):
   pass
 
 @CommandDecl(vn_command_ns, _imports, 'DeclCharacterSprite', alias={
-  '声明角色立绘' : {'character_name': '角色姓名', 'state_tags': '状态标签', 'image': '图片'}, # zh_CN
+  '声明角色立绘' : {'character_state_expr': '角色与状态表达式', 'image': '图片'}, # zh_CN
 })
-def cmd_character_sprite_decl(parser : VNParser, commandop : GeneralCommandOp, character_name : str, image : str, state_tags : str = ''):
+def cmd_character_sprite_decl(parser : VNParser, commandop : GeneralCommandOp, character_state_expr : CallExprOperand | str, image : str):
   # 定义一个角色的外观状态（一般是立绘差分，比如站姿、衣着、等），使得角色变换状态时能够切换立绘
   # 这必须是一个独立于角色声明的操作，因为更多角色外观等可以通过DLC等形式进行补足，所以它们可能处于不同的命名空间中
   # 在实际的内容中，一个角色的状态标签会有很多（包含衣着、站姿、表情等），
@@ -165,7 +165,7 @@ def cmd_set_character_state(parser : VNParser, commandop : GeneralCommandOp):
 @CommandDecl(vn_command_ns, _imports, 'DeclScene', alias={
   '声明场景' : {'name': '名称'}, # zh_CN
 })
-def cmd_scene_decl(parser : VNParser, commandop : GeneralCommandOp, name : str):
+def cmd_scene_decl(parser : VNParser, commandop : GeneralCommandOp, name : str, ext : ListExprOperand):
   pass
 
 @CommandDecl(vn_command_ns, _imports, 'DeclSceneBackground', alias={
@@ -176,9 +176,9 @@ def cmd_scene_background_decl(parser : VNParser, commandop : GeneralCommandOp, s
   pass
 
 @CommandDecl(vn_command_ns, _imports, 'DeclAlias', alias={
-  '声明别名' : {'alias_name': '别名名称', 'target':'目标', 'state_tags': '状态标签'}, # zh_CN
+  '声明别名' : {'alias_name': '别名名称', 'target':'目标'}, # zh_CN
 })
-def cmd_alias_decl(parser : VNParser, commandop : GeneralCommandOp, alias_name : str, target : str, state_tags : str = ''):
+def cmd_alias_decl(parser : VNParser, commandop : GeneralCommandOp, alias_name : str, target : CallExprOperand):
   # (仅在解析时用到，不会在IR中)
   # 给目标添加别名（比如在剧本中用‘我’指代某个人）
   pass
@@ -186,14 +186,48 @@ def cmd_alias_decl(parser : VNParser, commandop : GeneralCommandOp, alias_name :
 # ------------------------------------------------------------------------------
 # 内容操作命令
 # ------------------------------------------------------------------------------
-def cmd_character_entry(parser : VNParser, commandop : GeneralCommandOp, characters : str, transition : str):
+@CommandDecl(vn_command_ns, _imports, 'CharacterEnter', alias={
+  '角色入场': {'characters': '角色', 'transition': '转场'}
+})
+def cmd_character_entry(parser : VNParser, commandop : GeneralCommandOp, characters : list[CallExprOperand], transition : CallExprOperand = None):
   pass
 
 def cmd_wait_finish(parser : VNParser, commandop : GeneralCommandOp):
   pass
 
-def cmd_character_exit(parser : VNParser, commandop : GeneralCommandOp, characters : str, transition : str):
+@CommandDecl(vn_command_ns, _imports, 'CharacterExit', alias={
+  '角色退场': {'characters': '角色', 'transition': '转场'}
+})
+def cmd_character_exit(parser : VNParser, commandop : GeneralCommandOp, characters : list[CallExprOperand], transition : CallExprOperand = None):
   pass
+
+@CommandDecl(vn_command_ns, _imports, 'SpecialEffect', alias={
+  '特效': {'effect': '特效'}
+})
+def cmd_special_effect(parser : VNParser, commandop : GeneralCommandOp, effect : CallExprOperand):
+  pass
+
+@CommandDecl(vn_command_ns, _imports, 'SwitchCharacterState', alias={
+  '切换角色状态': {'state_expr': '状态表达式'}
+})
+def cmd_switch_character_state(parser : VNParser, commandop : GeneralCommandOp, state_expr : list[str] | CallExprOperand):
+  # 如果是个调用表达式，则角色名是调用的名称
+  # 如果是一串标签字符串，则更改默认发言者的状态
+  # 优先匹配一串字符串
+  pass
+
+@CommandDecl(vn_command_ns, _imports, 'SwitchScene', alias={
+  '切换场景': {'scene': '场景'}
+})
+def cmd_switch_scene(parser : VNParser, commandop : GeneralCommandOp, scene: CallExprOperand):
+  pass
+
+@CommandDecl(vn_command_ns, _imports, 'HideImage', alias={
+  '收起图片': {'image_name': '图片名', 'transition': '转场'}
+})
+def cmd_hide_image(parser : VNParser, commandop : GeneralCommandOp, image_name : str, transition : CallExprOperand = None):
+  pass
+
 
 # ------------------------------------------------------------------------------
 # 控制流相关的命令
@@ -205,14 +239,21 @@ def cmd_character_exit(parser : VNParser, commandop : GeneralCommandOp, characte
 def cmd_set_function(parser : VNParser, commandop : GeneralCommandOp, name : str):
   pass
 
+
+@CommandDecl(vn_command_ns, _imports, 'Choice', alias={
+  '选项': {'name': '名称', 'finish_action': '结束动作'}
+})
+def cmd_choice(parser : VNParser, commandop : GeneralCommandOp, ext : ListExprOperand, name : str, finish_action : CallExprOperand = CallExprOperand('continue')):
+  pass
+
 # ------------------------------------------------------------------------------
 # 解析状态相关的命令
 # ------------------------------------------------------------------------------
 
 @CommandDecl(vn_command_ns, _imports, 'DefaultSayer', alias={
-  '默认发言者': {'name': '名称', 'state_tags' : '状态标签'}, # zh_CN
+  '默认发言者': {'character_state_expr': '角色与状态表达式'}, # zh_CN
 })
-def cmd_set_default_sayer(parser : VNParser, commandop : GeneralCommandOp, name : str, state_tags : str = ''):
+def cmd_set_default_sayer(parser : VNParser, commandop : GeneralCommandOp, character_expr : CallExprOperand):
   pass
 
 

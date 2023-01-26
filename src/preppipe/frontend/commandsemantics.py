@@ -7,9 +7,12 @@ from __future__ import annotations
 from ..irbase import *
 from ..inputmodel import *
 from ..nameresolution import NameResolver, NamespaceNode
-from .commandsyntaxparser import GeneralCommandOp, CMDValueSymbol, CMDPositionalArgOp
+from .commandsyntaxparser import GeneralCommandOp, CMDValueSymbol, CMDPositionalArgOp, CommandCallReferenceType
 import inspect
 import types
+import typing
+import collections
+import re
 
 # ------------------------------------------------------------------------------
 # 解析器定义 （语义分析阶段）
@@ -38,6 +41,29 @@ def CommandDecl(ns: FrontendCommandNamespace, imports : dict[str, typing.Any], n
     #  return func(*args, **kwargs)
     #return wrapper
   return decorator_parsecommand
+
+# 其他类型的参数
+# 内联调用
+@dataclasses.dataclass
+class CallExprOperand:
+  name : str
+  args : list[typing.Any] = dataclasses.field(default_factory=list) # str, int, float, ConstantXXX, CallExprOperand
+  kwargs : typing.OrderedDict[str, Value] = dataclasses.field(default_factory=collections.OrderedDict)
+
+# 所有延伸的数据的基类
+# 这些数据是在命令之外的、根据语法整合进该命令的数据
+# 比如列表项、特殊块
+@dataclasses.dataclass(kw_only=True)
+class ExtendDataExprBase:
+  # 对于转换这些延伸参数时产生的警告或错误，我们其实没有其他很好的手段来保证它们在被用到时才报错、没用到时不报错
+  # 所以我们现在把它们放在参数本身，这样如果命令真的用到了这些结果，我们再把它们报告出去
+  # 设置 kw_only=True 以使 warnings 不影响子类的初始化
+  warnings : list[tuple[str, str]] | None = None
+
+# 延伸的列表项（只能出现一次）
+@dataclasses.dataclass
+class ListExprOperand(ExtendDataExprBase):
+  data : typing.OrderedDict[str, typing.Any] | list[str]
 
 @dataclasses.dataclass
 class FrontendCommandInfo:
@@ -195,6 +221,155 @@ class FrontendParserBase:
     # 没有回调函数满足条件时发生
     pass
   
+  def _convert_value(self, value : Value) -> Value | CallExprOperand:
+    assert isinstance(value, Value)
+    if isinstance(value.valuetype, CommandCallReferenceType):
+      assert isinstance(value, OpResult)
+      callop = value.parent
+      assert isinstance(callop, GeneralCommandOp)
+      return self.parse_commandop_as_callexpr(callop)
+    return value
+  
+  def _extract_extend_data(self, commandop : GeneralCommandOp) -> ExtendDataExprBase | None:
+    extend_data_block = commandop.get_region('extend_data').entry_block
+    # 先把最可能出现的给解决
+    if extend_data_block.body.empty:
+      return None
+    # 应该最多只有一个延伸参数
+    if extend_data_block.body.size != 1:
+      raise RuntimeError('More than one extend data?')
+    
+    op = extend_data_block.body.front
+    if isinstance(op, IMListOp):
+      # 我们需要把这个列表项转为 ListExprOperand
+      warnings : list[tuple[str, str]] = []
+      data = self._populate_listexpr(op, warnings)
+      if len(warnings) == 0:
+        warnings = None
+      return ListExprOperand(data, warnings=warnings)
+
+    # 其他的类型暂不支持
+    raise NotImplementedError('Extend data type not supported: ' + str(type(op)))
+  
+  def _populate_listexpr(self, src : IMListOp, warnings : list[tuple[str, str]]) -> typing.OrderedDict[str, typing.Any] | list[str]:
+    # 这里我们假设一个简单的情况，接受延伸内容的命令使用该列表来当一个 key-value store 来使用，键都是字符串，值是字符串或者图片、声音等资源
+    # 值可以为空，但如果一个层级里所有的值都为空，那么这是一个列表 (list) 而不是一个字典 (dict)
+    # 如果列表项整个为空，我们跳过该项
+    # 如果整个列表为空，我们返回一个空的字典
+    # 如果列表项键值有重复，
+    # 如果命令对该列表的使用方式与我们这里的处理不一样（比如分支命令，列表表示不同选项，底下的内容作为独立的(可携带命令的)段落），那么命令总归可以接受原始的 GeneralCommandOp 输入来自行处理
+    data : typing.OrderedDict[str, typing.Any] = collections.OrderedDict()
+    # 记录每个键值所在的位置，便于在出现重复键值时生成警告
+    prev_locations : dict[str, Location] = {}
+    is_nonempty_value_found = False
+    for item_region in src.regions:
+      # 最多两个块，一个块有 IMElementOp，存的是列表项的内容，另一个块有子列表
+      num_blocks = item_region.get_num_blocks()
+      assert num_blocks <= 2
+      if num_blocks == 0:
+        continue
+      # 第一个块一定有一个 IMElementOp，不会直接是子列表
+      textblock = item_region.entry_block
+      frontop = textblock.body.front
+      text_str, asset_list = IMElementOp.collect_text_from_paragraph(textblock)
+      text_str = text_str.strip()
+      # 我们接受如下形式的语法：
+      # <A>:<B>
+      # <A>=<B>
+      # <A> <B>
+      # A 与 B 可以是用引号引起来的字符串，也可以没有引号（只要没有其他这些字符、没有空格）
+      regex_str = "^(?P<k>\"[^\"]*\"|'[^']*'|[^'\"=＝:： ]+)(\s*[ =＝:：]\s*(?P<v>\"[^\"]*\"|'[^']*'|[^'\"=＝:： ]+|\0)?)?$"
+      match_result = re.match(regex_str, text_str)
+      if match_result is None:
+        # 这一项没法读，记个错误然后跳过
+        errcode = 'cmdparser-listitem-skipped-in-extend-data'
+        msg = str(frontop.location)
+        warnings.append((errcode, msg))
+        continue
+      key_str = match_result.group('k')
+      value_str = match_result.group('v') # 可能是 None
+      # 如果 key_str 是被引号引起来的，就把引号去掉
+      if key_str.startswith('"') and key_str.endswith('"'):
+        key_str = key_str[1:-1]
+      elif key_str.startswith("'") and key_str.endswith("'"):
+        key_str = key_str[1:-1]
+      value_v = None
+      if value_str is not None:
+        if value_str == '\0':
+          # 这是一个资源
+          if len(asset_list) == 0:
+            errcode = 'cmdparser-listitem-unresolved-asset-reference'
+            msg = str(frontop.location)
+            warnings.append((errcode, msg))
+          else:
+            value_v = asset_list[0]
+        elif value_str.startswith('"') and value_str.endswith('"'):
+          value_v = value_str[1:-1]
+        elif value_str.startswith("'") and value_str.endswith("'"):
+          value_v = value_str[1:-1]
+        else:
+          value_v = value_str
+      if value_v is None and num_blocks > 1:
+        # 应该还有一个列表项，我们读列表项的值
+        listblock = textblock.get_next_node()
+        assert isinstance(listblock, Block)
+        assert listblock.body.size == 1
+        frontop = listblock.body.front
+        if isinstance(frontop, IMListOp):
+          value_v = self._populate_listexpr(frontop, warnings)
+      # 检查是否所有内容都用上了
+      if isinstance(value_v, AssetData) and len(asset_list) > 1 or len(asset_list) > 0:
+        errcode = 'cmdparser-listitem-extra-asset-unused'
+        msg = str(frontop.location)
+        warnings.append((errcode, msg))
+      # 开始将当前项加到结果中
+      if key_str in data:
+        prev = prev_locations[key_str]
+        errcode = 'cmdparser-listitem-overwrite'
+        msg = '"' + key_str + '" @ ' + str(prev)
+        warnings.append((errcode, msg))
+      else:
+        data[key_str] = value_v
+        if value_v is not None:
+          is_nonempty_value_found = True
+    if not is_nonempty_value_found:
+      # 把字典转化成列表
+      return [k for k in data.keys()]
+    return data
+  
+  def parse_commandop_as_callexpr(self, commandop : GeneralCommandOp) -> CallExprOperand:
+    # 在命令内的调用表达式
+    # 可以再内嵌调用表达式，但是不会有追加的列表、特殊块等参数
+    call_name_symbol : CMDValueSymbol = commandop.get_symbol_table('head').get('name')
+    assert isinstance(call_name_symbol, CMDValueSymbol)
+    call_name = call_name_symbol.value.get_string()
+    assert isinstance(call_name, str)
+
+    positional_args = []
+    posarg_block = commandop.get_region('positional_arg').entry_block
+    for op in posarg_block.body:
+      assert isinstance(op, CMDPositionalArgOp)
+      opvalue = self._convert_value(op.value)
+      positional_args.append(opvalue)
+
+    kwargs = collections.OrderedDict()
+    kwargs_region = commandop.get_symbol_table('keyword_arg')
+    for op in kwargs_region:
+      assert isinstance(op, CMDValueSymbol)
+      name = op.name
+      value = self._convert_value(op.value)
+      # 内嵌的调用表达式没有参数别名
+      # if name in cmdinfo.parameter_alias_dict:
+      #   name = cmdinfo.parameter_alias_dict[name]
+      kwargs[name] = value
+    
+    # 确认没有追加数据，如果有的话就报错
+    extend_data_block = commandop.get_region('extend_data').entry_block
+    if not extend_data_block.body.empty:
+      raise RuntimeError('Extend data in (nested) call expression? (should only be in outer command)')
+    
+    return CallExprOperand(name=call_name, args=positional_args, kwargs=kwargs)
+  
   def handle_command_invocation(self, commandop : GeneralCommandOp, cmdinfo : FrontendCommandInfo):
     # 从所有候选命令实现中找到最合适的，并进行调用
     # 首先把参数准备好
@@ -202,16 +377,18 @@ class FrontendParserBase:
     posarg_block = commandop.get_region('positional_arg').entry_block
     for op in posarg_block.body:
       assert isinstance(op, CMDPositionalArgOp)
-      positional_args.append(op.value)
+      opvalue = self._convert_value(op.value)
+      positional_args.append(opvalue)
     kwargs_region = commandop.get_symbol_table('keyword_arg')
-    kwargs = {}
+    kwargs = collections.OrderedDict()
     for op in kwargs_region:
       assert isinstance(op, CMDValueSymbol)
       name = op.name
-      value = op.value
+      value = self._convert_value(op.value)
       if name in cmdinfo.parameter_alias_dict:
         name = cmdinfo.parameter_alias_dict[name]
       kwargs[name] = value
+    extend_data_value : ExtendDataExprBase = self._extract_extend_data(commandop)
     # 然后遍历所有项，找到所有能调用的回调函数
     matched_results : typing.List[typing.Tuple[callable, typing.List[typing.Any], typing.Dict[str, typing.Any], typing.List[typing.Tuple[str, typing.Any]]]] = [] # <callback, args, kwargs, warning>
     unmatched_results : typing.List[typing.Tuple[callable, typing.Tuple[str, str]]] = [] # callback, fatal error tuple (code, parameter name)
@@ -220,15 +397,15 @@ class FrontendParserBase:
       is_parser_param_found = False
       is_context_param_found = False
       is_op_param_found = False
+      is_extenddata_param_found = False
       target_args = []
       target_kwargs = {}
       warnings : typing.List[typing.Tuple[str, typing.Any]] = []
       is_first_param_for_positional_args = True
       first_fatal_error : typing.Tuple[str, typing.Any] = None
       used_args : typing.Set[str] = set()
-      is_positional_arg_used = False
-      if len(positional_args) == 0:
-        is_positional_arg_used = True
+      is_positional_arg_used = len(positional_args) == 0
+      is_extend_data_used = extend_data_value is None
       
       def add_parameter(name : str, param : inspect.Parameter, value : typing.Any) -> None:
         match param.kind:
@@ -252,6 +429,14 @@ class FrontendParserBase:
           return ('cmdparser-param-conversion-failed', param.name)
         add_parameter(param.name, param, target_value)
         return
+      def check_is_extend_data(annotation : typing.Any) -> list[type]:
+        if isinstance(annotation, types.UnionType):
+          # 这是 T1 | T2 | ...
+          return [ty for ty in annotation.__args__ if issubclass(ty, ExtendDataExprBase)]
+        assert isinstance(annotation, type)
+        if issubclass(annotation, ExtendDataExprBase):
+          return [annotation]
+        return []
 
       for name, param in sig.parameters.items():
         # 无论如何我们不接受回调函数携带 *args 或 **kwargs，因为：
@@ -263,7 +448,7 @@ class FrontendParserBase:
         if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
           raise RuntimeError('*args or **kwargs in frontend command handler not supported')
         # 检查是否是一些特殊的参数
-        if issubclass(param.annotation, FrontendParserBase):
+        if isinstance(param.annotation, type) and issubclass(param.annotation, FrontendParserBase):
           if is_parser_param_found:
             raise RuntimeError('More than one parser parameter found')
           is_parser_param_found = True
@@ -277,13 +462,35 @@ class FrontendParserBase:
           add_parameter(name, param, self.context)
           check_special_param_conflict(name)
           continue
-        if issubclass(param.annotation, GeneralCommandOp):
+        if param.annotation == GeneralCommandOp:
           if is_op_param_found:
             raise RuntimeError('More than one GeneralCommandOp parameter found')
           is_op_param_found = True
           add_parameter(name, param, commandop)
           check_special_param_conflict(name)
           continue
+        # 如果有延伸的参数的话也检查它们是否匹配
+        # 因为有可能有 T1 | T2 这样的标注，我们使用 check_is_extend_data() 来获取所有可能的类型，而不是只用单个 issubclass() / isinstance()
+        if extend_data_value is not None:
+          candidate_type_list = check_is_extend_data(param.annotation)
+          is_type_match = False
+          for t in candidate_type_list:
+            if isinstance(extend_data_value, t):
+              is_type_match = True
+              break
+          if is_type_match:
+            if is_extenddata_param_found:
+              raise RuntimeError('More than one extend data parameter found')
+            is_extenddata_param_found = True
+            is_extend_data_used = True
+            add_parameter(name, param, extend_data_value)
+            check_special_param_conflict(name)
+            continue
+          elif len(candidate_type_list) > 0 and param.default == inspect.Parameter.empty:
+            # 这种情况下，参数的标注确实是延伸的数据类型，但是当前提供的数据不是想要的类型
+            # （我们需要检查一下初值，这样如果延伸的数据是可选的，我们也不会在这过早报错）
+            first_fatal_error = ('cmdparser-mismatched-type-for-extend-data', name)
+            break
         
         # 该命令不是一个特殊参数，尝试赋值
         # 如果 kwargs (关键字参数)有现成的值的话用这个，优先级最高
@@ -303,7 +510,7 @@ class FrontendParserBase:
           continue
         if is_first_param_for_positional_args and len(positional_args) > 0:
           # 如果该参数只能以 kwargs 出现的话也报错
-          if param.kind == inspect.Parameter.POSITIONAL_ONLY:
+          if param.kind == inspect.Parameter.KEYWORD_ONLY:
             first_fatal_error = ('cmdparser-kwarg-using-positional-value', name)
             break
           is_positional_arg_used = True
@@ -324,6 +531,11 @@ class FrontendParserBase:
       # 检查是否有参数没用上，有的话同样报错
       if not is_positional_arg_used:
         unmatched_results.append((cb, ('cmdparser-unused-param', '<positional>')))
+        continue
+      if not is_extend_data_used:
+        # 即使命令直接使用 GeneralCommandOp 来读取延伸参数，只要它没有显式声明对延伸参数的引用，我们都不认为这是成功的匹配
+        # （加一个不被使用的参数没有影响，但是其他命令可能只用 GeneralCommandOp 而不使用延伸参数，我们想找到这样的情况）
+        unmatched_results.append((cb, ('cmdparser-unused-param', '<extenddata>')))
         continue
       for name, value in kwargs.items():
         if name not in used_args:
@@ -360,13 +572,113 @@ class FrontendParserBase:
         for b in r.blocks:
           for op in b.body:
             self.visit_op(op)
-  
-  
-def _try_convert_parameter(ty : type, value : typing.Any) -> typing.Any:
+
+def _try_convert_parameter_list(member_type : type | types.UnionType | typing._GenericAlias, value : typing.Any) -> typing.Any:
+  result = []
+  # 开始搞输入
+  if isinstance(value, list):
+    for v in value:
+      cur_value = _try_convert_parameter(member_type, v)
+      if cur_value is None:
+        return None
+      result.append(cur_value)
+  else:
+    cur_value = _try_convert_parameter(member_type, value)
+    if cur_value is None:
+      return None
+    result.append(cur_value) 
+  return result
+
+def _try_convert_parameter(ty : type | types.UnionType | typing._GenericAlias, value : typing.Any) -> typing.Any:
   # 如果类型标注是 typing.List[...] 这种的话，ty 的值会是像 typing._GenericAlias 的东西，这不算 type
   # 如果类型标注是 list[...] 这种的话， ty 的值会是像 types.GenericAlias 的东西，这是 type
+  # 如果类型标注是 X | Y | ... 这种的话， ty 的值会是 types.UnionType，这也不是 type
+  if isinstance(ty, types.GenericAlias) or isinstance(ty, typing._GenericAlias):
+    if ty.__origin__ != list:
+      # 我们只支持 list ，不支持像是 dict 等
+      raise RuntimeError('Generic alias for non-list types not supported')
+    if len(ty.__args__) != 1:
+      # list[str] 可以， list[int | str] 可以， list[int, str] 不行
+      raise RuntimeError('List type should have exactly one argument specifying the element type (can be union though)')
+    return _try_convert_parameter_list(ty.__args__[0], value)
+  
+  if ty == list or isinstance(ty, typing._SpecialGenericAlias):
+    # 这种情况下标注要么是 list 要么是 typing.List，都没有带成员类型
+    raise RuntimeError('List type should specify the element type (e.g., list[str] or list[str | int])')
+  
+  if isinstance(ty, types.UnionType):
+    for candidate_ty in ty.__args__:
+      cur_result = _try_convert_parameter(candidate_ty, value)
+      if cur_result is not None:
+        return cur_result
+    return None
+
+  # 剩余的情况下， ty 都应该是 type
   # 如果这里报错的话请检查类型标注是否有问题
   assert isinstance(ty, type)
+  
+  # 参数类型是 list 的情况处理完了，到这应该不会要有复合的输入
+  # 如果现在值是 list ，那么我们预计只有一项内容，我们将它展开
+  if isinstance(value, list):
+    if len(value) != 1:
+      return None
+    value = value[0]
+  
+  if type(value) == ty:
+    return value
+  
+  # 到这里我们现在支持如下类型：
+  # 整数型、浮点数型（仅作为输出，不作为输入）
+  # 延伸参数类型与调用表达式（不支持转换为其他类型，调用表达式可由文本、字符串转换得来）
+  # 文本、字符串（可以转换成所有不是延伸参数类型的类型）
+  
+  if issubclass(ty, ExtendDataExprBase):
+    # 如果类型不一致的话我们无法转换该类型的值
+    return None
+  
+  # 此时如果输入类型是 ExtendDataExprBase 或者 CallExprOperand 的话，我们应该无法对其做转化了
+  if isinstance(value, ExtendDataExprBase) or isinstance(value, CallExprOperand):
+    return None
+  
+  # 此时输入类型应该只会是纯文本
+  # 输出类型除了文本、字符串、整数、浮点数之外，还可能有调用表达式（需要从字符串转过去）
+  
+  # 首先把非基本类型的字符串解决了
+  if ty in [ConstantText, ConstantTextFragment, ConstantString]:
+    cur_value = value
+    if isinstance(value, ConstantString):
+      assert ty == ConstantText or ty == ConstantTextFragment
+      context = value.get_context()
+      cur_value = ConstantTextFragment.get(context, value, ConstantTextStyle.get((), context))
+      if ty == ConstantTextFragment:
+        return cur_value
+    assert ty == ConstantText
+    context = cur_value.get_context()
+    return ConstantText.get(context, [cur_value])
+  
+  # 其他类型都可以从字符串转换过去，这里先将值转为字符串
+  value_str = ''
+  if isinstance(value, ConstantText):
+    value_str = value.get_string()
+  elif isinstance(value, ConstantTextFragment):
+    value_str = value.get_string()
+  elif isinstance(value, ConstantString):
+    value_str = value.get_string()
+  else:
+    raise NotImplementedError('Unexpected input value type')
+  
+  if ty == CallExprOperand:
+    return CallExprOperand(name = value_str, args = [], kwargs = collections.OrderedDict())
+  if ty == str:
+    return value_str
+  if ty == int:
+    return int(value_str)
+  if ty == float:
+    return float(value_str)
+  raise NotImplementedError('Unexpected output value type')
+
+  # 把延伸参数类型和
+  
   
   # 预计的类型有这些
   permitted_type_set_input = {ConstantString, ConstantText, ConstantTextFragment}
@@ -405,18 +717,7 @@ def _try_convert_parameter(ty : type, value : typing.Any) -> typing.Any:
   if type(value) == ty:
     return value
   
-  # 首先把非基本类型的解决了
-  if ty in [ConstantText, ConstantTextFragment, ConstantString]:
-    cur_value = value
-    if isinstance(value, ConstantString):
-      assert ty == ConstantText or ty == ConstantTextFragment
-      context = value.get_context()
-      cur_value = ConstantTextFragment.get(context, value, ConstantTextStyle.get((), context))
-      if ty == ConstantTextFragment:
-        return cur_value
-    assert ty == ConstantText
-    context = cur_value.get_context()
-    return ConstantText.get(context, [cur_value])
+  
 
   # 基本类型都可以从字符串转换过去，这里先将值转为字符串
   value_str = ''
