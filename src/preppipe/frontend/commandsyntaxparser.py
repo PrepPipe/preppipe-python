@@ -57,7 +57,7 @@ class CMDValueSymbol(Symbol):
     self._value_operand = self._add_operand_with_value('value', value)
   
   @property
-  def value(self):
+  def value(self) -> Value:
     return self._value_operand.get()
 
 class CommandCallReferenceType(ValueType):
@@ -230,6 +230,9 @@ def check_is_command_start(b : Block, ctx: Context) -> typing.Tuple[str, typing.
         command_str += v.get_string()
       elif isinstance(v, ConstantText):
         command_str += v.get_string()
+      elif isinstance(v, AssetData):
+        command_str += '\0'
+        asset_list.append(v)
       else:
         raise NotImplementedError('TODO support other possible element types in IMElementOp')
     if first_op is None:

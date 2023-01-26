@@ -52,6 +52,14 @@ class IMElementOp(Operation):
   @property
   def content(self):
     return self._content_operand
+  
+  @staticmethod
+  def collect_text_from_paragraph(b : Block) -> tuple[str, list[AssetData]]:
+    # 把给定段落（以块表示）的文本提取出来：
+    # 所有文本内容都会只保留字符串
+    # 所有资源会被替换成 '\0' 并加到资源列表中
+    # 如果段落中有其他不是 IMElementOp 的操作项（比如命令等）则直接忽略
+    return _collect_text_from_paragraph_impl(b)
     
 class IMErrorElementOp(ErrorOp):
   # 该类代表读取中发生的错误
@@ -126,10 +134,6 @@ class IMListOp(Operation):
         index += 1
         name = str(index)
     self._take_region(list_item, name)
-  
-  @property
-  def body(self):
-    return self._body
 
 class IMDocumentOp(IMFrameOp):
   # 该类代表一个完整的文档
@@ -190,3 +194,31 @@ class IMParseCache:
   def query_image_asset(self, abspath : str) -> ImageAssetData:
     # abspath 应已通过审查
     raise NotImplementedError()
+
+def _collect_text_from_paragraph_impl(b : Block) -> tuple[str, list[AssetData]]:
+  content_str = ''
+  asset_list : typing.List[AssetData] = []
+  for op in b.body:
+    # 忽略所有非语义消息
+    if isinstance(op, MetadataOp):
+      continue
+    if not isinstance(op, IMElementOp):
+      # 碰到了一项非内容的，直接忽略
+      continue
+    # 找到了一项内容
+    # 尝试读取内容并组成命令文本
+    assert isinstance(op, IMElementOp)
+    content_operand : OpOperand = op.content
+    for i in range(0, content_operand.get_num_operands()):
+      v = content_operand.get(i)
+      if isinstance(v, ConstantTextFragment):
+        content_str += v.get_string()
+      elif isinstance(v, ConstantText):
+        content_str += v.get_string()
+      elif isinstance(v, AssetData):
+        content_str += '\0'
+        asset_list.append(v)
+      else:
+        raise NotImplementedError('TODO support other possible element types in IMElementOp')
+
+  return (content_str, asset_list)
