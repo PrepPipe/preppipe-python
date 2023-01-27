@@ -1,19 +1,20 @@
 # SPDX-FileCopyrightText: 2022 PrepPipe's Contributors
 # SPDX-License-Identifier: Apache-2.0
- 
+
 
 from __future__ import annotations
 
-from ..irbase import *
-from ..inputmodel import *
-from ..nameresolution import NameResolver, NamespaceNode
-from .commandsyntaxparser import GeneralCommandOp, CMDValueSymbol, CMDPositionalArgOp, CommandCallReferenceType
 import inspect
 import types
 import typing
 import collections
 import enum
 import re
+
+from ..irbase import *
+from ..inputmodel import *
+from ..nameresolution import NameResolver, NamespaceNode
+from .commandsyntaxparser import GeneralCommandOp, CMDValueSymbol, CMDPositionalArgOp, CommandCallReferenceType
 
 # ------------------------------------------------------------------------------
 # 解析器定义 （语义分析阶段）
@@ -30,12 +31,15 @@ import re
 
 # decorator for parse commands
 # reference: https://realpython.com/primer-on-python-decorators/#decorators-with-arguments
-def CommandDecl(ns: FrontendCommandNamespace, imports : dict[str, typing.Any], name : str, alias : typing.Dict[str | typing.Tuple[str], typing.Dict[str, str]] = {}):
+# pylint: disable=invalid-name
+def CommandDecl(ns: FrontendCommandNamespace, imports : dict[str, typing.Any], name : str, alias : typing.Dict[str | typing.Tuple[str], typing.Dict[str, str]] = None):
+  if alias is None:
+    alias = {}
   def decorator_parsecommand(func):
     # register the command
     ns.register_command(func, imports, name, alias)
     return func
-    
+
     # later on we may add debugging code to the wrapper... nothing for now
     #@functools.wraps(func)
     #def wrapper(*args, **kwargs):
@@ -64,7 +68,9 @@ def FrontendParamEnum(alias : dict[str, set[str]]):
     def translate_cb(name : str):
       if name in translation_dict:
         return translation_dict[name]
-      return cls[name]
+      if name in cls.__members__:
+        return cls[name]
+      return None
     setattr(cls, '_translate', staticmethod(translate_cb))
     return cls
   return decorator_enum
@@ -102,16 +108,16 @@ class FrontendCommandInfo:
   handler_list : list[tuple[callable, inspect.Signature]] # 所有的实现都在这里
 
 class FrontendCommandNamespace(NamespaceNode[FrontendCommandInfo]):
-  
+
   @staticmethod
   def create(parent : FrontendCommandNamespace | None, cname : str) -> FrontendCommandNamespace:
     if parent is None:
       parent = FrontendCommandRegistry.get_global_namespace()
     return FrontendCommandNamespace(FrontendCommandRegistry.get_registry(), parent, cname)
-  
+
   def __init__(self, tree: FrontendCommandRegistry, parent: FrontendCommandNamespace, cname: str | None) -> None:
     super().__init__(tree, parent, cname)
-  
+
   def register_command(self, func : callable, imports : dict[str, typing.Any], name : str, alias : typing.Dict[str, typing.Dict[str, str]]) -> None:
     cur_entry = self.lookup_name(name)
     if isinstance(cur_entry, FrontendCommandNamespace):
@@ -158,28 +164,28 @@ class FrontendCommandNamespace(NamespaceNode[FrontendCommandInfo]):
               raise RuntimeError('Conflicting alias for parameter "' + param_cname + '": "' + existing_cname + '" != "' + param_cname + '"')
           else:
             cur_entry.parameter_alias_dict[param_alias_name] = param_cname
-    
+
 
 class FrontendCommandRegistry(NameResolver[FrontendCommandInfo]):
   _global_ns : FrontendCommandNamespace
-  
+
   @staticmethod
   def get_registry() -> FrontendCommandRegistry:
     return _frontend_command_registry
-  
+
   @staticmethod
   def get_global_namespace() -> FrontendCommandNamespace:
     return FrontendCommandRegistry.get_registry().global_namespace
-  
+
   @property
   def global_namespace(self) -> FrontendCommandNamespace:
     return self._global_ns
-  
+
   def __init__(self) -> None:
     super().__init__()
     self._global_ns = FrontendCommandNamespace(self, None, None)
     self.set_root(self._global_ns)
-  
+
 
 _frontend_command_registry = FrontendCommandRegistry()
 
@@ -195,26 +201,60 @@ class FrontendParserBase:
   # 1.  方便理解、方便后续改动。python 语言特性用的太复杂容易劝退新人
   # 2.  便于在不改解析器类源代码的基础上新增命令，用于实现类似宏的效果。用户可以在自己的脚本里新增命令。
 
+  # matched_results : typing.List[typing.Tuple[callable, typing.List[typing.Any], typing.Dict[str, typing.Any], typing.List[typing.Tuple[str, typing.Any]]]] = [] # <callback, args, kwargs, warning>
+
+  @dataclasses.dataclass
+  class CommandInvocationInfo:
+    # 如果我们找到了一个可以用于处理给定命令的回调函数，我们用这个类型来保存参数以及警告
+    cb : callable
+    args : list[typing.Any] = dataclasses.field(default_factory=list)
+    kwargs : dict[str, typing.Any] = dataclasses.field(default_factory=dict)
+    warnings: list[tuple[str, typing.Any]] = dataclasses.field(default_factory=list)
+
+    def add_parameter(self, param : inspect.Parameter, value : typing.Any) -> None:
+      match param.kind:
+        case inspect.Parameter.VAR_POSITIONAL | inspect.Parameter.VAR_KEYWORD:
+          raise RuntimeError('Not expecting assignment to *arg / **kwarg')
+        case inspect.Parameter.POSITIONAL_ONLY:
+          self.args.append(value)
+        case inspect.Parameter.POSITIONAL_OR_KEYWORD | inspect.Parameter.KEYWORD_ONLY:
+          self.kwargs[param.name] = value
+        case _:
+          # should not be possible
+          raise NotImplementedError()
+
+    def try_add_parameter(self, param : inspect.Parameter, value : typing.Any) -> typing.Tuple[str, typing.Any] | None:
+      # 尝试把给定的值赋予参数
+      # 如果有错误的话返回错误
+      target_value = _try_convert_parameter(param.annotation, value)
+      if target_value is None:
+        return ('cmdparser-param-conversion-failed', param.name)
+      self.add_parameter(param, target_value)
+      return None
+
+    def add_warning(self, warn_code : str, warn_data : typing.Any):
+      self.warnings.append((warn_code, warn_data))
+
   _ctx : Context
   _command_ns : FrontendCommandNamespace
-  
+
   def __init__(self, ctx : Context, command_ns : FrontendCommandNamespace) -> None:
     self._ctx = ctx
     self._command_ns = command_ns
-  
+
   # 不管怎样我们都需要提供这两个接口来方便新的外部的实现
-  
+
   @property
   def context(self) -> Context:
     return self._ctx
-  
+
   @property
   def command_ns(self) -> FrontendCommandNamespace:
     return self._command_ns
-  
-  def lookup(self, name : str, using_path : typing.List[typing.Tuple[str]] = []):
+
+  def lookup(self, name : str, using_path : typing.List[typing.Tuple[str]] = None):
     return self.command_ns.namespace_tree.unqualified_lookup(name, self.command_ns.namespace_path, using_path)
-  
+
   def handle_command_op(self, op : GeneralCommandOp):
     head_symbol_table = op.get_symbol_table('head')
     namesymbol = head_symbol_table.get('name')
@@ -228,26 +268,23 @@ class FrontendParserBase:
       return
     assert isinstance(lookup_result, FrontendCommandInfo)
     return self.handle_command_invocation(op, lookup_result)
-  
+
   def handle_command_ambiguous(self, commandop : GeneralCommandOp, cmdinfo : FrontendCommandInfo,
-                               matched_results : typing.List[typing.Tuple[callable, typing.List[typing.Any], typing.Dict[str, typing.Any], typing.List[typing.Tuple[str, typing.Any]]]],
+                               matched_results : typing.List[CommandInvocationInfo],
                                unmatched_results : typing.List[typing.Tuple[callable, typing.Tuple[str, str]]]):
     # 但且仅当不止一个回调函数满足调用条件时发生
     pass
-  
+
   def handle_command_unique_invocation(self, commandop : GeneralCommandOp, cmdinfo : FrontendCommandInfo,
-                                       target_cb : callable,
-                                       target_args : typing.List[typing.Any],
-                                       target_kwargs : typing.Dict[str, typing.Any],
-                                       target_warnings : typing.List[typing.Tuple[str, typing.Any]],
+                                       matched_result : CommandInvocationInfo,
                                        unmatched_results : typing.List[typing.Tuple[callable, typing.Tuple[str, str]]]):
     # 仅当正好只有一个回调函数满足条件时发生
     pass
-  
+
   def handle_command_no_match(self, commandop : GeneralCommandOp, cmdinfo : FrontendCommandInfo, unmatched_results : typing.List[typing.Tuple[callable, typing.Tuple[str, str]]]):
     # 没有回调函数满足条件时发生
     pass
-  
+
   def _convert_value(self, value : Value) -> Value | CallExprOperand:
     assert isinstance(value, Value)
     if isinstance(value.valuetype, CommandCallReferenceType):
@@ -256,7 +293,7 @@ class FrontendParserBase:
       assert isinstance(callop, GeneralCommandOp)
       return self.parse_commandop_as_callexpr(callop)
     return value
-  
+
   def _extract_extend_data(self, commandop : GeneralCommandOp) -> ExtendDataExprBase | None:
     extend_data_block = commandop.get_region('extend_data').entry_block
     # 先把最可能出现的给解决
@@ -265,7 +302,7 @@ class FrontendParserBase:
     # 应该最多只有一个延伸参数
     if extend_data_block.body.size != 1:
       raise RuntimeError('More than one extend data?')
-    
+
     op = extend_data_block.body.front
     if isinstance(op, IMListOp):
       # 我们需要把这个列表项转为 ListExprOperand
@@ -277,7 +314,7 @@ class FrontendParserBase:
 
     # 其他的类型暂不支持
     raise NotImplementedError('Extend data type not supported: ' + str(type(op)))
-  
+
   def _populate_listexpr(self, src : IMListOp, warnings : list[tuple[str, str]]) -> typing.OrderedDict[str, typing.Any] | list[str]:
     # 这里我们假设一个简单的情况，接受延伸内容的命令使用该列表来当一个 key-value store 来使用，键都是字符串，值是字符串或者图片、声音等资源
     # 值可以为空，但如果一个层级里所有的值都为空，那么这是一个列表 (list) 而不是一个字典 (dict)
@@ -305,7 +342,7 @@ class FrontendParserBase:
       # <A>=<B>
       # <A> <B>
       # A 与 B 可以是用引号引起来的字符串，也可以没有引号（只要没有其他这些字符、没有空格）
-      regex_str = "^(?P<k>\"[^\"]*\"|'[^']*'|[^'\"=＝:： ]+)(\s*[ =＝:：]\s*(?P<v>\"[^\"]*\"|'[^']*'|[^'\"=＝:： ]+|\0)?)?$"
+      regex_str = r"^(?P<k>\"[^\"]*\"|'[^']*'|[^'\"=＝:： ]+)(\s*[ =＝:：]\s*(?P<v>\"[^\"]*\"|'[^']*'|[^'\"=＝:： ]+|\0)?)?$"
       match_result = re.match(regex_str, text_str)
       if match_result is None:
         # 这一项没法读，记个错误然后跳过
@@ -363,7 +400,7 @@ class FrontendParserBase:
       # 把字典转化成列表
       return [k for k in data.keys()]
     return data
-  
+
   def parse_commandop_as_callexpr(self, commandop : GeneralCommandOp) -> CallExprOperand:
     # 在命令内的调用表达式
     # 可以再内嵌调用表达式，但是不会有追加的列表、特殊块等参数
@@ -389,14 +426,26 @@ class FrontendParserBase:
       # if name in cmdinfo.parameter_alias_dict:
       #   name = cmdinfo.parameter_alias_dict[name]
       kwargs[name] = value
-    
+
     # 确认没有追加数据，如果有的话就报错
     extend_data_block = commandop.get_region('extend_data').entry_block
     if not extend_data_block.body.empty:
       raise RuntimeError('Extend data in (nested) call expression? (should only be in outer command)')
-    
+
     return CallExprOperand(name=call_name, args=positional_args, kwargs=kwargs)
-  
+
+  @staticmethod
+  def _check_is_extend_data(annotation : typing.Any) -> list[type]:
+    # 给定一个命令回调函数的参数类型标注，如果是延伸参数类型，返回所有的类型标注
+    # （如果该命令可以接受多种延伸参数类型，我们想把所有可接受的延伸参数类型找到）
+    if isinstance(annotation, types.UnionType):
+      # 这是 T1 | T2 | ...
+      return [ty for ty in annotation.__args__ if issubclass(ty, ExtendDataExprBase)]
+    assert isinstance(annotation, type)
+    if issubclass(annotation, ExtendDataExprBase):
+      return [annotation]
+    return []
+
   def handle_command_invocation(self, commandop : GeneralCommandOp, cmdinfo : FrontendCommandInfo):
     # 从所有候选命令实现中找到最合适的，并进行调用
     # 首先把参数准备好
@@ -417,53 +466,20 @@ class FrontendParserBase:
       kwargs[name] = value
     extend_data_value : ExtendDataExprBase = self._extract_extend_data(commandop)
     # 然后遍历所有项，找到所有能调用的回调函数
-    matched_results : typing.List[typing.Tuple[callable, typing.List[typing.Any], typing.Dict[str, typing.Any], typing.List[typing.Tuple[str, typing.Any]]]] = [] # <callback, args, kwargs, warning>
+    matched_results : typing.List[FrontendParserBase.CommandInvocationInfo] = []
     unmatched_results : typing.List[typing.Tuple[callable, typing.Tuple[str, str]]] = [] # callback, fatal error tuple (code, parameter name)
     assert len(cmdinfo.handler_list) > 0
     for cb, sig in cmdinfo.handler_list:
+      cur_match = FrontendParserBase.CommandInvocationInfo(cb)
       is_parser_param_found = False
       is_context_param_found = False
       is_op_param_found = False
       is_extenddata_param_found = False
-      target_args = []
-      target_kwargs = {}
-      warnings : typing.List[typing.Tuple[str, typing.Any]] = []
       is_first_param_for_positional_args = True
-      first_fatal_error : typing.Tuple[str, typing.Any] = None
-      used_args : typing.Set[str] = set()
+      first_fatal_error : tuple[str, typing.Any] = None
+      used_args : set[str] = set()
       is_positional_arg_used = len(positional_args) == 0
       is_extend_data_used = extend_data_value is None
-      
-      def add_parameter(name : str, param : inspect.Parameter, value : typing.Any) -> None:
-        match param.kind:
-          case inspect.Parameter.VAR_POSITIONAL | inspect.Parameter.VAR_KEYWORD:
-            raise RuntimeError('Not expecting assignment to *arg / **kwarg')
-          case inspect.Parameter.POSITIONAL_ONLY:
-            target_args.append(value)
-          case inspect.Parameter.POSITIONAL_OR_KEYWORD | inspect.Parameter.KEYWORD_ONLY:
-            target_kwargs[name] = value
-          case _:
-            raise NotImplementedError()
-      def check_special_param_conflict(name : str) -> None:
-        if name in kwargs:
-          warningcode = 'cmdparser-special-param-name-conflict'
-          warnings.append((warningcode, name))
-      def try_add_parameter(param : inspect.Parameter, value : typing.Any) -> typing.Tuple[str, typing.Any] | None:
-        # 尝试把给定的值赋予参数
-        # 如果有错误的话返回错误
-        target_value = _try_convert_parameter(param.annotation, value)
-        if target_value is None:
-          return ('cmdparser-param-conversion-failed', param.name)
-        add_parameter(param.name, param, target_value)
-        return
-      def check_is_extend_data(annotation : typing.Any) -> list[type]:
-        if isinstance(annotation, types.UnionType):
-          # 这是 T1 | T2 | ...
-          return [ty for ty in annotation.__args__ if issubclass(ty, ExtendDataExprBase)]
-        assert isinstance(annotation, type)
-        if issubclass(annotation, ExtendDataExprBase):
-          return [annotation]
-        return []
 
       for name, param in sig.parameters.items():
         # 无论如何我们不接受回调函数携带 *args 或 **kwargs，因为：
@@ -479,27 +495,30 @@ class FrontendParserBase:
           if is_parser_param_found:
             raise RuntimeError('More than one parser parameter found')
           is_parser_param_found = True
-          add_parameter(name, param, self)
-          check_special_param_conflict(name)
+          cur_match.add_parameter(param, self)
+          if name in kwargs:
+            cur_match.add_warning('cmdparser-special-param-name-conflict', name)
           continue
         if param.annotation == Context:
           if is_context_param_found:
             raise RuntimeError('More than one context parameter found')
           is_context_param_found = True
-          add_parameter(name, param, self.context)
-          check_special_param_conflict(name)
+          cur_match.add_parameter(param, self.context)
+          if name in kwargs:
+            cur_match.add_warning('cmdparser-special-param-name-conflict', name)
           continue
         if param.annotation == GeneralCommandOp:
           if is_op_param_found:
             raise RuntimeError('More than one GeneralCommandOp parameter found')
           is_op_param_found = True
-          add_parameter(name, param, commandop)
-          check_special_param_conflict(name)
+          cur_match.add_parameter(param, commandop)
+          if name in kwargs:
+            cur_match.add_warning('cmdparser-special-param-name-conflict', name)
           continue
         # 如果有延伸的参数的话也检查它们是否匹配
         # 因为有可能有 T1 | T2 这样的标注，我们使用 check_is_extend_data() 来获取所有可能的类型，而不是只用单个 issubclass() / isinstance()
         if extend_data_value is not None:
-          candidate_type_list = check_is_extend_data(param.annotation)
+          candidate_type_list = self._check_is_extend_data(param.annotation)
           is_type_match = False
           for t in candidate_type_list:
             if isinstance(extend_data_value, t):
@@ -510,15 +529,16 @@ class FrontendParserBase:
               raise RuntimeError('More than one extend data parameter found')
             is_extenddata_param_found = True
             is_extend_data_used = True
-            add_parameter(name, param, extend_data_value)
-            check_special_param_conflict(name)
+            cur_match.add_parameter(param, extend_data_value)
+            if name in kwargs:
+              cur_match.add_warning('cmdparser-special-param-name-conflict', name)
             continue
           elif len(candidate_type_list) > 0 and param.default == inspect.Parameter.empty:
             # 这种情况下，参数的标注确实是延伸的数据类型，但是当前提供的数据不是想要的类型
             # （我们需要检查一下初值，这样如果延伸的数据是可选的，我们也不会在这过早报错）
             first_fatal_error = ('cmdparser-mismatched-type-for-extend-data', name)
             break
-        
+
         # 该命令不是一个特殊参数，尝试赋值
         # 如果 kwargs (关键字参数)有现成的值的话用这个，优先级最高
         # 其次如果这是第一个参数的话，用 positional_args （位置参数）也可以
@@ -531,7 +551,7 @@ class FrontendParserBase:
             break
           used_args.add(name)
           is_first_param_for_positional_args = False
-          first_fatal_error = try_add_parameter(param, kwargs[name])
+          first_fatal_error = cur_match.try_add_parameter(param, kwargs[name])
           if first_fatal_error is not None:
             break
           continue
@@ -542,12 +562,12 @@ class FrontendParserBase:
             break
           is_positional_arg_used = True
           is_first_param_for_positional_args = False
-          first_fatal_error = try_add_parameter(param, positional_args)
+          first_fatal_error = cur_match.try_add_parameter(param, positional_args)
           if first_fatal_error is not None:
             break
           continue
         if param.default != inspect.Parameter.empty:
-          add_parameter(name, param, param.default)
+          cur_match.add_parameter(param, param.default)
           continue
         # 没有其他来源的值了，报错
         first_fatal_error = ('cmdparser-missing-param', name)
@@ -572,25 +592,19 @@ class FrontendParserBase:
         unmatched_results.append((cb, first_fatal_error))
         continue
       # 所有检查全部通过，该调用可用
-      t = (cb, target_args, target_kwargs, warnings)
-      matched_results.append(t)
+      matched_results.append(cur_match)
     assert len(matched_results) + len(unmatched_results) == len(cmdinfo.handler_list)
     if len(matched_results) == 0:
       return self.handle_command_no_match(commandop, cmdinfo, unmatched_results)
     if len(matched_results) == 1:
-      matched_tuple = matched_results[0]
-      target_cb = matched_tuple[0]
-      target_args = matched_tuple[1]
-      target_kwargs = matched_tuple[2]
-      target_warnings = matched_tuple[3]
-      return self.handle_command_unique_invocation(commandop, cmdinfo, target_cb, target_args, target_kwargs, target_warnings, unmatched_results)
+      return self.handle_command_unique_invocation(commandop, cmdinfo, matched_results[0], unmatched_results)
     return self.handle_command_ambiguous(commandop, cmdinfo, matched_results, unmatched_results)
-        
-  
+
+
   def handle_command_unrecognized(self, op : GeneralCommandOp, opname : str) -> None:
     err = ErrorOp('', op.location, 'cmdparser-unrecognized-cmdname', ConstantString.get('Command name not found: ' + opname, self.context))
     err.insert_before(op)
-  
+
   def visit_op(self, op : Operation) -> None:
     if isinstance(op, GeneralCommandOp):
       self.handle_command_op(op)
@@ -613,9 +627,11 @@ def _try_convert_parameter_list(member_type : type | types.UnionType | typing._G
     cur_value = _try_convert_parameter(member_type, value)
     if cur_value is None:
       return None
-    result.append(cur_value) 
+    result.append(cur_value)
   return result
 
+# 我们需要访问 typing._GenericAlias, typing._SpecialGenericAlias, 和 <enum>._translate()
+# pylint: disable=protected-access
 def _try_convert_parameter(ty : type | types.UnionType | typing._GenericAlias, value : typing.Any) -> typing.Any:
   # 如果类型标注是 typing.List[...] 这种的话，ty 的值会是像 typing._GenericAlias 的东西，这不算 type
   # 如果类型标注是 list[...] 这种的话， ty 的值会是像 types.GenericAlias 的东西，这是 type
@@ -628,11 +644,11 @@ def _try_convert_parameter(ty : type | types.UnionType | typing._GenericAlias, v
       # list[str] 可以， list[int | str] 可以， list[int, str] 不行
       raise RuntimeError('List type should have exactly one argument specifying the element type (can be union though)')
     return _try_convert_parameter_list(ty.__args__[0], value)
-  
+
   if ty == list or isinstance(ty, typing._SpecialGenericAlias):
     # 这种情况下标注要么是 list 要么是 typing.List，都没有带成员类型
     raise RuntimeError('List type should specify the element type (e.g., list[str] or list[str | int])')
-  
+
   if isinstance(ty, types.UnionType):
     for candidate_ty in ty.__args__:
       cur_result = _try_convert_parameter(candidate_ty, value)
@@ -643,34 +659,34 @@ def _try_convert_parameter(ty : type | types.UnionType | typing._GenericAlias, v
   # 剩余的情况下， ty 都应该是 type
   # 如果这里报错的话请检查类型标注是否有问题
   assert isinstance(ty, type)
-  
+
   # 参数类型是 list 的情况处理完了，到这应该不会要有复合的输入
   # 如果现在值是 list ，那么我们预计只有一项内容，我们将它展开
   if isinstance(value, list):
     if len(value) != 1:
       return None
     value = value[0]
-  
-  if type(value) == ty:
+
+  if isinstance(value, ty):
     return value
-  
+
   # 到这里我们现在支持如下类型：
   # 整数型、浮点数型（仅作为输出，不作为输入）
   # 枚举类型（仅输出，可由字符串转换得来）
   # 延伸参数类型与调用表达式（不支持转换为其他类型，调用表达式可由文本、字符串转换得来）
   # 文本、字符串（可以转换成所有不是延伸参数类型的类型）
-  
+
   if issubclass(ty, ExtendDataExprBase):
     # 如果类型不一致的话我们无法转换该类型的值
     return None
-  
+
   # 此时如果输入类型是 ExtendDataExprBase 或者 CallExprOperand 的话，我们应该无法对其做转化了
   if isinstance(value, ExtendDataExprBase) or isinstance(value, CallExprOperand):
     return None
-  
+
   # 此时输入类型应该只会是纯文本
   # 输出类型除了文本、字符串、整数、浮点数之外，还可能有调用表达式和枚举类型（需要从字符串转过去）
-  
+
   # 首先把非基本类型的字符串解决了
   if ty in [ConstantText, ConstantTextFragment, ConstantString]:
     cur_value = value
@@ -683,7 +699,7 @@ def _try_convert_parameter(ty : type | types.UnionType | typing._GenericAlias, v
     assert ty == ConstantText
     context = cur_value.get_context()
     return ConstantText.get(context, [cur_value])
-  
+
   # 其他类型都可以从字符串转换过去，这里先将值转为字符串
   value_str = ''
   if isinstance(value, ConstantText):
@@ -694,7 +710,7 @@ def _try_convert_parameter(ty : type | types.UnionType | typing._GenericAlias, v
     value_str = value.get_string()
   else:
     raise NotImplementedError('Unexpected input value type')
-  
+
   if ty == str:
     return value_str
   if ty == int:
@@ -707,5 +723,5 @@ def _try_convert_parameter(ty : type | types.UnionType | typing._GenericAlias, v
     if not hasattr(ty, '_translate'):
       raise RuntimeError('Enum parameter not registered with @FrontendParamEnum')
     return ty._translate(value_str)
-  
+
   raise NotImplementedError('Unexpected output value type')
