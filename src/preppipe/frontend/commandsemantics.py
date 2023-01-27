@@ -12,6 +12,7 @@ import inspect
 import types
 import typing
 import collections
+import enum
 import re
 
 # ------------------------------------------------------------------------------
@@ -41,6 +42,32 @@ def CommandDecl(ns: FrontendCommandNamespace, imports : dict[str, typing.Any], n
     #  return func(*args, **kwargs)
     #return wrapper
   return decorator_parsecommand
+
+# 如果命令参数实质上是个枚举类型，命令可以定义该枚举类型，继承 enum.Enum，并且加上这个修饰符
+# 这个修饰符会添加一个 _translate() 的静态函数，用于把字符串转为枚举类型的值
+# 不同语言的别名也会在该函数中转换
+def FrontendParamEnum(alias : dict[str, set[str]]):
+  def decorator_enum(cls):
+    assert issubclass(cls, enum.Enum)
+    used_keys = set()
+    translation_dict = {} # （不同语言的）别名 -> 枚举类值
+    for p in cls:
+      if p.name in alias:
+        used_keys.add(p.name)
+        for v in alias[p.name]:
+          assert v not in translation_dict
+          translation_dict[v] = p
+    if len(used_keys) != len(alias):
+      for key in alias.keys():
+        if key not in used_keys:
+          raise RuntimeError('Invalid key "' + key + '" in ' + cls.__name__ + ' for alias')
+    def translate_cb(name : str):
+      if name in translation_dict:
+        return translation_dict[name]
+      return cls[name]
+    setattr(cls, '_translate', staticmethod(translate_cb))
+    return cls
+  return decorator_enum
 
 # 其他类型的参数
 # 内联调用
@@ -629,6 +656,7 @@ def _try_convert_parameter(ty : type | types.UnionType | typing._GenericAlias, v
   
   # 到这里我们现在支持如下类型：
   # 整数型、浮点数型（仅作为输出，不作为输入）
+  # 枚举类型（仅输出，可由字符串转换得来）
   # 延伸参数类型与调用表达式（不支持转换为其他类型，调用表达式可由文本、字符串转换得来）
   # 文本、字符串（可以转换成所有不是延伸参数类型的类型）
   
@@ -641,7 +669,7 @@ def _try_convert_parameter(ty : type | types.UnionType | typing._GenericAlias, v
     return None
   
   # 此时输入类型应该只会是纯文本
-  # 输出类型除了文本、字符串、整数、浮点数之外，还可能有调用表达式（需要从字符串转过去）
+  # 输出类型除了文本、字符串、整数、浮点数之外，还可能有调用表达式和枚举类型（需要从字符串转过去）
   
   # 首先把非基本类型的字符串解决了
   if ty in [ConstantText, ConstantTextFragment, ConstantString]:
@@ -667,73 +695,17 @@ def _try_convert_parameter(ty : type | types.UnionType | typing._GenericAlias, v
   else:
     raise NotImplementedError('Unexpected input value type')
   
+  if ty == str:
+    return value_str
+  if ty == int:
+    return int(value_str)
+  if ty == float:
+    return float(value_str)
   if ty == CallExprOperand:
     return CallExprOperand(name = value_str, args = [], kwargs = collections.OrderedDict())
-  if ty == str:
-    return value_str
-  if ty == int:
-    return int(value_str)
-  if ty == float:
-    return float(value_str)
-  raise NotImplementedError('Unexpected output value type')
-
-  # 把延伸参数类型和
+  if issubclass(ty, enum.Enum):
+    if not hasattr(ty, '_translate'):
+      raise RuntimeError('Enum parameter not registered with @FrontendParamEnum')
+    return ty._translate(value_str)
   
-  
-  # 预计的类型有这些
-  permitted_type_set_input = {ConstantString, ConstantText, ConstantTextFragment}
-  permitted_elementary_type_set_output = {str, int, float, ConstantString, ConstantText, ConstantTextFragment}
-  if not isinstance(value, list) and type(value) not in permitted_type_set_input:
-    return None
-  if not isinstance(ty, types.GenericAlias) and ty not in permitted_elementary_type_set_output:
-    return None
-  
-  # 如果参数类型是 list 的话，确认只有一个参数类型
-  if isinstance(ty, types.GenericAlias):
-    assert ty.__origin__ == list
-    assert len(ty.__args__) == 1
-    innerty = ty.__args__[0]
-    result = []
-    # 开始搞输入
-    if isinstance(value, list):
-      for v in value:
-        cur_value = _try_convert_parameter(innerty, v)
-        if cur_value is None:
-          return None
-        result.append(cur_value)
-    else:
-      cur_value = _try_convert_parameter(innerty, value)
-      if cur_value is None:
-        return None
-      result.append(cur_value) 
-    return result
-  
-  # 参数类型是 list 的情况处理完了，到这应该不会要有复合的输入
-  # 如果现在值是 list ，那么我们预计只有一项内容，我们将它展开
-  if isinstance(value, list):
-    return _try_convert_parameter(ty, value[0])
-  
-  # 以下都是从单值到单值的转换
-  if type(value) == ty:
-    return value
-  
-  
-
-  # 基本类型都可以从字符串转换过去，这里先将值转为字符串
-  value_str = ''
-  if isinstance(value, ConstantText):
-    value_str = value.get_string()
-  elif isinstance(value, ConstantTextFragment):
-    value_str = value.get_string()
-  elif isinstance(value, ConstantString):
-    value_str = value.value
-  else:
-    raise NotImplementedError('Unexpected input value type')
-  
-  if ty == str:
-    return value_str
-  if ty == int:
-    return int(value_str)
-  if ty == float:
-    return float(value_str)
   raise NotImplementedError('Unexpected output value type')

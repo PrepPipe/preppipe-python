@@ -239,11 +239,18 @@ def cmd_hide_image(parser : VNParser, commandop : GeneralCommandOp, image_name :
 def cmd_set_function(parser : VNParser, commandop : GeneralCommandOp, name : str):
   pass
 
+@FrontendParamEnum(alias={
+  'Continue': {'继续'},
+  'Loop': {'循环'}
+})
+class ChoiceFinishActionEnum(enum.Enum):
+  Continue = 0 # 默认继续执行分支后的内容（默认值）
+  Loop = 1 # 循环到选项开始（用于类似Q/A，可以反复选择不同选项。可由跳出命令结束）
 
 @CommandDecl(vn_command_ns, _imports, 'Choice', alias={
   '选项': {'name': '名称', 'finish_action': '结束动作'}
 })
-def cmd_choice(parser : VNParser, commandop : GeneralCommandOp, ext : ListExprOperand, name : str, finish_action : CallExprOperand = CallExprOperand('continue')):
+def cmd_choice(parser : VNParser, commandop : GeneralCommandOp, ext : ListExprOperand, name : str, finish_action : ChoiceFinishActionEnum = ChoiceFinishActionEnum.Continue):
   pass
 
 # ------------------------------------------------------------------------------
