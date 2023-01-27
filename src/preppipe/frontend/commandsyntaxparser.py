@@ -25,7 +25,7 @@ from ..inputmodel import *
 from ..pipeline import TransformBase, MiddleEndDecl
 
 # 命令扫描（语法分析阶段）
-  
+
 # ------------------------------------------------------------------------------
 # Command AST definition
 # ------------------------------------------------------------------------------
@@ -37,11 +37,11 @@ class CMDPositionalArgOp(Operation):
   # operation location is the location of the name/value (start of the name for keyword args, start of the value for positional args)
   # we use a full op here to track the loc
   _value_operand : OpOperand
-  
+
   def __init__(self, name: str, loc: Location, value : Value, **kwargs) -> None:
     super().__init__(name, loc, **kwargs)
     self._value_operand = self._add_operand_with_value('value', value)
-  
+
   @property
   def value(self):
     return self._value_operand.get()
@@ -51,11 +51,11 @@ class CMDValueSymbol(Symbol):
   # name is the value / argument name
   # operation location is the location of the name/value (start of the name for keyword args, start of the value for positional args)
   _value_operand : OpOperand
-  
+
   def __init__(self, name: str, loc: Location, value : Value, **kwargs) -> None:
     super().__init__(name, loc, **kwargs)
     self._value_operand = self._add_operand_with_value('value', value)
-  
+
   @property
   def value(self) -> Value:
     return self._value_operand.get()
@@ -64,7 +64,7 @@ class CommandCallReferenceType(ValueType):
   # type of GeneralCommandOp so that it can be a value
   def __init__(self, context: Context) -> None:
     super().__init__(context)
-  
+
   @staticmethod
   def get(ctx : Context) -> CommandCallReferenceType:
     return ctx.get_stateless_type(CommandCallReferenceType)
@@ -80,7 +80,7 @@ class GeneralCommandOp(Operation):
   _extend_data_region : Region
   _extend_data_block : Block
   _valueref : OpResult
-  
+
   def __init__(self, name: str, loc: Location, name_value : ConstantString, name_loc : Location, **kwargs) -> None:
     super().__init__(name, loc, **kwargs)
     self._head_region = self._add_symbol_table('head')
@@ -100,22 +100,22 @@ class GeneralCommandOp(Operation):
     self._nested_callexpr_block = self._nested_callexpr_region.add_block('')
     # initialize the extend data region
     self._extend_data_block = self._extend_data_region.add_block('')
-  
+
   def add_positional_arg(self, value: Value, loc : Location):
     argop = CMDPositionalArgOp('', loc, value)
     self._positionalarg_block.push_back(argop)
-  
+
   def add_keyword_arg(self, key: str, value : Value, keyloc : Location, _valueloc : Location):
     argop = CMDValueSymbol(name=key, loc=keyloc, value=value)
     self._keywordarg_region.add(argop)
-  
+
   def set_raw_arg(self, rawarg_value : Value, rawarg_loc : Location):
     rawarg_symbol = CMDValueSymbol('rawarg', rawarg_loc, rawarg_value)
     self._head_region.add(rawarg_symbol)
 
   def add_nested_call(self, call : GeneralCommandOp):
     self._nested_callexpr_block.push_back(call)
-  
+
   def add_extend_data(self, data : Operation):
     assert self._extend_data_block.body.empty
     self._extend_data_block.push_back(data)
@@ -201,7 +201,7 @@ def check_is_command_start(b : Block, ctx: Context) -> typing.Tuple[str, typing.
   # (3) 命令开头字符所在的操作项（来提供位置信息）
   # 如果该段不是命令的话，返回 None
   # 构建纯文本途中将忽略任何错误记录（像 IMErrorElementOp 那样的）
-  
+
   # 可能的命令开始标记
   _command_start_text = ('[', '【')
 
@@ -258,10 +258,10 @@ def check_is_command_start(b : Block, ctx: Context) -> typing.Tuple[str, typing.
 
 def _strip_whitespaces(text: str) -> typing.Tuple[str, int, int]: # trimmed string, leading WS, terminating WS
   cur_text = text.lstrip()
-  leadingWS = len(text) - len(cur_text)
+  leading_ws = len(text) - len(cur_text)
   result = cur_text.rstrip()
-  trailingWS = len(cur_text) - len(result)
-  return (result, leadingWS, trailingWS)
+  trailing_ws = len(cur_text) - len(result)
+  return (result, leading_ws, trailing_ws)
 
 class _InitParsedCommandInfo:
   total_range : typing.Tuple[int, int] # position (from the text) of the '[' and ']' (or counterparts) token
@@ -278,22 +278,22 @@ class _CommandScanListener(CommandScanListener):
 
   def enterCommand(self, ctx : CommandScanParser.CommandContext):
     result = _InitParsedCommandInfo()
-    
+
     commandstart = ctx.COMMANDSTART().getSymbol()
     commandend = ctx.COMMANDEND().getSymbol()
     # termal token's getSourceInterval() return Tuple[int, int] (start, end)
     # commandstart_start = commandstart.getSourceInterval()[0]
     # commandstart_end = commandstart.getSourceInterval()[1]
     result.total_range = (commandstart.start, commandend.stop) # inclusive; usually commandstart/end.start == ....stop
-    
+
     commentstart = ctx.COMMENTSTART() # antlr4.tree.Tree.TerminalNodeImpl or None
     result.is_comment = (commentstart is not None)
 
     body = ctx.body()
-    rawText = body.getText()
-    result.body, contentStartTrim, contentEndTrim = _strip_whitespaces(rawText)
-    result.body_range = (body.start.start + contentStartTrim, body.stop.stop - contentEndTrim)
-    
+    raw_text = body.getText()
+    result.body, content_start_trim, content_end_trim = _strip_whitespaces(raw_text)
+    result.body_range = (body.start.start + content_start_trim, body.stop.stop - content_end_trim)
+
     self.commandinfo.append(result)
 
     # if result.is_comment:
@@ -318,7 +318,7 @@ class _CommandCreationErrorListenerBase(ErrorListener):
     self._error_occurred = False
     self._error_column = 0
     self._error_msg = ''
-  
+
   def syntaxError(self, recognizer, offendingSymbol, line, column, msg, e):
     if not self._error_occurred:
       assert isinstance(column, int)
@@ -326,18 +326,18 @@ class _CommandCreationErrorListenerBase(ErrorListener):
       self._error_occurred = True
       self._error_column = column
       self._error_msg = msg
-  
+
   @property
   def error_occurred(self):
     return self._error_occurred
-  
+
   def get_error_record(self) -> _CommandParseErrorRecord:
     return _CommandParseErrorRecord(column=self._error_column, msg=self._error_msg)
 
 class _CommandScanErrorListener(_CommandCreationErrorListenerBase):
   pass
 
-def _splitTextAsCommands(text : str) -> typing.List[_InitParsedCommandInfo] | _CommandParseErrorRecord:
+def _split_text_as_commands(text : str) -> typing.List[_InitParsedCommandInfo] | _CommandParseErrorRecord:
   istream = antlr4.InputStream(text)
   error_listener = _CommandScanErrorListener()
   lexer = CommandScanLexer(istream)
@@ -350,10 +350,10 @@ def _splitTextAsCommands(text : str) -> typing.List[_InitParsedCommandInfo] | _C
   parser.addErrorListener(error_listener)
   parser.addErrorListener(ConsoleErrorListener())
   tree = parser.line()
-  
+
   if error_listener.error_occurred:
     return error_listener.get_error_record()
-  
+
   # print(tree.toStringTree(recog=parser))
   listener = _CommandScanListener()
   walker = antlr4.ParseTreeWalker()
@@ -373,7 +373,7 @@ class _CommandParseVisitorImpl(CommandParseVisitor):
   asset_map : dict[int, AssetData]
   commandop : GeneralCommandOp
   command_op_stack : list[GeneralCommandOp]
-  
+
   def __init__(self, fulltext : str, global_offset : int, asset_map : dict[int, AssetData], startloc : Location) -> None:
     super().__init__()
     self.startloc = startloc
@@ -382,11 +382,11 @@ class _CommandParseVisitorImpl(CommandParseVisitor):
     self.asset_map = asset_map
     self.commandop = None
     self.command_op_stack = []
-  
+
   @property
   def context(self):
     return self.startloc.context
-  
+
   def _get_loc(self, offset : int) -> Location:
     loc = self.startloc
     if isinstance(loc, DILocation):
@@ -394,7 +394,7 @@ class _CommandParseVisitorImpl(CommandParseVisitor):
       assert offset_correction == 1
       loc = loc.context.get_DILocation(loc.file, loc.page, loc.row, offset + offset_correction)
     return loc
-  
+
   def _handle_natural_text(self, natural_text_node) -> tuple[str, int, int]:
     natural_text_token = natural_text_node.getSymbol()
     start = natural_text_token.start
@@ -418,36 +418,36 @@ class _CommandParseVisitorImpl(CommandParseVisitor):
     global_start = self.global_offset + start
     data = self.asset_map[global_start]
     return (data, global_start, self.global_offset + end)
-  
+
   def visitName(self, ctx: CommandParseParser.NameContext) -> tuple[ConstantString, Location]:
     content_tuple = None
-    
+
     if ctx.NATURALTEXT() is not None:
       content_tuple = self._handle_natural_text(ctx.NATURALTEXT())
     elif ctx.QUOTEDSTR() is not None:
       content_tuple = self._handle_quoted_str(ctx.QUOTEDSTR())
     else:
       raise RuntimeError('Name without valid child?')
-    
-    name_str, name_start, name_end = content_tuple
+
+    name_str, name_start, _name_end = content_tuple
     name_value = ConstantString.get(name_str, self.context)
     name_loc = self._get_loc(name_start)
     return (name_value, name_loc)
-  
+
   def visitCommand(self, ctx: CommandParseParser.CommandContext):
     assert ctx.name() is not None and isinstance(ctx.name(), CommandParseParser.NameContext)
     name_value, name_loc = self.visitName(ctx.name())
     self.commandop = GeneralCommandOp('', self.startloc, name_value, name_loc)
     if ctx.argumentlist() is not None:
       self.visitArgumentlist(ctx.argumentlist())
-  
+
   def visitArgumentlist(self, ctx: CommandParseParser.ArgumentlistContext):
     # 本函数只会在 command 下触发，不会在内联的参数组中出现
     self.command_op_stack.append(self.commandop)
     assert ctx.arguments() is not None and isinstance(ctx.arguments(), CommandParseParser.ArgumentsContext)
     self.visitArguments(ctx.arguments())
     self.command_op_stack.pop(-1)
-    
+
   def visitArguments(self, ctx: CommandParseParser.ArgumentsContext) -> None:
     # 这个函数会在两个情况下被调用：
     # 1. 我们在处理最外层的命令体
@@ -465,25 +465,25 @@ class _CommandParseVisitorImpl(CommandParseVisitor):
       self.visitPositionals(ctx.positionals())
     if ctx.kwargs() is not None:
       self.visitKwargs(ctx.kwargs())
-  
+
   def visitPositionals(self, ctx: CommandParseParser.PositionalsContext):
     current_command = self.command_op_stack[-1]
     for v in ctx.value():
       assert isinstance(v, CommandParseParser.ValueContext)
       value, loc = self.visitValue(v)
       current_command.add_positional_arg(value, loc)
-  
+
   def visitKwargs(self, ctx: CommandParseParser.KwargsContext):
     for v in ctx.kwvalue():
       assert isinstance(v, CommandParseParser.KwvalueContext)
       self.visitKwvalue(v)
-  
+
   def visitKwvalue(self, ctx: CommandParseParser.KwvalueContext) -> None:
     current_command = self.command_op_stack[-1]
     name_value, name_loc = self.visitName(ctx.name())
     value, value_loc = self.visitValue(ctx.value())
     current_command.add_keyword_arg(name_value.value, value, name_loc, value_loc)
-  
+
   def visitValue(self, ctx: CommandParseParser.ValueContext) -> tuple[Value, Location]:
     if ctx.callexpr() is not None:
       return self.visitCallexpr(ctx.callexpr())
@@ -491,7 +491,7 @@ class _CommandParseVisitorImpl(CommandParseVisitor):
       return self.visitEvalue(ctx.evalue())
     else:
       raise RuntimeError('Invalid value')
-  
+
   def visitCallexpr(self, ctx: CommandParseParser.CallexprContext) -> tuple[Value, Location]:
     name_value, name_loc = self.visitName(ctx.name())
     newop = GeneralCommandOp('', name_loc, name_value, name_loc)
@@ -501,26 +501,26 @@ class _CommandParseVisitorImpl(CommandParseVisitor):
     self.visitArguments(ctx.arguments())
     self.command_op_stack.pop(-1)
     return (newop.valueref, newop.location)
-  
+
   def visitEvalue(self, ctx: CommandParseParser.EvalueContext) -> tuple[Value, Location]:
     content_tuple = None
-    
+
     if ctx.NATURALTEXT() is not None:
       content_tuple = self._handle_natural_text(ctx.NATURALTEXT())
     elif ctx.QUOTEDSTR() is not None:
       content_tuple = self._handle_quoted_str(ctx.QUOTEDSTR())
     elif ctx.ELEMENT() is not None:
-      data, start, end = self._handle_nontext_element(ctx.ELEMENT())
+      data, start, _end = self._handle_nontext_element(ctx.ELEMENT())
       assert isinstance(data, AssetData)
       return (data, self._get_loc(start))
     else:
       raise RuntimeError('evalue without valid child?')
-    
-    content_str, startpos, endpos = content_tuple
+
+    content_str, startpos, _endpos = content_tuple
     value = ConstantString.get(content_str, self.context)
     loc = self._get_loc(startpos)
     return (value, loc)
-  
+
 # ------------------------------------------------------------------------------
 # 组装起来
 
@@ -538,22 +538,23 @@ def _visit_command_block_impl(b : Block, ctx : Context, command_str : str, asset
     if isinstance(headloc, DILocation):
       return ctx.get_DILocation(headloc.file, headloc.page, headloc.row, headloc.column + offset)
     return headloc
-  
+
   # 进行检查，把资源的位置何内容对应起来
   asset_loc_list = [i.start() for i in re.finditer('\0', command_str)]
   assert len(asset_loc_list) == len(asset_list)
   asset_map_dict = {}
+  # pylint: disable=consider-using-enumerate
   for i in range(0, len(asset_loc_list)):
     asset_map_dict[asset_loc_list[i]] = asset_list[i]
-  
+
   # 首先，把命令段分割成一系列命令，如果无法形成命令则添加一个错误
-  infolist = _splitTextAsCommands(command_str)
+  infolist = _split_text_as_commands(command_str)
   if isinstance(infolist, _CommandParseErrorRecord):
     errorloc = get_loc_at_offset(infolist.column)
     errop = ErrorOp('', errorloc, error_code='cmd-scan-error', error_msg=ConstantString.get(infolist.msg, ctx))
     errop.insert_before(insert_before_op)
     return
-  
+
   # 开始处理
   last_command = None
   assert isinstance(infolist, list)
