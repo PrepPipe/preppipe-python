@@ -14,11 +14,11 @@ vn_command_ns = FrontendCommandNamespace.create(None, 'vnmodel')
 
 class UnrecognizedCommandOp(ErrorOp):
   # 基本是从 GeneralCommandOp 那里抄来的
-  _head_region : SymbolTableRegion # name + raw_args 
+  _head_region : SymbolTableRegion # name + raw_args
   _positionalarg_region : Region # single block, list of values
   _positionalarg_block : Block
   _keywordarg_region : SymbolTableRegion
-  
+
   def __init__(self, src: GeneralCommandOp, **kwargs) -> None:
     super().__init__(src.name, src.location, 'vnparser-unrecognized-command', None, **kwargs)
     self._head_region = self._add_symbol_table('head')
@@ -58,7 +58,7 @@ class VNParser(FrontendParserBase):
     self._skip_ops = set()
     self._insert_point = None
     self._unbacked_block = None
-  
+
   def add_document(self, doc : IMDocumentOp):
     # 我们在 VNModel 中将该文档中的内容“转录”过去
     # 读不了的东西直接忽视（扔掉）
@@ -75,24 +75,33 @@ class VNParser(FrontendParserBase):
           continue
         if isinstance(op, GeneralCommandOp):
           self.handle_command_op(op)
-  
+
   def handle_command_unrecognized(self, op: GeneralCommandOp, opname: str) -> None:
     # 在插入点创建一个 UnrecognizedCommandOp
     # TODO 在这加自动匹配
     newop = UnrecognizedCommandOp(op)
     newop.insert_before(self._insert_point)
     print('Unrecognized command: ' + str(op))
-  
-  def handle_command_invocation(self, op: GeneralCommandOp, cmdinfo: FrontendCommandInfo):
-    return super().handle_command_invocation(op, cmdinfo)
-  
-  def handle_command_ambiguous(self, commandop: GeneralCommandOp, cmdinfo: FrontendCommandInfo, matched_results: typing.List[typing.Tuple[callable, typing.List[typing.Any], typing.Dict[str, typing.Any], typing.List[typing.Tuple[str, typing.Any]]]], unmatched_results: typing.List[typing.Tuple[callable, typing.Tuple[str, str]]]):
+
+  def handle_command_invocation(self, commandop: GeneralCommandOp, cmdinfo: FrontendCommandInfo):
+    return super().handle_command_invocation(commandop, cmdinfo)
+
+  def handle_command_ambiguous(self, commandop: GeneralCommandOp, cmdinfo: FrontendCommandInfo,
+                               matched_results: typing.List[FrontendParserBase.CommandInvocationInfo],
+                               unmatched_results: typing.List[typing.Tuple[callable, typing.Tuple[str, str]]]):
     raise NotImplementedError()
-  
-  def handle_command_no_match(self, commandop: GeneralCommandOp, cmdinfo: FrontendCommandInfo, unmatched_results: typing.List[typing.Tuple[callable, typing.Tuple[str, str]]]):
+
+  def handle_command_no_match(self, commandop: GeneralCommandOp, cmdinfo: FrontendCommandInfo,
+                              unmatched_results: typing.List[typing.Tuple[callable, typing.Tuple[str, str]]]):
     raise NotImplementedError()
-  
-  def handle_command_unique_invocation(self, commandop: GeneralCommandOp, cmdinfo: FrontendCommandInfo, target_cb: callable, target_args: typing.List[typing.Any], target_kwargs: typing.Dict[str, typing.Any], target_warnings: typing.List[typing.Tuple[str, typing.Any]], unmatched_results: typing.List[typing.Tuple[callable, typing.Tuple[str, str]]]):
+
+  def handle_command_unique_invocation(self, commandop: GeneralCommandOp, cmdinfo: FrontendCommandInfo,
+                                       matched_result: FrontendParserBase.CommandInvocationInfo,
+                                       unmatched_results: typing.List[typing.Tuple[callable, typing.Tuple[str, str]]]):
+    target_cb = matched_result.cb
+    target_args = matched_result.args
+    target_kwargs = matched_result.kwargs
+    target_warnings = matched_result.warnings
     print('Command ' + cmdinfo.cname + ': target_cb=' + str(target_cb) + ', args=' + str(target_args) + ', kwargs=' + str(target_kwargs) + ', warnings=' + str(target_warnings))
     target_cb(*target_args, **target_kwargs)
     return
@@ -113,6 +122,7 @@ def cmd_image_decl(parser : VNParser, commandop : GeneralCommandOp, name : str, 
 @CommandDecl(vn_command_ns, _imports, 'DeclVariable', alias={
   '声明变量' : {'name': '名称', 'type': '类型', 'initializer': '初始值'},
 })
+# pylint: disable=redefined-builtin
 def cmd_variable_decl(parser: VNParser, commandop : GeneralCommandOp, name : str, type : str, initializer : str):
   pass
 
@@ -156,10 +166,6 @@ def cmd_character_say_attr(parser : VNParser, commandop : GeneralCommandOp, char
                           ):
   # 定义一个角色说话时名称的显示
   # 如果
-  pass
-
-# TODO
-def cmd_set_character_state(parser : VNParser, commandop : GeneralCommandOp):
   pass
 
 @CommandDecl(vn_command_ns, _imports, 'DeclScene', alias={
@@ -240,17 +246,17 @@ def cmd_set_function(parser : VNParser, commandop : GeneralCommandOp, name : str
   pass
 
 @FrontendParamEnum(alias={
-  'Continue': {'继续'},
-  'Loop': {'循环'}
+  'CONTINUE': { 'continue', '继续'},
+  'LOOP': {'loop', '循环'}
 })
 class ChoiceFinishActionEnum(enum.Enum):
-  Continue = 0 # 默认继续执行分支后的内容（默认值）
-  Loop = 1 # 循环到选项开始（用于类似Q/A，可以反复选择不同选项。可由跳出命令结束）
+  CONTINUE = 0 # 默认继续执行分支后的内容（默认值）
+  LOOP = 1 # 循环到选项开始（用于类似Q/A，可以反复选择不同选项。可由跳出命令结束）
 
 @CommandDecl(vn_command_ns, _imports, 'Choice', alias={
   '选项': {'name': '名称', 'finish_action': '结束动作'}
 })
-def cmd_choice(parser : VNParser, commandop : GeneralCommandOp, ext : ListExprOperand, name : str, finish_action : ChoiceFinishActionEnum = ChoiceFinishActionEnum.Continue):
+def cmd_choice(parser : VNParser, commandop : GeneralCommandOp, ext : ListExprOperand, name : str, finish_action : ChoiceFinishActionEnum = ChoiceFinishActionEnum.CONTINUE):
   pass
 
 # ------------------------------------------------------------------------------
@@ -271,7 +277,7 @@ class VNParseTransform(TransformBase):
   def __init__(self, ctx: Context) -> None:
     super().__init__(ctx)
     self._parser = VNParser(ctx, vn_command_ns)
-  
+
   def run(self) -> Operation | typing.List[Operation] | None:
     for doc in self.inputs:
       self._parser.add_document(doc)

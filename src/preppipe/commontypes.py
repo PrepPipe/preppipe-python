@@ -1,6 +1,9 @@
 # SPDX-FileCopyrightText: 2022 PrepPipe's Contributors
 # SPDX-License-Identifier: Apache-2.0
 
+# Most of the code in this file is deprecated
+# pylint: skip-file
+
 from __future__ import annotations
 import mimetypes
 import os, io, gc
@@ -23,14 +26,14 @@ class Color:
   g : int = 0
   b : int = 0
   a : int = 255
-  
+
   def __init__(self, r : int = 0, g: int = 0, b: int = 0, a: int = 255) -> None:
     self.r = r
     self.g = g
     self.b = b
     self.a = a
     self.validate()
-  
+
   ##
   # @~english @brief Map of predefined color names to values. %Color names can be passed to Color.get()
   # @~chinese @brief 预设颜色到对应值的表。可在调用 Color.get() 时提供颜色名。
@@ -43,22 +46,22 @@ class Color:
     "white": (255,  255,  255,  255),
     "black": (0,    0,    0,    255)
   }
-  
+
   def red(self) -> int:
     return self.r
-  
+
   def green(self) -> int:
     return self.g
-  
+
   def blue(self) -> int:
     return self.b
-  
+
   def alpha(self) -> int:
     return self.a
-  
+
   def transparent(self) -> bool:
     return self.a == 0
-  
+
   def validate(self) -> None:
     if self.r < 0 or self.r > 255:
       raise AttributeError("Color.r (" + str(self.r) + ") out of range [0, 255]")
@@ -68,7 +71,7 @@ class Color:
       raise AttributeError("Color.b (" + str(self.b) + ") out of range [0, 255]")
     if self.a < 0 or self.a > 255:
       raise AttributeError("Color.a (" + str(self.a) + ") out of range [0, 255]")
-  
+
   def getString(self) -> str:
     result = "#" + '{:02x}'.format(self.r) + '{:02x}'.format(self.g) + '{:02x}'.format(self.b)
     if self.a != 255:
@@ -77,14 +80,14 @@ class Color:
 
   def __str__(self) -> str:
     return self.getString()
-  
+
   @staticmethod
   def get(src: typing.Any):
     """!
     @~english @brief Try to get a color from a value (a string or color tuple)
     @~chinese @brief 用参数(一个字符串或是元组)构造一个颜色值
     @~
-    
+
     <details open><summary>English(en)</summary>
     Returns a Color from one of the following argument:
     <ul>
@@ -93,7 +96,7 @@ class Color:
     </ul>
     This function raises AttributeError exception if the argument is not in any of the form above.
     </details>
-    
+
     <details open><summary>中文(zh)</summary>
     用来创建颜色的参数必须是以下任意一种形式:
     <ul>
@@ -135,42 +138,42 @@ class Color:
     else:
       raise AttributeError("Not a color: " + src)
     return Color(r, g, b, a)
-  
+
   def to_tuple(self):
     if self.a == 255:
       return (self.r, self.g, self.b)
     return (self.r, self.g, self.b, self.a)
-  
+
 
 class FileType(enum.Enum):
   """!
   @~english @brief Enum for file type according to usage, mainly used for metadata like debug locations in source files
   @~chinese @brief (基于使用方式的)文件类型的枚举值，用于定位源文件位置等元数据
   """
-  
+
   Unknown = 0
-  
+
   ##
   # @~english @brief plain text, excluding Markdown or HTML
   # @~chinese @brief 纯文本，不包括Markdown或是HTML
   #
   Text = enum.auto() # loc: line, column
-  
-  Markdown = enum.auto() # loc: line, column, title path 
+
+  Markdown = enum.auto() # loc: line, column, title path
   HTML = enum.auto() # loc: line, column, elements path
-  
+
   ##
   # @~english @brief any static, single-layer image types
   # @~chinese @brief 任意静态、单层图片类型
   #
   Image = enum.auto()
   """any static, single-layer image types"""
-  
+
   ##
   # @~english @brief static, layered image, basically corresponds to a PSD file
   # @~chinese @brief 静态、多层的图片类型，基本上等同于PSD文件
   # @~
-  # 
+  #
   # <details open><summary>English(en)</summary>
   # A layered image (at least) contains a list of image layers, from the bottom to top.<br>
   # Each image layer (at least) contains (1) a single static image, and (2) a unique layer name.
@@ -182,49 +185,49 @@ class FileType(enum.Enum):
   #
   LayeredImage = enum.auto()
   """static, layered image, basically corresponds to a PSD file"""
-  
+
   Audio = enum.auto()
   Video = enum.auto()
-  
+
   ##
   # @~english @brief OpenDocument/OfficeOpenXML word processing documents
   # @~chinese @brief OpenDocument/OfficeOpenXML (Word)文档
   #
   Document = enum.auto()
   """OpenDocument/OfficeOpenXML word processing documents"""
-  
+
   ##
   # @~english @brief OpenDocument/OfficeOpenXML presentations
   # @~chinese @brief OpenDocument/OfficeOpenXML (PPT)演示
   #
   Presentation = enum.auto()
   """OpenDocument/OfficeOpenXML presentations"""
-  
+
   ##
   # @~english @brief OpenDocument/OfficeOpenXML spreadsheet
   # @~chinese @brief OpenDocument/OfficeOpenXML (Excel)表格
   #
   Spreadsheet = enum.auto()
   """OpenDocument/OfficeOpenXML spreadsheet"""
-  
+
   @staticmethod
   def get_from_mimetype(mimetype : str):
     special_dict : typing.Dict[str, FileType] = {
       # PSD File
       'image/vnd.adobe.photoshop' : FileType.LayeredImage,
-      
+
       # EPS File
       'application/postscript': FileType.Image,
-      
+
       # OpenDocument files
       'application/vnd.oasis.opendocument.text': FileType.Document,
       'application/vnd.oasis.opendocument.presentation': FileType.Presentation,
       'application/vnd.oasis.opendocument.spreadsheet': FileType.Spreadsheet,
-      
+
       # HTML and markdown
       'text/html' : FileType.HTML,
       'text/markdown' : FileType.Markdown,
-      
+
       # last item
       'application/octet-stream' : FileType.Unknown
     }
@@ -282,9 +285,9 @@ class AssetBase:
   @~english @brief Base class for all assets (the non-code portion that we don't interpret)
   @~chinese @brief 所有资源(我们不作解读的非代码的部分)的基类
   @~
-  
+
   @todo this class is not finished yet
-  
+
   <details open><summary>English(en)</summary>
   The design of %AssetBase aims the following goals:
   <ul>
@@ -307,7 +310,7 @@ class AssetBase:
   We determine the canonical MIME Type of a file from the result of mimetypes.guess_type().<br>
   Derived class can add additional members for metadata if appropriate.<br>
   </details>
-  
+
   <details open><summary>中文(zh)</summary>
   %AssetBase 的设计服务于以下目标：
   <ul>
@@ -331,7 +334,7 @@ class AssetBase:
   如果合适的话，子类可以添加额外的成员来记录资源的元数据。<br>
   </details>
   """
-  
+
   ##
   # @~english @brief Temporary directory path for backing store
   # @~chinese @brief 后备存储的临时目录
@@ -350,14 +353,14 @@ class AssetBase:
   # </details>
   #
   backing_dir : typing.ClassVar[tempfile.TemporaryDirectory] = None
-  
-  
+
+
   _memory_resident_data : bytes
   _backing_store_path : str
   _byte_size : int
   _mimetype : str
   _cache_insert_slot : typing.Any
-  
+
   def __init__(self, mimetype : str, *, snapshot : bytes = None, backing_store_path : str = "") -> None:
     self._memory_resident_data = snapshot
     self._backing_store_path = backing_store_path
@@ -370,38 +373,38 @@ class AssetBase:
       assert os.path.isabs(backing_store_path) and os.path.isfile(backing_store_path)
       if self._byte_size < 0:
         self._byte_size = os.stat(backing_store_path).st_size
-  
+
   def valid(self) -> bool:
     if self._memory_resident_data is not None:
       return True
     if len(self._backing_store_path) > 0 and os.path.isfile(self._backing_store_path):
       return True
     return False
-  
+
   def get_mime_type(self) -> str:
     """!
     @~english @brief get the MIME Type of this asset
     @~chinese @brief 返回这个资源的 MIME 类型
     """
     return self._mimetype
-  
+
   def get_size(self) -> int:
     """!
     @~english @brief get the file size (in bytes) of this asset
     @~chinese @brief 返回这个资源的大小 (以字节为单位)
     """
     return self._byte_size
-  
+
   def _export(self, memory_data : typing.Any, mimetype : str) -> bytes:
     """!
     @~english @brief export the asset object with the given format (must not be the original format)
     @~chinese @brief 将资源对象导出到指定格式 (一定不是原本的格式)
     """
     pass
-  
+
   def _load(self, snapshot : bytes, mimetype : str) -> typing.Any:
     pass
-  
+
   @functools.lru_cache
   def get(self):
     if self._cache_insert_slot is not None:
@@ -414,7 +417,7 @@ class AssetBase:
         snapshot = f.read()
       return self._load(snapshot, self._mimetype)
     raise RuntimeError("Trying to get() from invalid asset object")
-  
+
   def get_snapshot(self) -> bytes:
     if self._memory_resident_data is not None:
       return self._memory_resident_data
@@ -424,20 +427,20 @@ class AssetBase:
         snapshot = f.read()
       return snapshot
     raise RuntimeError("Trying to get_snapshot() from invalid asset object")
-  
+
   def cache_data(self, memory_data : typing.Any):
     # insert the memory_data to get() cache result
     self._cache_insert_slot = memory_data
     result = self.get()
     assert result == memory_data
     self._cache_insert_slot = None
-    
+
   # support for using objects as key in dictionary / in set
   def __hash__(self) -> int:
     return hash(id(self))
   def __eq__(self, __o: object) -> bool:
     return __o is self
-  
+
   @staticmethod
   def _gchook(phase, info):
     """!
@@ -448,20 +451,20 @@ class AssetBase:
     """
     #AssetBase.get.cache_clear()
     pass
-  
+
   @staticmethod
   def _get_tmp_backing_dir() -> tempfile.TemporaryDirectory:
     if AssetBase.backing_dir is None:
       AssetBase.backing_dir = tempfile.TemporaryDirectory(prefix="preppipe_asset")
     return AssetBase.backing_dir
-  
+
   @staticmethod
   def _get_tmp_backing_path(suffix: str = "") -> str:
     backing_dir = AssetBase._get_tmp_backing_dir()
     fd, path = tempfile.mkstemp(dir=backing_dir,suffix=suffix)
     os.close(fd)
     return path
-  
+
   @staticmethod
   def secure_overwrite(exportpath: str, write_callback: typing.Callable, open_mode : str = 'wb'):
     tmpfilepath = exportpath + ".tmp"
@@ -487,16 +490,16 @@ class BytesAsset(AssetBase):
   """
   def __init__(self, mimetype : str, *, snapshot: bytes = None, backing_store_path: str = "") -> None:
       super().__init__(mimetype, snapshot = snapshot, backing_store_path = backing_store_path)
-  
+
   def get(self) -> bytes:
     return super().get()
-  
+
   def _export(self, memory_data : typing.Any, mimetype : str) -> bytes:
     return memory_data
-  
+
   def _load(self, snapshot : bytes, mimetype : str) -> typing.Any:
     return snapshot
-  
+
   @staticmethod
   def create(src):
     if isinstance(src, bytes):
@@ -512,38 +515,38 @@ class AudioAsset(AssetBase):
   @~english @brief Base class for all audio assets
   @~chinese @brief 音频资源的基类
   @~
-  
+
   <details open><summary>English(en)</summary>
   All audio assets use pydub.AudioSegment for manipulation-ready form.<br>
   This class takes care of import/export and format handling.<br>
   </details>
-  
+
   <details open><summary>中文(zh)</summary>
   所有的音频资源都以 pydub.AudioSegment 表示，方便进行处理。<br>
   这个类提供导入、导出，以及文件格式的处理。<br>
   </details>
   """
-  
+
   ##
   # @~english @brief Audio types whose MIME Type is exactly audio/xxx where xxx is file name extension
   # @~chinese @brief 所有 MIME 类型正好是 audio/xxx (xxx 是文件后缀名)的音频类型
-  # 
+  #
   _mime_type_suffix_identity_set : typing.ClassVar[typing.Set[str]] = {
     "wav", "aac", "ogg", "m4a", "aiff", "flac"
   }
-  
+
   ##
   # @~english @brief For audio types with different MIME subtype and file name extension, this bidict maps from MIME subtype to extension
   # @~chinese @brief 所有 MIME 子类型与文件后缀名不符的音频类型在这个 bidict 中可由 MIME 子类型转换为后缀名
-  # 
+  #
   _mime_type_suffix_transform_dict : typing.ClassVar[bidict.bidict[str, str]] = {
     "mpeg" : "mp3"
   }
-  
+
   @staticmethod
   def get_format_from_mimetype(mimetype : str) -> str:
     """!
-    @~english @brief Convert a MIME Type string into pydub's \a format, which is also the file extension 
+    @~english @brief Convert a MIME Type string into pydub's \a format, which is also the file extension
     @~chinese @brief 将 MIME 类型转化为 pydub 使用的 \a 格式，同时也是文件后缀名
     @~
     """
@@ -555,7 +558,7 @@ class AudioAsset(AssetBase):
     if subtype in AudioAsset._mime_type_suffix_transform_dict:
       return AudioAsset._mime_type_suffix_transform_dict[subtype]
     raise NotImplementedError("Unrecognized audio mimetype "+ mimetype)
-  
+
   @staticmethod
   def is_mimetype_supported(mimetype : str) -> bool:
     """!
@@ -564,7 +567,7 @@ class AudioAsset(AssetBase):
     @~
     """
     return (AudioAsset.get_format_from_mimetype(mimetype) is not None)
-  
+
   @staticmethod
   def get_mimetype_from_format(format : str):
     format = format.lower()
@@ -573,27 +576,27 @@ class AudioAsset(AssetBase):
     if format in AudioAsset._mime_type_suffix_transform_dict.inverse:
       return "audio/" + AudioAsset._mime_type_suffix_transform_dict.inverse[format]
     raise NotImplementedError("Unrecognized audio format "+ format)
-  
+
   def __init__(self, mimetype : str, *, snapshot : bytes = None, backing_store_path : str = "") -> None:
     super().__init__(mimetype, snapshot=snapshot, backing_store_path=backing_store_path)
-  
+
   def get(self) -> pydub.AudioSegment:
     return super().get()
-  
+
   def _export(self, memory_data: pydub.AudioSegment, mimetype: str) -> bytes:
     buffer = io.BytesIO()
     memory_data.export(buffer, format = self.get_format_from_mimetype(mimetype))
     return buffer.read()
-  
+
   def _load(self, snapshot : bytes, mimetype : str) -> typing.Any:
     buffer = io.BytesIO(snapshot)
     format = self.get_format_from_mimetype(mimetype)
     return pydub.AudioSegment.from_file(buffer, format=format)
-  
+
   @staticmethod
   def create_from_record(mimetype : str, backing_store_path : str):
     return AudioAsset(mimetype, snapshot=None, backing_store_path = backing_store_path)
-  
+
   @staticmethod
   def create_from_storage(backing_store_path : str):
     abs_path = os.path.abspath(backing_store_path)
@@ -604,7 +607,7 @@ class AudioAsset(AssetBase):
       raise RuntimeError("Unsupported encoding: " + encoding + " for file " + abs_path)
     assert AudioAsset.is_mimetype_supported(mimetype)
     return AudioAsset(mimetype, backing_store_path=abs_path)
-  
+
   @staticmethod
   def create_from_bytes(mimetype : str, snapshot : bytes = None):
     return AudioAsset(mimetype, snapshot=snapshot)
@@ -619,32 +622,32 @@ class ImageAsset(AssetBase):
   @~english @brief Base class for all static, single-layer assets
   @~chinese @brief 所有静态、单图层图片资源的基类
   @~
-  
+
   @todo add support for SVG
-  
+
   <details open><summary>English(en)</summary>
   All image assets use PIL.Image for manipulation-ready form.<br>
   This class takes care of import/export and format handling.<br>
   </details>
-  
+
   <details open><summary>中文(zh)</summary>
   所有的图片资源都以 PIL.Image 表示，方便进行处理。<br>
   这个类提供导入、导出，以及文件格式的处理。<br>
   </details>
   """
-  
+
   ##
   # @~english @brief Image types whose MIME Type is exactly image/xxx where xxx is file name extension
   # @~chinese @brief 所有 MIME 类型正好是 image/xxx (xxx 是文件后缀名)的图片类型
-  # 
+  #
   _mime_type_suffix_identity_set : typing.ClassVar[typing.Set[str]] = {
     "png", "bmp", "tiff", "dib", "gif", "pcx", "xbm"
   }
-  
+
   ##
   # @~english @brief For image types with different MIME subtype and file name extension, this bidict maps from MIME subtype to extension
   # @~chinese @brief 所有 MIME 子类型与文件后缀名不符的图片类型在这个 bidict 中可由 MIME 子类型转换为后缀名
-  # 
+  #
   _mime_type_suffix_transform_dict : typing.ClassVar[bidict.bidict[str, str]] = {
     # add SVG back after their support is ready
     # "svg+xml": "svg",
@@ -653,7 +656,7 @@ class ImageAsset(AssetBase):
     "vnd.microsoft.icon": "ico",
     "x-portable-pixmap": "ppm"
   }
-  
+
   ##
   # @~english @brief For image types with MIME type not starting with "image", this bidict maps from full MIME type to extension
   # @~chinese @brief 所有 MIME 类型不以"image"开头的图片类型在这个 bidict 中可由完整的 MIME 类型转换为后缀名
@@ -661,11 +664,11 @@ class ImageAsset(AssetBase):
   _mime_type_full_dict : typing.ClassVar[bidict.bidict[str, str]] = {
     "application/postscript" : "eps"
   }
-  
+
   @staticmethod
   def get_format_from_mimetype(mimetype : str) -> str:
     """!
-    @~english @brief Convert a MIME Type string into pydub's \a format, which is also the file extension 
+    @~english @brief Convert a MIME Type string into pydub's \a format, which is also the file extension
     @~chinese @brief 将 MIME 类型转化为 pydub 使用的 \a 格式，同时也是文件后缀名
     @~
     """
@@ -680,7 +683,7 @@ class ImageAsset(AssetBase):
     elif mimetype in ImageAsset._mime_type_full_dict:
       return ImageAsset._mime_type_full_dict[mimetype]
     raise NotImplementedError("Unrecognized image mimetype "+ mimetype)
-  
+
   @staticmethod
   def is_mimetype_supported(mimetype : str) -> bool:
     """!
@@ -689,7 +692,7 @@ class ImageAsset(AssetBase):
     @~
     """
     return (ImageAsset.get_format_from_mimetype(mimetype) is not None)
-  
+
   @staticmethod
   def get_mimetype_from_format(format : str):
     format = format.lower()
@@ -700,29 +703,29 @@ class ImageAsset(AssetBase):
     if format in ImageAsset._mime_type_full_dict.inverse:
       return ImageAsset._mime_type_full_dict.inverse[format]
     raise NotImplementedError("Unrecognized image format "+ format)
-  
+
   def __init__(self, mimetype : str, *, snapshot : bytes = None, backing_store_path : str = "") -> None:
     super().__init__(mimetype, snapshot=snapshot, backing_store_path=backing_store_path)
-  
+
   def get(self) -> PIL.Image:
     return super().get()
-  
+
   def _export(self, memory_data : PIL.Image, mimetype : str) -> bytes:
     buffer = io.BytesIO()
     memory_data.save(buffer, format = self.get_format_from_mimetype(mimetype))
     return buffer.read()
-  
+
   def _load(self, snapshot : bytes, mimetype : str) -> typing.Any:
     buffer = io.BytesIO(snapshot)
     return PIL.Image.open(buffer, format = self.get_format_from_mimetype(mimetype))
-  
-  
+
+
 class TextAttribute(enum.Enum):
   # we only define TextAttribute without TextFragment because VNModel and InputModel permits different text fields
   # text attributes without associated data
   Bold = enum.auto()
   Italic = enum.auto()
-  
+
   # text attributes with data
   Hierarchy = enum.auto() # data: int representing the "level" of text; 0: normal text; 1: title; 2: Header1; 3: Header2; ... UPDATE: this will be dropped
   Size = enum.auto() # data: int representing size change; 0 is no change, + means increase size, - means decrease size; see preppipe.util.FontSizeConverter for more details
@@ -748,27 +751,27 @@ class IRNamespaceIdentifier:
   @property
   def identifier(self) -> typing.List[str]:
     return self._identifier
-  
+
   def __init__(self, identifier : typing.List[str] = []) -> None:
     self._identifier = identifier.copy()
-  
+
   def __eq__(self, __o: object) -> bool:
     if isinstance(__o, typing.List[str]):
       return self.identifier == __o
     if isinstance(__o, IRNamespaceIdentifier):
       return self.identifier == __o.identifier
     return False
-  
+
   def to_string(self) -> str:
     return ".".join(self.identifier)
-  
+
   def __hash__(self) -> int:
     return hash(self.to_string())
 
 class IRTypeObject:
   def __init__(self) -> None:
     super().__init__()
-  
+
   def __str__(self) -> str:
     return type(self).__name__
 
@@ -789,7 +792,7 @@ class IRValue:
     self._value_type = value_type
     self._source = source
     self._name = name
-  
+
   def to_string(self, indent = 0) -> str:
     if self._source is None:
       return ""
@@ -798,15 +801,15 @@ class IRValue:
     if len(self._name) > 0:
       result += "." + self._name
     return result
-  
+
   @property
   def uses(self):
     return self._uses
-  
+
   @property
   def value_type(self):
     return self._value_type
-  
+
   def add_use(self, user : typing.Any, operand : typing.Any) -> IRUse:
     u = IRUse(self, user, operand)
     assert u not in self._uses
@@ -903,10 +906,10 @@ class IROp:
           body.append("  "*indent + "}")
       result += "\n" + "\n".join(body)
     return result
-  
+
   def __str__(self) -> str:
     return self.to_string(0)
-  
+
   def get_region_dict(self) -> typing.Dict[str, typing.Any]:
     # the value (region body) should be one of the following:
     # 1. a sequence/iterable of blocks (the block should also have to_string() function)
@@ -917,11 +920,11 @@ class IROp:
   @classmethod
   def get_input_arguments(cls) -> typing.List[IRValueDecl]:
     return []
-  
+
   @classmethod
   def get_output_values(cls) -> typing.List[IRValueDecl]:
     return []
-  
+
   def get_input_value(self, name : str):
     # if the input value name does not exist, raise exception
     # if the name corresponds to a list of value, return typing.List[IRValue]
@@ -961,13 +964,13 @@ class MessageImportance(enum.Enum):
 
 class MessageHandler:
   _instance = None
-  
+
   @staticmethod
   def install_message_handler(handler):
     # subclass MessageHandler and call this function to install the handler
     assert isinstance(handler, MessageHandler)
     MessageHandler._instance = handler
-  
+
   def message(self, importance : MessageImportance, msg : str, file : str = "", location: str = ""):
     # usually the location string contains the file path
     # use location if available
@@ -976,31 +979,30 @@ class MessageHandler:
       locstring = location
     elif len(file) > 0:
       locstring = file
-    
+
     if len(locstring) > 0:
       locstring = ' ' + locstring + ': '
-    
+
     print("[{imp}]{loc}{msg}".format(imp=str(importance), loc=locstring, msg=msg))
-  
+
   @staticmethod
   def get():
     if MessageHandler._instance is None:
       MessageHandler._instance = MessageHandler()
     return MessageHandler._instance
-  
+
   @staticmethod
   def info(msg : str, file : str = "", location: str = ""):
     MessageHandler.get().message(MessageImportance.Info, msg, file, location)
-  
+
   @staticmethod
   def warning(msg : str, file : str = "", location: str = ""):
     MessageHandler.get().message(MessageImportance.Warning, msg, file, location)
-  
+
   @staticmethod
   def critical_warning(msg : str, file : str = "", location: str = ""):
     MessageHandler.get().message(MessageImportance.CriticalWarning, msg, file, location)
-  
+
   @staticmethod
   def error(msg : str, file : str = "", location: str = ""):
     MessageHandler.get().message(MessageImportance.Error, msg, file, location)
-  

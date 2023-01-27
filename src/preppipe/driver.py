@@ -14,8 +14,8 @@ def _testmain():
   ctx = Context()
   settings = IMSettings()
   cache = IMParseCache(ctx)
-  filePath = sys.argv[1]
-  doc = parse_odf(ctx, settings, cache, filePath)
+  filepath = sys.argv[1]
+  doc = parse_odf(ctx, settings, cache, filepath)
   perform_command_parse_transform(doc)
   doc.view()
 

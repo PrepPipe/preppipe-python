@@ -51,9 +51,9 @@ ignore=CVS
 ignore-paths=
 
 # Files or directories matching the regular expression patterns are skipped.
-# The regex matches against base names, not paths. The default value ignores
-# Emacs file locks
-ignore-patterns=^\.#
+# The regex matches against base names, not paths.
+# anything starting with '_' are ignored
+ignore-patterns=_.*
 
 # List of module names for which member attributes should not be checked
 # (useful for modules/projects where namespaces are manipulated during runtime
@@ -314,7 +314,7 @@ overgeneral-exceptions=BaseException,
 [FORMAT]
 
 # Expected format of line ending, e.g. empty (any line ending), LF or CRLF.
-expected-line-ending-format=
+expected-line-ending-format=LF
 
 # Regexp for a line that is allowed to be longer than the limit.
 ignore-long-lines=^\s*(# )?<?https?://\S+>?$
@@ -327,7 +327,7 @@ indent-after-paren=2
 indent-string='  '
 
 # Maximum number of characters on a single line.
-max-line-length=100
+max-line-length=200
 
 # Maximum number of lines in a module.
 max-module-lines=1000
@@ -340,6 +340,8 @@ single-line-class-stmt=no
 # else.
 single-line-if-stmt=no
 
+# stop complaining variable names that are too short
+good-names-rgxs=^[_a-z][_a-z0-9]?$
 
 [IMPORTS]
 
@@ -415,7 +417,10 @@ disable=raw-checker-failed,
         suppressed-message,
         useless-suppression,
         deprecated-pragma,
-        use-symbolic-message-instead
+        use-symbolic-message-instead,
+        unused-import, wildcard-import, unused-wildcard-import,
+        too-many-lines,
+        trailing-newlines
 
 # Enable the message, report, category or checker with the given id(s). You can
 # either give multiple identifier separated by comma (,) or put this option
