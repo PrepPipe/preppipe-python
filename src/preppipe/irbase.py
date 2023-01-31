@@ -6,19 +6,19 @@ from __future__ import annotations
 import typing
 import enum
 import dataclasses
-import llist
 import collections
 import collections.abc
 import tempfile
 import os
 import pathlib
-
-import bidict
-import PIL.Image
-import pydub
 import shutil
 import webbrowser
 import io
+
+import PIL.Image
+import pydub
+import bidict
+import llist
 
 from .commontypes import TextAttribute, Color
 
@@ -78,16 +78,21 @@ class IList(typing.Generic[T], llist.dllist):
   def get_index_of(self, node : T) -> int:
     # -1 if node not found, node index if found
     cur_index = 0
-    cur_node = self.front()
+    cur_node = self.front
     while cur_node is not None:
+      assert isinstance(cur_node, IListNode)
       if cur_node is node:
         return cur_index
+      # pylint: disable=no-member
       cur_node = cur_node.next
+      cur_index += 1
     return -1
 
   def merge_into(self, dest : IList[T]):
     while self.front is not None:
       v = self.front
+      assert isinstance(v, IListNode)
+      # pylint: disable=no-member
       v.node_removed(self.parent)
       super().remove(v)
       dest.push_back(v)
@@ -95,11 +100,21 @@ class IList(typing.Generic[T], llist.dllist):
   def __iter__(self) -> IListIterator[T]:
     return IListIterator(super().first)
 
+  # pylint: disable=invalid-length-returned
   def __len__(self) -> int:
+    assert self.size >= 0
     return self.size
 
   def __getitem__(self, index : int) -> T:
-    return super().__getitem__[index]
+    return super().__getitem__(index)
+
+  def clear(self):
+    while self.front is not None:
+      v = self.front
+      assert isinstance(v, IListNode)
+      # pylint: disable=no-member
+      v.node_removed(self.parent)
+      super().remove(v)
 
 class IListIterator(typing.Generic[T]):
   _node : T
@@ -122,7 +137,7 @@ class IListNode(typing.Generic[T], llist.dllistnode):
     # passthrough kwargs for cooperative multiple inheritance
     super().__init__(**kwargs)
 
-  def _try_get_owner(self):
+  def _try_get_owner(self) -> IList:
     # first, weakref itself can be None if it never referenced another object
     # second, weakref may lose reference to the target
     # we use this function to dereference a weakref
@@ -130,12 +145,14 @@ class IListNode(typing.Generic[T], llist.dllistnode):
       return self.owner()
     return None
 
+  # pylint: disable=protected-access
   def insert_before(self, ip : IListNode[T]) -> None:
     owner = self._try_get_owner()
     ipowner = ip._try_get_owner()
     assert ipowner is not None
     if owner is not None:
       self.node_removed(self.parent)
+      # pylint: disable=no-member
       owner.remove(self)
     self.node_inserted(self.parent)
     ipowner.insertnode(self, ip)
@@ -145,6 +162,7 @@ class IListNode(typing.Generic[T], llist.dllistnode):
     owner = self._try_get_owner()
     if owner is not None:
       self.node_removed(self.parent)
+      # pylint: disable=no-member
       owner.remove(self)
 
   # if a derived class want to execute code before inserting or removing from list,
@@ -172,12 +190,14 @@ class IListNode(typing.Generic[T], llist.dllistnode):
     # to get a type hint, override this method in derived class to add it
     owner = self._try_get_owner()
     if owner is not None:
+      # pylint: disable=no-member
       return owner.parent
     return None
 
   def get_index(self):
     owner = self._try_get_owner()
     assert owner is not None
+    # pylint: disable=no-member
     return owner.get_index_of(self)
 
 class NameDict(collections.abc.MutableMapping, typing.Generic[T]):
@@ -242,7 +262,8 @@ class NameDictNode(typing.Generic[T]):
     self._name = name
 
   def remove_from_parent(self):
-    self.dictref.__delitem__(self.name)
+    del self.dictref[self.name]
+    #self.dictref.__delitem__(self.name)
 
   @property
   def dictref(self) -> NameDict[T]:
@@ -355,13 +376,14 @@ class OptionalType(ParameterizedType):
 class ParameterizedTypeUniquingDict:
   # this class is used by Context to manage all parameterized type objects
   _pty : type # type object of the parameterized type
-  _instance_dict : dict[str, ValueType]
+  _instance_dict : collections.OrderedDict[str, ValueType]
   def __init__(self, pty : type) -> None:
-    self._instance_dict = {}
+    self._instance_dict = collections.OrderedDict()
     self._pty = pty
     assert isinstance(pty, type)
 
   def get_or_create(self, parameters : typing.List[ValueType | int | str | bool | None], ctor : callable):
+    # pylint: disable=protected-access
     reprstr = ParameterizedType._get_parameter_repr(parameters)
     if reprstr in self._instance_dict:
       return self._instance_dict[reprstr]
@@ -568,6 +590,7 @@ class Value:
   def valuetype(self) -> ValueType:
     return self._type
 
+  # pylint: disable=protected-access
   def replace_all_uses_with(self, v : Value) -> None:
     assert self._type == v._type
     self._uselist.merge_into(v._uselist)
@@ -608,6 +631,7 @@ class Use(IListNode):
     if super().parent is not None:
       super().remove_from_parent()
     if v is not None:
+      # pylint: disable=protected-access
       v._uselist.push_back(self)
 
 class User:
@@ -662,35 +686,31 @@ class OpResult(NameReferencedValue):
     super().__init__(ty)
 
   @property
-  def result_number(self) -> int:
-    return super().get_index()
-
-  @property
   def parent(self) -> Operation:
     return super().parent
 
-class OpTerminatorInfo(User):
-  _parent : Operation
+#class OpTerminatorInfo(User):
+#  _parent : Operation
 
-  def __init__(self, parent : Operation) -> None:
-    super().__init__()
-    self._parent = parent
+#  def __init__(self, parent : Operation) -> None:
+#    super().__init__()
+#    self._parent = parent
 
-  @property
-  def parent(self) -> Operation:
-    return self._parent
+#  @property
+#  def parent(self) -> Operation:
+#    return self._parent
 
-  def get_successor(self, index : int) -> Block:
-    return super().get_operand(index).parent
+#  def get_successor(self, index : int) -> Block:
+#    return super().get_operand(index).parent
 
-  def set_successor(self, index : int, dest : Block) -> None:
-    super().set_operand(index, dest.value)
+#  def set_successor(self, index : int, dest : Block) -> None:
+#    super().set_operand(index, dest.value)
 
-  def add_successor(self, dest : Block) -> None:
-    super().add_operand(dest.value)
+#  def add_successor(self, dest : Block) -> None:
+#    super().add_operand(dest.value)
 
-  def get_num_successors(self) -> int:
-    return super().get_num_operands()
+#  def get_num_successors(self) -> int:
+#    return super().get_num_operands()
 
 class BlockArgument(NameReferencedValue):
   def __init__(self, ty: ValueType) -> None:
@@ -708,7 +728,7 @@ class Operation(IListNode):
   _results : NameDict[OpResult]
   _attributes : NameDict[Attribute]
   _regions : NameDict[Region]
-  _terminator_info : OpTerminatorInfo
+  #_terminator_info : OpTerminatorInfo
 
   def __init__(self, name : str, loc : Location, **kwargs) -> None:
     # passthrough kwargs for cooperative multiple inheritance
@@ -719,11 +739,11 @@ class Operation(IListNode):
     self._results = NameDict(self)
     self._attributes = NameDict(self)
     self._regions = NameDict(self)
-    self._terminator_info = None
+    #self._terminator_info = None
 
-  def _set_is_terminator(self):
-    assert self._terminator_info is None
-    self._terminator_info = OpTerminatorInfo(self)
+  #def _set_is_terminator(self):
+  #  assert self._terminator_info is None
+  #  self._terminator_info = OpTerminatorInfo(self)
 
   def _add_result(self, name : str, ty : ValueType) -> OpResult:
     r = OpResult(ty)
@@ -851,8 +871,10 @@ class Operation(IListNode):
     for operand in self._operands.values():
       assert isinstance(operand, OpOperand)
       operand.drop_all_uses()
-    if self._terminator_info is not None:
-      self._terminator_info.drop_all_uses()
+    self._operands.clear()
+    for r in self.regions:
+      r.drop_all_references()
+    self._regions.clear()
 
   def erase_from_parent(self) -> Operation:
     # return the next op
@@ -861,28 +883,28 @@ class Operation(IListNode):
     self.drop_all_references()
     return retval
 
-  @property
-  def terminator_info(self) -> OpTerminatorInfo:
-    return self._terminator_info
+  #@property
+  #def terminator_info(self) -> OpTerminatorInfo:
+  #  return self._terminator_info
 
-  def is_terminator(self) -> bool:
-    return self._terminator_info is not None
+  #def is_terminator(self) -> bool:
+  #  return self._terminator_info is not None
 
-  def get_successor(self, index : int) -> Block:
-    if self._terminator_info is None:
-      return None
-    return self._terminator_info.get_successor(index)
+  #def get_successor(self, index : int) -> Block:
+  #  if self._terminator_info is None:
+  #    return None
+  #  return self._terminator_info.get_successor(index)
 
-  def set_successor(self, index : int, dest : Block) -> None:
-    self._terminator_info.set_successor(index, dest)
+  #def set_successor(self, index : int, dest : Block) -> None:
+  #  self._terminator_info.set_successor(index, dest)
 
-  def add_successor(self, dest : Block) -> None:
-    self._terminator_info.add_successor(dest)
+  #def add_successor(self, dest : Block) -> None:
+  #  self._terminator_info.add_successor(dest)
 
-  def get_num_successors(self) -> int:
-    if self._terminator_info is None:
-      return 0
-    return self._terminator_info.get_num_successors()
+  #def get_num_successors(self) -> int:
+  #  if self._terminator_info is None:
+  #    return 0
+  #  return self._terminator_info.get_num_successors()
 
   @property
   def name(self):
@@ -956,6 +978,7 @@ class Symbol(Operation):
   def name(self, n : str):
     if self.parent is not None:
       table : SymbolTableRegion = self.parent.parent
+      # pylint: disable=protected-access
       assert isinstance(table, SymbolTableRegion)
       table._rename_symbol(self, n)
     self._name = n
@@ -963,11 +986,13 @@ class Symbol(Operation):
   def node_inserted(self, parent : Block):
     table : SymbolTableRegion = parent.parent
     assert isinstance(table, SymbolTableRegion)
+    # pylint: disable=protected-access
     table._add_symbol(self)
 
   def node_removed(self, parent : Block):
     table : SymbolTableRegion = parent.parent
     assert isinstance(table, SymbolTableRegion)
+    # pylint: disable=protected-access
     table._drop_symbol(self.name)
 
 class MetadataOp(Operation):
@@ -982,10 +1007,10 @@ class ErrorOp(MetadataOp):
   _error_code : str
   _error_message_operand : OpOperand
 
-  def __init__(self, name : str, loc: Location, error_code : str, error_msg : ConstantString = None, **kwargs) -> None:
+  def __init__(self, name : str, loc: Location, error_code : str, error_msg : StringLiteral = None, **kwargs) -> None:
     assert isinstance(error_code, str)
     if error_msg is not None:
-      assert isinstance(error_msg, ConstantString)
+      assert isinstance(error_msg, StringLiteral)
     super().__init__(name, loc, **kwargs)
     self._error_code = error_code
     self._error_message_operand = self._add_operand_with_value('message', error_msg)
@@ -996,7 +1021,7 @@ class ErrorOp(MetadataOp):
     return self._error_code
 
   @property
-  def error_message(self) -> ConstantString:
+  def error_message(self) -> StringLiteral:
     return self._error_message_operand.get()
 
 class CommentOp(MetadataOp):
@@ -1004,12 +1029,12 @@ class CommentOp(MetadataOp):
   # 一般来说我们努力将其保留到输出源文件中
   _comment_operand : OpOperand
 
-  def __init__(self, name: str, loc: Location, comment : ConstantString, **kwargs) -> None:
+  def __init__(self, name: str, loc: Location, comment : StringLiteral, **kwargs) -> None:
     super().__init__(name, loc, **kwargs)
     self._comment_operand = self._add_operand_with_value('comment', comment)
 
   @property
-  def comment(self) -> ConstantString:
+  def comment(self) -> StringLiteral:
     return self._comment_operand.get()
 
 class Block(Value, IListNode):
@@ -1067,6 +1092,7 @@ class Block(Value, IListNode):
   def drop_all_references(self) -> None:
     for op in self._ops:
       op.drop_all_references()
+    self._ops.clear()
 
   def erase_from_parent(self) -> Block:
     retval = self.next
@@ -1100,6 +1126,7 @@ class Region(NameDictNode):
   @property
   def context(self) -> Context | None:
     if not self._blocks.empty:
+      # pylint: disable=no-member
       return self._blocks.front.context
     if self.parent is not None:
       return self.parent.context
@@ -1121,6 +1148,7 @@ class Region(NameDictNode):
   def drop_all_references(self) -> None:
     for b in self._blocks:
       b.drop_all_references()
+    self._blocks.clear()
 
   def erase_from_parent(self) -> None:
     self.remove_from_parent()
@@ -1164,7 +1192,7 @@ class Region(NameDictNode):
 
 class SymbolTableRegion(Region, collections.abc.Sequence):
   # if a region is a symbol table, it will always have one block
-  _lookup_dict : dict[str, Symbol]
+  _lookup_dict : collections.OrderedDict[str, Symbol]
   _block : Block
   _anonymous_count : int # we use numeric default names if a symbol without name is added
 
@@ -1173,7 +1201,7 @@ class SymbolTableRegion(Region, collections.abc.Sequence):
     self._block = Block("", context)
     self.push_back(self._block)
     self._anonymous_count = 0
-    self._lookup_dict = {}
+    self._lookup_dict = collections.OrderedDict()
 
   def _get_anonymous_name(self):
     result = str(self._anonymous_count)
@@ -1197,7 +1225,7 @@ class SymbolTableRegion(Region, collections.abc.Sequence):
     self._lookup_dict[newname] = symbol
 
   def __getitem__(self, key : str) -> Symbol:
-    return self.get(key, None)
+    return self._lookup_dict.get(key, None)
 
   def get(self, key : str) -> Symbol:
     return self._lookup_dict.get(key, None)
@@ -1214,7 +1242,7 @@ class SymbolTableRegion(Region, collections.abc.Sequence):
   def add(self, symbol : Symbol):
     self._block.push_back(symbol)
 
-class Constant(Value):
+class Literal(Value):
   _value : typing.Any
   def __init__(self, ty: ValueType, value : typing.Any, **kwargs) -> None:
     super().__init__(ty, **kwargs)
@@ -1228,16 +1256,39 @@ class Constant(Value):
     return self.valuetype.context
 
   @staticmethod
-  def _get_constant_impl(cls : type, value : typing.Any, context : Context) -> typing.Any:
-    return context.get_constant_uniquing_dict(cls).get_or_create(value, lambda : cls(context, value))
+  def _get_literal_impl(literal_cls : type, value : typing.Any, context : Context) -> typing.Any:
+    return context.get_literal_uniquing_dict(literal_cls).get_or_create(value, lambda : literal_cls(context, value))
 
-class ConstantUniquingDict:
+class UndefLiteral(Literal):
+  # 我们会使用 Undef 在特定条件下替换别的值
+  # （比如如果一个Op要被删了，如果它还在被使用的话，所有的引用都会替换为这种值）
+  def __init__(self, ty: ValueType, msg : str = '', **kwargs) -> None:
+    super().__init__(ty, msg, **kwargs)
+
+  @property
+  def value(self) -> str:
+    return super().value
+
+  @staticmethod
+  def get(ty : ValueType, msg : str, context : Context):
+    return context.get_literal_uniquing_dict(UndefLiteral).get_or_create((ty, msg), lambda : UndefLiteral(ty, msg))
+
+class ConstExpr(Value, User):
+  # ConstExpr 与 Literal 的区别是， ConstExpr 可以引用从 Operation 来的值(包括 Operation的引用和 OpResult)
+  # Literal 一定可以跨越顶层 Operation 的迭代（或者说从一种 IR 到另一种 IR）， ConstExpr 没有这种要求
+  # 在有依赖关系的 Operation 被更换或者被删除时， ConstExpr 有可能会无缝转换成另一个值（参数被替换）， Literal 的值不可能有改变
+  # 子 IR 类型可以定义新的 Literal 和 ConstExpr ，并以“是否可能依赖 Operation”为标准区分两者
+  # 不过 ConstExpr 也可以不引用从 Operation 来的值
+  def __init__(self, ty: ValueType, **kwargs) -> None:
+    super().__init__(ty, **kwargs)
+
+class LiteralUniquingDict:
   _ty : type
-  _inst_dict : dict[typing.Any, typing.Any]
+  _inst_dict : collections.OrderedDict[typing.Any, typing.Any]
 
   def __init__(self, ty : type) -> None:
     self._ty = ty
-    self._inst_dict = {}
+    self._inst_dict = collections.OrderedDict()
 
   def get_or_create(self, data : typing.Any, ctor : callable) -> Value:
     if data in self._inst_dict:
@@ -1246,27 +1297,32 @@ class ConstantUniquingDict:
     self._inst_dict[data] = inst
     return inst
 
+class ConstExprUniquingDict(LiteralUniquingDict):
+  def __init__(self, ty: type) -> None:
+    super().__init__(ty)
 
 class Context:
   # the object that we use to keep track of unique constructs (types, constant expressions, file assets)
-  _stateless_type_dict : dict[type, ValueType]
-  _parameterized_type_dict : dict[type, ParameterizedTypeUniquingDict]
-  _constant_dict : dict[type, ConstantUniquingDict]
+  _stateless_type_dict : collections.OrderedDict[type, ValueType]
+  _parameterized_type_dict : collections.OrderedDict[type, ParameterizedTypeUniquingDict]
+  _literal_dict : collections.OrderedDict[type, LiteralUniquingDict]
+  _constexpr_dict : collections.OrderedDict[type, ConstExprUniquingDict]
   _asset_data_list : IList[AssetData]
   _asset_temp_dir : tempfile.TemporaryDirectory # created on-demand
   _null_location : Location # a dummy location value with only a reference to the context
-  _difile_dict : dict[str, DIFile] # from filepath string to the DIFile object
-  _diloc_dict : dict[DIFile, dict[tuple[int, int, int], DILocation]] # <file> -> <page, row, column> -> DILocation
+  _difile_dict : collections.OrderedDict[str, DIFile] # from filepath string to the DIFile object
+  _diloc_dict : collections.OrderedDict[DIFile, dict[tuple[int, int, int], DILocation]] # <file> -> <page, row, column> -> DILocation
 
   def __init__(self) -> None:
-    self._stateless_type_dict = {}
-    self._parameterized_type_dict = {}
+    self._stateless_type_dict = collections.OrderedDict()
+    self._parameterized_type_dict = collections.OrderedDict()
     self._asset_data_list = IList(self)
     self._asset_temp_dir = None
-    self._constant_dict = {}
+    self._literal_dict = collections.OrderedDict()
+    self._constexpr_dict = collections.OrderedDict()
     self._null_location = Location(self)
-    self._difile_dict = {}
-    self._diloc_dict = {}
+    self._difile_dict = collections.OrderedDict()
+    self._diloc_dict = collections.OrderedDict()
 
   def get_stateless_type(self, ty : type) -> typing.Any:
     if ty in self._stateless_type_dict:
@@ -1293,11 +1349,18 @@ class Context:
     os.close(fd)
     return path
 
-  def get_constant_uniquing_dict(self, ty : type) -> ConstantUniquingDict:
-    if ty in self._constant_dict:
-      return self._constant_dict[ty]
-    result = ConstantUniquingDict(ty)
-    self._constant_dict[ty] = result
+  def get_literal_uniquing_dict(self, ty : type) -> LiteralUniquingDict:
+    if ty in self._literal_dict:
+      return self._literal_dict[ty]
+    result = LiteralUniquingDict(ty)
+    self._literal_dict[ty] = result
+    return result
+
+  def get_constexpr_uniquing_dict(self, ty : type) -> ConstExprUniquingDict:
+    if ty in self._constexpr_dict:
+      return self._constexpr_dict[ty]
+    result = ConstExprUniquingDict(ty)
+    self._constexpr_dict[ty] = result
     return result
 
   def _add_asset_data(self, asset : AssetData):
@@ -1369,12 +1432,12 @@ class AssetData(Value, IListNode):
     pass
 
   @staticmethod
-  def secure_overwrite(exportpath: str, write_callback: typing.Callable, open_mode : str = 'wb'):
+  def secure_overwrite(exportpath: str, write_callback: typing.Callable):
     tmpfilepath = exportpath + ".tmp"
     parent_path = pathlib.Path(tmpfilepath).parent
     os.makedirs(parent_path, exist_ok=True)
     isOldExist = os.path.isfile(exportpath)
-    with open(tmpfilepath, open_mode) as f:
+    with open(tmpfilepath, 'wb') as f:
       write_callback(f)
     if isOldExist:
       old_name = exportpath + ".old"
@@ -1454,8 +1517,8 @@ class ImageAssetData(AssetData):
       return
     # we do file copy iff the source and dest format matches
     # otherwise, we open the source file and save it in the destination
-    srcname, srcext = os.path.splitext(self._backing_store_path)
-    destname, destext = os.path.splitext(dest_path)
+    _srcname, srcext = os.path.splitext(self._backing_store_path)
+    _destname, destext = os.path.splitext(dest_path)
     if srcext == destext:
       shutil.copy2(self._backing_store_path, dest_path, follow_symlinks=False)
     else:
@@ -1482,7 +1545,7 @@ class AudioAssetData(AssetData):
     else:
       assert self._data is None
       # check that the file extension is what we recognize
-      basepath, ext = os.path.splitext(self._backing_store_path)
+      _basepath, ext = os.path.splitext(self._backing_store_path)
       ext = ext.lower()
       if ext in self._supported_formats:
         self._format = ext
@@ -1499,7 +1562,7 @@ class AudioAssetData(AssetData):
     return pydub.AudioSegment.from_file(self._backing_store_path, format = self._format)
 
   def export(self, dest_path: str) -> None:
-    basepath, ext = os.path.splitext(dest_path)
+    _basepath, ext = os.path.splitext(dest_path)
     fmt = ext.lower()
     assert fmt in self._supported_formats
     if self._data is not None:
@@ -1596,17 +1659,7 @@ class DILocation(Location):
 # Constants
 # ------------------------------------------------------------------------------
 
-
-
-  #@staticmethod
-  #def get(value: typing.Any, context : Context) -> typing.Any:
-  #  if isinstance(value, int):
-  #    return VNConstantInt.get(value, context)
-  #  if isinstance(value, bool):
-  #    return VNConstantBool.get(value, context)
-  #  raise RuntimeError("Unknown value type for constant creation")
-
-class ConstantInt(Constant):
+class IntLiteral(Literal):
   def __init__(self, context : Context, value : int, **kwargs) -> None:
     # should not be called by user code
     assert isinstance(value, int)
@@ -1618,10 +1671,10 @@ class ConstantInt(Constant):
     return super().value
 
   @staticmethod
-  def get(value : int, context : Context) -> ConstantInt:
-    return Constant._get_constant_impl(ConstantInt, value, context)
+  def get(value : int, context : Context) -> IntLiteral:
+    return Literal._get_literal_impl(IntLiteral, value, context)
 
-class ConstantBool(Constant):
+class BoolLiteral(Literal):
   def __init__(self, context : Context, value: bool, **kwargs) -> None:
     assert isinstance(value, bool)
     ty = BoolType.get(context)
@@ -1632,10 +1685,10 @@ class ConstantBool(Constant):
     return super().value
 
   @staticmethod
-  def get(value : bool, context : Context) -> ConstantBool:
-    return Constant._get_constant_impl(ConstantBool, value, context)
+  def get(value : bool, context : Context) -> BoolLiteral:
+    return Literal._get_literal_impl(BoolLiteral, value, context)
 
-class ConstantFloat(Constant):
+class FloatLiteral(Literal):
   def __init__(self, context : Context, value: float, **kwargs) -> None:
     ty = FloatType.get(context)
     super().__init__(ty, value, **kwargs)
@@ -1645,10 +1698,10 @@ class ConstantFloat(Constant):
     return super().value
 
   @staticmethod
-  def get(value : float, context : Context) -> ConstantFloat:
-    return Constant._get_constant_impl(ConstantFloat, value, context)
+  def get(value : float, context : Context) -> FloatLiteral:
+    return Literal._get_literal_impl(FloatLiteral, value, context)
 
-class ConstantString(Constant):
+class StringLiteral(Literal):
   # 字符串常量的值不包含样式等信息，就是纯字符串
   def __init__(self, context : Context, value: str, **kwargs) -> None:
     assert isinstance(value, str)
@@ -1663,10 +1716,10 @@ class ConstantString(Constant):
     return self.value
 
   @staticmethod
-  def get(value : str, context : Context) -> ConstantString:
-    return Constant._get_constant_impl(ConstantString, value, context)
+  def get(value : str, context : Context) -> StringLiteral:
+    return Literal._get_literal_impl(StringLiteral, value, context)
 
-class ConstantTextStyle(Constant):
+class TextStyleLiteral(Literal):
   # 文字样式常量只包含文字样式信息
   def __init__(self, context : Context, value: tuple[tuple[TextAttribute, typing.Any]], **kwargs) -> None:
     ty = TextStyleType.get(context)
@@ -1677,11 +1730,11 @@ class ConstantTextStyle(Constant):
     return super().value
 
   @staticmethod
-  def get(value : tuple[tuple[TextAttribute, typing.Any]] | dict[TextAttribute, typing.Any], context : Context) -> ConstantTextStyle:
+  def get(value : tuple[tuple[TextAttribute, typing.Any]] | dict[TextAttribute, typing.Any], context : Context) -> TextStyleLiteral:
     if isinstance(value, dict):
-      value = ConstantTextStyle.get_style_tuple(value)
+      value = TextStyleLiteral.get_style_tuple(value)
     assert isinstance(value, tuple)
-    return Constant._get_constant_impl(ConstantTextStyle, value, context)
+    return Literal._get_literal_impl(TextStyleLiteral, value, context)
 
   @staticmethod
   def get_style_tuple(styles : dict[TextAttribute, typing.Any]):
@@ -1734,13 +1787,13 @@ class ConstantTextStyle(Constant):
         return e[1]
     return None
 
-class ConstantTextFragment(Constant, User):
+class TextFragmentLiteral(Literal, User):
   # 文本常量的值包含字符串以及样式信息（大小字体、字体颜色、背景色（高亮颜色），或是附注（Ruby text））
   # 单个文本片段常量内容所使用的样式需是一致的，如果不一致则可以把内容进一步切分，按照样式来进行分节
   # 文本片段常量的“值”（value）是【对字符串常量的引用】+【样式信息元组】的元组(tuple)
   # 样式信息元组内的每一项都是(样式，值)组成的元组，这些项将根据样式的枚举值进行排序
 
-  def __init__(self, context : Context, string : ConstantString, styles : ConstantTextStyle, **kwargs) -> None:
+  def __init__(self, context : Context, string : StringLiteral, styles : TextStyleLiteral, **kwargs) -> None:
     # value 应为 ConstantTextFragment.get_value_tuple() 的结果
     ty = TextType.get(context)
     super().__init__(ty = ty, value = (string, styles), **kwargs)
@@ -1748,33 +1801,33 @@ class ConstantTextFragment(Constant, User):
     self.add_operand(styles)
 
   @property
-  def value(self) -> tuple[ConstantString, ConstantTextStyle]:
+  def value(self) -> tuple[StringLiteral, TextStyleLiteral]:
     return super().value
 
   @property
-  def content(self) -> ConstantString:
+  def content(self) -> StringLiteral:
     return self.get_operand(0)
 
   @property
-  def style(self) -> ConstantTextStyle:
+  def style(self) -> TextStyleLiteral:
     return self.get_operand(1)
 
   def get_string(self) -> str:
     return self.content.value
 
   @staticmethod
-  def get(context : Context, string : ConstantString, styles : ConstantTextStyle) -> ConstantTextFragment:
-    if not isinstance(string, ConstantString):
+  def get(context : Context, string : StringLiteral, styles : TextStyleLiteral) -> TextFragmentLiteral:
+    if not isinstance(string, StringLiteral):
       raise RuntimeError("string 参数应为对字符串常量的引用")
-    if not isinstance(styles, ConstantTextStyle):
+    if not isinstance(styles, TextStyleLiteral):
       raise RuntimeError("styles 参数应为对文本样式常量的引用")
-    return context.get_constant_uniquing_dict(ConstantTextFragment).get_or_create((string, styles), lambda : ConstantTextFragment(context, string, styles))
+    return context.get_literal_uniquing_dict(TextFragmentLiteral).get_or_create((string, styles), lambda : TextFragmentLiteral(context, string, styles))
 
-class ConstantText(Constant, User):
+class TextLiteral(Literal, User):
   # 文本常量是一个或多个文本片段常量组成的串
 
-  def __init__(self, context : Context, value: tuple[ConstantTextFragment], **kwargs) -> None:
-    ConstantText._check_value_tuple(value)
+  def __init__(self, context : Context, value: tuple[TextFragmentLiteral], **kwargs) -> None:
+    TextLiteral._check_value_tuple(value)
     ty = TextType.get(context)
     super().__init__(ty, value, **kwargs)
     for frag in value:
@@ -1784,52 +1837,52 @@ class ConstantText(Constant, User):
     result = ''
     for i in range(0, self.get_num_operands()):
       v = self.get_operand(i)
-      assert isinstance(v, ConstantTextFragment)
+      assert isinstance(v, TextFragmentLiteral)
       result += v.content.value
     return result
 
   @staticmethod
-  def _check_value_tuple(value: tuple[ConstantTextFragment]) -> None:
+  def _check_value_tuple(value: tuple[TextFragmentLiteral]) -> None:
     isCheckFailed = False
     if not isinstance(value, tuple):
       isCheckFailed = True
     else:
       for v in value:
-        if not isinstance(v, ConstantTextFragment):
+        if not isinstance(v, TextFragmentLiteral):
           isCheckFailed = True
     if isCheckFailed:
       raise RuntimeError("文本常量的值应为仅由文本片段常量组成的元组")
 
   @staticmethod
-  def get(context : Context, value : typing.Iterable[ConstantTextFragment]) -> ConstantText:
+  def get(context : Context, value : typing.Iterable[TextFragmentLiteral]) -> TextLiteral:
     value_tuple = tuple(value)
-    return Constant._get_constant_impl(ConstantText, value_tuple, context)
+    return Literal._get_literal_impl(TextLiteral, value_tuple, context)
 
-class ConstantTextList(Constant, User):
+class TextListLiteral(Literal, User):
   # 文本列表常量对应文档中列表的一层
-  def __init__(self, context : Context, value: tuple[ConstantText | ConstantTextList], **kwargs) -> None:
+  def __init__(self, context : Context, value: tuple[TextLiteral | TextListLiteral], **kwargs) -> None:
     ty = AggregateTextType.get(context)
     super().__init__(ty, value, **kwargs)
     for element in value:
       self.add_operand(element)
 
   @property
-  def value(self) -> tuple[ConstantText | ConstantTextList]:
+  def value(self) -> tuple[TextLiteral | TextListLiteral]:
     return super().value
 
   def __len__(self):
     return len(self.value)
 
-  def __getitem__(self, index : int) -> ConstantText | ConstantTextList:
+  def __getitem__(self, index : int) -> TextLiteral | TextListLiteral:
     return self.value.__getitem__(index)
 
   @staticmethod
-  def get(context : Context, value : typing.Iterable[ConstantText | ConstantTextList]) -> ConstantTextList:
+  def get(context : Context, value : typing.Iterable[TextLiteral | TextListLiteral]) -> TextListLiteral:
     value_tuple = tuple(value)
-    return Constant._get_constant_impl(ConstantTextList, value_tuple, context)
+    return Literal._get_literal_impl(TextListLiteral, value_tuple, context)
 
-class ConstantTable(Constant, User):
-  def __init__(self, context : Context, nrows : int, ncols : int, value: tuple[tuple[ConstantText]], **kwargs) -> None:
+class TableLiteral(Literal, User):
+  def __init__(self, context : Context, nrows : int, ncols : int, value: tuple[tuple[TextLiteral]], **kwargs) -> None:
     ty = AggregateTextType.get(context)
     super().__init__(ty = ty, value = (nrows, ncols, value), **kwargs)
     for rows in value:
@@ -1837,7 +1890,7 @@ class ConstantTable(Constant, User):
         self.add_operand(cell)
 
   @property
-  def value(self) -> tuple(int, int, tuple[tuple[ConstantText]]):
+  def value(self) -> tuple(int, int, tuple[tuple[TextLiteral]]):
     return super().value
 
   @property
@@ -1849,15 +1902,15 @@ class ConstantTable(Constant, User):
     return self.value[1]
 
   @property
-  def cells(self) -> tuple[tuple[ConstantText]]:
+  def cells(self) -> tuple[tuple[TextLiteral]]:
     return self.value[2]
 
-  def get_cell(self, row : int, col : int) -> ConstantText:
+  def get_cell(self, row : int, col : int) -> TextLiteral:
     return self.value[2][row][col]
 
   @staticmethod
-  def get(context : Context, nrows : int, ncols : int, value: tuple[tuple[ConstantText]]) -> ConstantTable:
-    return context.get_constant_uniquing_dict(ConstantTable).get_or_create((nrows, ncols, value), lambda : ConstantTable(context, nrows, ncols, value))
+  def get(context : Context, nrows : int, ncols : int, value: tuple[tuple[TextLiteral]]) -> TableLiteral:
+    return context.get_literal_uniquing_dict(TableLiteral).get_or_create((nrows, ncols, value), lambda : TableLiteral(context, nrows, ncols, value))
 
 # ------------------------------------------------------------------------------
 # IR dumping
@@ -1915,6 +1968,7 @@ class IRWriter:
     # populate self._asset_index_dict
     self._asset_index_dict = {}
     num = 0
+    # pylint: disable=protected-access
     for asset in self._ctx._asset_data_list:
       self._asset_index_dict[asset] = num
       num += 1
@@ -1926,30 +1980,30 @@ class IRWriter:
   def _emit_asset(self, asset : AssetData) -> bytes:
     # TODO actually implement this function
     # for now we don't try to emit any asset; just print their ID as a text element and done
-    id = self._index_assets()[asset]
+    asset_id = self._index_assets()[asset]
     asset_name = type(asset).__name__
-    body_str = '#' + hex(id) + " " + asset_name
+    body_str = '#' + hex(asset_id) + " " + asset_name
     if not self._html_dump:
       return body_str
     s = "<span class=\"AssetPlaceholder\">" + self.escape(body_str) + "</span>"
     return s.encode('utf-8')
 
     # check if we have already exported it
-    if asset in self._asset_export_cache:
-      return self._asset_export_cache[asset]
+    #if asset in self._asset_export_cache:
+    #  return self._asset_export_cache[asset]
 
     # if the asset is already exported (i.e., it is in self._asset_pin_dict), just use the expression there
-    if self._asset_pin_dict is not None and asset in self._asset_pin_dict:
-      asset_path = self._asset_pin_dict[asset]
-      result = self._emit_asset_reference_to_path(asset, asset_path)
-      self._asset_export_cache[asset] = result
-      return result
+    #if self._asset_pin_dict is not None and asset in self._asset_pin_dict:
+    #  asset_path = self._asset_pin_dict[asset]
+    #  result = self._emit_asset_reference_to_path(asset, asset_path)
+    #  self._asset_export_cache[asset] = result
+    #  return result
 
     # otherwise, if we export the asset as separate files (self._asset_export_dict not None), we do that
-    if self._asset_export_dict is not None:
-      pass
+    #if self._asset_export_dict is not None:
+    #  pass
     # otherwise, we emit the expression in self._output_asset
-    pass
+    #pass
 
   def _get_indent_stylename(self, level : int) -> str:
     return 'dump_indent_level_' + str(level)
@@ -1957,7 +2011,7 @@ class IRWriter:
   def _get_operation_short_name(self, op : Operation) -> str:
     return '[' + hex(id(op)) + ' ' + type(op).__name__ + ']\"' + op.name + '"'
 
-  def _get_text_style_str(self, style : ConstantTextStyle) -> str:
+  def _get_text_style_str(self, style : TextStyleLiteral) -> str:
     value : tuple[tuple[TextAttribute, typing.Any]] = style.value
     result = '('
     for t in value:
@@ -1987,42 +2041,43 @@ class IRWriter:
       return None
     if isinstance(value, BlockArgument):
       raise NotImplementedError('TODO')
-    if isinstance(value, Constant):
-      if isinstance(value, ConstantBool):
+    if isinstance(value, Literal):
+      if isinstance(value, BoolLiteral):
         if value.value == True:
           self._write_body('true')
         else:
           self._write_body('false')
         return None
-      elif isinstance(value, ConstantFloat):
+      elif isinstance(value, FloatLiteral):
         self._write_body(self.escape(str(value.value)))
         return None
-      elif isinstance(value, ConstantInt):
+      elif isinstance(value, IntLiteral):
         self._write_body(self.escape(str(value.value)))
         return None
-      elif isinstance(value, ConstantString):
+      elif isinstance(value, StringLiteral):
         self._write_body(self.escape('"' + value.value + '"'))
         return None
-      elif isinstance(value, ConstantTextFragment):
+      elif isinstance(value, TextFragmentLiteral):
         self._write_body(self.escape('TextFrag["' + value.content.value + '",' + self._get_text_style_str(value.style) + ']'))
         return None
-      elif isinstance(value, ConstantTextStyle):
+      elif isinstance(value, TextStyleLiteral):
         self._write_body(self.escape(self._get_text_style_str(value)))
         return None
-      elif isinstance(value, ConstantText):
+      elif isinstance(value, TextLiteral):
         self._write_body(self.escape('Text{'))
         for u in value.operanduses():
+          # pylint: disable=assignment-from-none
           res = self._walk_value(u.value)
           assert res is None
           self._write_body(',')
         self._write_body(self.escape('}'))
         return None
-      elif isinstance(value, ConstantTextList):
+      elif isinstance(value, TextListLiteral):
         raise NotImplementedError('TODO')
-      elif isinstance(value, ConstantTable):
+      elif isinstance(value, TableLiteral):
         raise NotImplementedError('TODO')
       else:
-        raise NotImplementedError('Unexpected constant type for dumping')
+        raise NotImplementedError('Unexpected literal type for dumping')
     # unknown value types
     self._write_body(self.escape('[#' + str(id(value)) + ' ' + type(value).__name__ + ']'))
     return None
@@ -2074,6 +2129,7 @@ class IRWriter:
           isFirstValue = False
         else:
           self._write_body(',')
+        # pylint: disable=assignment-from-none
         delayed_content = self._walk_value(operand.get_operand(i))
         if delayed_content is not None:
           raise NotImplementedError('TODO')
@@ -2130,6 +2186,7 @@ class IRWriter:
       # no need for anything here in text dump
 
       for r in op.regions:
+        # pylint: disable=assignment-from-none
         retval = self._walk_region(r, level+1)
         assert retval is None
 
@@ -2144,7 +2201,6 @@ class IRWriter:
       # this is a nested op
       # write the enclosing mark
       self._write_body_html('</li>\n')
-      pass
     # done!
     return None
 

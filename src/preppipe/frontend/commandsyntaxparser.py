@@ -81,7 +81,7 @@ class GeneralCommandOp(Operation):
   _extend_data_block : Block
   _valueref : OpResult
 
-  def __init__(self, name: str, loc: Location, name_value : ConstantString, name_loc : Location, **kwargs) -> None:
+  def __init__(self, name: str, loc: Location, name_value : StringLiteral, name_loc : Location, **kwargs) -> None:
     super().__init__(name, loc, **kwargs)
     self._head_region = self._add_symbol_table('head')
     self._positionalarg_region = self._add_region('positional_arg')
@@ -217,7 +217,7 @@ def check_is_command_start(b : Block, ctx: Context) -> typing.Tuple[str, typing.
       # 碰到了一项非内容的
       # 如果我们已经找到了开始标记，就在开始标记前添加一个错误记录
       if first_op is not None:
-        error_op = IMErrorElementOp(name='', loc = first_op.location, content=ConstantString.get(command_str, ctx), error_code='cmd-noncontent-entry-in-command')
+        error_op = IMErrorElementOp(name='', loc = first_op.location, content=StringLiteral.get(command_str, ctx), error_code='cmd-noncontent-entry-in-command')
         error_op.insert_before(first_op)
       continue
     # 找到了一项内容
@@ -226,9 +226,9 @@ def check_is_command_start(b : Block, ctx: Context) -> typing.Tuple[str, typing.
     content_operand : OpOperand = op.content
     for i in range(0, content_operand.get_num_operands()):
       v = content_operand.get(i)
-      if isinstance(v, ConstantTextFragment):
+      if isinstance(v, TextFragmentLiteral):
         command_str += v.get_string()
-      elif isinstance(v, ConstantText):
+      elif isinstance(v, TextLiteral):
         command_str += v.get_string()
       elif isinstance(v, AssetData):
         command_str += '\0'
@@ -419,7 +419,7 @@ class _CommandParseVisitorImpl(CommandParseVisitor):
     data = self.asset_map[global_start]
     return (data, global_start, self.global_offset + end)
 
-  def visitName(self, ctx: CommandParseParser.NameContext) -> tuple[ConstantString, Location]:
+  def visitName(self, ctx: CommandParseParser.NameContext) -> tuple[StringLiteral, Location]:
     content_tuple = None
 
     if ctx.NATURALTEXT() is not None:
@@ -430,7 +430,7 @@ class _CommandParseVisitorImpl(CommandParseVisitor):
       raise RuntimeError('Name without valid child?')
 
     name_str, name_start, _name_end = content_tuple
-    name_value = ConstantString.get(name_str, self.context)
+    name_value = StringLiteral.get(name_str, self.context)
     name_loc = self._get_loc(name_start)
     return (name_value, name_loc)
 
@@ -459,7 +459,7 @@ class _CommandParseVisitorImpl(CommandParseVisitor):
     rawarg_text = ''
     if rawarg_end > rawarg_start:
       rawarg_text = self.fulltext[rawarg_start:rawarg_end]
-    current_command.set_raw_arg(ConstantString.get(rawarg_text, self.context), self._get_loc(rawarg_start))
+    current_command.set_raw_arg(StringLiteral.get(rawarg_text, self.context), self._get_loc(rawarg_start))
     # 具体的参数读取交给子项
     if ctx.positionals() is not None:
       self.visitPositionals(ctx.positionals())
@@ -517,7 +517,7 @@ class _CommandParseVisitorImpl(CommandParseVisitor):
       raise RuntimeError('evalue without valid child?')
 
     content_str, startpos, _endpos = content_tuple
-    value = ConstantString.get(content_str, self.context)
+    value = StringLiteral.get(content_str, self.context)
     loc = self._get_loc(startpos)
     return (value, loc)
 
@@ -551,7 +551,7 @@ def _visit_command_block_impl(b : Block, ctx : Context, command_str : str, asset
   infolist = _split_text_as_commands(command_str)
   if isinstance(infolist, _CommandParseErrorRecord):
     errorloc = get_loc_at_offset(infolist.column)
-    errop = ErrorOp('', errorloc, error_code='cmd-scan-error', error_msg=ConstantString.get(infolist.msg, ctx))
+    errop = ErrorOp('', errorloc, error_code='cmd-scan-error', error_msg=StringLiteral.get(infolist.msg, ctx))
     errop.insert_before(insert_before_op)
     return
 
@@ -569,7 +569,7 @@ def _visit_command_block_impl(b : Block, ctx : Context, command_str : str, asset
     loc = get_loc_at_offset(body_range_start)
     # 如果是注释，则直接生成注释项
     if is_comment:
-      comment = CommentOp('', loc, ConstantString.get(body, ctx))
+      comment = CommentOp('', loc, StringLiteral.get(body, ctx))
       comment.insert_before(insert_before_op)
       continue
     # 既然不是注释，那就是真正的命令了
@@ -588,7 +588,7 @@ def _visit_command_block_impl(b : Block, ctx : Context, command_str : str, asset
     if error_listener.error_occurred:
       record = error_listener.get_error_record()
       errorloc = get_loc_at_offset(record.column)
-      errop = ErrorOp('', errorloc, error_code='cmd-parse-error', error_msg=ConstantString.get(record.msg, ctx))
+      errop = ErrorOp('', errorloc, error_code='cmd-parse-error', error_msg=StringLiteral.get(record.msg, ctx))
       errop.insert_before(insert_before_op)
       continue
     cmd_visitor = _CommandParseVisitorImpl(command_str, body_range_start, asset_map_dict, loc)

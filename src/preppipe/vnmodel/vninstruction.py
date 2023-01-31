@@ -22,22 +22,22 @@ class VNTimeChainedInstruction(VNInstruction):
     self._time_operand = self._add_operand('开始时间')
     time_type = VNTimeOrderType.get(loc.context)
     self._time_result = self._add_result('结束时间', time_type)
-  
+
   @property
   def start_time(self) -> Value:
     # 取当前开始时间的值
     return self._time_operand.get()
-  
+
   @start_time.setter
   def start_time(self, time : Value):
     # 设置当前开始时间的值
     assert isinstance(time.valuetype, VNTimeOrderType)
     self._time_operand.set_operand(0, time)
-  
+
   @start_time.deleter
   def start_time(self):
     self._time_operand.drop_all_uses()
-  
+
   @property
   def finish_time(self) -> OpResult:
     # 取当前结束时间的值
@@ -52,18 +52,18 @@ class VNTerminatorInstruction(VNInstruction):
     super().__init__(name = name, loc = loc, **kwargs)
     self._time_operand = self._add_operand('开始时间')
     self._set_is_terminator()
-  
+
   @property
   def start_time(self) -> Value:
     # 取当前开始时间的值
     return self._time_operand.get()
-  
+
   @start_time.setter
   def start_time(self, time : Value):
     # 设置当前开始时间的值
     assert isinstance(time.valuetype, VNTimeOrderType)
     self._time_operand.set_operand(0, time)
-  
+
   @start_time.deleter
   def start_time(self):
     self._time_operand.drop_all_uses()
@@ -80,11 +80,11 @@ class VNInstructionGroup(VNTimeChainedInstruction):
     self._body = Block('', loc.context)
     r.push_back(self._body)
     self._body_start_time_arg = self._body.add_argument('开始时间', time_type)
-  
+
   @property
   def body(self) -> Block:
     return self._body
-  
+
   @property
   def body_start_time(self) -> BlockArgument:
     return self._body_start_time_arg
@@ -103,11 +103,11 @@ class VNSayInstructionGroup(VNInstructionGroup):
   def __init__(self, name: str, loc: Location, **kwargs) -> None:
     super().__init__(name, loc, **kwargs)
     self._characters_operand = self._add_operand('发言者')
-  
+
   @property
   def characters(self) -> Value:
     return self._characters_operand.get()
-  
+
   @characters.setter
   def characters(self, c : VNCharacterRecord | list[VNCharacterRecord]):
     if isinstance(c, list):
@@ -120,7 +120,7 @@ class VNSayInstructionGroup(VNInstructionGroup):
       # single character
       assert isinstance(c, VNCharacterRecord)
       self._characters_operand.set_operand(0, c)
-  
+
   @characters.deleter
   def characters(self):
     self._characters_operand.drop_all_uses()
@@ -147,35 +147,35 @@ class VNBranchInst(VNTerminatorInstruction):
     self._default_destination_operand = self._add_operand_with_value('默认目标块', default_target)
     self._conditions_operand = self._add_operand('条件列表')
     self._candidate_destinations_operand = self._add_operand('目标块列表')
-  
+
   @property
   def default_destination(self) -> Block:
     return self._default_destination_operand.get()
-  
+
   @default_destination.setter
   def default_destination(self, b : Block):
     assert isinstance(b, Block)
     self._default_destination_operand.set_operand(0, b)
-  
+
   @default_destination.deleter
   def default_destination(self):
     self._default_destination_operand.drop_all_uses()
-  
+
   @property
   def num_candidates(self) -> int:
     return self._conditions_operand.get_num_operands()
-  
+
   def add_candidate_destination(self, condition : Value, target : Block):
     assert isinstance(condition.valuetype, VNBoolType)
     assert isinstance(target, Block)
     self._conditions_operand.add_operand(condition)
     self._candidate_destinations_operand.add_operand(target)
-  
+
   def get_candidate(self, index : int) -> tuple[Value, Block]:
     condition = self._conditions_operand.get_operand(index)
     target = self._candidate_destinations_operand.get_operand(index)
     return (condition, target)
-  
+
   def set_candidate(self, index : int, condition : Value, target : Block):
     assert isinstance(condition.valuetype, VNBoolType)
     assert isinstance(target, Block)
@@ -192,16 +192,16 @@ class VNFarJumpInst(VNTerminatorInstruction):
   def __init__(self, name: str, loc: Location, target : Block, **kwargs) -> None:
     super().__init__(name, loc, **kwargs)
     self._destination_operand = self._add_operand_with_value('目标块', target)
-  
+
   @property
   def destination(self) -> Block:
     return self._destination_operand.get()
-  
+
   @destination.setter
   def destination(self, b : Block):
     assert isinstance(b, Block)
     self._destination_operand.set_operand(0, b)
-  
+
   @destination.deleter
   def destination(self):
     self._destination_operand.drop_all_uses()
@@ -230,25 +230,25 @@ class VNContentManipulationInst(VNTimeChainedInstruction):
   @property
   def variant(self) -> Value:
     return self._variant_operand.get()
-  
+
   @variant.setter
   def variant(self, v : Value):
     self._variant_operand.set_operand(0, v)
-  
+
   @variant.deleter
   def variant(self):
     self._variant_operand.drop_all_uses()
-  
+
   @property
   def transition(self) -> Value:
     return self._transition_operand.get()
-  
+
   @transition.setter
   def transition(self, v : Value):
     if not isinstance(v.valuetype, VNEffectFunctionType):
       raise RuntimeError('无效的值类型')
     self._transition_operand.set_operand(0, v)
-  
+
   @transition.deleter
   def transition(self):
     self._transition_operand.drop_all_uses()
@@ -256,23 +256,23 @@ class VNContentManipulationInst(VNTimeChainedInstruction):
 class VNContentRemovalInst(VNTimeChainedInstruction):
   # 任何移除特定内容的指令都继承该类
   # 共用的参数：过渡
-  
+
   _transition_operand : OpOperand
 
   def __init__(self, name: str, loc: Location, **kwargs) -> None:
     super().__init__(name = name, loc = loc, **kwargs)
     self._transition_operand = self._add_operand('过渡')
-  
+
   @property
   def transition(self) -> Value:
     return self._transition_operand.get()
-  
+
   @transition.setter
   def transition(self, v : Value):
     if not isinstance(v.valuetype, VNEffectFunctionType):
       raise RuntimeError('无效的值类型')
     self._transition_operand.set_operand(0, v)
-  
+
   @transition.deleter
   def transition(self):
     self._transition_operand.drop_all_uses()
@@ -283,30 +283,30 @@ class VNCreateInst(VNTimeChainedInstruction):
   # 这是创建指令的基类，子类应该根据不同的内容类型（图片、音乐等）添加相应的输入与类型检查
   _content_operand : OpOperand # Displayable | AudioType | ...
   _handle : OpResult
-  
+
   def __init__(self, name: str, loc: Location, content_type : VNType, content : Value, **kwargs) -> None:
     super().__init__(name = name, loc = loc, **kwargs)
     handle_type = VNHandleType.get(content_type)
     self._content_operand = self._add_operand_with_value('内容', content)
     self._handle = self._add_result('句柄', handle_type)
-  
+
   @property
   def device(self) -> VNDeviceRecord:
     content = self.content
     if content is not None:
       return content.device
     return None
-  
+
   # 子类应该覆盖以下属性来添加正确的类型检查
 
   @property
   def content(self) -> Value:
     return self._content_operand
-  
+
   @content.setter
   def content(self, v : Value):
     self._content_operand.set_operand(0, v)
-  
+
   @content.deleter
   def content(self):
     self._content_operand.drop_all_uses()
@@ -319,7 +319,7 @@ class VNModifyInst(VNTimeChainedInstruction):
   # 修改指令取一个句柄，并对内容或其他属性作出修改
   # 句柄属于SSA值，但是修改指令对句柄所指内容的修改不算为值的定义、不作为SSA中的定义
   _handle_operand : OpOperand # 句柄类型
-  
+
   def __init__(self, name: str, loc: Location, handle : Value, **kwargs) -> None:
     super().__init__(name = name, loc = loc, **kwargs)
     self._handle_operand = self._add_operand_with_value('句柄', handle)
@@ -327,15 +327,15 @@ class VNModifyInst(VNTimeChainedInstruction):
   @property
   def handle(self) -> Value:
     return self._handle_operand.get()
-  
+
   @handle.setter
   def handle(self, h : Value):
     self._handle_operand.set_operand(0, h)
-  
+
   @handle.deleter
   def handle(self):
     self._handle_operand.drop_all_uses()
-  
+
 class VNPutInst(VNTimeChainedInstruction):
   # 放置指令会在目标设备上创建一个内容，但是与创建指令不同，该指令不返回句柄
   # 放置指令创建的内容的有效期由设备、环境等决定，而不是由程序显式地去移除
@@ -346,18 +346,18 @@ class VNPutInst(VNTimeChainedInstruction):
   def __init__(self, name: str, loc: Location, content : Value, **kwargs) -> None:
     super().__init__(name, loc, **kwargs)
     self._content_operand = self._add_operand_with_value('内容', content)
-  
+
   @property
   def device(self) -> VNDeviceRecord:
     content = self.content
     if content is not None:
       return content.device
     return None
-  
+
   @property
   def content(self) -> Value:
     return self._content_operand
-  
+
   @content.setter
   def content(self, v : Value):
     self._content_operand.set_operand(0, v)
@@ -382,21 +382,21 @@ class VNDisplayableManipulationInst(VNContentManipulationInst):
     self._position_operand = self._add_operand('位置')
     self._zorder_operand = self._add_operand('纵向顺序')
     self._effect_operand = self._add_operand('特效')
-  
+
   @property
   def position(self) -> Value:
     return self._position_operand.get()
-  
+
   @position.setter
   def position(self, v : Value):
     if not isinstance(v.valuetype, VNScreenCoordinateType):
       raise RuntimeError('类型错误')
     self._position_operand.set_operand(0, v)
-  
+
   @position.deleter
   def position(self):
     self._position_operand.drop_all_uses()
-  
+
   @property
   def zorder(self) -> int | None:
     zorder = self._zorder_operand.get()
@@ -405,7 +405,7 @@ class VNDisplayableManipulationInst(VNContentManipulationInst):
     if isinstance(zorder, VNConstantInt):
       return zorder.value
     raise RuntimeError('无效的值类型')
-  
+
   @zorder.setter
   def zorder(self, v : int | VNConstantInt):
     value : VNConstantInt = None
@@ -416,21 +416,21 @@ class VNDisplayableManipulationInst(VNContentManipulationInst):
     else:
       raise RuntimeError('无效的值类型')
     self._zorder_operand.set_operand(0, value)
-  
+
   @zorder.deleter
   def zorder(self):
     self._zorder_operand.drop_all_uses()
-  
+
   @property
   def effect(self):
     return self._effect_operand.get()
-  
+
   @effect.setter
   def effect(self, v : Value):
     if not isinstance(v.valuetype, VNEffectFunctionType):
       raise RuntimeError('无效的值类型')
     self._effect_operand.set_operand(0, v)
-  
+
   @effect.deleter
   def effect(self):
     self._effect_operand.drop_all_uses()
@@ -449,7 +449,7 @@ class VNAudioManipulationInst(VNContentManipulationInst):
     super().__init__(name = name, loc = loc, **kwargs)
     self._volume_operand = self._add_operand('音量')
     self._playback_speed_operand = self._add_operand('播放速度')
-  
+
   @property
   def volume(self) -> float | None:
     v = self._volume_operand.get()
@@ -458,7 +458,7 @@ class VNAudioManipulationInst(VNContentManipulationInst):
     if isinstance(v, VNConstantFloat):
       return v.value
     raise RuntimeError('无效类型')
-  
+
   @volume.setter
   def volume(self, v : float | VNConstantFloat):
     value : VNConstantFloat = None
@@ -469,11 +469,11 @@ class VNAudioManipulationInst(VNContentManipulationInst):
     else:
       raise RuntimeError('无效类型')
     self._volume_operand.set_operand(0, value)
-  
+
   @volume.deleter
   def volume(self):
     self._volume_operand.drop_all_uses()
-  
+
   @property
   def playback_speed(self) -> float | None:
     v = self._playback_speed_operand.get()
@@ -482,7 +482,7 @@ class VNAudioManipulationInst(VNContentManipulationInst):
     if isinstance(v, VNConstantFloat):
       return v.value
     raise RuntimeError('无效类型')
-  
+
   @playback_speed.setter
   def playback_speed(self, v : float | VNConstantFloat):
     value : VNConstantFloat = None
@@ -493,7 +493,7 @@ class VNAudioManipulationInst(VNContentManipulationInst):
     else:
       raise RuntimeError('无效类型')
     self._playback_speed_operand.set_operand(0, value)
-  
+
   @playback_speed.deleter
   def playback_speed(self):
     self._playback_speed_operand.drop_all_uses()
@@ -512,7 +512,7 @@ class VNRemoveInst(VNContentRemovalInst):
   # 区别于创建、修改、放置指令，移除指令不应被当做根据内容而特化的指令的基类；直接使用该指令即可
 
   _handle_operand : OpOperand # 句柄类型
-  
+
   def __init__(self, name: str, loc: Location, handle : Value, transition : Value = None, **kwargs) -> None:
     super().__init__(name = name, loc = loc, **kwargs)
     self._handle_operand = self._add_operand_with_value('句柄', handle)
@@ -520,11 +520,11 @@ class VNRemoveInst(VNContentRemovalInst):
   @property
   def handle(self) -> Value:
     return self._handle_operand.get()
-  
+
   @handle.setter
   def handle(self, h : Value):
     self._handle_operand.set_operand(0, h)
-  
+
   @handle.deleter
   def handle(self):
     self._handle_operand.drop_all_uses()
@@ -540,12 +540,12 @@ class VNClearInst(VNContentRemovalInst):
   @property
   def device(self) -> Value:
     return self._device_operand.get()
-  
+
   @device.setter
   def device(self, d : Value):
     assert isinstance(d.valuetype, VNDeviceReferenceType)
     self._device_operand.set_operand(0, d)
-  
+
   @device.deleter
   def device(self):
     self._device_operand.drop_all_uses()
@@ -556,7 +556,7 @@ class VNCreateDisplayableInst(VNCreateInst, VNDisplayableManipulationInst):
   def __init__(self, name: str, loc: Location, content: Value, **kwargs) -> None:
     content_type = VNDisplayableType.get(loc.context)
     super().__init__(name = name, loc = loc, content_type = content_type, content = content, **kwargs)
-  
+
   @VNCreateInst.content.setter
   def content(self, v : Value):
     if not isinstance(v.valuetype, VNDisplayableType):
@@ -568,7 +568,7 @@ class VNPutDisplayableInst(VNPutInst, VNDisplayableManipulationInst):
 
   def __init__(self, name: str, loc: Location, content: Value, **kwargs) -> None:
     super().__init__(name = name, loc = loc, content = content, **kwargs)
-  
+
   @VNPutInst.content.setter
   def content(self, v : Value):
     if not isinstance(v.valuetype, VNDisplayableType):
@@ -580,7 +580,7 @@ class VNModifyDisplayableInst(VNModifyInst, VNDisplayableManipulationInst):
 
   def __init__(self, name: str, loc: Location, handle: Value, **kwargs) -> None:
     super().__init__(name = name, loc = loc, handle = handle, **kwargs)
-  
+
 
 class VNCreateAudioInst(VNCreateInst, VNAudioManipulationInst):
   # 创建音频项指令
@@ -588,24 +588,24 @@ class VNCreateAudioInst(VNCreateInst, VNAudioManipulationInst):
   def __init__(self, name: str, loc: Location, content: Value, **kwargs) -> None:
     content_type = VNAudioType.get(loc.context)
     super().__init__(name = name, loc = loc, content_type = content_type, content = content, **kwargs)
-  
+
   @VNCreateInst.content.setter
   def content(self, v : Value):
     if not isinstance(v.valuetype, VNAudioType):
       raise RuntimeError("类型错误")
     self._content_operand.set_operand(0, v)
-  
+
 class VNPutAudioInst(VNPutInst, VNAudioManipulationInst):
 
   def __init__(self, name: str, loc: Location, content: Value, **kwargs) -> None:
     super().__init__(name = name, loc = loc, content = content, **kwargs)
-  
+
   @VNPutInst.content.setter
   def content(self, v : Value):
     if not isinstance(v.valuetype, VNAudioType):
       raise RuntimeError("类型错误")
     self._content_operand.set_operand(0, v)
-  
+
 class VNModifyAudioInst(VNModifyInst, VNAudioManipulationInst):
   def __init__(self, name: str, loc: Location, handle: Value, **kwargs) -> None:
     super().__init__(name = name, loc = loc, handle = handle, **kwargs)
@@ -616,7 +616,7 @@ class VNPutTextInst(VNPutInst, VNTextManipulationInst):
 
   def __init__(self, name: str, loc: Location, content: Value, **kwargs) -> None:
     super().__init__(name, loc, content, **kwargs)
-  
+
   @VNPutInst.content.setter
   def content(self, v : Value):
     if not isinstance(v.valuetype, VNTextType):
