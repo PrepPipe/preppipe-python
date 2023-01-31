@@ -184,7 +184,9 @@ class FrontendCommandRegistry(NameResolver[FrontendCommandInfo]):
   def __init__(self) -> None:
     super().__init__()
     self._global_ns = FrontendCommandNamespace(self, None, None)
-    self.set_root(self._global_ns)
+
+  def get_root_node(self) -> FrontendCommandNamespace:
+    return self._global_ns
 
 
 _frontend_command_registry = FrontendCommandRegistry()
@@ -253,14 +255,14 @@ class FrontendParserBase:
     return self._command_ns
 
   def lookup(self, name : str, using_path : typing.List[typing.Tuple[str]] = None):
-    return self.command_ns.namespace_tree.unqualified_lookup(name, self.command_ns.namespace_path, using_path)
+    return self.command_ns.namespace_tree.unqualified_lookup(name, self.command_ns.get_namespace_path(), using_path)
 
   def handle_command_op(self, op : GeneralCommandOp):
     head_symbol_table = op.get_symbol_table('head')
     namesymbol = head_symbol_table.get('name')
     assert isinstance(namesymbol, CMDValueSymbol)
     opname = namesymbol.value
-    assert isinstance(opname, ConstantString)
+    assert isinstance(opname, StringLiteral)
     # 目前我们不定义 fully qualified lookup，因为貌似没有适合作为命名空间分隔符的字符。。。
     lookup_result = self.lookup(opname.value)
     if lookup_result is None:
@@ -602,7 +604,7 @@ class FrontendParserBase:
 
 
   def handle_command_unrecognized(self, op : GeneralCommandOp, opname : str) -> None:
-    err = ErrorOp('', op.location, 'cmdparser-unrecognized-cmdname', ConstantString.get('Command name not found: ' + opname, self.context))
+    err = ErrorOp('', op.location, 'cmdparser-unrecognized-cmdname', StringLiteral.get('Command name not found: ' + opname, self.context))
     err.insert_before(op)
 
   def visit_op(self, op : Operation) -> None:
@@ -688,25 +690,25 @@ def _try_convert_parameter(ty : type | types.UnionType | typing._GenericAlias, v
   # 输出类型除了文本、字符串、整数、浮点数之外，还可能有调用表达式和枚举类型（需要从字符串转过去）
 
   # 首先把非基本类型的字符串解决了
-  if ty in [ConstantText, ConstantTextFragment, ConstantString]:
+  if ty in [TextLiteral, TextFragmentLiteral, StringLiteral]:
     cur_value = value
-    if isinstance(value, ConstantString):
-      assert ty == ConstantText or ty == ConstantTextFragment
+    if isinstance(value, StringLiteral):
+      assert ty == TextLiteral or ty == TextFragmentLiteral
       context = value.get_context()
-      cur_value = ConstantTextFragment.get(context, value, ConstantTextStyle.get((), context))
-      if ty == ConstantTextFragment:
+      cur_value = TextFragmentLiteral.get(context, value, TextStyleLiteral.get((), context))
+      if ty == TextFragmentLiteral:
         return cur_value
-    assert ty == ConstantText
+    assert ty == TextLiteral
     context = cur_value.get_context()
-    return ConstantText.get(context, [cur_value])
+    return TextLiteral.get(context, [cur_value])
 
   # 其他类型都可以从字符串转换过去，这里先将值转为字符串
   value_str = ''
-  if isinstance(value, ConstantText):
+  if isinstance(value, TextLiteral):
     value_str = value.get_string()
-  elif isinstance(value, ConstantTextFragment):
+  elif isinstance(value, TextFragmentLiteral):
     value_str = value.get_string()
-  elif isinstance(value, ConstantString):
+  elif isinstance(value, StringLiteral):
     value_str = value.get_string()
   else:
     raise NotImplementedError('Unexpected input value type')

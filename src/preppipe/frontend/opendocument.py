@@ -18,7 +18,7 @@ class _TextStyleInfo:
   # this structure temporarily holds the style info during the parsing
   style : typing.Dict[TextAttribute, typing.Any]
   is_strike_through : bool # if the font has strikethrough (and we will drop it after generation)
-  
+
   def __init__(self, src = None):
     self.style = {}
     self.is_strike_through = False
@@ -26,32 +26,32 @@ class _TextStyleInfo:
       assert isinstance(src, _TextStyleInfo)
       self.style = src.style.copy()
       self.is_strike_through = src.is_strike_through
-  
+
   def set_bold(self, bold : bool):
     if bold:
       self.style[TextAttribute.Bold] = True
     else:
       self.style.pop(TextAttribute.Bold, None)
-  
+
   def set_italic(self, italic : bool):
     if italic:
       self.style[TextAttribute.Italic] = True
     else:
       self.style.pop(TextAttribute.Italic, None)
-  
+
   def set_color(self, color: Color):
     self.style[TextAttribute.TextColor] = color
-  
+
   def set_background_color(self, color: Color):
     self.style[TextAttribute.BackgroundColor] = color
-  
+
   def set_strike_through(self, v : bool):
     self.is_strike_through = v
 
 class _ListStyleInfo:
   is_numbered : bool # true if the list use numbers instead of bullet points
   start_value : int # usually 1
-  
+
   def __init__(self, src = None) -> None:
     self.is_numbered = False
     self.start_value = 1
@@ -59,21 +59,21 @@ class _ListStyleInfo:
       assert isinstance(src, _ListStyleInfo)
       self.is_numbered = src.is_numbered
       self.start_value = src.start_value
-  
+
   def set_numbered(self, v : bool):
     self.is_numbered = v
-  
+
   def set_start_value(self, v : int):
     self.start_value = v
 
 class _ODParseContext:
   # how many characters in a paragraph makes the paragraph considered long enough (for debugging purpose)
   _NUM_CHARS_LONG_PARAGRAPH : typing.ClassVar[int] = 10
-  
+
   # the list of anchor types we support for frames
   # we do not support anchoring from page; it would be too difficult to determine
   _FRAME_EXPECTED_ANCHORTYPES : typing.List[str] = ["as-char", "char", "paragraph"]
-  
+
   ctx : Context
   settings : IMSettings
   cache : IMParseCache
@@ -81,14 +81,14 @@ class _ODParseContext:
   odfhandle: odf.opendocument.OpenDocument
   difile : DIFile
   documentname : str
-  
+
   style_data : typing.Dict[str, _TextStyleInfo]
   list_style_data : typing.Dict[str, _ListStyleInfo]
-  asset_reference_dict : typing.Dict[str, AssetData | typing.Tuple[ConstantString, ConstantString]] # cache asset request results; either the asset or the error tuple
+  asset_reference_dict : typing.Dict[str, AssetData | typing.Tuple[StringLiteral, StringLiteral]] # cache asset request results; either the asset or the error tuple
   cur_page_count : int
   cur_row_count : int
   cur_column_count : int
-  
+
   # ------------------------------------------------------------------
   # ODF states
   # it is generally hard to locate a point in the source document
@@ -98,9 +98,9 @@ class _ODParseContext:
   #num_total_paragraph : int # the absolute paragraph count
   #last_paragraph_text : str # the content of the "last long paragraph"
   #num_paragraph_past_last_text : int # how many paragraphs has passed from the last long paragraph; should be starting from 1
-  
+
   # ------------------------------------------------------------------
-  
+
   def __init__(self, ctx : Context, settings : IMSettings, cache : IMParseCache, filePath : str) -> None:
     filePath = os.path.realpath(filePath, strict=True)
     self.ctx = ctx
@@ -109,12 +109,12 @@ class _ODParseContext:
     self.filePath = filePath
     self.odfhandle = odf.opendocument.load(filePath)
     self.difile = ctx.get_DIFile(filePath)
-    
+
     self.style_data = {}
     self.list_style_data = {}
     self.asset_reference_dict = {}
     self.documentname = os.path.splitext(os.path.basename(filePath))[0]
-    
+
     self.cur_page_count = 1
     self.cur_row_count = 1
     self.cur_column_count = 1
@@ -122,14 +122,14 @@ class _ODParseContext:
     #self.num_total_paragraph = 0
     #self.last_paragraph_text = ""
     #self.num_paragraph_past_last_text = 0
-  
+
   @staticmethod
   def _get_element_attribute(node: odf.element.Element, attr: str) -> str:
     for k in node.attributes.keys():
       if (k[1] == attr):
         return node.attributes[k]
     return ""
-  
+
   def _populate_style_data(self, node: odf.element.Element):
     for child in node.childNodes:
       if child.qname[1] == "style":
@@ -189,21 +189,21 @@ class _ODParseContext:
         # not a style node; just recurse
         if (len(child.childNodes) > 0):
           self._populate_style_data(child)
-          
+
   @staticmethod
   def get_style(node) -> str:
     """Extract the style-name attribute from the element node"""
     return _ODParseContext._get_element_attribute(node, "style-name")
-  
+
   def get_DILocation(self, page : int, row : int, column : int) -> DILocation:
     return self.ctx.get_DILocation(self.difile, page, row, column)
-  
+
   def create_text_element(self, text:str, style_name:str, loc : DILocation) -> IMElementOp | typing.Tuple[IMElementOp, IMErrorElementOp]:
     """Create the text element with the provided text and style name.
     The flags for the text element will be set from the style name
     """
     # 如果文本被划掉（有strikethrough），则我们在此添加一个StrikeThrough的属性，这个 IMElementOp 会在之后的 transform_pass_fix_text_elements() 中消耗掉
-    content = ConstantString.get(text, self.ctx)
+    content = StringLiteral.get(text, self.ctx)
     error_op = None
     cstyle = None
     is_strike_through = False
@@ -211,23 +211,23 @@ class _ODParseContext:
       style = self.style_data[style_name]
       if style.is_strike_through:
         is_strike_through = True
-      cstyle = ConstantTextStyle.get(style.style, self.ctx)
+      cstyle = TextStyleLiteral.get(style.style, self.ctx)
     else:
-      cstyle = ConstantTextStyle.get(style.style, self.ctx)
-      error_op = IMErrorElementOp(name = '', loc = loc, content = content, error_code='odf-bad-style-name', error_msg = ConstantString.get('Cannot find style name \"' + style_name + '"', self.ctx))
-    content = ConstantTextFragment.get(self.ctx, content, cstyle)
+      cstyle = TextStyleLiteral.get(style.style, self.ctx)
+      error_op = IMErrorElementOp(name = '', loc = loc, content = content, error_code='odf-bad-style-name', error_msg = StringLiteral.get('Cannot find style name \"' + style_name + '"', self.ctx))
+    content = TextFragmentLiteral.get(self.ctx, content, cstyle)
     node = IMElementOp(name = '', loc = loc, content = content)
     if is_strike_through:
       node.set_attr('StrikeThrough', True)
     if error_op is None:
       return node
     return (node, error_op)
-    
+
     #if style_name in self.style_data:
     #  style = self.style_data[style_name]
     #  node = IMTextElement(text, style)
     #  return node
-    
+
     # style_name not found
     # add to notification
     #if style_name not in self.missing_style_list:
@@ -235,7 +235,7 @@ class _ODParseContext:
     # just create a text without format
     #node = IMTextElement(text)
     #return node
-  
+
   def create_image_reference(self, href : str, loc : DILocation) -> IMElementOp:
     if href in self.asset_reference_dict:
       value = self.asset_reference_dict[href]
@@ -245,7 +245,7 @@ class _ODParseContext:
         content = value[0]
         err = value[1]
         return IMErrorElementOp(name = '', loc = loc, content = content, error_code='odf-bad-image-ref', error_msg = err)
-    
+
     value : Value = None
     if href in self.odfhandle.Pictures:
       (FilenameOrImage, data, mediatype) = self.odfhandle.Pictures[href]
@@ -266,22 +266,22 @@ class _ODParseContext:
           return self.cache.query_image_asset(path)
         return None
       value = self.settings.search(imagePath, self.filePath, fileCheckCB)
-    
+
     if not isinstance(value, ImageAssetData):
       msg = "Cannot resolve reference to image \"" + href + "\" (please check file presence or security violation)"
       MessageHandler.critical_warning(msg, self.filePath)
-      textstr = ConstantString.get(href, self.ctx)
-      msgstr = ConstantString.get(msg, self.ctx)
+      textstr = StringLiteral.get(href, self.ctx)
+      msgstr = StringLiteral.get(msg, self.ctx)
       self.asset_reference_dict[href] = (textstr, msgstr)
       return IMErrorElementOp(name = '', loc = loc, content = textstr, error_code='odf-bad-image-ref', error_msg = msgstr)
-    
+
     self.asset_reference_dict[href] = value
     return IMElementOp(name = '', loc = loc, content = value)
-  
+
   def _get_unsupported_element_op(self, element : odf.element.Element) -> IMErrorElementOp:
     loc = self.get_DILocation(self.cur_page_count, self.cur_row_count, self.cur_column_count)
-    return IMErrorElementOp(name = str(element.qname), loc = loc, content = ConstantString.get(str(element), self.ctx), error_code='unsupported-element')
-  
+    return IMErrorElementOp(name = str(element.qname), loc = loc, content = StringLiteral.get(str(element), self.ctx), error_code='unsupported-element')
+
   def odf_parse_paragraph(self, rootnode : odf.element.Element, isInFrame : bool, default_style: str = "") -> Block:
     def populate_paragraph(paragraph: Block, rootnode : odf.element.Element, default_style: str, isInFrame : bool) -> None:
       for element in rootnode.childNodes:
@@ -309,41 +309,41 @@ class _ODParseContext:
           elif element.qname[1] == "frame":
             if len(element.childNodes) == 0:
               continue
-            
+
             # inside a frame, we usually only have one single child
             # however, we may have substitutes that appear after the first child
             # (e.g., if we have a chart in the doc, we will have (1) the chart object and (2) a replacement image)
             # the qname is not always good enough for debugging (e.g., the chart is just an "object"), but is better than nothing
             firstChild = element.childNodes[0]
             first_child_name = firstChild.qname[1]
-            
+
             if len(element.childNodes) > 1:
               remaining_qnames = []
               for i in range(1, len(element.childNodes)):
                 remaining_qnames.append(element.childNodes[i].qname[1])
               info_str = "Frame (" + first_child_name +") has more than one child ("+ str(remaining_qnames)+"); only the first is read."
               MessageHandler.info(info_str, self.filePath, str(loc))
-            
+
             # check whether the frame has the expected anchoring
             anchor = self._get_element_attribute(element, "anchor-type")
             if anchor not in self._FRAME_EXPECTED_ANCHORTYPES:
               warn_str = "Frame (" + first_child_name + ") with unexpected anchor type " + anchor + "found. Please inspect the output on possible mispositions of frame data. (Expecting: "+ str(self._FRAME_EXPECTED_ANCHORTYPES) + ")"
               MessageHandler.warning(warn_str, self.filePath, str(loc))
-            
-            
+
+
             if firstChild.nodeType == 1 and first_child_name == "image":
               href = self._get_element_attribute(firstChild, "href")
               loc = self.get_DILocation(self.cur_page_count, self.cur_row_count, self.cur_column_count)
               image_element = self.create_image_reference(href, loc)
               paragraph.push_back(image_element)
-              
+
             elif firstChild.nodeType == 1 and first_child_name == "text-box":
               # we do not support nested textbox. If we are already in frame, we skip this text box
               loc = self.get_DILocation(self.cur_page_count, self.cur_row_count, self.cur_column_count)
               if isInFrame:
                 warn_str = "Frame (" + first_child_name +") is inside a framed environment, and is therefore ignored"
                 MessageHandler.warning(warn_str, self.filePath, str(loc))
-                paragraph.push_back(IMErrorElementOp('', loc, content= ConstantString.get("text-box", self.ctx), error_code='odf-nested-frame', error_msg= ConstantString.get(warn_str, self.ctx)))
+                paragraph.push_back(IMErrorElementOp('', loc, content= StringLiteral.get("text-box", self.ctx), error_code='odf-nested-frame', error_msg= StringLiteral.get(warn_str, self.ctx)))
               else:
                 # let's deal with this text box
                 # the default text style for textbox text is specified on the frame, instead of the text-box element
@@ -377,7 +377,7 @@ class _ODParseContext:
     self.cur_row_count += 1
     self.cur_column_count = 1
     return paragraph
-  
+
   def odf_parse_frame(self, result : Region, rootnode : odf.element.Element, isInFrame : bool, default_style : str = ""):
     # isInFrame is false if this part is inside the flow of the document,
     # and is true if this is outside the document flow.
@@ -432,7 +432,7 @@ class _ODParseContext:
                 else:
                   listop.is_numbered = False
             if is_emit_error:
-              list_error_op = IMErrorElementOp('', listop.location, content = ConstantString.get(list_style, self.ctx), error_code='odf-bad-list-style', error_msg = ConstantString.get('Cannot get list style', self.ctx))
+              list_error_op = IMErrorElementOp('', listop.location, content = StringLiteral.get(list_style, self.ctx), error_code='odf-bad-list-style', error_msg = StringLiteral.get('Cannot get list style', self.ctx))
           for listnode in node.childNodes:
             listnodetype = listnode.qname[1]
             match listnodetype:
@@ -453,7 +453,7 @@ class _ODParseContext:
           # node type not recognized
           loc = self.get_DILocation(self.cur_page_count, self.cur_row_count, self.cur_column_count)
           MessageHandler.warning("Element unrecognized and ignored: " + nodetype, self.filePath, str(loc))
-  
+
   def transform_pass_fix_text_elements(self, doc : IMDocumentOp):
     # 把所有文本的字体转换为符合IR的形式：
     # （误）1. 将 ODF 的 styles 转换为IR的格式，确定所有字体大小
@@ -466,7 +466,7 @@ class _ODParseContext:
     # 2. 字体的大小成为了非局部的属性，容易产生意外结果
     # 因此，即使IR支持字体大小，我们也在此将丢弃所有大小信息，只将不会引起误判的内容（颜色，加粗，斜体等）加进去
     # 更新：放弃使用字体大小后，我们现在在生成阶段就直接在 IMElementOp 中生成符合要求的内容，因此在此处我们目前只合并相邻的、样式相同的文本
-    
+
     def walk_region(region : Region) -> bool:
       # 如果该区内所有的内容都被去除，则返回 True,否则返回 False
       blocks_to_delete = []
@@ -494,7 +494,7 @@ class _ODParseContext:
             # 加上这条检查，这样万一以后在首次生成 IMElementOp 时沾上属性后，我们可以在这里添加对属性的合并
             assert cur_op.attributes.empty
             cur_content = cur_op.content.get()
-            assert isinstance(cur_content, ConstantTextFragment)
+            assert isinstance(cur_content, TextFragmentLiteral)
             if cur_style is None:
               # this is the first time we visit an element
               cur_text = cur_content.content.value
@@ -506,7 +506,7 @@ class _ODParseContext:
             else:
               # we get an fragment with a different style
               # first, end the last fragment
-              new_frag = ConstantTextFragment.get(self.ctx, ConstantString.get(cur_text, self.ctx), cur_style)
+              new_frag = TextFragmentLiteral.get(self.ctx, StringLiteral.get(cur_text, self.ctx), cur_style)
               fragment_list.append(new_frag)
               # now start the new one
               cur_text = cur_content.content.value
@@ -517,14 +517,14 @@ class _ODParseContext:
           # finished the first iteration
           # end the last fragment
           assert len(cur_text) > 0
-          new_frag = ConstantTextFragment.get(self.ctx, ConstantString.get(cur_text, self.ctx), cur_style)
+          new_frag = TextFragmentLiteral.get(self.ctx, StringLiteral.get(cur_text, self.ctx), cur_style)
           # create the new element
           new_content = None
           if len(fragment_list) == 0:
             new_content = new_frag
           else:
             fragment_list.append(new_frag)
-            new_content = ConstantText.get(self.ctx, fragment_list)
+            new_content = TextLiteral.get(self.ctx, fragment_list)
           newop  = IMElementOp(first_text_op.name, first_text_op.location, new_content)
           # now replace the current ops
           newop.insert_before(first_text_op)
@@ -561,7 +561,7 @@ class _ODParseContext:
                   op_to_delete.append(op)
           elif type(op) == IMElementOp:
             content = op.content.get()
-            if isinstance(content, ConstantTextFragment) and not op.has_attr('StrikeThrough'):
+            if isinstance(content, TextFragmentLiteral) and not op.has_attr('StrikeThrough'):
               # we do found a fragment
               if first_text_op is None:
                 first_text_op = op
@@ -599,7 +599,7 @@ class _ODParseContext:
       # end of the helper function
     walk_region(doc.body)
     # 我们不会删除文档的 body 区，所以此处不检查返回值
-  
+
   def transform_pass_reassociate_lists(self, doc : IMDocumentOp):
     # 对所有的 IMListOp 进行重组，以解决以下问题：
     # 1.  目前当不同种类的列表相互嵌套（比如有数字的和没数字的）时，如果有以下列表：
@@ -785,22 +785,22 @@ class _ODParseContext:
         #  block_to_move.remove_from_parent()
         #  cur_listop_stack[-1].get_last_region().push_back(block_to_move)
         #  continue
-          
+
         # 有内容且不是列表项、目前栈为空，则继续寻找第一个列表
         cur_block = cur_block.get_next_node()
         continue
-          
+
     # end of the helper
     walk_frame(doc)
-  
+
   def parse_odf(self) -> IMDocumentOp:
     self._populate_style_data(self.odfhandle.styles)
     self._populate_style_data(self.odfhandle.automaticstyles)
-    
+
     assert self.cur_page_count == 1
     assert self.cur_row_count == 1
     assert self.cur_column_count == 1
-    
+
     result : IMDocumentOp = IMDocumentOp(self.documentname, self.difile)
     self.odf_parse_frame(result.body, self.odfhandle.text, False)
     self.transform_pass_fix_text_elements(result)
@@ -817,13 +817,13 @@ class ReadOpenDocument(TransformBase):
   _ctx : Context
   _settings : IMSettings
   _cache : IMParseCache
-  
+
   def __init__(self, _ctx: Context) -> None:
     super().__init__(_ctx)
     self._ctx = _ctx
     self._settings = IMSettings()
     self._cache = IMParseCache(self._ctx)
-  
+
   def run(self) -> IMDocumentOp | typing.List[IMDocumentOp]:
     if len(self.inputs) == 1:
       return parse_odf(self._ctx, self._settings, self._cache, self.inputs[0])
@@ -842,7 +842,7 @@ def _main():
   filePath = sys.argv[1]
   doc = parse_odf(ctx, settings, cache, filePath)
   doc.view()
-  
+
 if __name__ == "__main__":
   _main()
 
