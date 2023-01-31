@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import typing
 import enum
+import dataclasses
 
 # ------------------------------------------------------------------------------
 # 类似C++的命名解析在语涵编译器中至少有两处应用：
@@ -30,57 +31,59 @@ import enum
 
 T = typing.TypeVar('T') # typevar for the node subclass
 
-# 某个在该命名空间下的名称代表什么
-class _NameResolutionDataEntryKind(enum.Enum):
-  CanonicalEntry = 0 # 代表一个数据项，值是数据项记录
-  EntryAlias = 1 # 代表数据项的一个别名，值是该数据项的规范名(canonical name)
-  CanonicalChild = 2 # 代表一个子结点，值是子结点的引用
-  ChildAlias = 3 # 代表子结点的一个别名，值是子结点的规范名
-  RemoteEntryAlias = 4 # 代表一个其他命名空间下的数据项，值是一个完整的命名空间路径+规范名
-  RemoteChildAlias = 5 # 代表一个其他命名空间，值是完整的命名空间路径
-
-
 class NameResolver(typing.Generic[T]):
-  _root : NamespaceNode[T]
 
-  def set_root(self, r : NamespaceNode[T]):
-    self._root = r
+  # derived class may override the following methods (get root node and get node at specific path)
+  def get_root_node(self) -> NamespaceNodeInterface[T]:
+    raise NotImplementedError()
 
-  def get_namespace_node(self, path : typing.Tuple[str]) -> NamespaceNode[T] | None:
-    current_node = self._root
+  def get_namespace_node(self, path : typing.Tuple[str]) -> NamespaceNodeInterface[T] | None:
+    current_node = self.get_root_node()
     for step in path:
       assert isinstance(step, str)
-      current_node = current_node.lookup_name(step)
-      if not isinstance(current_node, NamespaceNode):
+      current_node = self._lookup_name(current_node, step)
+      if not isinstance(current_node, NamespaceNodeInterface):
         return None
     return current_node
 
-  def unqualified_lookup(self, name : str, start_namespace_path : typing.Tuple[str], using_namespace_paths : typing.Iterable[typing.Tuple[str]] | None) -> NamespaceNode[T] | T | None:
+  # ----------------------------------------------------------------------------
+
+  def _lookup_name(self, node : NamespaceNodeInterface[T], name : str) -> NamespaceNodeInterface[T] | T | None:
+    # resolve all alias entries here
+    result = node.lookup_name(name)
+    if isinstance(result, NamespaceNodeInterface.AliasEntry):
+      tnode = self.get_namespace_node(result.ns_path)
+      if result.name is None:
+        return tnode
+      return self._lookup_name(tnode, result.name)
+    return result
+
+  def unqualified_lookup(self, name : str, start_namespace_path : typing.Tuple[str], using_namespace_paths : typing.Iterable[typing.Tuple[str]] | None) -> NamespaceNodeInterface[T] | T | None:
     # 对类似 ::<name> 名字的查找
     # 从 start_namespace_path 开始查找，当前层没找到就往上一层查找，找到全局命名空间还是没有的话再在 using_namespace_paths 中一个个找
     current_ns = self.get_namespace_node(start_namespace_path)
     while current_ns is not None:
-      result = current_ns.lookup_name(name)
+      result = self._lookup_name(current_ns, name)
       if result is not None:
         return result
-      current_ns = current_ns.parent
+      current_ns = current_ns.get_namespace_parent_node()
 
     if using_namespace_paths is not None:
       for alternative in using_namespace_paths:
         current_ns = self.get_namespace_node(alternative)
-        result = current_ns.lookup_name(name)
+        result = self._lookup_name(current_ns, name)
         if result is not None:
           return result
     return None
 
-  def fully_qualified_lookup(self, name : str, namespace_path : typing.Tuple[str]) -> NamespaceNode[T] | T | None:
+  def fully_qualified_lookup(self, name : str, namespace_path : typing.Tuple[str]) -> NamespaceNodeInterface[T] | T | None:
     # 对类似 ::<namespace_path>::<name> 名字的查找
     node = self.get_namespace_node(namespace_path)
     if node is None:
       return None
-    return node.lookup_name(name)
+    return self._lookup_name(node, name)
 
-  def partially_qualified_lookup(self, name : str, prefix : typing.Tuple[str], start_namespace_path : typing.Tuple[str], using_namespace_paths : typing.Iterable[typing.Tuple[str]]) -> NamespaceNode[T] | T | None:
+  def partially_qualified_lookup(self, name : str, prefix : typing.Tuple[str], start_namespace_path : typing.Tuple[str], using_namespace_paths : typing.Iterable[typing.Tuple[str]]) -> NamespaceNodeInterface[T] | T | None:
     # 对类似 <prefix>::<name> 名字的查找
     # 先递归查找 prefix 所在的命名空间，找到之后再在当前的命名空间中查找该名称
     assert prefix is not None and len(prefix) >= 1
@@ -89,56 +92,83 @@ class NameResolver(typing.Generic[T]):
       target_namespace = self.partially_qualified_lookup(prefix[-1], prefix[:-1], start_namespace_path, using_namespace_paths)
     else:
       target_namespace = self.unqualified_lookup(prefix[0], start_namespace_path, using_namespace_paths)
-    if not isinstance(target_namespace, NamespaceNode):
+    if not isinstance(target_namespace, NamespaceNodeInterface):
       return None
-    return target_namespace.lookup_name(name)
+    return self._lookup_name(target_namespace, name)
 
-class NamespaceNode(typing.Generic[T]):
+class NamespaceNodeInterface(typing.Generic[T]):
+  @dataclasses.dataclass
+  class AliasEntry:
+    ns_path: tuple[str]
+    name : str = None # None if referring to the node
+
+  def __init__(self, **kwargs) -> None:
+    super().__init__(**kwargs)
+
+  def get_namespace_parent_node(self) -> NamespaceNodeInterface[T] | None:
+    raise NotImplementedError()
+
+  def get_namespace_path(self) -> tuple[str]:
+    raise NotImplementedError()
+
+  def lookup_name(self, name : str) -> NamespaceNodeInterface[T] | T | AliasEntry | None:
+    raise NotImplementedError()
+
+class NamespaceNode(typing.Generic[T], NamespaceNodeInterface[T]):
+  # 某个在该命名空间下的名称代表什么
+  class _NameResolutionDataEntryKind(enum.Enum):
+    CanonicalEntry = 0 # 代表一个数据项，值是数据项记录
+    EntryAlias = 1 # 代表数据项的一个别名，值是该数据项的规范名(canonical name)
+    CanonicalChild = 2 # 代表一个子结点，值是子结点的引用
+    ChildAlias = 3 # 代表子结点的一个别名，值是子结点的规范名
+    RemoteEntryAlias = 4 # 代表一个其他命名空间下的数据项，值是一个完整的命名空间路径+规范名
+    RemoteChildAlias = 5 # 代表一个其他命名空间，值是完整的命名空间路径
+
   _namespace_path : typing.Tuple[str]
   _data_dict : typing.Dict[str, typing.Tuple[_NameResolutionDataEntryKind, typing.Any]] # 规范名(canonical name) -> 数据(data)、子结点，或者别名到其他东西
   _tree : NameResolver[T]
   _parent : NamespaceNode[T]
 
   @property
-  def parent(self) -> NamespaceNode[T] | None:
-    return self._parent
-
-  @property
   def namespace_tree(self) -> NameResolver[T]:
     return self._tree
 
-  @property
-  def namespace_path(self) -> typing.Tuple[str]:
+  def get_namespace_parent_node(self):
+    return self._parent
+
+  def get_namespace_path(self) -> tuple[str]:
     return self._namespace_path
 
-  def lookup_name(self, name : str) -> NamespaceNode[T] | T | None:
+  def lookup_name(self, name : str) -> NamespaceNode[T] | T | NamespaceNodeInterface.AliasEntry | None:
     assert isinstance(name, str)
     if name not in self._data_dict:
       return None
     kind, data = self._data_dict[name]
     match kind:
-      case _NameResolutionDataEntryKind.CanonicalEntry:
+      case NamespaceNode._NameResolutionDataEntryKind.CanonicalEntry:
         return data # T
-      case _NameResolutionDataEntryKind.EntryAlias:
+      case NamespaceNode._NameResolutionDataEntryKind.EntryAlias:
         target_kind, target_data = self._data_dict[data]
-        assert target_kind == _NameResolutionDataEntryKind.CanonicalEntry
+        assert target_kind == NamespaceNode._NameResolutionDataEntryKind.CanonicalEntry
         return target_data # T
-      case _NameResolutionDataEntryKind.CanonicalChild:
+      case NamespaceNode._NameResolutionDataEntryKind.CanonicalChild:
         return data # NamespaceNode[T]
-      case _NameResolutionDataEntryKind.ChildAlias:
+      case NamespaceNode._NameResolutionDataEntryKind.ChildAlias:
         target_kind, target_data = self._data_dict[data]
-        assert target_kind == _NameResolutionDataEntryKind.CanonicalChild
+        assert target_kind == NamespaceNode._NameResolutionDataEntryKind.CanonicalChild
         return target_data # NamespaceNode[T]
-      case _NameResolutionDataEntryKind.RemoteEntryAlias:
+      case NamespaceNode._NameResolutionDataEntryKind.RemoteEntryAlias:
         nspath, cname = data
-        return self.namespace_tree.get_namespace_node(nspath).lookup_name(cname)
-      case _NameResolutionDataEntryKind.RemoteChildAlias:
-        return self.namespace_tree.get_namespace_node(data)
+        return NamespaceNodeInterface.AliasEntry(ns_path=nspath, name=cname)
+        # return self.namespace_tree.get_namespace_node(nspath).lookup_name(cname)
+      case NamespaceNode._NameResolutionDataEntryKind.RemoteChildAlias:
+        return NamespaceNodeInterface.AliasEntry(ns_path=data)
+        # return self.namespace_tree.get_namespace_node(data)
       case _:
         raise NotImplementedError('Unexpected data entry kind')
 
   def unqualified_lookup(self, name : str, using_namespace_paths : typing.Iterable[typing.Tuple[str]]) -> NamespaceNode[T] | T | None:
-    return self.namespace_tree.unqualified_lookup(name, self.namespace_path, using_namespace_paths)
+    return self.namespace_tree.unqualified_lookup(name, self.get_namespace_path(), using_namespace_paths)
 
   def __init__(self,tree : NameResolver[T],  parent : NamespaceNode[T], cname : str | None) -> None:
     super().__init__()
@@ -150,20 +180,20 @@ class NamespaceNode(typing.Generic[T]):
       assert parent is None
     else:
       assert parent is not None and isinstance(cname, str)
-      self._namespace_path = (*parent.namespace_path, cname)
+      self._namespace_path = (*parent.get_namespace_path(), cname)
       parent.add_child(cname, self)
 
   def add_data_entry(self, cname : str, data : T) -> None:
     assert data is not None
     if cname in self._data_dict:
       raise RuntimeError('given cname "' + cname + '" is already used:' + str(self._data_dict[cname]))
-    self._data_dict[cname] = (_NameResolutionDataEntryKind.CanonicalEntry, data)
+    self._data_dict[cname] = (NamespaceNode._NameResolutionDataEntryKind.CanonicalEntry, data)
 
   def add_child(self, cname : str, child : NamespaceNode[T]) -> None:
     assert child is not None
     if cname in self._data_dict:
       raise RuntimeError('given cname "' + cname + '" is already used:' + str(self._data_dict[cname]))
-    self._data_dict[cname] = (_NameResolutionDataEntryKind.CanonicalChild, child)
+    self._data_dict[cname] = (NamespaceNode._NameResolutionDataEntryKind.CanonicalChild, child)
 
   def add_local_alias(self, name : str, alias : str) -> None:
     assert isinstance(name, str)
@@ -178,27 +208,27 @@ class NamespaceNode(typing.Generic[T]):
         raise RuntimeError('Cannot resolve name "' + name + '"')
       kind, data = self._data_dict[resolved_name]
       match kind:
-        case _NameResolutionDataEntryKind.CanonicalEntry:
-          self._data_dict[alias] = (_NameResolutionDataEntryKind.EntryAlias, resolved_name)
+        case NamespaceNode._NameResolutionDataEntryKind.CanonicalEntry:
+          self._data_dict[alias] = (NamespaceNode._NameResolutionDataEntryKind.EntryAlias, resolved_name)
           return
-        case _NameResolutionDataEntryKind.EntryAlias:
+        case NamespaceNode._NameResolutionDataEntryKind.EntryAlias:
           resolved_name = data
-        case _NameResolutionDataEntryKind.CanonicalChild:
-          self._data_dict[alias] = (_NameResolutionDataEntryKind.ChildAlias, resolved_name)
+        case NamespaceNode._NameResolutionDataEntryKind.CanonicalChild:
+          self._data_dict[alias] = (NamespaceNode._NameResolutionDataEntryKind.ChildAlias, resolved_name)
           return
-        case _NameResolutionDataEntryKind.ChildAlias:
+        case NamespaceNode._NameResolutionDataEntryKind.ChildAlias:
           resolved_name = data
-        case _NameResolutionDataEntryKind.RemoteChildAlias:
+        case NamespaceNode._NameResolutionDataEntryKind.RemoteChildAlias:
           self._data_dict[alias] = (kind, data)
           return
-        case _NameResolutionDataEntryKind.RemoteEntryAlias:
+        case NamespaceNode._NameResolutionDataEntryKind.RemoteEntryAlias:
           self._data_dict[alias] = (kind, data)
           return
         case _:
           raise NotImplementedError('Unhandled data entry kind')
 
   def _add_remote_alias_check(self, remote_path : typing.Tuple[str], alias : str) -> None:
-    assert remote_path != self.namespace_path
+    assert remote_path != self.get_namespace_path()
     assert isinstance(remote_path, tuple)
     for step in remote_path:
       assert isinstance(step, str)
@@ -207,10 +237,10 @@ class NamespaceNode(typing.Generic[T]):
 
   def add_remote_node_alias(self, remote_path : typing.Tuple[str], alias : str) -> None:
     self._add_remote_alias_check(remote_path, alias)
-    self._data_dict[alias] = (_NameResolutionDataEntryKind.RemoteChildAlias, remote_path)
+    self._data_dict[alias] = (NamespaceNode._NameResolutionDataEntryKind.RemoteChildAlias, remote_path)
 
   def add_remote_entry_alias(self, remote_path : typing.Tuple[str], remote_name : str, alias : str) -> None:
     self._add_remote_alias_check(remote_path, alias)
     assert isinstance(remote_name, str)
-    self._data_dict[alias] = (_NameResolutionDataEntryKind.RemoteEntryAlias, (remote_path, remote_name))
+    self._data_dict[alias] = (NamespaceNode._NameResolutionDataEntryKind.RemoteEntryAlias, (remote_path, remote_name))
 
