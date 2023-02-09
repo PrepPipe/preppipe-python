@@ -53,7 +53,7 @@ class TestVNModel(unittest.TestCase):
     #bob_sayer.set_character_sprite("", vnmodel.get_asset("male"))
     #narrator = vnmodel.add_character(preppipe.VNCharacterIdentity(""))
     #narrator_sayer = vnmodel.add_sayer(preppipe.VNSayerInfo(narrator))
-    
+
     # add data
     # stub start function, calling test_main and do nothing else
     # eventually our test_main should be like:
@@ -93,23 +93,23 @@ class TestVNModel(unittest.TestCase):
       fragment = vnconstant.VNConstantTextFragment.get(top.context, string, {})
       ctext = vnconstant.VNConstantText.get(top.context, [fragment])
       return ctext
-    
+
     classroom_image = top.get_asset('classroom')
     assert isinstance(classroom_image, vnasset.VNImageAsset)
     classroom_displayable = vnrecord.VNDisplayableRecord('教室', top.location, background_dev)
     classroom_variant = classroom_displayable.add_variant('', classroom_image)
-    classroom_position = vnconstant.VNConstantScreenCoordinate.get(top.context, (0, 0))
+    classroom_position = vnconstant.VNScreenCoordinateLiteral.get(top.context, (0, 0))
     classroom_position = classroom_displayable.add_position('', classroom_position)
 
     sayer1_image = top.get_asset('female')
     assert isinstance(sayer1_image, vnasset.VNImageAsset)
-    sayer1_position = vnconstant.VNConstantScreenCoordinate.get(top.context, (100, 100))
+    sayer1_position = vnconstant.VNScreenCoordinateLiteral.get(top.context, (100, 100))
     sayer1_dict = vnrecord.VNDisplayableRecord.create_simple_displayable_record('甲', top.location, character_dev, sayer1_image, sayer1_position)
     #sayer1_displayable = vnrecord.VNDisplayableRecord('甲', top.location, character_dev)
 
     sayer2_image = top.get_asset('male')
     assert isinstance(sayer2_image, vnasset.VNImageAsset)
-    sayer2_position = vnconstant.VNConstantScreenCoordinate.get(top.context, (200, 200))
+    sayer2_position = vnconstant.VNScreenCoordinateLiteral.get(top.context, (200, 200))
     sayer2_dict = vnrecord.VNDisplayableRecord.create_simple_displayable_record('乙', top.location, character_dev, sayer2_image, sayer2_position)
 
     bgm_music = top.get_asset('bgm4')
@@ -126,7 +126,7 @@ class TestVNModel(unittest.TestCase):
     #test_entry_bb.add_instruction(preppipe.VNUpdateBGMInst(vnmodel.get_asset("bgm4")))
     # TODO
 
-    
+
     #test_entry_bb.add_instruction(preppipe.VNSayInst(narrator_sayer, preppipe.VNTextBlock("Silence")))
     narrator_say_group = entry_step.create_say_instruction_group(classroom_bg_inst.finish_time, narrator)
     narrator_say_builder = entry_step.create_instruction_group_builder(narrator_say_group)
@@ -169,8 +169,8 @@ class TestVNModel(unittest.TestCase):
 
     func_test_entry_builder.create_return()
     return top
-    
-    
+
+
   #def test_renpy_export(self):
   #  vnmodel = TestVNModel.get_vnmodel()
   #  with tempfile.TemporaryDirectory() as project_dir:
@@ -181,4 +181,3 @@ class TestVNModel(unittest.TestCase):
   #    export_obj.do_export()
   #    print(util.collectDirectoryDataAsText(project_dir))
   #    util.copyTestDirIfRequested(project_dir, "TestVNModel.test_renpy_export")
-    
