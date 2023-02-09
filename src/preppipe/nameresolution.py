@@ -27,6 +27,7 @@ import dataclasses
 # 所有的 using_namespace_paths 都是一串代表了 using namespace DDD::EEE 这样的路径
 # 在我们的编译器中，这样的 using directive 只能把命名空间并入全局命名空间(global namespace)，不能并入其他命名空间
 # 因此，我们只在从当前命名空间开始查找完、没找到匹配项之后，再去搜索 using_namespace_paths 中的命名空间
+# （呃。。我们早晚有一天要把这个功能加上，一个命名空间可以用类似 using namespace DDD 的方式把命名空间 DDD 中的内容并入当前（非全局）命名空间）
 # ------------------------------------------------------------------------------
 
 T = typing.TypeVar('T') # typevar for the node subclass
@@ -49,7 +50,8 @@ class NameResolver(typing.Generic[T]):
   # ----------------------------------------------------------------------------
 
   def _lookup_name(self, node : NamespaceNodeInterface[T], name : str) -> NamespaceNodeInterface[T] | T | None:
-    # resolve all alias entries here
+    # 解析该名
+    # TODO 目前还不支持 node 的 get_using_namespace_paths()
     result = node.lookup_name(name)
     if isinstance(result, NamespaceNodeInterface.AliasEntry):
       tnode = self.get_namespace_node(result.ns_path)
@@ -59,20 +61,24 @@ class NameResolver(typing.Generic[T]):
     return result
 
   def unqualified_lookup(self, name : str, start_namespace_path : typing.Tuple[str], using_namespace_paths : typing.Iterable[typing.Tuple[str]] | None) -> NamespaceNodeInterface[T] | T | None:
-    # 对类似 ::<name> 名字的查找
+    # 对类似 <name> 名字的查找
     # 从 start_namespace_path 开始查找，当前层没找到就往上一层查找，找到全局命名空间还是没有的话再在 using_namespace_paths 中一个个找
+    def search_from_node(current_ns : NamespaceNodeInterface[T]) -> T | None:
+      while current_ns is not None:
+        result = self._lookup_name(current_ns, name)
+        if result is not None:
+          return result
+        current_ns = current_ns.get_namespace_parent_node()
+      return None
+
     current_ns = self.get_namespace_node(start_namespace_path)
-    while current_ns is not None:
-      result = self._lookup_name(current_ns, name)
-      if result is not None:
-        return result
-      current_ns = current_ns.get_namespace_parent_node()
+    if initial_search_result := search_from_node(current_ns):
+      return initial_search_result
 
     if using_namespace_paths is not None:
       for alternative in using_namespace_paths:
         current_ns = self.get_namespace_node(alternative)
-        result = self._lookup_name(current_ns, name)
-        if result is not None:
+        if result := self._lookup_name(current_ns, name):
           return result
     return None
 
@@ -110,6 +116,11 @@ class NamespaceNodeInterface(typing.Generic[T]):
 
   def get_namespace_path(self) -> tuple[str]:
     raise NotImplementedError()
+
+  def get_using_namespace_paths(self) -> typing.Iterable[tuple[str]] | None:
+    # 除了在该命名空间搜索之外，还应该在哪里搜索
+    # (比如 using namespace DDD; --> 在此返回[('DDD')])
+    return None
 
   def lookup_name(self, name : str) -> NamespaceNodeInterface[T] | T | AliasEntry | None:
     raise NotImplementedError()
