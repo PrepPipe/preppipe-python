@@ -1,10 +1,14 @@
 # SPDX-FileCopyrightText: 2022 PrepPipe's Contributors
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
+import copy
+
 from ...irbase import *
 from ..commandsyntaxparser import *
 from ..commandsemantics import *
-from ...vnmodel_v3 import *
+from ...vnmodel_v4 import *
 
 # ------------------------------------------------------------------------------
 # 内容声明命令
@@ -46,56 +50,186 @@ class UnrecognizedCommandOp(ErrorOp):
       assert isinstance(op, CMDValueSymbol)
       self._keywordarg_region.add(CMDValueSymbol(op.name, op.location, op.value))
 
-class VNParser(FrontendParserBase):
+@dataclasses.dataclass
+class VNParsingStateForSayer:
+  sprite_handle : Value = None
+  sayer_state : list[str] = None
+
+  def __copy__(self) -> VNParsingStateForSayer:
+    return copy.deepcopy(self)
+
+  def __deepcopy__(self, memo) -> VNParsingStateForSayer:
+    result = VNParsingStateForSayer(sprite_handle = self.sprite_handle)
+    if self.sayer_state is not None:
+      result.sayer_state = self.sayer_state.copy()
+    return result
+
+@dataclasses.dataclass
+class VNParsingState:
+  # 该类描述所有状态信息;所有的引用都不“拥有”所引用的对象
+  # 部分不会在处理输入时改变的内容不会在这出现（比如当前的命名空间，当前命名空间的人物声明，等等）
+  # 如果要添加成员，请记得更新 copy() 函数，以免出现复制出错
+
+  # （不属于状态信息但是有用）
+  context : Context
+
+  # 输入输出位置
+  # 所有的都是浅层复制
+  # 读取时，我们以块（段落）为单位进行读取；输出是以操作项为单位
+  input_top_level_region : Region = None # 应该永不为 None
+  input_current_block : Block = None # 下一个需要读取的块（我们在处理操作项时先把这个转向它的下一项，就像先更新PC再执行指令那样）
+  output_current_region : Region = None # 如果这是 None，那我们还没有开始构建 VNFunction 而只是在一个 stub 里填内容，否则这应该是 VNFunction 的内容区
+  output_current_block : Block = None # 如果这是 None, 那我们还没有进入任何函数部分，有需要加内容就填一个 stub
+  output_current_insertion_point : Operation = None # 新输出项的位置，如果是 None 则加到 output_current_block 结尾，不然的话就加在该操作项之前
+
+  # 当前场景信息
+  # state_sayer_states 和 state_scene_states 需要深层复制
+  state_default_sayer : VNCharacterRecord = None # 默认发言者; None 为旁白
+  state_current_scene : VNSceneRecord = None # 当前场景
+  state_sayer_states : collections.OrderedDict[VNCharacterRecord, VNParsingStateForSayer] = None # 每个发言者当前的状态
+  state_scene_states : list[str] = None # 场景的状态标签
+
+  # 当前设备
+  # 所有的都是浅层复制
+  state_current_device_say_name : VNDeviceRecord = None
+  state_current_device_say_text : VNDeviceRecord = None
+  state_current_device_say_sideimage : VNDeviceRecord = None
+
+  def __deepcopy__(self, memo):
+    # deep copy of VNParserState would cause handles like VNCharacterRecord being copied as well
+    # we only use shallow copy for VNParserState
+    raise RuntimeError('VNParserState should not be deep-copied')
+
+  def __copy__(self) -> VNParsingState:
+    # 先把浅层复制的解决了
+    result = dataclasses.replace(self)
+    # 然后所有需要深层复制的再更新
+    if self.state_scene_states is not None:
+      result.state_scene_states = self.state_scene_states.copy()
+    if self.state_sayer_states is not None:
+      result.state_sayer_states = collections.OrderedDict()
+      for sayer, state in self.state_sayer_states.items():
+        result.state_sayer_states[sayer] = copy.copy(state)
+    return result
+
+  def fork(self) -> VNParsingState:
+    return copy.copy(self)
+
+  def write_op(self, op : Operation | typing.Iterable[Operation]):
+    if self.output_current_block is None:
+      assert self.output_current_region is None and self.output_current_insertion_point is None
+      self.output_current_block = Block('', self.context)
+    if isinstance(op, Operation):
+      if self.output_current_insertion_point is None:
+        self.output_current_block.push_back(op)
+      else:
+        if self.output_current_insertion_point is None:
+          for cur in op:
+            assert isinstance(cur, Operation)
+            self.output_current_block.push_back(cur)
+        else:
+          for cur in op:
+            assert isinstance(cur, Operation)
+            cur.insert_before(self.output_current_insertion_point)
+
+  def get_next_input_block(self) -> Block | None:
+    if self.input_current_block is not None:
+      cur = self.input_current_block
+      self.input_current_block = cur.get_next_node()
+      return cur
+    return None
+
+class VNParser(FrontendParserBase[VNParsingState]):
   _result_op : VNModel
-  _skip_ops : typing.Set[Operation]
-  _insert_point : Operation
-  _unbacked_block : Block
+  _resolver : VNModelNameResolver
 
   def __init__(self, ctx: Context, command_ns: FrontendCommandNamespace) -> None:
-    super().__init__(ctx, command_ns)
+    super().__init__(ctx, command_ns, VNParsingState)
     self._result_op = VNModel(name = '', loc = ctx.null_location)
-    self._skip_ops = set()
-    self._insert_point = None
-    self._unbacked_block = None
+    self._resolver = VNModelNameResolver(self._result_op)
+
+  @property
+  def resolver(self):
+    return self._resolver
+
+  def initialize_state_for_doc(self, doc : IMDocumentOp) -> VNParsingState:
+    state = VNParsingState(self._result_op.context)
+    # 首先将输入状态搞好
+    state.input_top_level_region = doc.body
+    if state.input_top_level_region.blocks.empty:
+      return None
+    state.input_current_block = doc.body.blocks.front
+    # 输出状态和当前场景状态不用管
+    # TODO 初始化当前设备信息
+    return state
+
+  def populate_ops_from_block(self, state : VNParsingState, block : Block, oplist : list[Operation]) -> None:
+    # 把一个块中的所有 op 读取出来
+    # 专门建一个函数的原因是方便子类覆盖该函数，这样在我们开始处理该块之前可以搞一些特殊操作（比如添加命令，）
+    for op in block.body:
+      oplist.append(op)
+
+  def handle_block(self, state : VNParsingState, block : Block):
+    if block.body.empty:
+      return
+    # 我们在编译时跳过所有 MetadataOp 但是保留其与其他内容的相对位置
+    # 虽然前端并不支持在文本中夹杂命令，这不妨碍我们在处理文本的过程中执行命令
+    # 以后也有可能添加在文本中加入命令的语法
+    # TODO 继续完成该函数
+    text_sayer_ref : VNCharacterRecord = None
+    pending_say_text_contents = []
+    def try_emit_pending_content():
+      pass
+
+    for op in block.body:
+      if isinstance(op, MetadataOp):
+        try_emit_pending_content()
+        # TODO 等待 clone() 完成后把这个加上
+        # cloned = op.clone()
+        # state.write_op(cloned)
+        continue
+      if isinstance(op, GeneralCommandOp):
+        self.handle_command_op(state, op)
+        continue
+      if isinstance(op, IMElementOp):
+        pending_say_text_contents.append(op.content.get())
+        continue
+      if isinstance(op, IMListOp):
+        # TODO 递归解析所有内容
+        continue
+      raise NotImplementedError('Unhandled element type')
 
   def add_document(self, doc : IMDocumentOp):
     # 我们在 VNModel 中将该文档中的内容“转录”过去
-    # 读不了的东西直接忽视（扔掉）
-    # 现将插入位置初始化好
-    self._unbacked_block = Block('Detached', self.context)
-    self._insert_point = MetadataOp('Dummy', self.context.null_location)
-    self._unbacked_block.push_back(self._insert_point)
-    # 开始
-    body_region = doc.body
-    for paragraph in body_region.blocks:
-      for op in paragraph.body:
-        if op in self._skip_ops:
-          self._skip_ops.remove(op)
-          continue
-        if isinstance(op, GeneralCommandOp):
-          self.handle_command_op(op)
+    # 跳过所有空文件
+    if (state := self.initialize_state_for_doc(doc)) is None:
+      return
+    while block := state.get_next_input_block():
+      self.handle_block(state, block)
 
-  def handle_command_unrecognized(self, op: GeneralCommandOp, opname: str) -> None:
+  def handle_command_unrecognized(self, state: VNParsingState, op: GeneralCommandOp, opname: str) -> None:
     # 在插入点创建一个 UnrecognizedCommandOp
     # TODO 在这加自动匹配
     newop = UnrecognizedCommandOp(op)
-    newop.insert_before(self._insert_point)
+    #newop.insert_before(self._insert_point)
     print('Unrecognized command: ' + str(op))
 
-  def handle_command_invocation(self, commandop: GeneralCommandOp, cmdinfo: FrontendCommandInfo):
-    return super().handle_command_invocation(commandop, cmdinfo)
+  def handle_command_invocation(self, state: VNParsingState, commandop: GeneralCommandOp, cmdinfo: FrontendCommandInfo):
+    return super().handle_command_invocation(state, commandop, cmdinfo)
 
-  def handle_command_ambiguous(self, commandop: GeneralCommandOp, cmdinfo: FrontendCommandInfo,
+  def handle_command_ambiguous(self, state: VNParsingState,
+                               commandop: GeneralCommandOp, cmdinfo: FrontendCommandInfo,
                                matched_results: typing.List[FrontendParserBase.CommandInvocationInfo],
                                unmatched_results: typing.List[typing.Tuple[callable, typing.Tuple[str, str]]]):
     raise NotImplementedError()
 
-  def handle_command_no_match(self, commandop: GeneralCommandOp, cmdinfo: FrontendCommandInfo,
+  def handle_command_no_match(self, state: VNParsingState,
+                              commandop: GeneralCommandOp, cmdinfo: FrontendCommandInfo,
                               unmatched_results: typing.List[typing.Tuple[callable, typing.Tuple[str, str]]]):
     raise NotImplementedError()
 
-  def handle_command_unique_invocation(self, commandop: GeneralCommandOp, cmdinfo: FrontendCommandInfo,
+  def handle_command_unique_invocation(self, state: VNParsingState,
+                                       commandop: GeneralCommandOp, cmdinfo: FrontendCommandInfo,
                                        matched_result: FrontendParserBase.CommandInvocationInfo,
                                        unmatched_results: typing.List[typing.Tuple[callable, typing.Tuple[str, str]]]):
     target_cb = matched_result.cb

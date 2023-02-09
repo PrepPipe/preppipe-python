@@ -304,7 +304,12 @@ class Location:
 # ------------------------------------------------------------------------------
 
 class ValueType:
+  _s_traits : typing.ClassVar[tuple[type]] = () # type traits; take types as operand so that we can attach static methods to the traits
   _context : Context
+
+  @classmethod
+  def get_type_traits(cls) -> tuple[type]:
+    return cls._s_traits
 
   def __init__(self, context: Context) -> None:
     self._context = context
@@ -321,14 +326,14 @@ class ValueType:
 
 class ParameterizedType(ValueType):
   # parameterized types are considered different if the parameters (can be types or literal values) are different
-  _parameters : typing.List[ValueType | int | str | bool | None] # None for separator
+  _parameters : typing.List[ValueType | type | int | str | bool | None] # None for separator
 
-  def __init__(self, context: Context, parameters : typing.Iterable[ValueType | int | str | bool | None]) -> None:
+  def __init__(self, context: Context, parameters : typing.Iterable[ValueType | type | int | str | bool | None]) -> None:
     super().__init__(context)
     self._parameters = list(parameters)
 
   @staticmethod
-  def _get_parameter_repr(parameters : typing.List[ValueType | int | str | bool | None]):
+  def _get_parameter_repr(parameters : typing.List[ValueType | type | int | str | bool | None]):
     result = ''
     isFirst = True
     for v in parameters:
@@ -337,6 +342,8 @@ class ParameterizedType(ValueType):
       else:
         result += ', '
       if isinstance(v, ValueType):
+        result += repr(v)
+      elif isinstance(v, type):
         result += repr(v)
       elif isinstance(v, str):
         result += '"' + v + '"'
@@ -373,6 +380,42 @@ class OptionalType(ParameterizedType):
       return ty
     return ty.context.get_parameterized_type_dict(OptionalType).get_or_create([ty], lambda : OptionalType(ty))
 
+class EnumType(ParameterizedType):
+  _enum_type : type
+
+  def __init__(self, ty : type, context : Context) -> None:
+    super().__init__(context, [ty])
+    self._enum_type = ty
+
+  def __str__(self) -> str:
+    return "枚举类型<" + str(self._enum_type) + ">"
+
+  @property
+  def element_type(self) -> type:
+    return self._enum_type
+
+  @staticmethod
+  def get(ty : type, context : Context) -> EnumType:
+    return context.get_parameterized_type_dict(EnumType).get_or_create([ty], lambda : EnumType(ty, context))
+
+class ClassType(ParameterizedType):
+  _base_cls_type : type
+
+  def __init__(self, base_cls : type, context: Context) -> None:
+    super().__init__(context, [base_cls])
+    self._base_cls_type = base_cls
+
+  def __str__(self) -> str:
+    return "类类型<" + str(self._base_cls_type) + ">"
+
+  @property
+  def element_type(self) -> type:
+    return self._base_cls_type
+
+  @staticmethod
+  def get(base_cls : type, context : Context) -> ClassType:
+    return context.get_parameterized_type_dict(ClassType).get_or_create([base_cls], lambda : ClassType(base_cls, context))
+
 class ParameterizedTypeUniquingDict:
   # this class is used by Context to manage all parameterized type objects
   _pty : type # type object of the parameterized type
@@ -382,7 +425,7 @@ class ParameterizedTypeUniquingDict:
     self._pty = pty
     assert isinstance(pty, type)
 
-  def get_or_create(self, parameters : typing.List[ValueType | int | str | bool | None], ctor : callable):
+  def get_or_create(self, parameters : typing.List[ValueType | type | int | str | bool | None], ctor : callable):
     # pylint: disable=protected-access
     reprstr = ParameterizedType._get_parameter_repr(parameters)
     if reprstr in self._instance_dict:
@@ -418,6 +461,17 @@ class _AssetDataReferenceType(ValueType):
   @staticmethod
   def get(ctx : Context) -> _AssetDataReferenceType:
     return ctx.get_stateless_type(_AssetDataReferenceType)
+
+class VoidType(ValueType):
+  def __init__(self, context: Context) -> None:
+    super().__init__(context)
+
+  def __str__(self) -> str:
+    return "空类型"
+
+  @staticmethod
+  def get(ctx : Context) -> VoidType:
+    return ctx.get_stateless_type(VoidType)
 
 class IntType(ValueType):
   def __init__(self, context: Context) -> None:
@@ -598,6 +652,22 @@ class Value:
   def __str__(self) -> str:
     return str(self._type) + ' ' + type(self).__name__
 
+  def destroy_value(self):
+    # 首先走一遍 use list 看看有没有 constexpr 在用，如果有的话把它们去掉
+    # constexpr 使用者都没了之后还有什么在用的话，就生成 Undef
+    if not self.use_empty():
+      const_users : list[ConstExpr] = []
+      for use in self._uselist:
+        user = use.user
+        if isinstance(user, ConstExpr):
+          const_users.append(user)
+      if len(const_users) > 0:
+        for cexpr in const_users:
+          cexpr.destroy_constant()
+    if not self.use_empty():
+      undef = UndefLiteral.get(self.valuetype, str(self))
+      self.replace_all_uses_with(undef)
+
 class NameReferencedValue(Value, NameDictNode):
   def __init__(self, ty: ValueType, **kwargs) -> None:
     # passthrough kwargs for cooperative multiple inheritance
@@ -722,6 +792,12 @@ class BlockArgument(NameReferencedValue):
 
 # reference: https://mlir.llvm.org/doxygen/classmlir_1_1Operation.html
 class Operation(IListNode):
+  _s_traits : typing.ClassVar[tuple[type]] = () # operation traits; take types as operand so that we can attach static methods to the traits
+
+  @classmethod
+  def get_operation_traits(cls) -> tuple[type]:
+    return cls._s_traits
+
   _name : str
   _loc : Location
   _operands : NameDict[OpOperand]
@@ -761,6 +837,10 @@ class Operation(IListNode):
   @property
   def attributes(self):
     return self._attributes
+
+  # TODO 我们基本上需要把整个 IR 改了才能做到这个
+  def clone(self) -> Operation:
+    raise NotImplementedError()
 
   def _add_operand(self, name : str) -> OpOperand:
     o = OpOperand()
@@ -871,10 +951,18 @@ class Operation(IListNode):
     for operand in self._operands.values():
       assert isinstance(operand, OpOperand)
       operand.drop_all_uses()
+    for result in self._results.values():
+      assert isinstance(result, OpResult)
+      result.destroy_value()
     self._operands.clear()
+    self._results.clear()
     for r in self.regions:
       r.drop_all_references()
     self._regions.clear()
+    if isinstance(self, Value):
+      self.destroy_value()
+    if isinstance(self, User):
+      self.drop_all_uses()
 
   def erase_from_parent(self) -> Operation:
     # return the next op
@@ -1093,6 +1181,7 @@ class Block(Value, IListNode):
     for op in self._ops:
       op.drop_all_references()
     self._ops.clear()
+    self.destroy_value()
 
   def erase_from_parent(self) -> Block:
     retval = self.next
@@ -1270,17 +1359,66 @@ class UndefLiteral(Literal):
     return super().value
 
   @staticmethod
-  def get(ty : ValueType, msg : str, context : Context):
-    return context.get_literal_uniquing_dict(UndefLiteral).get_or_create((ty, msg), lambda : UndefLiteral(ty, msg))
+  def get(ty : ValueType, msg : str):
+    return ty.context.get_literal_uniquing_dict(UndefLiteral).get_or_create((ty, msg), lambda : UndefLiteral(ty, msg))
+
+class ClassLiteral(Literal):
+  # 某些情况下我们需要用一个字面值来找到一个类
+  # （比如 VNModel 中我们按名字查找转场效果）
+  # 这就是使用该类型的时候了
+  def __init__(self, context : Context, baseclass : type,  value: type, **kwargs) -> None:
+    assert issubclass(value, baseclass)
+    ty = ClassType.get(baseclass, context)
+    super().__init__(ty, value, **kwargs)
+
+  @property
+  def value(self) -> type:
+    return super().value
+
+  @staticmethod
+  def get(baseclass : type, value : type, context : Context):
+    return context.get_literal_uniquing_dict(ClassLiteral).get_or_create((baseclass, value), lambda : ClassLiteral(context, baseclass, value))
 
 class ConstExpr(Value, User):
+  # ConstExpr 是引用其他 Value 的 Value，自身像 Literal 那样也是保证无重复的。虽然大部分参数应该是 Literal 但也可以用别的
   # ConstExpr 与 Literal 的区别是， ConstExpr 可以引用从 Operation 来的值(包括 Operation的引用和 OpResult)
   # Literal 一定可以跨越顶层 Operation 的迭代（或者说从一种 IR 到另一种 IR）， ConstExpr 没有这种要求
-  # 在有依赖关系的 Operation 被更换或者被删除时， ConstExpr 有可能会无缝转换成另一个值（参数被替换）， Literal 的值不可能有改变
+  # 在有依赖关系的 Operation 被更换或者被删除时， ConstExpr 会被删掉， Literal 的值不可能有改变
   # 子 IR 类型可以定义新的 Literal 和 ConstExpr ，并以“是否可能依赖 Operation”为标准区分两者
   # 不过 ConstExpr 也可以不引用从 Operation 来的值
-  def __init__(self, ty: ValueType, **kwargs) -> None:
+  # 所有的子类的构造函数应该只带两个参数：context, values
+
+  def __init__(self, ty: ValueType, values : typing.Iterable[Value], **kwargs) -> None:
     super().__init__(ty, **kwargs)
+    for v in values:
+      self.add_operand(v)
+
+  def destroy_constant(self):
+    # 使用的值被删除，使得该表达式也该被删除时，本函数会被调用
+    self.remove_dead_constant_users()
+    if not self.use_empty():
+      raise RuntimeError('Destroying ConstExpr in use')
+    self_cls = type(self)
+    key_tuple = (self_cls, *[v.value for v in self.operanduses()])
+    self.valuetype.context.get_constexpr_uniquing_dict(self_cls).erase_constant(key_tuple)
+    self.drop_all_uses()
+    self.destroy_value()
+
+  def remove_dead_constant_users(self):
+    dead_cexpr : list[ConstExpr] = []
+    for u in self.uses:
+      user = u.user
+      if isinstance(user, ConstExpr):
+        user.remove_dead_constant_users()
+        if user.use_empty():
+          dead_cexpr.append(user)
+    for user in dead_cexpr:
+      user.destroy_constant()
+
+  @classmethod
+  def _get_impl(cexpr_cls, ty : ValueType, values : typing.Iterable[Value]):
+    key_tuple = (cexpr_cls, *values)
+    return ty.context.get_constexpr_uniquing_dict(cexpr_cls).get_or_create(key_tuple, lambda: cexpr_cls(ty.context, values))
 
 class LiteralUniquingDict:
   _ty : type
@@ -1300,6 +1438,9 @@ class LiteralUniquingDict:
 class ConstExprUniquingDict(LiteralUniquingDict):
   def __init__(self, ty: type) -> None:
     super().__init__(ty)
+
+  def erase_constant(self, data : typing.Any):
+    del self._inst_dict[data]
 
 class Context:
   # the object that we use to keep track of unique constructs (types, constant expressions, file assets)
@@ -1656,7 +1797,7 @@ class DILocation(Location):
     return str(self.file) + '#P' + str(self.page) + ':' + str(self.row) + ':' + str(self.column)
 
 # ------------------------------------------------------------------------------
-# Constants
+# Literals
 # ------------------------------------------------------------------------------
 
 class IntLiteral(Literal):
@@ -1857,6 +1998,21 @@ class TextLiteral(Literal, User):
   def get(context : Context, value : typing.Iterable[TextFragmentLiteral]) -> TextLiteral:
     value_tuple = tuple(value)
     return Literal._get_literal_impl(TextLiteral, value_tuple, context)
+
+class EnumLiteral(typing.Generic[T], Literal):
+  def __init__(self, context : Context, value: T, **kwargs) -> None:
+    assert isinstance(value, enum.Enum)
+    ty = EnumType.get(type(value), context)
+    super().__init__(ty, value, **kwargs)
+
+  @property
+  def value(self) -> T:
+    return super().value
+
+  @staticmethod
+  def get(context : Context, value : T) -> EnumLiteral[T]:
+    value_tuple = tuple(value)
+    return Literal._get_literal_impl(EnumLiteral, value_tuple, context)
 
 class TextListLiteral(Literal, User):
   # 文本列表常量对应文档中列表的一层
