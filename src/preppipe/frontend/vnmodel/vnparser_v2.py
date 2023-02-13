@@ -145,7 +145,7 @@ class VNParser(FrontendParserBase[VNParsingState]):
 
   def __init__(self, ctx: Context, command_ns: FrontendCommandNamespace) -> None:
     super().__init__(ctx, command_ns, VNParsingState)
-    self._result_op = VNModel(name = '', loc = ctx.null_location)
+    self._result_op = VNModel.create(context=ctx, name = '', loc = ctx.null_location)
     self._resolver = VNModelNameResolver(self._result_op)
 
   @property

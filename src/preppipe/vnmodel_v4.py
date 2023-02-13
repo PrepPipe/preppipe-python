@@ -567,12 +567,21 @@ class VNModel(Operation):
   _namespace_region : SymbolTableRegion
   # 为了复用符号表的有关代码，我们把命名空间的不同部分用'/'分隔开，和目录一样，全局命名空间也有'/'
   # 根据命名空间查找内容应该使用额外的手段（比如前段可以用 nameresolution 有关的实现）
-  def __init__(self, name: str, loc: Location, **kwargs) -> None:
-    super().__init__(name, loc, **kwargs)
-    self._namespace_region = self._add_symbol_table('namespaces')
+
+  def construct_init(self, name: str = '', loc: Location = None, **kwargs) -> None:
+    super().construct_init(name=name, loc=loc, **kwargs)
+    self._add_symbol_table('namespaces')
+
+  def post_init(self) -> None:
+    super().post_init()
+    self._namespace_region = self.get_symbol_table('namespaces')
 
   def get_namespace(self, namespace : str) -> VNNamespace | None:
     return self._namespace_region.get(namespace)
+
+  @staticmethod
+  def create(context : Context, name : str = '', loc : Location = None) -> VNModel:
+    return VNModel(init_mode=IRObjectInitMode.CONSTRUCT, context=context, name=name, loc=loc)
 
 class VNModelNameResolver(NameResolver[VNFunction | VNRecord]):
   _model : VNModel

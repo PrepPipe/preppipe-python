@@ -14,6 +14,8 @@ import pathlib
 import shutil
 import webbrowser
 import io
+import abc
+import json
 
 import PIL.Image
 import pydub
@@ -21,6 +23,7 @@ import bidict
 import llist
 
 from .commontypes import TextAttribute, Color
+from .irjson import *
 
 # ------------------------------------------------------------------------------
 # ADT needed for IR
@@ -36,6 +39,7 @@ from .commontypes import TextAttribute, Color
 T = typing.TypeVar('T') # typevar for the node subclass
 
 class IList(typing.Generic[T], llist.dllist):
+  # __slots__ = ('_parent')
   _parent : typing.Any
   def __init__(self, parent : typing.Any) -> None:
     super().__init__()
@@ -117,6 +121,8 @@ class IList(typing.Generic[T], llist.dllist):
       super().remove(v)
 
 class IListIterator(typing.Generic[T]):
+  # __slots__ = ('_node')
+
   _node : T
 
   def __init__(self, n : T) -> None:
@@ -133,6 +139,8 @@ class IListIterator(typing.Generic[T]):
 # if the list intends to be mutable, element node should inherit from this class
 # otherwise, just inheriting from llist.dllistnode is fine
 class IListNode(typing.Generic[T], llist.dllistnode):
+  # __slots__ = ()
+
   def __init__(self, **kwargs) -> None:
     # passthrough kwargs for cooperative multiple inheritance
     super().__init__(**kwargs)
@@ -201,6 +209,7 @@ class IListNode(typing.Generic[T], llist.dllistnode):
     return owner.get_index_of(self)
 
 class NameDict(collections.abc.MutableMapping, typing.Generic[T]):
+  # __slots__ = ('_parent', '_dict')
   _parent : typing.Any
   _dict : collections.OrderedDict[str, NameDictNode[T]]
 
@@ -244,6 +253,7 @@ class NameDict(collections.abc.MutableMapping, typing.Generic[T]):
     return self._parent
 
 class NameDictNode(typing.Generic[T]):
+  # 因为我们想要保证 Value 可以用 slots，但该类可能与 Value 同时被继承（比如 OpResult），所以这里不加 slots
   _dictref : NameDict[T]
   _name : str
 
@@ -279,21 +289,199 @@ class NameDictNode(typing.Generic[T]):
 # IR classes
 # ------------------------------------------------------------------------------
 
-class Location:
-  _context : Context
+class IRObjectInitMode(enum.Enum):
+  CONSTRUCT = enum.auto() # 从零开始构造一个新对象
+  COPY = enum.auto() # 复制一个现成的对象
+  IMPORT_JSON = enum.auto() # 导入之前保存的 JSON
 
-  def __init__(self, ctx : Context) -> None:
-    self._context = ctx
+class IRObject:
+  # （除了 Context 和基础类型之外的）IR 对象的基类
+  # 提供此类的主要目的是将对象的创建过程统一
+  # 由于 Python 不像 C++ 那样支持多个构造函数，我们在这里提供我们所需要的 不同构造函数的接口
+  # ****** 该函数不应该被覆盖 ******
+
+  # 帮助部分元数据、常量等去掉 __dict__
+  # 使用 slots 之后我们仍然可以在类外给类做类似添加成员函数等操作，因为这些改的是类对象，而不是类实例
+  # 。。现在先不用 slots，问题太多
+  # __slots__ = ()
+
+  def __init__(self, *, init_mode : IRObjectInitMode, context : Context, **kwargs) -> None:
+    self.base_init(init_mode=init_mode, context=context, **kwargs)
+    match init_mode:
+      case IRObjectInitMode.CONSTRUCT:
+        self.construct_init(init_mode=init_mode, context=context, **kwargs)
+      case IRObjectInitMode.COPY:
+        self.copy_init(init_mode=init_mode, context=context, **kwargs)
+      case IRObjectInitMode.IMPORT_JSON:
+        self.json_import_init(init_mode=init_mode, context=context, **kwargs)
+    self.post_init()
+
+  def base_init(self, **kwargs) -> None:
+    # 如果该对象继承了不属于 IRObject 的其他类型，那么这是调用它们构造函数的地方
+    super().__init__()
+
+  def construct_init(self, **kwargs) -> None:
+    # 创建一个新的、空的对象
+    pass
+
+  def copy_init(self, *, init_src : IRObject, value_mapper : IRValueMapper, **kwargs) -> None:
+    # 从一个相同类型的对象那里复制出一个新的
+    # 该函数只应该由 IR 基础类实现，用户类不应该覆盖
+    # value_mapper 用来保存被复制的值的映射关系（旧值到新值），如果我们复制一个有内部区块的操作项，内部的值有依赖关系，
+    # 那么就需要用 value_mapper 使复制出来的操作项用上复制出来的值（而不是原来操作项里的值）
+    pass
+
+  def post_copy_value_remap(self, *, value_mapper : IRValueMapper, **kwargs) -> None:
+    pass
+
+  def json_import_init(self, *, importer : IRJsonImporter, init_src : dict, **kwargs) -> None:
+    # 从保存的 JSON 那里恢复该对象
+    # 该函数只应该由 IR 基础类实现，用户类不应该覆盖
+    pass
+
+  def post_init(self) -> None:
+    # 主要是给用户定义的子类的，用于添加各种不进入存档的临时数据
+    # 注意，在该函数被调用时，我们只知道该对象的基本属性、内容已完成初始化，
+    # 我们不确定子对象或是其他引用的对象是否已经初始化
+    pass
 
   @property
+  @abc.abstractmethod
   def context(self) -> Context:
-    return self._context
+    raise NotImplementedError()
 
-  def __repr__(self) -> str:
-    return type(self).__name__
+  def clone(self, value_mapper : IRValueMapper = None):
+    if value_mapper is None:
+      value_mapper = IRValueMapper(self.context, option_ignore_values_with_no_use=True)
+    result = self.__class__(init_mode = IRObjectInitMode.COPY, context=self.context, init_src=self, value_mapper=value_mapper)
+    if len(value_mapper) > 0:
+      result.post_copy_value_remap(value_mapper)
+    return result
 
-  def __str__(self) -> str:
-    return type(self).__name__
+@dataclasses.dataclass
+class IRValueMapper:
+  context : Context
+  option_ignore_values_with_no_use : bool = False
+  value_map : dict[Value, Value] = dataclasses.field(default_factory=dict)
+
+  def add_value_map(self, old_value : Value, new_value : Value):
+    if self.option_ignore_values_with_no_use:
+      if old_value.use_empty():
+        return
+    self.value_map[old_value] = new_value
+
+  def get_mapped_value(self, key : Value) -> Value | None:
+    if key in self.value_map:
+      return self.value_map[key]
+    return None
+
+
+def _stub_copy_init(self, *, init_src : IRObject, value_mapper : IRValueMapper, **kwargs):
+  raise RuntimeError("Class cannot be copy-constructed: " + type(self).__name__)
+
+def _metadata_object_json_import_init(self, *, importer : IRJsonImporter, init_src : dict, **kwargs) -> None:
+  raise NotImplementedError()
+
+def IRObjectUniqueTrait(cls):
+  # 该修饰符用于不可被复制的对象（比如他们需要在 Context 被去重，比如字面值）
+  cls.copy_init = _stub_copy_init
+  return cls
+
+def IRObjectMetadataTrait(cls):
+  # 该修饰符用于所有以元数据(Metadata)的方式进行 JSON 导入导出的对象：
+  # 1.  对象不可复制，将会在 Context 层面被去重
+  # 2.  对象是 dataclass 并且所有成员值只能包含(1)字面值（整数，字符串，等等），(2)Python 类型，(3)对其他元数据项的引用，(4) Context
+  #     对象不可以包含对 Value 的引用，不能是 User
+  # 3.  对其他元数据的引用不可以包含环，必须最多是 DAG
+  # 4.  对象的每一个值都有 "json_repr" 的元数据，描述（除 Context 以外）所有参数的 JSON 形式
+  # 目前该修饰符只用于位置信息 (DIFile, DILocation)和值类型
+  # （注意我们需要使用 object.__setattr__(obj, "field_name", value) 来进行初始化，不然我们不能动 frozen 的 dataclass）
+  cls.copy_init = _stub_copy_init
+  cls.json_import_init = _metadata_object_json_import_init
+  return cls
+
+# 。。下面这些注释作废了
+# IR 主要使用 JSON 进行导入导出
+# JSON 大致结构如下：
+# JSON 存档 ::= {类型列表, 顶层对象} ;
+#   类型列表 ::= [类型 __qualname__] ; # 类型 必须是 IRObject 的子类
+#   对象 ::= {"T": <TID>, 基础类型}
+# TODO
+
+
+class IRJsonImporter:
+  _type_dict : dict[str, type]
+  _value_dict : dict[int, Value]
+  _valuetype_dict : dict[int, ValueType]
+  _placeholder_value_dict : dict[int, Value]
+  _placeholder_recycle_list : list[Value]
+  _ctx : Context
+
+  def __init__(self, ctx : Context) -> None:
+    self._ctx = ctx
+    self._type_dict = {}
+    self._value_dict = {}
+    self._valuetype_dict = {}
+    self._placeholder_value_dict = {}
+    self._placeholder_recycle_list = []
+
+    for cls in IRObject.__subclasses__():
+      self._type_dict[cls.__qualname__] = cls
+
+  def json_import(self, json_fp : typing.TextIO) -> Operation:
+    # 好像不应该用decoder或者json本身的load/dump。。还是用传统的递归比较好
+    toplevel = json.load(json_fp)
+    # TODO toplevel 应该有以下项：
+    # 1.  协议版本号 (x.y)
+    # 2.  类型列表 (Python 类型到 ID)
+    # 3.  元数据节点，包括 DIFile/DILocation 和各种 ValueType
+    # 4.  顶层操作项
+
+
+  def get_value_type(self, value_type_id : int):
+    return self._valuetype_dict[value_type_id]
+
+  def claim_value_id(self, value_id : int, value : Value):
+    # 当一个 IR 的值初始化好后，我们用这个函数来把对该值的引用加上
+    assert value_id not in self._value_dict
+    self._value_dict[value_id] = value
+    if value_id in self._placeholder_value_dict:
+      placeholder = self._placeholder_value_dict[value_id]
+      placeholder.replace_all_uses_with(value)
+      del self._placeholder_value_dict[value_id]
+      self._placeholder_recycle_list.append(placeholder)
+
+  def get_value(self, value_id : int) -> Value:
+    # 获取指定 ID 的值（可能只是个占位的值）
+    if value_id in self._value_dict:
+      return self._value_dict[value_id]
+    if value_id in self._placeholder_value_dict:
+      return self._placeholder_value_dict[value_id]
+    # 创建新的占位值
+    placeholder : PlaceholderValue = None
+    if len(self._placeholder_recycle_list) > 0:
+      placeholder = self._placeholder_recycle_list.pop()
+    else:
+      placeholder = PlaceholderValue(init_mode = IRObjectInitMode.CONSTRUCT, context = self._ctx, ty = VoidType.get(self._ctx))
+    self._placeholder_value_dict[value_id] = placeholder
+    return placeholder
+
+  @property
+  def context(self):
+    return self._ctx
+
+  def get_type(self, qualname : str):
+    return self._type_dict[qualname]
+
+
+@IRObjectMetadataTrait
+@dataclasses.dataclass(init=False, slots=True)
+class Location(IRObject):
+  context : Context
+
+  def base_init(self, *, context : Context, **kwargs) -> None:
+    super(Location, self).base_init(context=context, **kwargs)
+    self.context=context
 
   @staticmethod
   def getNullLocation(ctx: Context):
@@ -303,37 +491,28 @@ class Location:
 # Types
 # ------------------------------------------------------------------------------
 
+@dataclasses.dataclass(init=False, slots=True, frozen=True)
 class ValueType:
-  _s_traits : typing.ClassVar[tuple[type]] = () # type traits; take types as operand so that we can attach static methods to the traits
-  _context : Context
+  context : Context
 
-  @classmethod
-  def get_type_traits(cls) -> tuple[type]:
-    return cls._s_traits
-
-  def __init__(self, context: Context) -> None:
-    self._context = context
-
-  @property
-  def context(self) -> Context:
-    return self._context
-
-  def __repr__(self) -> str:
-    return type(self).__name__
+  def __init__(self, *, context : Context, **kwargs) -> None:
+    object.__setattr__(self, 'context', context)
 
   def __str__(self) -> str:
     return type(self).__name__
 
-class ParameterizedType(ValueType):
+@IRObjectMetadataTrait
+@dataclasses.dataclass(init=False, slots=True, frozen=True)
+class ParameterizedType(IRObject, ValueType):
   # parameterized types are considered different if the parameters (can be types or literal values) are different
-  _parameters : typing.List[ValueType | type | int | str | bool | None] # None for separator
+  parameters : tuple[ValueType | type | int | str | bool | None] = dataclasses.field(metadata={'json_repr': IRJsonRepr.TYPE_PARAMETERIZED_PARAM}) # None for separator
 
-  def __init__(self, context: Context, parameters : typing.Iterable[ValueType | type | int | str | bool | None]) -> None:
-    super().__init__(context)
-    self._parameters = list(parameters)
+  def construct_init(self, *, context : Context, parameters : typing.Iterable[ValueType | type | int | str | bool | None], **kwargs) -> None:
+    super().construct_init(context=context,**kwargs)
+    object.__setattr__(self, 'parameters', tuple(parameters))
 
   @staticmethod
-  def _get_parameter_repr(parameters : typing.List[ValueType | type | int | str | bool | None]):
+  def _get_parameter_repr(parameters : typing.Iterable[ValueType | type | int | str | bool | None]):
     result = ''
     isFirst = True
     for v in parameters:
@@ -355,66 +534,64 @@ class ParameterizedType(ValueType):
     return result
 
   def __repr__(self) -> str:
-    return  type(self).__name__ + '<' + ParameterizedType._get_parameter_repr(self._parameters) + '>'
+    return  type(self).__name__ + '<' + ParameterizedType._get_parameter_repr(self.parameters) + '>'
 
+@dataclasses.dataclass(init=False, slots=True, frozen=True)
 class OptionalType(ParameterizedType):
   # dependent type that is optional of the specified type (either have the data or None)
   # likely used for a PHI for handles
-  _depend_type : ValueType
 
-  def __init__(self, ty : ValueType) -> None:
-    super().__init__(ty.context, [ty])
-    self._depend_type = ty
-
-  def __str__(self) -> str:
-    return "可选<" + str(self._depend_type) + ">"
+  def construct_init(self, *, element_type: ValueType, **kwargs) -> None:
+    return super().construct_init(element_type.context, [element_type], **kwargs)
 
   @property
   def element_type(self) -> ValueType:
-    return self._depend_type
+    return super().parameters[0]
+
+  def __str__(self) -> str:
+    return "可选<" + str(self.element_type) + ">"
 
   @staticmethod
   def get(ty : ValueType) -> OptionalType:
     # skip degenerate case
     if isinstance(ty, OptionalType):
       return ty
-    return ty.context.get_parameterized_type_dict(OptionalType).get_or_create([ty], lambda : OptionalType(ty))
+    return ty.context.get_parameterized_type_dict(OptionalType).get_or_create([ty], lambda : OptionalType(init_mode = IRObjectInitMode.CONSTRUCT, context = ty.context, element_type=ty))
 
+@dataclasses.dataclass(init=False, slots=True, frozen=True)
 class EnumType(ParameterizedType):
-  _enum_type : type
 
-  def __init__(self, ty : type, context : Context) -> None:
-    super().__init__(context, [ty])
-    self._enum_type = ty
-
-  def __str__(self) -> str:
-    return "枚举类型<" + str(self._enum_type) + ">"
+  def construct_init(self, *, ty : type, context : Context, **kwargs) -> None:
+    return super().construct_init(context=context, parameters=[ty], **kwargs)
 
   @property
   def element_type(self) -> type:
-    return self._enum_type
+    return super().parameters[0]
+
+  def __str__(self) -> str:
+    return "枚举类型<" + str(self.element_type) + ">"
+
 
   @staticmethod
   def get(ty : type, context : Context) -> EnumType:
-    return context.get_parameterized_type_dict(EnumType).get_or_create([ty], lambda : EnumType(ty, context))
+    return context.get_parameterized_type_dict(EnumType).get_or_create([ty], lambda : EnumType(init_mode = IRObjectInitMode.CONSTRUCT, context = context, ty = ty))
 
+@dataclasses.dataclass(init=False, slots=True, frozen=True)
 class ClassType(ParameterizedType):
-  _base_cls_type : type
 
-  def __init__(self, base_cls : type, context: Context) -> None:
-    super().__init__(context, [base_cls])
-    self._base_cls_type = base_cls
+  def construct_init(self, *, base_cls : type, context: Context, **kwargs) -> None:
+    super().construct_init(context=context, parameters=[base_cls])
 
   def __str__(self) -> str:
-    return "类类型<" + str(self._base_cls_type) + ">"
+    return "类类型<" + str(self.element_type) + ">"
 
   @property
   def element_type(self) -> type:
-    return self._base_cls_type
+    return super().parameters[0]
 
   @staticmethod
   def get(base_cls : type, context : Context) -> ClassType:
-    return context.get_parameterized_type_dict(ClassType).get_or_create([base_cls], lambda : ClassType(base_cls, context))
+    return context.get_parameterized_type_dict(ClassType).get_or_create([base_cls], lambda : ClassType(init_mode=IRObjectInitMode.CONSTRUCT, context=context, base_cls=base_cls))
 
 class ParameterizedTypeUniquingDict:
   # this class is used by Context to manage all parameterized type objects
@@ -443,195 +620,111 @@ class ParameterizedTypeUniquingDict:
 # Actual value types
 # ------------------------------------------------------------------------------
 
-class BlockReferenceType(ValueType):
-  def __init__(self, context: Context) -> None:
-    super().__init__(context)
+@IRObjectMetadataTrait
+@dataclasses.dataclass(init=False, slots=True, frozen=True)
+class StatelessType(ValueType, IRObject):
+  @classmethod
+  def get(cls, ctx : Context):
+    return ctx.get_stateless_type(cls)
 
-  @staticmethod
-  def get(ctx : Context) -> BlockReferenceType:
-    return ctx.get_stateless_type(BlockReferenceType)
+@dataclasses.dataclass(init=False, slots=True, frozen=True)
+class BlockReferenceType(StatelessType):
+  pass
 
-class _AssetDataReferenceType(ValueType):
+@dataclasses.dataclass(init=False, slots=True, frozen=True)
+class _AssetDataReferenceType(StatelessType):
   # this type is only for asset data internal reference (from Asset instance to AssetData instance)
   # we use this to implement copy-on-write
   # usually no user code need to work with it
-  def __init__(self, context: Context) -> None:
-    super().__init__(context)
+  pass
 
-  @staticmethod
-  def get(ctx : Context) -> _AssetDataReferenceType:
-    return ctx.get_stateless_type(_AssetDataReferenceType)
-
-class VoidType(ValueType):
-  def __init__(self, context: Context) -> None:
-    super().__init__(context)
-
+@dataclasses.dataclass(init=False, slots=True, frozen=True)
+class VoidType(StatelessType):
   def __str__(self) -> str:
     return "空类型"
 
-  @staticmethod
-  def get(ctx : Context) -> VoidType:
-    return ctx.get_stateless_type(VoidType)
-
-class IntType(ValueType):
-  def __init__(self, context: Context) -> None:
-    super().__init__(context)
-
+@dataclasses.dataclass(init=False, slots=True, frozen=True)
+class IntType(StatelessType):
   def __str__(self) -> str:
     return "整数类型"
 
-  @staticmethod
-  def get(ctx : Context) -> IntType:
-    return ctx.get_stateless_type(IntType)
-
-class FloatType(ValueType):
-  def __init__(self, context: Context) -> None:
-    super().__init__(context)
-
+@dataclasses.dataclass(init=False, slots=True, frozen=True)
+class FloatType(StatelessType):
   def __str__(self) -> str:
     return "浮点数类型"
 
-  @staticmethod
-  def get(ctx : Context) -> FloatType:
-    return ctx.get_stateless_type(FloatType)
-
-class BoolType(ValueType):
-  def __init__(self, context: Context) -> None:
-    super().__init__(context)
-
+@dataclasses.dataclass(init=False, slots=True, frozen=True)
+class BoolType(StatelessType):
   def __str__(self) -> str:
     return "逻辑类型"
 
-  @staticmethod
-  def get(ctx : Context) -> BoolType:
-    return ctx.get_stateless_type(BoolType)
-
-class StringType(ValueType):
-  # any string
-  def __init__(self, context: Context) -> None:
-    super().__init__(context)
-
+@dataclasses.dataclass(init=False, slots=True, frozen=True)
+class StringType(StatelessType):
   def __str__(self) -> str:
     return "字符串类型"
 
-  @staticmethod
-  def get(ctx : Context) -> StringType:
-    return ctx.get_stateless_type(StringType)
-
-class TextStyleType(ValueType):
-  # text styles
-  def __init__(self, context: Context) -> None:
-    super().__init__(context)
-
+@dataclasses.dataclass(init=False, slots=True, frozen=True)
+class TextStyleType(StatelessType):
   def __str__(self) -> str:
     return "文本格式类型"
 
-  @staticmethod
-  def get(ctx : Context) -> TextStyleType:
-    return ctx.get_stateless_type(TextStyleType)
-
-class TextType(ValueType):
+@dataclasses.dataclass(init=False, slots=True, frozen=True)
+class TextType(StatelessType):
   # string + style (style can be empty)
-  def __init__(self, context: Context) -> None:
-    super().__init__(context)
-
   def __str__(self) -> str:
     return "文本类型"
 
-  @staticmethod
-  def get(ctx : Context) -> TextType:
-    return ctx.get_stateless_type(TextType)
-
-class ImageType(ValueType):
-  def __init__(self, context: Context) -> None:
-    super().__init__(context)
-
+@dataclasses.dataclass(init=False, slots=True, frozen=True)
+class ImageType(StatelessType):
   def __str__(self) -> str:
     return "图片类型"
 
-  @staticmethod
-  def get(ctx : Context) -> ImageType:
-    return ctx.get_stateless_type(ImageType)
-
-class AudioType(ValueType):
-  def __init__(self, context: Context) -> None:
-    super().__init__(context)
-
+@dataclasses.dataclass(init=False, slots=True, frozen=True)
+class AudioType(StatelessType):
   def __str__(self) -> str:
     return "声音类型"
 
-  @staticmethod
-  def get(ctx : Context) -> AudioType:
-    return ctx.get_stateless_type(AudioType)
-
-class AggregateTextType(ValueType):
+@dataclasses.dataclass(init=False, slots=True, frozen=True)
+class AggregateTextType(StatelessType):
   # 列表，表格，代码段等结构化的文本内容
-  def __init__(self, context: Context) -> None:
-    super().__init__(context)
-
   def __str__(self) -> str:
     return "结构文本类型"
-
-  @staticmethod
-  def get(ctx : Context) -> AggregateTextType:
-    return ctx.get_stateless_type(AggregateTextType)
 
 # ------------------------------------------------------------------------------
 # Major classes
 # ------------------------------------------------------------------------------
 
-class Attribute(NameDictNode):
-  _data : typing.Any
-
-  def __init__(self, data : typing.Any) -> None:
-    super().__init__()
-    self._data = data
-
-  @property
-  def value(self) -> typing.Any:
-    return self._data
-
-  @value.setter
-  def value(self, v : typing.Any) -> None:
-    self._data = v
-
-  @property
-  def data(self) -> typing.Any:
-    return self._data
-
-  @data.setter
-  def data(self, v : typing.Any) -> None:
-    self._data = v
-
-  @property
-  def parent(self) -> Operation:
-    return super().parent
-
-class IntrinsicAttribute(Attribute):
-  # use intrinsic attributes for class data members
-  _attrname : str
-  def __init__(self, attrname : str) -> None:
-    super().__init__(data=None)
-    self._attrname = attrname
-
-  @property
-  def value(self) -> typing.Any:
-    return getattr(super().parent, self._attrname)
-
-  @value.setter
-  def value(self, v : typing.Any) -> None:
-    setattr(super().parent, self._attrname, v)
-
-class Value:
+class Value(IRObject):
+  # __slots__ = ('_type', '_uselist')
   # value is either a block argument or an operation result
   _type : ValueType
   _uselist : IList[Use]
 
-  def __init__(self, ty : ValueType, **kwargs) -> None:
-    # passthrough kwargs for cooperative multiple inheritance
-    super().__init__(**kwargs)
+  def construct_init(self, *, ty : ValueType, **kwargs) -> None:
+    super().construct_init(**kwargs)
     self._type = ty
     self._uselist = IList(self)
+
+  def copy_init(self, *, init_src: Value, value_mapper : IRValueMapper, **kwargs) -> None:
+    super().copy_init(init_src, value_mapper)
+    self._type = init_src._type
+    self._uselist = IList(self)
+    value_mapper.add_value_map(init_src, self)
+
+  def json_import_init(self, *, importer: IRJsonImporter, init_src: dict, **kwargs) -> None:
+    # 因为有些值（比如同时继承了 Symbol 和 Value 的）不需要从存档里读取值类型，
+    # 这些值的类型完全可以从子类决定，
+    # 我们建一个新的函数 import_bypass_value(), 子类可以覆盖该函数来提供类型
+    super().json_import_init(importer=importer, init_src=init_src, **kwargs)
+    if ty := self.import_bypass_value(importer):
+      self._type = ty
+    else:
+      self._type = importer.get_value_type(init_src[IRJsonRepr.VALUE_VALUETYPE.value])
+    self._uselist = IList(self)
+    importer.claim_value_id(init_src[IRJsonRepr.VALUE_VALUEID.value], self)
+
+  def import_bypass_value(self, importer: IRJsonImporter) -> ValueType:
+    return None
 
   @property
   def uses(self) -> IList[Use]:
@@ -643,6 +736,10 @@ class Value:
   @property
   def valuetype(self) -> ValueType:
     return self._type
+
+  @property
+  def context(self) -> Context:
+    return self._type.context
 
   # pylint: disable=protected-access
   def replace_all_uses_with(self, v : Value) -> None:
@@ -668,16 +765,22 @@ class Value:
       undef = UndefLiteral.get(self.valuetype, str(self))
       self.replace_all_uses_with(undef)
 
+class PlaceholderValue(Value):
+  # __slots__ = ()
+  # 只为了在导入或者是变换等时候临时使用一下的值，不应该出现在导出的 IR 里
+  def replace_all_uses_with(self, v : Value) -> None:
+    # 把对值类型的检查去掉的版本
+    self._uselist.merge_into(v._uselist)
+
+
 class NameReferencedValue(Value, NameDictNode):
-  def __init__(self, ty: ValueType, **kwargs) -> None:
-    # passthrough kwargs for cooperative multiple inheritance
-    super().__init__(ty, **kwargs)
 
   @property
   def parent(self) -> Block | Operation:
     return super().parent
 
 class Use(IListNode):
+  # __slots__ = ('_user', '_argno')
   _user : User
   _argno : int
   def __init__(self, user : User, argno : int) -> None:
@@ -711,6 +814,11 @@ class User:
     # passthrough kwargs for cooperative multiple inheritance
     super().__init__(**kwargs)
     self._operandlist = []
+
+  def post_copy_value_remap(self, value_mapper : IRValueMapper):
+    for u in self._operandlist:
+      if newvalue := value_mapper.get_mapped_value(u.value):
+        u.set_value(newvalue)
 
   def get_operand(self, index : int) -> Value:
     return self._operandlist[index].value
@@ -752,46 +860,17 @@ class OpOperand(User, NameDictNode):
   # 可以调用 User.drop_all_uses() 来取消所有引用
 
 class OpResult(NameReferencedValue):
-  def __init__(self, ty: ValueType) -> None:
-    super().__init__(ty)
-
   @property
   def parent(self) -> Operation:
     return super().parent
 
-#class OpTerminatorInfo(User):
-#  _parent : Operation
-
-#  def __init__(self, parent : Operation) -> None:
-#    super().__init__()
-#    self._parent = parent
-
-#  @property
-#  def parent(self) -> Operation:
-#    return self._parent
-
-#  def get_successor(self, index : int) -> Block:
-#    return super().get_operand(index).parent
-
-#  def set_successor(self, index : int, dest : Block) -> None:
-#    super().set_operand(index, dest.value)
-
-#  def add_successor(self, dest : Block) -> None:
-#    super().add_operand(dest.value)
-
-#  def get_num_successors(self) -> int:
-#    return super().get_num_operands()
-
 class BlockArgument(NameReferencedValue):
-  def __init__(self, ty: ValueType) -> None:
-    super().__init__(ty)
-
   @property
   def parent(self) -> Block:
     return super().parent
 
 # reference: https://mlir.llvm.org/doxygen/classmlir_1_1Operation.html
-class Operation(IListNode):
+class Operation(IRObject, IListNode):
   _s_traits : typing.ClassVar[tuple[type]] = () # operation traits; take types as operand so that we can attach static methods to the traits
 
   @classmethod
@@ -802,27 +881,54 @@ class Operation(IListNode):
   _loc : Location
   _operands : NameDict[OpOperand]
   _results : NameDict[OpResult]
-  _attributes : NameDict[Attribute]
+  _attributes : collections.OrderedDict[str, int | str | bool | float]
   _regions : NameDict[Region]
   #_terminator_info : OpTerminatorInfo
 
-  def __init__(self, name : str, loc : Location, **kwargs) -> None:
-    # passthrough kwargs for cooperative multiple inheritance
-    super().__init__(**kwargs)
-    self._name = name
-    self._loc = loc
+  def base_init(self, *, context : Context, **kwargs) -> None:
+    super().base_init(context=context,**kwargs)
+    self._name = ''
+    self._loc = context.null_location
     self._operands = NameDict(self)
     self._results = NameDict(self)
-    self._attributes = NameDict(self)
+    self._attributes = collections.OrderedDict()
     self._regions = NameDict(self)
-    #self._terminator_info = None
 
-  #def _set_is_terminator(self):
-  #  assert self._terminator_info is None
-  #  self._terminator_info = OpTerminatorInfo(self)
+  def construct_init(self, *, name : str = '', loc : Location = None, **kwargs) -> None:
+    super().construct_init(name=name, loc=loc,**kwargs)
+    self._name = name
+    if loc is not None:
+      self._loc = loc
+
+  def copy_init(self, *, init_src: Operation, value_mapper: IRValueMapper, **kwargs) -> None:
+    super().copy_init(init_src=init_src, value_mapper=value_mapper, **kwargs)
+    self._name = init_src._name
+    self._loc = init_src._loc
+    for name in init_src._operands:
+      self._add_operand(name)
+    for result in init_src._results.values():
+      new_result = self._add_result(result.name, result.valuetype)
+      value_mapper.add_value_map(result, new_result)
+    self._attributes = init_src._attributes.copy()
+    for name, r in init_src._regions.items():
+      if isinstance(r, SymbolTableRegion):
+        new_region = SymbolTableRegion(value_mapper.context)
+        new_region.copy_init(r, value_mapper)
+        self._regions[name] = r
+      else:
+        new_region = Region()
+        new_region.copy_init(r, value_mapper)
+        self._regions[name] = r
+
+  def post_copy_value_remap(self, value_mapper: IRValueMapper) -> None:
+    super().post_copy_value_remap(value_mapper)
+    for name, operand in self._operands.items():
+      operand.post_copy_value_remap(value_mapper)
+    for r in self.regions:
+      r.post_copy_value_remap(value_mapper)
 
   def _add_result(self, name : str, ty : ValueType) -> OpResult:
-    r = OpResult(ty)
+    r = OpResult(init_mode=IRObjectInitMode.CONSTRUCT, context=ty.context, ty=ty)
     self._results[name] = r
     return r
 
@@ -837,10 +943,6 @@ class Operation(IListNode):
   @property
   def attributes(self):
     return self._attributes
-
-  # TODO 我们基本上需要把整个 IR 改了才能做到这个
-  def clone(self) -> Operation:
-    raise NotImplementedError()
 
   def _add_operand(self, name : str) -> OpOperand:
     o = OpOperand()
@@ -859,6 +961,9 @@ class Operation(IListNode):
       o.add_operand(v)
     return o
 
+  def get_result(self, name : str) -> OpResult:
+    return self._results.get(name)
+
   def get_operand_inst(self, name : str) -> OpOperand:
     return self._operands.get(name)
 
@@ -868,26 +973,11 @@ class Operation(IListNode):
       return o.get()
     return None
 
-  def _add_intrinsic_attr(self, name : str, attrname : str) -> IntrinsicAttribute:
-    assert name not in self._attributes
-    a = IntrinsicAttribute(attrname)
-    self._attributes[name] = a
-    return a
+  def set_attr(self, name : str, value: typing.Any) -> None:
+    self._attributes[name] = value
 
-  def set_attr(self, name : str, value: typing.Any) -> Attribute:
-    a : Attribute = None
-    if name in self._attributes:
-      a = self._attributes[name]
-      a.data = value
-    else:
-      a = Attribute(value)
-      self._attributes[name] = a
-    return a
-
-  def get_attr(self, name : str) -> Attribute | None:
-    if name in self._attributes:
-      return self._attributes[name]
-    return None
+  def get_attr(self, name : str) -> int | str | bool | float | None:
+    return self._attributes.get(name, None)
 
   def has_attr(self, name : str) -> bool:
     return name in self._attributes
@@ -971,29 +1061,6 @@ class Operation(IListNode):
     self.drop_all_references()
     return retval
 
-  #@property
-  #def terminator_info(self) -> OpTerminatorInfo:
-  #  return self._terminator_info
-
-  #def is_terminator(self) -> bool:
-  #  return self._terminator_info is not None
-
-  #def get_successor(self, index : int) -> Block:
-  #  if self._terminator_info is None:
-  #    return None
-  #  return self._terminator_info.get_successor(index)
-
-  #def set_successor(self, index : int, dest : Block) -> None:
-  #  self._terminator_info.set_successor(index, dest)
-
-  #def add_successor(self, dest : Block) -> None:
-  #  self._terminator_info.add_successor(dest)
-
-  #def get_num_successors(self) -> int:
-  #  if self._terminator_info is None:
-  #    return 0
-  #  return self._terminator_info.get_num_successors()
-
   @property
   def name(self):
     return self._name
@@ -1059,8 +1126,6 @@ class Operation(IListNode):
     print(dump.decode('utf-8'))
 
 class Symbol(Operation):
-  def __init__(self, name: str, loc: Location, **kwargs) -> None:
-    super().__init__(name, loc, **kwargs)
 
   @Operation.name.setter
   def name(self, n : str):
@@ -1085,57 +1150,95 @@ class Symbol(Operation):
 
 class MetadataOp(Operation):
   # 所有不带语义的操作项的基类（错误记录，注释，等等）
-  def __init__(self, name: str, loc: Location, **kwargs) -> None:
-    super().__init__(name, loc, **kwargs)
+  pass
 
 class ErrorOp(MetadataOp):
   # 错误项用以记录编译中遇到的错误
   # 所有错误项需要(1)一个错误编号，(2)一个错误消息
   # 一般来说所有转换都需要忽视这些错误项，把它们留在IR里不去动它们
-  _error_code : str
   _error_message_operand : OpOperand
 
-  def __init__(self, name : str, loc: Location, error_code : str, error_msg : StringLiteral = None, **kwargs) -> None:
+  def construct_init(self, *, error_code : str, error_msg : StringLiteral = None, name: str = '', loc: Location = None,  **kwargs) -> None:
     assert isinstance(error_code, str)
     if error_msg is not None:
       assert isinstance(error_msg, StringLiteral)
-    super().__init__(name, loc, **kwargs)
-    self._error_code = error_code
-    self._error_message_operand = self._add_operand_with_value('message', error_msg)
-    self._add_intrinsic_attr('Code', 'error_code')
+    super().construct_init(name=name, loc=loc, **kwargs)
+    self._add_operand_with_value('message', error_msg)
+    self.set_attr('Code', error_code)
+
+  def post_init(self) -> None:
+    self._error_message_operand = self.get_operand_inst('message')
 
   @property
   def error_code(self) -> str:
-    return self._error_code
+    return self.get_attr('Code')
 
   @property
   def error_message(self) -> StringLiteral:
     return self._error_message_operand.get()
+
+  @staticmethod
+  def create(error_code : str, context : Context, error_msg : StringLiteral = None, name: str = '', loc: Location = None) -> ErrorOp:
+    return ErrorOp(init_mode=IRObjectInitMode.CONSTRUCT, context=context, error_code = error_code, error_msg = error_msg, name = name, loc = loc)
 
 class CommentOp(MetadataOp):
   # 注释项用以保留源中的用户输入的注释
   # 一般来说我们努力将其保留到输出源文件中
   _comment_operand : OpOperand
 
-  def __init__(self, name: str, loc: Location, comment : StringLiteral, **kwargs) -> None:
-    super().__init__(name, loc, **kwargs)
-    self._comment_operand = self._add_operand_with_value('comment', comment)
+  def construct_init(self, *, comment : StringLiteral, name: str = '', loc: Location = None, **kwargs) -> None:
+    super().construct_init(name = name, loc = loc, **kwargs)
+    self._add_operand_with_value('comment', comment)
+
+  def post_init(self) -> None:
+    self._comment_operand = self.get_operand_inst('comment')
 
   @property
   def comment(self) -> StringLiteral:
     return self._comment_operand.get()
+
+  @staticmethod
+  def create(comment : StringLiteral, name: str = '', loc: Location = None) -> CommentOp:
+    return CommentOp(init_mode=IRObjectInitMode.CONSTRUCT, context=comment.context, comment = comment, name = name, loc = loc)
 
 class Block(Value, IListNode):
   _ops : IList[Operation, Block]
   _args : NameDict[BlockArgument]
   _name : str
 
-  def __init__(self, name : str, context : Context) -> None:
-    ty = BlockReferenceType.get(context)
-    super().__init__(ty)
+  @staticmethod
+  def create(name : str, context : Context):
+    return Block(init_mode = IRObjectInitMode.CONSTRUCT, context = context, name = name)
+
+  def base_init(self, **kwargs) -> None:
+    super().base_init(**kwargs)
     self._ops = IList(self)
     self._args = NameDict(self)
+    self._name = ''
+
+  def construct_init(self, *, name : str, context : Context, **kwargs) -> None:
+    ty = BlockReferenceType.get(context)
+    super().construct_init(ty = ty, name = name, context = context, **kwargs)
     self._name = name
+
+  def copy_init(self, *, init_src: Block, value_mapper: IRValueMapper, **kwargs) -> None:
+    super().copy_init(init_src=init_src, value_mapper=value_mapper, **kwargs)
+    self._name = init_src._name
+
+    for arg in init_src._args.values():
+      new_arg = self.add_argument(arg.name, arg.valuetype)
+      value_mapper.add_value_map(arg, new_arg)
+    for op in init_src._ops:
+      clonedop = op.clone(value_mapper)
+      self._ops.push_back(clonedop)
+
+  def post_copy_value_remap(self, value_mapper : IRValueMapper):
+    super().post_copy_value_remap(value_mapper)
+    for op in self._ops:
+      op.post_copy_value_remap(value_mapper)
+
+  def import_bypass_value(self, importer: IRJsonImporter) -> ValueType:
+    return BlockReferenceType.get(importer.context)
 
   @property
   def context(self) -> Context:
@@ -1212,6 +1315,16 @@ class Region(NameDictNode):
     super().__init__()
     self._blocks = IList(self)
 
+  def copy_init(self, *, init_src : Region, value_mapper : IRValueMapper, **kwargs):
+    for b in init_src._blocks:
+      new_block = b.clone(value_mapper)
+      self._blocks.push_back(new_block)
+      value_mapper.add_value_map(b, new_block)
+
+  def post_copy_value_remap(self, value_mapper : IRValueMapper):
+    for b in self._blocks:
+      b.post_copy_value_remap(value_mapper)
+
   @property
   def context(self) -> Context | None:
     if not self._blocks.empty:
@@ -1255,7 +1368,7 @@ class Region(NameDictNode):
     ctx = self.context
     if ctx is None:
       raise RuntimeError('Cannot find context')
-    block = Block(name, ctx)
+    block = Block.create(name, ctx)
     self._blocks.push_back(block)
     return block
 
@@ -1287,10 +1400,15 @@ class SymbolTableRegion(Region, collections.abc.Sequence):
 
   def __init__(self, context : Context) -> None:
     super().__init__()
-    self._block = Block("", context)
+    self._block = Block.create("", context)
     self.push_back(self._block)
     self._anonymous_count = 0
     self._lookup_dict = collections.OrderedDict()
+
+  def copy_init(self, *, init_src: SymbolTableRegion, value_mapper: IRValueMapper, **kwargs):
+    for symbol in init_src:
+      new_symbol = symbol.clone(value_mapper)
+      self.add(new_symbol)
 
   def _get_anonymous_name(self):
     result = str(self._anonymous_count)
@@ -1331,11 +1449,17 @@ class SymbolTableRegion(Region, collections.abc.Sequence):
   def add(self, symbol : Symbol):
     self._block.push_back(symbol)
 
-class Literal(Value):
+@IRObjectUniqueTrait
+class Literal(Value, IRObject):
+  # __slots__ = ('_value')
   _value : typing.Any
-  def __init__(self, ty: ValueType, value : typing.Any, **kwargs) -> None:
-    super().__init__(ty, **kwargs)
+
+  def construct_init(self, *, ty: ValueType, value : typing.Any, **kwargs) -> None:
+    super().construct_init(ty = ty, **kwargs)
     self._value = value
+
+  def json_import_init(self, *, importer: IRJsonImporter, init_src: dict, **kwargs) -> None:
+    raise NotImplementedError('Subclass should override this')
 
   @property
   def value(self) -> typing.Any:
@@ -1346,13 +1470,11 @@ class Literal(Value):
 
   @staticmethod
   def _get_literal_impl(literal_cls : type, value : typing.Any, context : Context) -> typing.Any:
-    return context.get_literal_uniquing_dict(literal_cls).get_or_create(value, lambda : literal_cls(context, value))
+    return context.get_literal_uniquing_dict(literal_cls).get_or_create(value, lambda : literal_cls(init_mode = IRObjectInitMode.CONSTRUCT, context = context, value = value))
 
 class UndefLiteral(Literal):
   # 我们会使用 Undef 在特定条件下替换别的值
   # （比如如果一个Op要被删了，如果它还在被使用的话，所有的引用都会替换为这种值）
-  def __init__(self, ty: ValueType, msg : str = '', **kwargs) -> None:
-    super().__init__(ty, msg, **kwargs)
 
   @property
   def value(self) -> str:
@@ -1360,16 +1482,17 @@ class UndefLiteral(Literal):
 
   @staticmethod
   def get(ty : ValueType, msg : str):
-    return ty.context.get_literal_uniquing_dict(UndefLiteral).get_or_create((ty, msg), lambda : UndefLiteral(ty, msg))
+    return ty.context.get_literal_uniquing_dict(UndefLiteral).get_or_create((ty, msg),
+      lambda : UndefLiteral(init_mode = IRObjectInitMode.CONSTRUCT, context = ty.context, ty = ty, value = msg))
 
 class ClassLiteral(Literal):
   # 某些情况下我们需要用一个字面值来找到一个类
   # （比如 VNModel 中我们按名字查找转场效果）
   # 这就是使用该类型的时候了
-  def __init__(self, context : Context, baseclass : type,  value: type, **kwargs) -> None:
-    assert issubclass(value, baseclass)
+
+  def construct_init(self, *, context : Context, baseclass : type,  value: type, **kwargs) -> None:
     ty = ClassType.get(baseclass, context)
-    super().__init__(ty, value, **kwargs)
+    return super().construct_init(ty=ty, value=value, **kwargs)
 
   @property
   def value(self) -> type:
@@ -1377,8 +1500,10 @@ class ClassLiteral(Literal):
 
   @staticmethod
   def get(baseclass : type, value : type, context : Context):
-    return context.get_literal_uniquing_dict(ClassLiteral).get_or_create((baseclass, value), lambda : ClassLiteral(context, baseclass, value))
+    return context.get_literal_uniquing_dict(ClassLiteral).get_or_create((baseclass, value),
+      lambda : ClassLiteral(init_mode = IRObjectInitMode.CONSTRUCT, context = context, baseclass = baseclass, value = value))
 
+@IRObjectUniqueTrait
 class ConstExpr(Value, User):
   # ConstExpr 是引用其他 Value 的 Value，自身像 Literal 那样也是保证无重复的。虽然大部分参数应该是 Literal 但也可以用别的
   # ConstExpr 与 Literal 的区别是， ConstExpr 可以引用从 Operation 来的值(包括 Operation的引用和 OpResult)
@@ -1386,10 +1511,9 @@ class ConstExpr(Value, User):
   # 在有依赖关系的 Operation 被更换或者被删除时， ConstExpr 会被删掉， Literal 的值不可能有改变
   # 子 IR 类型可以定义新的 Literal 和 ConstExpr ，并以“是否可能依赖 Operation”为标准区分两者
   # 不过 ConstExpr 也可以不引用从 Operation 来的值
-  # 所有的子类的构造函数应该只带两个参数：context, values
 
-  def __init__(self, ty: ValueType, values : typing.Iterable[Value], **kwargs) -> None:
-    super().__init__(ty, **kwargs)
+  def construct_init(self, *, ty: ValueType, values : typing.Iterable[Value], **kwargs) -> None:
+    super().construct_init(ty=ty, **kwargs)
     for v in values:
       self.add_operand(v)
 
@@ -1418,7 +1542,8 @@ class ConstExpr(Value, User):
   @classmethod
   def _get_impl(cexpr_cls, ty : ValueType, values : typing.Iterable[Value]):
     key_tuple = (cexpr_cls, *values)
-    return ty.context.get_constexpr_uniquing_dict(cexpr_cls).get_or_create(key_tuple, lambda: cexpr_cls(ty.context, values))
+    return ty.context.get_constexpr_uniquing_dict(cexpr_cls).get_or_create(key_tuple,
+      lambda: cexpr_cls(init_mode = IRObjectInitMode.CONSTRUCT, context = ty.context, values = values))
 
 class LiteralUniquingDict:
   _ty : type
@@ -1461,14 +1586,14 @@ class Context:
     self._asset_temp_dir = None
     self._literal_dict = collections.OrderedDict()
     self._constexpr_dict = collections.OrderedDict()
-    self._null_location = Location(self)
+    self._null_location = Location(init_mode=IRObjectInitMode.CONSTRUCT, context=self)
     self._difile_dict = collections.OrderedDict()
     self._diloc_dict = collections.OrderedDict()
 
   def get_stateless_type(self, ty : type) -> typing.Any:
     if ty in self._stateless_type_dict:
       return self._stateless_type_dict[ty]
-    instance = ty(self)
+    instance = ty(context=self)
     self._stateless_type_dict[ty] = instance
     return instance
 
@@ -1516,7 +1641,7 @@ class Context:
   def get_DIFile(self, path : str) -> DIFile:
     if path in self._difile_dict:
       return self._difile_dict[path]
-    result = DIFile(self, path)
+    result = DIFile(init_mode=IRObjectInitMode.CONSTRUCT, context = self, filepath=path)
     self._difile_dict[path] = result
     return result
 
@@ -1529,7 +1654,8 @@ class Context:
     key = (page, row, column)
     if key in self._diloc_dict:
       return self._diloc_dict[key]
-    result = DILocation(difile, page, row, column)
+    # file : DIFile, page : int, row : int, column : int,
+    result = DILocation(init_mode=IRObjectInitMode.CONSTRUCT, context=self, file=difile, page=page, row=row, column=column)
     self._diloc_dict[key] = result
     return result
 
@@ -1744,54 +1870,38 @@ class AssetBase(User):
 # Debug info (DI)
 # ------------------------------------------------------------------------------
 
+@IRObjectMetadataTrait
+@dataclasses.dataclass(init=False, slots=True)
 class DIFile(Location):
-  _path : str
+  filepath : str
 
-  def __init__(self, ctx: Context, path : str) -> None:
-    super().__init__(ctx)
-    self._path = path
+  def construct_init(self, *, filepath : str, **kwargs) -> None:
+    super(DIFile, self).construct_init(**kwargs)
+    self.filepath = filepath
 
-  @property
-  def filepath(self) -> str:
-    return self._path
+  @staticmethod
+  def get_json_repr() -> dict[str, str]:
+    return {'filepath': IRJsonRepr.LOCATION_FILE_PATH.value}
 
-  def __str__(self) -> str:
-    return self._path
-
+@IRObjectMetadataTrait
+@dataclasses.dataclass(init=False, slots=True)
 class DILocation(Location):
   # 描述一个文档位置
   # 对于文档而言，页数可以用 page breaks 来定 （ODF 有 <text:soft-page-break/>）
   # 对于表格而言，页数相当于 sheet 的序号
   # 所有信息如果有的话就从1开始，没有就用0
   # 目前我们的 DILocation 只用于给用户指出位置，暂时不会有源到源的转换，所以这里有信息损失不是大事
-  _file : DIFile
-  _page : int
-  _row : int
-  _col : int
+  file : DIFile
+  page : int
+  row : int
+  column : int
 
-  def __init__(self, file : DIFile, page : int, row : int, column : int) -> None:
-    ctx = file.context
-    super().__init__(ctx)
-    self._file = file
-    self._page = page
-    self._row = row
-    self._col = column
-
-  @property
-  def file(self) -> DIFile:
-    return self._file
-
-  @property
-  def page(self) -> int:
-    return self._page
-
-  @property
-  def row(self) -> int:
-    return self._row
-
-  @property
-  def column(self) -> int:
-    return self._col
+  def construct_init(self, *, file : DIFile, page : int, row : int, column : int, **kwargs) -> None:
+    super(DILocation, self).construct_init(**kwargs)
+    self.file = file
+    self.page = page
+    self.row = row
+    self.column = column
 
   def __str__(self) -> str:
     return str(self.file) + '#P' + str(self.page) + ':' + str(self.row) + ':' + str(self.column)
@@ -1801,11 +1911,13 @@ class DILocation(Location):
 # ------------------------------------------------------------------------------
 
 class IntLiteral(Literal):
-  def __init__(self, context : Context, value : int, **kwargs) -> None:
-    # should not be called by user code
+  def construct_init(self, *, context : Context, value : int, **kwargs) -> None:
     assert isinstance(value, int)
     ty = IntType.get(context)
-    super().__init__(ty, value, **kwargs)
+    return super().construct_init(ty=ty, value=value, **kwargs)
+
+  def import_bypass_value(self, importer: IRJsonImporter) -> ValueType:
+    return IntType.get(importer.context)
 
   @property
   def value(self) -> int:
@@ -1816,10 +1928,13 @@ class IntLiteral(Literal):
     return Literal._get_literal_impl(IntLiteral, value, context)
 
 class BoolLiteral(Literal):
-  def __init__(self, context : Context, value: bool, **kwargs) -> None:
+  def construct_init(self, *, context : Context, value: bool, **kwargs) -> None:
     assert isinstance(value, bool)
     ty = BoolType.get(context)
-    super().__init__(ty, value, **kwargs)
+    super().construct_init(ty=ty, value=value, **kwargs)
+
+  def import_bypass_value(self, importer: IRJsonImporter) -> ValueType:
+    return BoolType.get(importer.context)
 
   @property
   def value(self) -> bool:
@@ -1830,9 +1945,13 @@ class BoolLiteral(Literal):
     return Literal._get_literal_impl(BoolLiteral, value, context)
 
 class FloatLiteral(Literal):
-  def __init__(self, context : Context, value: float, **kwargs) -> None:
+  def construct_init(self, *, context : Context, value: float, **kwargs) -> None:
+    assert isinstance(value, float)
     ty = FloatType.get(context)
-    super().__init__(ty, value, **kwargs)
+    super().construct_init(ty=ty, value=value, **kwargs)
+
+  def import_bypass_value(self, importer: IRJsonImporter) -> ValueType:
+    return FloatType.get(importer.context)
 
   @property
   def value(self) -> float:
@@ -1844,10 +1963,14 @@ class FloatLiteral(Literal):
 
 class StringLiteral(Literal):
   # 字符串常量的值不包含样式等信息，就是纯字符串
-  def __init__(self, context : Context, value: str, **kwargs) -> None:
+
+  def construct_init(self, *, context : Context, value: str, **kwargs) -> None:
     assert isinstance(value, str)
     ty = StringType.get(context)
-    super().__init__(ty, value, **kwargs)
+    super().construct_init(ty=ty, value=value, **kwargs)
+
+  def import_bypass_value(self, importer: IRJsonImporter) -> ValueType:
+    return StringType.get(importer.context)
 
   @property
   def value(self) -> str:
@@ -1862,9 +1985,13 @@ class StringLiteral(Literal):
 
 class TextStyleLiteral(Literal):
   # 文字样式常量只包含文字样式信息
-  def __init__(self, context : Context, value: tuple[tuple[TextAttribute, typing.Any]], **kwargs) -> None:
+
+  def construct_init(self, *, context : Context, value: tuple[tuple[TextAttribute, typing.Any]], **kwargs) -> None:
     ty = TextStyleType.get(context)
-    super().__init__(ty, value, **kwargs)
+    super().construct_init(ty=ty, value=value, **kwargs)
+
+  def import_bypass_value(self, importer: IRJsonImporter) -> ValueType:
+    return TextStyleType.get(importer.context)
 
   @property
   def value(self) -> tuple[tuple[TextAttribute, typing.Any]]:
@@ -1928,18 +2055,34 @@ class TextStyleLiteral(Literal):
         return e[1]
     return None
 
-class TextFragmentLiteral(Literal, User):
+class LiteralExpr(Literal, User):
+  # 字面值表达式是只引用其他字面值的表达式
+  # 所有字面值表达式都只由：(1)表达式类型，(2)参数 这两项决定
+  def construct_init(self, *, ty: ValueType, value_tuple: tuple[Literal], **kwargs) -> None:
+    super().construct_init(ty=ty, value=value_tuple, **kwargs)
+    for v in value_tuple:
+      assert isinstance(v, Literal)
+      self.add_operand(v)
+
+  @classmethod
+  def _get_literalexpr_impl(cls, value_tuple, context):
+    return context.get_literal_uniquing_dict(cls).get_or_create(value_tuple,
+      lambda : cls(init_mode=IRObjectInitMode.CONSTRUCT, context=context, value_tuple=value_tuple))
+
+class TextFragmentLiteral(LiteralExpr):
   # 文本常量的值包含字符串以及样式信息（大小字体、字体颜色、背景色（高亮颜色），或是附注（Ruby text））
   # 单个文本片段常量内容所使用的样式需是一致的，如果不一致则可以把内容进一步切分，按照样式来进行分节
   # 文本片段常量的“值”（value）是【对字符串常量的引用】+【样式信息元组】的元组(tuple)
   # 样式信息元组内的每一项都是(样式，值)组成的元组，这些项将根据样式的枚举值进行排序
+  # TODO 我们其实没有必要对文本内容提供去重。。。目前没有任何部分对
 
-  def __init__(self, context : Context, string : StringLiteral, styles : TextStyleLiteral, **kwargs) -> None:
-    # value 应为 ConstantTextFragment.get_value_tuple() 的结果
+  def construct_init(self, *, context : Context, value_tuple : tuple[StringLiteral, TextStyleLiteral], **kwargs) -> None:
+    assert len(value_tuple) == 2 and isinstance(value_tuple[0], StringLiteral) and isinstance(value_tuple[1], TextStyleLiteral)
     ty = TextType.get(context)
-    super().__init__(ty = ty, value = (string, styles), **kwargs)
-    self.add_operand(string)
-    self.add_operand(styles)
+    super().construct_init(ty=ty, value_tuple=value_tuple, **kwargs)
+
+  def import_bypass_value(self, importer: IRJsonImporter) -> ValueType:
+    return TextType.get(importer.context)
 
   @property
   def value(self) -> tuple[StringLiteral, TextStyleLiteral]:
@@ -1962,17 +2105,18 @@ class TextFragmentLiteral(Literal, User):
       raise RuntimeError("string 参数应为对字符串常量的引用")
     if not isinstance(styles, TextStyleLiteral):
       raise RuntimeError("styles 参数应为对文本样式常量的引用")
-    return context.get_literal_uniquing_dict(TextFragmentLiteral).get_or_create((string, styles), lambda : TextFragmentLiteral(context, string, styles))
+    return TextFragmentLiteral._get_literalexpr_impl((string, styles), context)
 
-class TextLiteral(Literal, User):
+class TextLiteral(LiteralExpr):
   # 文本常量是一个或多个文本片段常量组成的串
 
-  def __init__(self, context : Context, value: tuple[TextFragmentLiteral], **kwargs) -> None:
-    TextLiteral._check_value_tuple(value)
+  def construct_init(self, *, context : Context, value_tuple: tuple[TextFragmentLiteral], **kwargs) -> None:
+    TextLiteral._check_value_tuple(value_tuple)
     ty = TextType.get(context)
-    super().__init__(ty, value, **kwargs)
-    for frag in value:
-      self.add_operand(frag)
+    super().construct_init(ty=ty, value_tuple=value_tuple, **kwargs)
+
+  def import_bypass_value(self, importer: IRJsonImporter) -> ValueType:
+    return TextType.get(importer.context)
 
   def get_string(self) -> str:
     result = ''
@@ -1997,13 +2141,16 @@ class TextLiteral(Literal, User):
   @staticmethod
   def get(context : Context, value : typing.Iterable[TextFragmentLiteral]) -> TextLiteral:
     value_tuple = tuple(value)
-    return Literal._get_literal_impl(TextLiteral, value_tuple, context)
+    return TextLiteral._get_literalexpr_impl(value_tuple, context)
 
 class EnumLiteral(typing.Generic[T], Literal):
-  def __init__(self, context : Context, value: T, **kwargs) -> None:
+
+  def construct_init(self, *, context : Context, value: T, **kwargs) -> None:
     assert isinstance(value, enum.Enum)
     ty = EnumType.get(type(value), context)
-    super().__init__(ty, value, **kwargs)
+    super().construct_init(ty=ty, value=value, **kwargs)
+
+  # 我们需要 value 的值来确定类型，所以不覆盖 import_bypass_value()
 
   @property
   def value(self) -> T:
@@ -2011,62 +2158,62 @@ class EnumLiteral(typing.Generic[T], Literal):
 
   @staticmethod
   def get(context : Context, value : T) -> EnumLiteral[T]:
-    value_tuple = tuple(value)
-    return Literal._get_literal_impl(EnumLiteral, value_tuple, context)
+    return Literal._get_literal_impl(EnumLiteral, value, context)
 
-class TextListLiteral(Literal, User):
-  # 文本列表常量对应文档中列表的一层
-  def __init__(self, context : Context, value: tuple[TextLiteral | TextListLiteral], **kwargs) -> None:
-    ty = AggregateTextType.get(context)
-    super().__init__(ty, value, **kwargs)
-    for element in value:
-      self.add_operand(element)
+# TODO 这个还没有代码用到，先去掉
+#class TextListLiteral(Literal, User):
+#  # 文本列表常量对应文档中列表的一层
+#  def __init__(self, context : Context, value: tuple[TextLiteral | TextListLiteral], **kwargs) -> None:
+#    ty = AggregateTextType.get(context)
+#    super().__init__(ty, value, **kwargs)
+#    for element in value:
+#      self.add_operand(element)
+#
+#  @property
+#  def value(self) -> tuple[TextLiteral | TextListLiteral]:
+#    return super().value
+#
+#  def __len__(self):
+#    return len(self.value)
+#
+#  def __getitem__(self, index : int) -> TextLiteral | TextListLiteral:
+#    return self.value.__getitem__(index)
+#
+#  @staticmethod
+#  def get(context : Context, value : typing.Iterable[TextLiteral | TextListLiteral]) -> TextListLiteral:
+#    value_tuple = tuple(value)
+#    return Literal._get_literal_impl(TextListLiteral, value_tuple, context)
 
-  @property
-  def value(self) -> tuple[TextLiteral | TextListLiteral]:
-    return super().value
+#class TableLiteral(LiteralExpr):
+#  def __init__(self, context : Context, nrows : int, ncols : int, value: tuple[tuple[TextLiteral]], **kwargs) -> None:
+#    ty = AggregateTextType.get(context)
+#    super().__init__(ty = ty, value = (nrows, ncols, value), **kwargs)
+#    for rows in value:
+#      for cell in rows:
+#        self.add_operand(cell)
 
-  def __len__(self):
-    return len(self.value)
+#  @property
+#  def value(self) -> tuple(int, int, tuple[tuple[TextLiteral]]):
+#    return super().value
 
-  def __getitem__(self, index : int) -> TextLiteral | TextListLiteral:
-    return self.value.__getitem__(index)
+#  @property
+#  def rowcount(self) -> int:
+#    return self.value[0]
 
-  @staticmethod
-  def get(context : Context, value : typing.Iterable[TextLiteral | TextListLiteral]) -> TextListLiteral:
-    value_tuple = tuple(value)
-    return Literal._get_literal_impl(TextListLiteral, value_tuple, context)
+#  @property
+#  def columncount(self) -> int:
+#    return self.value[1]
 
-class TableLiteral(Literal, User):
-  def __init__(self, context : Context, nrows : int, ncols : int, value: tuple[tuple[TextLiteral]], **kwargs) -> None:
-    ty = AggregateTextType.get(context)
-    super().__init__(ty = ty, value = (nrows, ncols, value), **kwargs)
-    for rows in value:
-      for cell in rows:
-        self.add_operand(cell)
+#  @property
+#  def cells(self) -> tuple[tuple[TextLiteral]]:
+#    return self.value[2]
 
-  @property
-  def value(self) -> tuple(int, int, tuple[tuple[TextLiteral]]):
-    return super().value
+#  def get_cell(self, row : int, col : int) -> TextLiteral:
+#    return self.value[2][row][col]
 
-  @property
-  def rowcount(self) -> int:
-    return self.value[0]
-
-  @property
-  def columncount(self) -> int:
-    return self.value[1]
-
-  @property
-  def cells(self) -> tuple[tuple[TextLiteral]]:
-    return self.value[2]
-
-  def get_cell(self, row : int, col : int) -> TextLiteral:
-    return self.value[2][row][col]
-
-  @staticmethod
-  def get(context : Context, nrows : int, ncols : int, value: tuple[tuple[TextLiteral]]) -> TableLiteral:
-    return context.get_literal_uniquing_dict(TableLiteral).get_or_create((nrows, ncols, value), lambda : TableLiteral(context, nrows, ncols, value))
+#  @staticmethod
+#  def get(context : Context, nrows : int, ncols : int, value: tuple[tuple[TextLiteral]]) -> TableLiteral:
+#    return context.get_literal_uniquing_dict(TableLiteral).get_or_create((nrows, ncols, value), lambda : TableLiteral(context, nrows, ncols, value))
 
 # ------------------------------------------------------------------------------
 # IR dumping
@@ -2228,10 +2375,10 @@ class IRWriter:
           self._write_body(',')
         self._write_body(self.escape('}'))
         return None
-      elif isinstance(value, TextListLiteral):
-        raise NotImplementedError('TODO')
-      elif isinstance(value, TableLiteral):
-        raise NotImplementedError('TODO')
+      #elif isinstance(value, TextListLiteral):
+      #  raise NotImplementedError('TODO')
+      #elif isinstance(value, TableLiteral):
+      #  raise NotImplementedError('TODO')
       else:
         raise NotImplementedError('Unexpected literal type for dumping')
     # unknown value types
@@ -2315,7 +2462,7 @@ class IRWriter:
         else:
           self._write_body(',')
         attr = op.get_attr(attribute_name)
-        self._write_body(self.escape(attribute_name + '=' + str(attr.value)))
+        self._write_body(self.escape(attribute_name + '=' + str(attr)))
       self._write_body(self.escape(']'))
 
     # loc
