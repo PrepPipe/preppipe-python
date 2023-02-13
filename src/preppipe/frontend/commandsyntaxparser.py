@@ -38,13 +38,21 @@ class CMDPositionalArgOp(Operation):
   # we use a full op here to track the loc
   _value_operand : OpOperand
 
-  def __init__(self, name: str, loc: Location, value : Value, **kwargs) -> None:
-    super().__init__(name, loc, **kwargs)
-    self._value_operand = self._add_operand_with_value('value', value)
+  def construct_init(self, *, value : Value, name: str = '', loc: Location = None, **kwargs) -> None:
+    super().construct_init(name=name, loc=loc, **kwargs)
+    self._add_operand_with_value('value', value)
+
+  def post_init(self) -> None:
+    super().post_init()
+    self._value_operand = self.get_operand_inst('value')
 
   @property
   def value(self):
     return self._value_operand.get()
+
+  @staticmethod
+  def create(name: str, loc : Location, value : Value):
+    return CMDPositionalArgOp(init_mode=IRObjectInitMode.CONSTRUCT, context=loc.context, value=value, name=name, loc=loc)
 
 class CMDValueSymbol(Symbol):
   # representing a value in the command, or an argument value
@@ -52,22 +60,25 @@ class CMDValueSymbol(Symbol):
   # operation location is the location of the name/value (start of the name for keyword args, start of the value for positional args)
   _value_operand : OpOperand
 
-  def __init__(self, name: str, loc: Location, value : Value, **kwargs) -> None:
-    super().__init__(name, loc, **kwargs)
-    self._value_operand = self._add_operand_with_value('value', value)
+  def construct_init(self, *, value : Value, name: str = '', loc: Location = None, **kwargs) -> None:
+    super().construct_init(name=name, loc=loc, **kwargs)
+    self._add_operand_with_value('value', value)
+
+  def post_init(self) -> None:
+    super().post_init()
+    self._value_operand = self.get_operand_inst('value')
 
   @property
   def value(self) -> Value:
     return self._value_operand.get()
 
-class CommandCallReferenceType(ValueType):
-  # type of GeneralCommandOp so that it can be a value
-  def __init__(self, context: Context) -> None:
-    super().__init__(context)
-
   @staticmethod
-  def get(ctx : Context) -> CommandCallReferenceType:
-    return ctx.get_stateless_type(CommandCallReferenceType)
+  def create(name: str, loc: Location, value : Value):
+    return CMDValueSymbol(init_mode=IRObjectInitMode.CONSTRUCT, context=loc.context, value=value, name=name, loc=loc)
+
+class CommandCallReferenceType(StatelessType):
+  # type of GeneralCommandOp so that it can be a value
+  pass
 
 class GeneralCommandOp(Operation):
   # 所有能被识别的命令（能找到命令名以及参数列表）
@@ -81,8 +92,9 @@ class GeneralCommandOp(Operation):
   _extend_data_block : Block
   _valueref : OpResult
 
-  def __init__(self, name: str, loc: Location, name_value : StringLiteral, name_loc : Location, **kwargs) -> None:
-    super().__init__(name, loc, **kwargs)
+  def construct_init(self, *, name_value : StringLiteral, name_loc : Location, name: str = '', loc: Location = None, **kwargs) -> None:
+    # 由于这里的初始化并不会在复制和JSON导入时执行，所以我们在 post_init() 里面要把对象属性全都重新取一遍
+    super().construct_init(name=name, loc=loc, **kwargs)
     self._head_region = self._add_symbol_table('head')
     self._positionalarg_region = self._add_region('positional_arg')
     self._keywordarg_region = self._add_symbol_table('keyword_arg')
@@ -91,7 +103,7 @@ class GeneralCommandOp(Operation):
     self._valueref = self._add_result('', CommandCallReferenceType.get(self.context))
 
     # initialize the head region (name here)
-    name_symbol = CMDValueSymbol('name', name_loc, name_value)
+    name_symbol = CMDValueSymbol.create('name', name_loc, name_value)
     self._head_region.add(name_symbol)
     # initialize the positional args region
     self._positionalarg_block = self._positionalarg_region.add_block('')
@@ -101,16 +113,32 @@ class GeneralCommandOp(Operation):
     # initialize the extend data region
     self._extend_data_block = self._extend_data_region.add_block('')
 
+  def post_init(self) -> None:
+    super().post_init()
+    self._head_region = self.get_symbol_table('head')
+    self._positionalarg_region = self.get_region('positional_arg')
+    self._positionalarg_block = self._positionalarg_region.blocks.back
+    self._keywordarg_region = self.get_symbol_table('keyword_arg')
+    self._nested_callexpr_region = self.get_region('nested_calls')
+    self._nested_callexpr_block = self._nested_callexpr_region.blocks.back
+    self._extend_data_region = self.get_region('extend_data')
+    self._extend_data_block = self._extend_data_region.blocks.back
+    self._valueref = self.get_result('')
+
+  @staticmethod
+  def create(name: str, loc: Location, name_value : StringLiteral, name_loc : Location):
+    return GeneralCommandOp(init_mode=IRObjectInitMode.CONSTRUCT, context=loc.context, name_value=name_value, name_loc=name_loc, name=name, loc=loc)
+
   def add_positional_arg(self, value: Value, loc : Location):
-    argop = CMDPositionalArgOp('', loc, value)
+    argop = CMDPositionalArgOp.create('', loc, value)
     self._positionalarg_block.push_back(argop)
 
   def add_keyword_arg(self, key: str, value : Value, keyloc : Location, _valueloc : Location):
-    argop = CMDValueSymbol(name=key, loc=keyloc, value=value)
+    argop = CMDValueSymbol.create(name=key, loc=keyloc, value=value)
     self._keywordarg_region.add(argop)
 
   def set_raw_arg(self, rawarg_value : Value, rawarg_loc : Location):
-    rawarg_symbol = CMDValueSymbol('rawarg', rawarg_loc, rawarg_value)
+    rawarg_symbol = CMDValueSymbol.create('rawarg', rawarg_loc, rawarg_value)
     self._head_region.add(rawarg_symbol)
 
   def add_nested_call(self, call : GeneralCommandOp):
@@ -437,7 +465,7 @@ class _CommandParseVisitorImpl(CommandParseVisitor):
   def visitCommand(self, ctx: CommandParseParser.CommandContext):
     assert ctx.name() is not None and isinstance(ctx.name(), CommandParseParser.NameContext)
     name_value, name_loc = self.visitName(ctx.name())
-    self.commandop = GeneralCommandOp('', self.startloc, name_value, name_loc)
+    self.commandop = GeneralCommandOp.create('', self.startloc, name_value, name_loc)
     if ctx.argumentlist() is not None:
       self.visitArgumentlist(ctx.argumentlist())
 
@@ -494,7 +522,7 @@ class _CommandParseVisitorImpl(CommandParseVisitor):
 
   def visitCallexpr(self, ctx: CommandParseParser.CallexprContext) -> tuple[Value, Location]:
     name_value, name_loc = self.visitName(ctx.name())
-    newop = GeneralCommandOp('', name_loc, name_value, name_loc)
+    newop = GeneralCommandOp.create('', name_loc, name_value, name_loc)
     current_command = self.command_op_stack[-1]
     current_command.add_nested_call(newop)
     self.command_op_stack.append(newop)
@@ -569,7 +597,7 @@ def _visit_command_block_impl(b : Block, ctx : Context, command_str : str, asset
     loc = get_loc_at_offset(body_range_start)
     # 如果是注释，则直接生成注释项
     if is_comment:
-      comment = CommentOp('', loc, StringLiteral.get(body, ctx))
+      comment = CommentOp.create(comment = StringLiteral.get(body, ctx), name = '', loc = loc)
       comment.insert_before(insert_before_op)
       continue
     # 既然不是注释，那就是真正的命令了
