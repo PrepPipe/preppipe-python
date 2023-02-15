@@ -354,8 +354,8 @@ class IRObject:
     if value_mapper is None:
       value_mapper = IRValueMapper(self.context, option_ignore_values_with_no_use=True)
     result = self.__class__(init_mode = IRObjectInitMode.COPY, context=self.context, init_src=self, value_mapper=value_mapper)
-    if len(value_mapper) > 0:
-      result.post_copy_value_remap(value_mapper)
+    if value_mapper.is_require_value_remap():
+      result.post_copy_value_remap(value_mapper=value_mapper)
     return result
 
 @dataclasses.dataclass
@@ -374,6 +374,9 @@ class IRValueMapper:
     if key in self.value_map:
       return self.value_map[key]
     return None
+
+  def is_require_value_remap(self) -> bool:
+    return len(self.value_map) > 0
 
 
 def _stub_copy_init(self, *, init_src : IRObject, value_mapper : IRValueMapper, **kwargs):
@@ -706,7 +709,7 @@ class Value(IRObject):
     self._uselist = IList(self)
 
   def copy_init(self, *, init_src: Value, value_mapper : IRValueMapper, **kwargs) -> None:
-    super().copy_init(init_src, value_mapper)
+    super().copy_init(init_src=init_src, value_mapper=value_mapper, **kwargs)
     self._type = init_src._type
     self._uselist = IList(self)
     value_mapper.add_value_map(init_src, self)
@@ -815,7 +818,7 @@ class User:
     super().__init__(**kwargs)
     self._operandlist = []
 
-  def post_copy_value_remap(self, value_mapper : IRValueMapper):
+  def post_copy_value_remap(self, *, value_mapper : IRValueMapper, **kwargs):
     for u in self._operandlist:
       if newvalue := value_mapper.get_mapped_value(u.value):
         u.set_value(newvalue)
@@ -905,7 +908,9 @@ class Operation(IRObject, IListNode):
     self._name = init_src._name
     self._loc = init_src._loc
     for name in init_src._operands:
-      self._add_operand(name)
+      cur_operand = self._add_operand(name)
+      for op_use in init_src.get_operand_inst(name).operanduses():
+        cur_operand.add_operand(op_use.value)
     for result in init_src._results.values():
       new_result = self._add_result(result.name, result.valuetype)
       value_mapper.add_value_map(result, new_result)
@@ -913,19 +918,19 @@ class Operation(IRObject, IListNode):
     for name, r in init_src._regions.items():
       if isinstance(r, SymbolTableRegion):
         new_region = SymbolTableRegion(value_mapper.context)
-        new_region.copy_init(r, value_mapper)
-        self._regions[name] = r
+        new_region.copy_init(init_src=r, value_mapper=value_mapper, **kwargs)
+        self._regions[name] = new_region
       else:
         new_region = Region()
-        new_region.copy_init(r, value_mapper)
-        self._regions[name] = r
+        new_region.copy_init(init_src=r, value_mapper=value_mapper, **kwargs)
+        self._regions[name] = new_region
 
-  def post_copy_value_remap(self, value_mapper: IRValueMapper) -> None:
-    super().post_copy_value_remap(value_mapper)
+  def post_copy_value_remap(self, *, value_mapper: IRValueMapper, **kwargs) -> None:
+    super().post_copy_value_remap(value_mapper=value_mapper, **kwargs)
     for name, operand in self._operands.items():
-      operand.post_copy_value_remap(value_mapper)
+      operand.post_copy_value_remap(value_mapper=value_mapper, **kwargs)
     for r in self.regions:
-      r.post_copy_value_remap(value_mapper)
+      r.post_copy_value_remap(value_mapper=value_mapper, **kwargs)
 
   def _add_result(self, name : str, ty : ValueType) -> OpResult:
     r = OpResult(init_mode=IRObjectInitMode.CONSTRUCT, context=ty.context, ty=ty)
@@ -1232,10 +1237,10 @@ class Block(Value, IListNode):
       clonedop = op.clone(value_mapper)
       self._ops.push_back(clonedop)
 
-  def post_copy_value_remap(self, value_mapper : IRValueMapper):
-    super().post_copy_value_remap(value_mapper)
+  def post_copy_value_remap(self, *, value_mapper : IRValueMapper, **kwargs):
+    super().post_copy_value_remap(value_mapper=value_mapper, **kwargs)
     for op in self._ops:
-      op.post_copy_value_remap(value_mapper)
+      op.post_copy_value_remap(value_mapper=value_mapper, **kwargs)
 
   def import_bypass_value(self, importer: IRJsonImporter) -> ValueType:
     return BlockReferenceType.get(importer.context)
@@ -1321,9 +1326,9 @@ class Region(NameDictNode):
       self._blocks.push_back(new_block)
       value_mapper.add_value_map(b, new_block)
 
-  def post_copy_value_remap(self, value_mapper : IRValueMapper):
+  def post_copy_value_remap(self, *, value_mapper : IRValueMapper, **kwargs):
     for b in self._blocks:
-      b.post_copy_value_remap(value_mapper)
+      b.post_copy_value_remap(value_mapper=value_mapper, **kwargs)
 
   @property
   def context(self) -> Context | None:
@@ -1883,6 +1888,9 @@ class DIFile(Location):
   def get_json_repr() -> dict[str, str]:
     return {'filepath': IRJsonRepr.LOCATION_FILE_PATH.value}
 
+  def __str__(self) -> str:
+    return self.filepath
+
 @IRObjectMetadataTrait
 @dataclasses.dataclass(init=False, slots=True)
 class DILocation(Location):
@@ -2229,6 +2237,7 @@ class IRWriter:
   _output_asset : io.BytesIO # the <style> part
   _max_indent_level : int # maximum indent level; we need this to create styles for text with different indents
   _html_dump : bool # True: output HTML; False: output text dump
+  _element_id_map : dict[int, int] # id(obj) -> export_id(obj)
 
   def __init__(self, ctx : Context, html_dump : bool, asset_pin_dict : dict[AssetData, str], asset_export_dict : dict[str, AssetData] | None) -> None:
     # assets in asset_pin_dict are already exported and we can simply use the mapped value to reference the specified asset
@@ -2244,6 +2253,19 @@ class IRWriter:
     self._asset_index_dict = None
     self._max_indent_level = 0
     self._html_dump = html_dump
+    self._element_id_map = {}
+
+  def get_export_id(self, obj : typing.Any) -> int:
+    idvalue = id(obj)
+    if idvalue in self._element_id_map:
+      return self._element_id_map[idvalue]
+    element_value = len(self._element_id_map)
+    self._element_id_map[idvalue] = element_value
+    return element_value
+
+  def get_id_str(self, obj : typing.Any):
+    elementid = self.get_export_id(obj)
+    return "#" + str(elementid)
 
   def escape(self, htmlstring):
     if not self._html_dump:
@@ -2312,7 +2334,7 @@ class IRWriter:
     return 'dump_indent_level_' + str(level)
 
   def _get_operation_short_name(self, op : Operation) -> str:
-    return '[' + hex(id(op)) + ' ' + type(op).__name__ + ']\"' + op.name + '"'
+    return '[' + self.get_id_str(op) + ' ' + type(op).__name__ + ']\"' + op.name + '"'
 
   def _get_text_style_str(self, style : TextStyleLiteral) -> str:
     value : tuple[tuple[TextAttribute, typing.Any]] = style.value
@@ -2382,7 +2404,7 @@ class IRWriter:
       else:
         raise NotImplementedError('Unexpected literal type for dumping')
     # unknown value types
-    self._write_body(self.escape('[#' + str(id(value)) + ' ' + type(value).__name__ + ']'))
+    self._write_body(self.escape('[' + self.get_id_str(value) + ' ' + type(value).__name__ + ']'))
     return None
 
   def _walk_operation(self, op : Operation, level : int) -> None:
@@ -2453,7 +2475,7 @@ class IRWriter:
       self._write_body(self.escape(')'))
 
     # attributes
-    if not op.attributes.empty:
+    if len(op.attributes) > 0:
       self._write_body(self.escape('['))
       isFirst = True
       for attribute_name in op.attributes:
@@ -2509,7 +2531,7 @@ class IRWriter:
 
   def _walk_region(self, r : Region, level : int) -> None:
     # for HTML dump, this should be in a <ul> element
-    region_title = hex(id(r)) + ' ' + type(r).__name__ + ' "' + r.name + '"'
+    region_title = self.get_id_str(r) + ' ' + type(r).__name__ + ' "' + r.name + '"'
 
     #self._write_body('<p class=\"' + self._get_indent_stylename(level) + '">')
     if self._html_dump:
@@ -2565,7 +2587,7 @@ class IRWriter:
         arg_name_list.append('<anon>')
       else:
         arg_name_list.append(arg.name)
-    body_header = hex(id(b)) + ' ' + body_header + '(' + ','.join(arg_name_list) + ')'
+    body_header = self.get_id_str(b) + ' ' + body_header + '(' + ','.join(arg_name_list) + ')'
     self._write_body(self.escape(body_header) + block_title_end + '\n')
     for o in b.body:
       self._walk_operation(o, level+1)
