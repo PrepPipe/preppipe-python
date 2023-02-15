@@ -26,55 +26,55 @@ class TransformBase:
     # 给命令行解析器（ArgumentParser）添加专属于该转换的参数
     # 只会在注册时提供了 arg_title 的情况下调用
     pass
-  
+
   @staticmethod
   def handle_arguments(args : argparse.Namespace):
     # 当命令行解析完毕后，如果该转换被启用，则该函数负责读取该转换所使用的参数
     # 只会在注册时提供了 arg_title 的情况下调用
     pass
-  
+
   _ctx : Context
   _inputs : typing.List[Operation | str]
   _output : str
-  
+
   def __init__(self, ctx : Context) -> None:
     # 此基类不会使用这些参数，子类在创建时应使用这样的参数列表
     # ctx: 所有 IR 共用的 Context
     self._ctx = ctx
     self._inputs = []
     self._output = ''
-  
+
   def set_input(self, inputs: typing.List[Operation | str]) -> None:
     # 设置输入（不管是 IR 还是文件路径）
     # inputs: （不管是IR还是其他文件、路径参数的）输入，即使是单个也是一个 list
     # 该函数一定会在 run() 之前被调用一次，但是与 set_output_path() 的调用没有必然的先后
     self._inputs = inputs
-  
+
   def set_output_path(self, output : str):
     # 设置输出（一个路径）
     # 只有输出不是IR的转换会被调用该函数，输出是 IR 的话下面的 run() 的返回值才是输出
     # 如果该函数被调用，则一定在 run() 之前被调用，并且最多调用一次
     self._output = output
-  
+
   def run(self) -> Operation | typing.List[Operation] | None:
     # 执行该转换
     # 如果该转换输出IR，则返回值应该是该IR的顶层操作项
     # 如果该转换不输出IR，则不返回任何值，实现应该在 run() 返回前完成输出
     # 基本上这应该是每个转换类实例中最后一个执行的成员函数
     pass
-  
+
   @property
   def inputs(self):
     return self._inputs
-  
+
   @property
   def output(self):
     return self._output
-  
+
   @property
   def context(self):
     return self._ctx
-  
+
   def __str__(self) -> str:
     result = type(self).__name__
     iostr = ''
@@ -117,7 +117,7 @@ class IODecl:
   description : str # 用于描述该输入输出的字符串
   match_suffix : str | typing.Tuple[str] | None = None # 用于自动匹配该输入输出的文件后缀名，None 则不作匹配。字符串需要包含'.'
   nargs : int | str = '*'
-  
+
   def __str__(self) -> str:
     result = ''
     if len(self.description) > 0:
@@ -176,7 +176,7 @@ class _OrderedPassAction(argparse.Action):
     setattr(namespace, 'ordered_passes', previous)
 
 class TransformRegistration:
-  
+
   @dataclasses.dataclass
   class TransformInfo:
     definition : type
@@ -185,13 +185,13 @@ class TransformRegistration:
     output_decl : type | IODecl
     arg_title : str | None
     arg_desc : str | None
-  
+
   _registration_record : typing.ClassVar[typing.Dict[type, TransformInfo]] = {}
   _flag_to_type_dict : typing.ClassVar[typing.Dict[str, type]] = {}
   _frontend_records : typing.ClassVar[typing.Dict[str, TransformInfo]] = {}
   _middleend_records : typing.ClassVar[typing.Dict[str, TransformInfo]] = {}
   _backend_records : typing.ClassVar[typing.Dict[str, TransformInfo]] = {}
-  
+
   # 我们假设每次运行的流程都是以下过程或其中的一部分：
     # 1. 前端读取非 IR 的文件，或者直接读取 IR 文件。这一步不需要区分读取的先后顺序，可以同时使用多个前端。该步结束时所有的“当前”IR都是同一类型，可能有一个顶层操作项也有可能有多个
     # 2. 中端读取上一步的结果，运行命令行给出的 0-N 个转换。这一步需要区分转换的先后顺序。每一个转换开始时 IR 类型相同，结束时也是，IR 顶层操作项的数量可能会减少。
@@ -205,10 +205,10 @@ class TransformRegistration:
     frontends : typing.List[TransformBase] # 所有的（初始化好的）前端
     middleends : typing.List[TransformBase] # 所有的中端
     backends : typing.List[TransformBase] # 所有的后端
-  
+
   def __init__(self) -> None:
     raise RuntimeError('TransformRegistration should not be instantiated')
-  
+
   @staticmethod
   def register_argument_group(transform_cls, arg_title : str, arg_desc : str | None):
     assert issubclass(transform_cls, TransformBase)
@@ -220,31 +220,31 @@ class TransformRegistration:
     info = TransformRegistration._registration_record[transform_cls]
     info.arg_title = arg_title
     info.arg_desc = arg_desc
-  
+
   @staticmethod
   def _iodecl_to_string(decl : type | IODecl):
     if isinstance(decl, IODecl):
       return str(decl)
     assert isinstance(decl, type) and issubclass(decl, Operation)
     return decl.__name__
-  
+
   @staticmethod
   def setup_argparser(parser : argparse.ArgumentParser):
-    
+
     def get_transform_helpstr(info : TransformRegistration.TransformInfo):
       return info.definition.__name__ + ': ' + TransformRegistration._iodecl_to_string(info.input_decl) + ' -> ' + TransformRegistration._iodecl_to_string(info.output_decl)
-    
+
     # 处理前后端的辅助函数
     def add_frontend_transform_arg(group : argparse._ArgumentGroup, info : TransformRegistration.TransformInfo):
       group.add_argument('--' + info.flag, dest=info.flag, action=_OrderedPassAction, nargs = info.input_decl.nargs, help=get_transform_helpstr(info))
-    
+
     def add_backend_transform_arg(group : argparse._ArgumentGroup, info : TransformRegistration.TransformInfo):
       group.add_argument('--' + info.flag, dest=info.flag, action=_OrderedPassAction, nargs = info.output_decl.nargs, help=get_transform_helpstr(info))
-    
+
     # 处理中端的辅助函数
     def add_middleend_transform_arg(group : argparse._ArgumentGroup, info : TransformRegistration.TransformInfo):
       group.add_argument('--' + info.flag, dest=info.flag, action=_OrderedPassAction, nargs=0, help=get_transform_helpstr(info))
-    
+
     def handle_stage_group(flags_dict : typing.Dict[str, TransformRegistration.TransformInfo], stage_name : str, stage_desc : str, cb_add_arg : callable):
       assert len(flags_dict) > 0
       group = parser.add_argument_group(title=stage_name, description=stage_desc)
@@ -253,7 +253,7 @@ class TransformRegistration:
         if info.arg_title is not None:
           transform_arg_group = parser.add_argument_group(title=info.arg_title, description=info.arg_desc)
           info.definition.install_arguments(transform_arg_group)
-    
+
     # 函数主体
     # parser.add_argument('input', nargs='*', type=str)
     # parser.add_argument('--output', dest='output', action='store', nargs=1, type=str)
@@ -264,7 +264,7 @@ class TransformRegistration:
       handle_stage_group(TransformRegistration._middleend_records, 'Middle end', 'Options tp enable middle-end transforms', add_middleend_transform_arg)
     if len(TransformRegistration._backend_records) > 0:
       handle_stage_group(TransformRegistration._backend_records, 'Back end', 'Options tp enable backend transforms', add_backend_transform_arg)
-  
+
   @staticmethod
   def build_pipeline(parsed_args : argparse.Namespace, ctx : Context) -> typing.List[TransformBase]:
     # 找到所有被调用的转换，将它们的命令行参数解析好，然后组成最终的管线
@@ -342,7 +342,7 @@ class TransformRegistration:
       for i in range(0, len(pipeline)):
         print("Pipeline "+str(i) + ':' + str(pipeline[i]))
     return pipeline
-  
+
   @staticmethod
   def register_transform_common(transform_cls, flag : str, input_decl : type | IODecl, output_decl : type | IODecl) -> TransformInfo:
     assert isinstance(transform_cls, type)
@@ -356,8 +356,8 @@ class TransformRegistration:
     info = TransformRegistration.TransformInfo(transform_cls, flag, input_decl, output_decl, None, None)
     TransformRegistration._registration_record[transform_cls] = info
     return info
-  
-  
+
+
   @staticmethod
   def register_frontend_transform(transform_cls, flag : str, input_decl : IODecl, output_decl : type):
     assert isinstance(input_decl, IODecl)
@@ -365,14 +365,14 @@ class TransformRegistration:
     assert issubclass(output_decl, Operation)
     info = TransformRegistration.register_transform_common(transform_cls, flag, input_decl, output_decl)
     TransformRegistration._frontend_records[flag] = info
-  
+
   @staticmethod
   def register_middleend_transform(transform_cls, flag : str, input_decl : type, output_decl : str):
     assert issubclass(input_decl, Operation)
     assert issubclass(output_decl, Operation)
     info = TransformRegistration.register_transform_common(transform_cls, flag, input_decl, output_decl)
     TransformRegistration._middleend_records[flag] = info
-  
+
   @staticmethod
   def register_backend_transform(transform_cls, flag : str, input_decl : type, output_decl : IODecl):
     assert issubclass(input_decl, Operation)
@@ -402,28 +402,61 @@ class _ViewIR(TransformBase):
     for op in self.inputs:
       op.view()
 
+@BackendDecl('test-copy-dump', input_decl=Operation, output_decl=IODecl('<No output>', nargs=0))
+class _TestCopyDumpIR(TransformBase):
+  @staticmethod
+  def save_dump(s : str, name : str)-> str:
+    name_portion = 'anon'
+    if len(name) > 0:
+      sanitized_name = get_sanitized_filename(name)
+      if len(sanitized_name) > 0:
+        name_portion = sanitized_name
+    file = tempfile.NamedTemporaryFile('w+b', suffix='.txt', prefix='preppipe_' + name_portion + '_', delete=False)
+    file.write(s.encode())
+    file.close()
+    path = os.path.abspath(file.name)
+    return path
+
+  def run(self) -> None:
+    src_dump = []
+    clones = []
+    for op in self.inputs:
+      src_dump.append(str(op))
+      clones.append(op.clone())
+      op.drop_all_references()
+    # pylint: disable=consider-using-enumerate
+    for i in range(0, len(clones)):
+      src = src_dump[i]
+      clone = clones[i]
+      dest = str(clone)
+      if src != dest:
+        src_path = _TestCopyDumpIR.save_dump(src, 'src')
+        dest_path = _TestCopyDumpIR.save_dump(dest, 'dest')
+        print('Diff: A=' + src_path + ', B=' + dest_path)
+        raise RuntimeError('Cloned output not matching with input!')
+
 def pipeline_main(args : typing.List[str] = None):
   # args 应该是不带 sys.argv[0] 的
   # (pipeline_cmd.py 中，这个参数是 sys.argv[1:])
   if args is None:
     args = sys.argv[1:]
-  
+
   def _print_version_info():
     print('preppipe ' + __version__)
   # 第一步：读取
   parser = argparse.ArgumentParser(prog='preppipe_pipeline', description='Direct commandline interface for preppipe')
-  
+
   TransformRegistration.setup_argparser(parser)
   result_args = parser.parse_args(args)
-  
+
   # if there is no valid action performed, we want to print the help message
   is_action_performed = False
-  
+
   # print version info if needed
   if result_args.verbose:
     _print_version_info()
     is_action_performed = True
-  
+
   ctx = Context()
   pipeline = TransformRegistration.build_pipeline(result_args, ctx)
   current_ir_ops = []
@@ -462,7 +495,7 @@ def pipeline_main(args : typing.List[str] = None):
       assert issubclass(info.output_decl, Operation)
       list_result = []
       if isinstance(run_result, list):
-        list_result = run_result.copy()  
+        list_result = run_result.copy()
       elif isinstance(run_result, Operation):
         list_result = [run_result]
       else:
@@ -479,17 +512,17 @@ def pipeline_main(args : typing.List[str] = None):
     else:
       # 该转换输出非IR内容
       assert isinstance(info.output_decl, IODecl)
-  
+
   if step_count > 0:
     is_action_performed = True
-  
+
   if not is_action_performed:
     parser.print_usage()
     return
-  
+
   if len(current_ir_ops) > 0 and not is_current_ir_used:
     print('Warning: last-stage IR not used')
-  
+
   return
 
 if __name__ == "__main__":
