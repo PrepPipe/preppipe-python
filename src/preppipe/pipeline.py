@@ -435,6 +435,31 @@ class _TestCopyDumpIR(TransformBase):
         print('Diff: A=' + src_path + ', B=' + dest_path)
         raise RuntimeError('Cloned output not matching with input!')
 
+@BackendDecl('json-export', input_decl=Operation, output_decl=IODecl('JSON file', nargs=1))
+class _JsonExportIR(TransformBase):
+  def run(self) -> Operation | typing.List[Operation] | None:
+    if len(self.inputs) == 0:
+      raise RuntimeError('No IR for export')
+    exporter = IRJsonExporter(self.context)
+    toplevel = None
+    for op in self.inputs:
+      if not isinstance(op, Operation):
+        raise RuntimeError('Toplevel should be an operation')
+      curop = op.json_export(exporter = exporter)
+      assert isinstance(curop, dict)
+      if toplevel is None:
+        # 0 --> 1
+        toplevel = curop
+      elif isinstance(toplevel, list):
+        # N --> N+1
+        toplevel.append(curop)
+      else:
+        # 1 --> 2
+        toplevel = [toplevel, curop]
+    json_str = exporter.write_json(toplevel)
+    with open(self.output, "w", newline="\n") as f:
+      f.write(json_str)
+
 def pipeline_main(args : typing.List[str] = None):
   # args 应该是不带 sys.argv[0] 的
   # (pipeline_cmd.py 中，这个参数是 sys.argv[1:])
