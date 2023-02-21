@@ -8,6 +8,7 @@ import enum
 import dataclasses
 import collections
 import collections.abc
+import decimal
 import tempfile
 import os
 import pathlib
@@ -23,7 +24,7 @@ import bidict
 import llist
 
 from .commontypes import TextAttribute, Color
-from .irjson import *
+from ._version import __version__
 
 # ------------------------------------------------------------------------------
 # ADT needed for IR
@@ -297,14 +298,16 @@ class IRObjectInitMode(enum.Enum):
 class IRObject:
   # （除了 Context 和基础类型之外的）IR 对象的基类
   # 提供此类的主要目的是将对象的创建过程统一
-  # 由于 Python 不像 C++ 那样支持多个构造函数，我们在这里提供我们所需要的 不同构造函数的接口
-  # ****** 该函数不应该被覆盖 ******
 
   # 帮助部分元数据、常量等去掉 __dict__
   # 使用 slots 之后我们仍然可以在类外给类做类似添加成员函数等操作，因为这些改的是类对象，而不是类实例
   # 。。现在先不用 slots，问题太多
   # __slots__ = ()
 
+  json_name_dict : typing.ClassVar[dict[str, type]] = {}
+
+  # 由于 Python 不像 C++ 那样支持多个构造函数，我们在这里提供我们所需要的 不同构造函数的接口
+  # ****** 该函数不应该被覆盖 ******
   def __init__(self, *, init_mode : IRObjectInitMode, context : Context, **kwargs) -> None:
     self.base_init(init_mode=init_mode, context=context, **kwargs)
     match init_mode:
@@ -345,6 +348,16 @@ class IRObject:
     # 我们不确定子对象或是其他引用的对象是否已经初始化
     pass
 
+  def json_export_impl(self, *, exporter : IRJsonExporter, dest : dict, **kwargs) -> None:
+    if 'JSON_TYPE_NAME' not in type(self).__dict__:
+      raise RuntimeError('Type '+ type(self).__name__ + ' not registered with @IRObjectJsonTypeName("<name>") decorator')
+    dest[IRJsonRepr.ANY_TYPE.value] = type(self).__dict__['JSON_TYPE_NAME']
+
+  @classmethod
+  def json_export_type_action(cls, exporter : IRJsonExporter, type_obj : dict):
+    # 当我们在 IR JSON 输出中注册类型时，如果有什么额外的数据需要保存，我们可以在这做
+    pass
+
   @property
   @abc.abstractmethod
   def context(self) -> Context:
@@ -357,6 +370,13 @@ class IRObject:
     if value_mapper.is_require_value_remap():
       result.post_copy_value_remap(value_mapper=value_mapper)
     return result
+
+  def json_export(self, exporter : IRJsonExporter = None) -> str:
+    if exporter is None:
+      exporter = IRJsonExporter(self.context)
+    toplevel = {}
+    self.json_export_impl(exporter=exporter, dest=toplevel)
+    return exporter.write_json(toplevel)
 
 @dataclasses.dataclass
 class IRValueMapper:
@@ -377,6 +397,277 @@ class IRValueMapper:
 
   def is_require_value_remap(self) -> bool:
     return len(self.value_map) > 0
+
+def IRObjectJsonTypeName(name : str):
+  assert isinstance(name, str) and len(name) > 0
+  def inner_regr(cls):
+    assert isinstance(cls, type)
+    assert name not in IRObject.json_name_dict
+    IRObject.json_name_dict[name] = cls
+    setattr(cls, 'JSON_TYPE_NAME', name)
+    return cls
+  return inner_regr
+
+class IRJsonRepr(enum.Enum):
+  # 对象的一些值在 JSON 对象中所使用的键 (key)
+  # 为了保证无歧义，即使对象类型不同，我们在这里也不会复用
+  # 通用部分
+  ANY_NAME  = 'name' # 所有的名称（包括操作项的，区的，或是其他）都使用这个
+  ANY_TYPE  = 'type' # 类型标识
+  ANY_BODY  = 'body'
+  ANY_KIND  = 'kind'
+  ANY_FLOAT = 'float' # 一个 decimal.Decimal 类型的值
+  ANY_REF   = 'ref' # 一个对元数据 (Metadata) 或值类型 (ValueType)的引用值
+  FLOAT_SIGN      = 'sign'
+  FLOAT_DIGIT     = 'digit'
+  FLOAT_EXPONENT  = 'exponent'
+
+  # 专有部分
+  LOCATION_FILE_PATH = 'file_path'
+  TYPE_PARAMETERIZED_PARAM = 'type_param'
+  VALUE_VALUETYPE = 'vty' # the type of the value
+  VALUE_VALUEID   = 'vid' # an ID representing the value
+  OP_LOCATION   = 'loc'
+  OP_REGION     = 'region'
+  OP_OPERAND    = 'operand'
+  OP_RESULT     = 'result'
+  OP_ATTRIBUTE  = 'attr'
+  OP_METADATA   = 'md'
+  USER_VALUELIST  = 'user_values'
+  BLOCK_ARGUMENT = 'arg'
+  MDLIKE_VALUEKIND_TYPE = 'm_type'
+  MDLIKE_VALUEKIND_REF  = 'm_ref'
+
+class IRJsonExporter:
+  # 每个实例对应一个 JSON 导出文件，管理其中需要去重或特殊处理的内容
+  # 一个导出文件里可能包含不止一个顶层操作项
+  context : Context
+  base_types : set[type] # 包含所有（不需要额外注释的）基础类型
+  type_dict : dict[type, str] # 从类型对象到 JSON 导出时所使用的的类型名；加在里面的都是加过类型注释的
+  md_dict : dict[Metadata, int] # 从元数据对象到元数据结点 ID 的映射
+  vty_dict : dict[ValueType, str] # 从值类型到表达值的映射
+  vty_index_dict : dict[type, int] # 对于每个值类型，下一个下标应该是多少
+  protocol_ver : int # 协议版本
+  output_type_dict : dict[str, typing.Any] # (要放到结果里的) Python 类型标注
+  output_metadata_list : list # 元数据列表
+  output_valuetype_dict : dict # 值类型（不是 Python 类型）（一般是类型名+数值后缀）
+
+  def __init__(self, context : Context) -> None:
+    self.context = context
+    self.base_types = set()
+    self.type_dict = {}
+    self.md_dict = {}
+    self.vty_dict = {}
+    self.vty_index_dict = {}
+    self.protocol_ver = 0
+    self.output_type_dict = {}
+    self.output_metadata_list = []
+    self.output_valuetype_dict = []
+    self.init_protocol_0()
+
+  def add_base_type(self, ty : type):
+    json_name = ty.JSON_TYPE_NAME
+    assert isinstance(json_name, str)
+    self.type_dict[ty] = json_name
+
+  def get_type_str(self, ty : type) -> str:
+    if ty in self.type_dict:
+      return self.type_dict[ty]
+    # 如果碰到一个没见过的类型，那么我们需要把他注册到 output_type_dict 里面
+    assert issubclass(ty, IRObject)
+    if ty not in IRObject.json_name_dict:
+      raise RuntimeError('Type not registered with @IRObjectJsonTypeName("<object_json_name>"): ' + ty.__name__)
+    json_name = IRObject.json_name_dict[ty]
+    # 把类型所有的直接父类列出来
+    bases = []
+    for parent in ty.__bases__:
+      parent_ty_name = self.get_type_str(parent)
+      bases.append(parent_ty_name)
+
+    # 我们要求所有类型只能继承自 IRBase 中定义的基本类型
+    # 如果有 IRBase 中的类型没有加到 JSON 基础类型中，我们想找到这些情况
+    assert len(bases) > 0
+
+    type_obj = {}
+    type_obj["base"] = bases
+    # 如果类型有其他东西需要加，就在这里加上
+    ty.json_export_type_action(exporter=self, type_obj=type_obj)
+    self.output_type_dict[json_name] = type_obj
+    return json_name
+
+  def emit_float(self, value : decimal.Decimal) -> dict:
+    value_tuple = value.as_tuple() # (sign : 0/1, digits: tuple[int], exponent: int) --> json array
+    out_value = {
+      IRJsonRepr.ANY_KIND.value       : IRJsonRepr.ANY_FLOAT.value,
+      IRJsonRepr.FLOAT_SIGN.value     : value_tuple.sign,
+      IRJsonRepr.FLOAT_DIGIT.value    : value_tuple.digits,
+      IRJsonRepr.FLOAT_EXPONENT.value : value_tuple.exponent
+    }
+    return out_value
+
+  def _emit_metadata_like_value(self, value : typing.Any, toplevel_type : type) -> typing.Any:
+    if isinstance(value, (int, bool, str)):
+      return value
+    if isinstance(value, decimal.Decimal):
+      return self.emit_float(value)
+    if isinstance(value, type):
+      result = {}
+      result[IRJsonRepr.ANY_KIND.value] = IRJsonRepr.MDLIKE_VALUEKIND_TYPE.value
+      result[IRJsonRepr.ANY_TYPE.value] = self.get_type_str(value)
+      return result
+    if isinstance(value, toplevel_type):
+      ref = None
+      if toplevel_type is Metadata:
+        ref = self.get_metadata_id(value)
+      elif toplevel_type is ValueType:
+        ref = self.get_value_type_repr(value)
+      else:
+        raise RuntimeError('Unexpected toplevel type for metadata value: ' + str(toplevel_type))
+      result = {}
+      result[IRJsonRepr.ANY_KIND.value] = IRJsonRepr.MDLIKE_VALUEKIND_REF.value
+      result[IRJsonRepr.ANY_REF.value] = ref
+      return result
+    # 到这里的话就不是基础类型了
+    # 检查是否是元组
+    if isinstance(value, tuple):
+      result = []
+      for v in value:
+        result.append(self._emit_metadata_like_value(v, toplevel_type))
+      return result
+    # 暂不支持其他类型
+    raise RuntimeError('Unexpected value type')
+
+
+  def export_metadata_like_object(self, obj : Metadata | ValueType) -> dict:
+    assert dataclasses.is_dataclass(obj)
+    toplevel_type : type = None
+    if isinstance(obj, Metadata):
+      toplevel_type = Metadata
+    elif isinstance(obj, ValueType):
+      toplevel_type = ValueType
+    else:
+      raise RuntimeError('Unexpected metadata-like type: ' + type(obj).__name__)
+
+    data = {}
+    for field in dataclasses.fields(obj):
+      value = getattr(obj, field.name)
+      # ignore context fields
+      if isinstance(value, Context):
+        assert value is self.context
+        continue
+      data[field.name] = self._emit_metadata_like_value(value, toplevel_type)
+    type_str = self.get_type_str(obj)
+    return {IRJsonRepr.ANY_TYPE.value : type_str, IRJsonRepr.ANY_BODY.value : data}
+
+  def get_metadata_id(self, md : Metadata) -> int:
+    if md in self.md_dict:
+      return self.md_dict[md]
+    # 需要把该元数据加到输出里
+    # TODO
+    if 'JSON_TYPE_NAME' not in type(md).__dict__:
+      raise RuntimeError('ValueType ' + type(md).__name__ + ' not registered with @IRObjectJsonTypeName("<name>") decorator')
+    raise NotImplementedError()
+
+  def get_value_repr(self, value : Value) -> dict | str | int | bool:
+    # 该函数是在导出对值的引用（不是定义）时调用的
+    # 如果用到的是字符串字面值，就用 str
+    # 如果用到的是整数字面值，就用 int
+    # 如果用到的是逻辑类型的字面值，就用 bool
+    # 如果用到的是其他值，就用 Object
+    raise NotImplementedError()
+
+  def get_value_id(self, value: Value) -> int:
+    # 该函数是在导出对值的定义（不是引用）时调用的
+    # 如果是基础的字面值的话根本不会调用该函数（在应该引用处就内嵌其值了）
+    raise NotImplementedError()
+
+  def get_value_type_repr(self, vty : ValueType) -> str:
+    if 'JSON_TYPE_NAME' not in type(vty).__dict__:
+      raise RuntimeError('ValueType ' + type(vty).__name__ + ' not registered with @IRObjectJsonTypeName("<name>") decorator')
+    # TODO
+    # 可以使用 export_metadata_like_object() 来辅助输出
+    raise NotImplementedError()
+
+  def get_plain_value_repr(self, value : str | int | bool | decimal.Decimal) -> dict | str | int | bool:
+    assert isinstance(value, (int, str, bool, decimal.Decimal))
+    if isinstance(value, decimal.Decimal):
+      return self.emit_float(value)
+    return value
+
+  def write_json(self, toplevel : dict | list) -> str:
+    # 如果 toplevel 是 dict 的话，顶层操作项只有一个
+    # 如果 toplevel 是 list 的话，顶层操作项可以不止一个，每一项都是列表成员
+    assert isinstance(toplevel, (dict, list))
+    json_obj = {}
+    json_obj["version"] = {"protocol": self.protocol_ver, "preppipe": __version__}
+    json_obj["type"] = self.output_type_dict
+    json_obj["metadata"] = self.output_metadata_list
+    json_obj["valuetype"] = self.output_valuetype_dict
+    json_obj["toplevel"] = toplevel
+    return json.dumps(json_obj, allow_nan=False)
+
+  def init_protocol_0(self):
+    base_types = [
+      # core IR types
+      ValueType,
+      Value,
+      User,
+      Operation,
+      Literal,
+      LiteralExpr,
+      ConstExpr,
+      AssetData,
+      Region,
+      SymbolTableRegion,
+
+      # types
+      ParameterizedType,
+      OptionalType,
+      EnumType,
+      ClassType,
+      StatelessType,
+      BlockReferenceType,
+      AssetDataReferenceType,
+      VoidType,
+      IntType,
+      FloatType,
+      BoolType,
+      StringType,
+      TextStyleType,
+      TextType,
+      ImageType,
+      AudioType,
+
+      # operations
+      Symbol,
+      MetadataOp,
+      ErrorOp,
+      CommentOp,
+
+      # literal
+      UndefLiteral,
+      ClassLiteral,
+      IntLiteral,
+      BoolLiteral,
+      FloatLiteral,
+      StringLiteral,
+      TextStyleLiteral,
+      TextFragmentLiteral,
+      TextLiteral,
+      EnumLiteral,
+
+      # metadata
+      Location,
+      DIFile,
+      DILocation,
+
+      # asset data
+      BytesAssetData,
+      ImageAssetData,
+      AudioAssetData,
+    ]
+    for ty in base_types:
+      self.add_base_type(ty)
 
 
 def _stub_copy_init(self, *, init_src : IRObject, value_mapper : IRValueMapper, **kwargs):
@@ -477,14 +768,25 @@ class IRJsonImporter:
     return self._type_dict[qualname]
 
 
+@IRObjectJsonTypeName('metadata_md')
 @IRObjectMetadataTrait
-@dataclasses.dataclass(init=False, slots=True)
-class Location(IRObject):
+@dataclasses.dataclass(init=False, slots=True, frozen=True)
+class Metadata(IRObject):
+  # 所有元数据的基类
+  # 如果元数据有以下需求：
+  # (1) 要包含对值的引用
+  # (2) 要能作为值、有类型
+  # (3) 要能表达复杂的、超越 DAG 的结构
+  # 有以上之一的请继承 MetadataOp 而不是该类
   context : Context
 
-  def base_init(self, *, context : Context, **kwargs) -> None:
-    super(Location, self).base_init(context=context, **kwargs)
-    self.context=context
+  def construct_init(self, *, context : Context, **kwargs) -> None:
+    super(Metadata, self).construct_init(context=context, **kwargs)
+    object.__setattr__(self, 'context', context)
+
+@IRObjectJsonTypeName('location_dl')
+@dataclasses.dataclass(init=False, slots=True, frozen=True)
+class Location(Metadata):
 
   @staticmethod
   def getNullLocation(ctx: Context):
@@ -494,19 +796,22 @@ class Location(IRObject):
 # Types
 # ------------------------------------------------------------------------------
 
+@IRObjectJsonTypeName("value_t")
+@IRObjectMetadataTrait
 @dataclasses.dataclass(init=False, slots=True, frozen=True)
-class ValueType:
+class ValueType(IRObject):
   context : Context
 
-  def __init__(self, *, context : Context, **kwargs) -> None:
+  def construct_init(self, *, context : Context, **kwargs) -> None:
+    super(ValueType, self).construct_init(context=context, **kwargs)
     object.__setattr__(self, 'context', context)
 
   def __str__(self) -> str:
     return type(self).__name__
 
-@IRObjectMetadataTrait
+@IRObjectJsonTypeName("parameterized_t")
 @dataclasses.dataclass(init=False, slots=True, frozen=True)
-class ParameterizedType(IRObject, ValueType):
+class ParameterizedType(ValueType):
   # parameterized types are considered different if the parameters (can be types or literal values) are different
   parameters : tuple[ValueType | type | int | str | bool | None] = dataclasses.field(metadata={'json_repr': IRJsonRepr.TYPE_PARAMETERIZED_PARAM}) # None for separator
 
@@ -539,13 +844,13 @@ class ParameterizedType(IRObject, ValueType):
   def __repr__(self) -> str:
     return  type(self).__name__ + '<' + ParameterizedType._get_parameter_repr(self.parameters) + '>'
 
+@IRObjectJsonTypeName("optional_t")
 @dataclasses.dataclass(init=False, slots=True, frozen=True)
 class OptionalType(ParameterizedType):
   # dependent type that is optional of the specified type (either have the data or None)
-  # likely used for a PHI for handles
 
   def construct_init(self, *, element_type: ValueType, **kwargs) -> None:
-    return super().construct_init(element_type.context, [element_type], **kwargs)
+    return super().construct_init(context=element_type.context, parameters=[element_type], **kwargs)
 
   @property
   def element_type(self) -> ValueType:
@@ -561,9 +866,9 @@ class OptionalType(ParameterizedType):
       return ty
     return ty.context.get_parameterized_type_dict(OptionalType).get_or_create([ty], lambda : OptionalType(init_mode = IRObjectInitMode.CONSTRUCT, context = ty.context, element_type=ty))
 
+@IRObjectJsonTypeName("enum_t")
 @dataclasses.dataclass(init=False, slots=True, frozen=True)
 class EnumType(ParameterizedType):
-
   def construct_init(self, *, ty : type, context : Context, **kwargs) -> None:
     return super().construct_init(context=context, parameters=[ty], **kwargs)
 
@@ -579,9 +884,9 @@ class EnumType(ParameterizedType):
   def get(ty : type, context : Context) -> EnumType:
     return context.get_parameterized_type_dict(EnumType).get_or_create([ty], lambda : EnumType(init_mode = IRObjectInitMode.CONSTRUCT, context = context, ty = ty))
 
+@IRObjectJsonTypeName("class_t")
 @dataclasses.dataclass(init=False, slots=True, frozen=True)
 class ClassType(ParameterizedType):
-
   def construct_init(self, *, base_cls : type, context: Context, **kwargs) -> None:
     super().construct_init(context=context, parameters=[base_cls])
 
@@ -623,70 +928,82 @@ class ParameterizedTypeUniquingDict:
 # Actual value types
 # ------------------------------------------------------------------------------
 
-@IRObjectMetadataTrait
+@IRObjectJsonTypeName("stateless_t")
 @dataclasses.dataclass(init=False, slots=True, frozen=True)
-class StatelessType(ValueType, IRObject):
+class StatelessType(ValueType):
   @classmethod
   def get(cls, ctx : Context):
     return ctx.get_stateless_type(cls)
 
+@IRObjectJsonTypeName("block_ref_t")
 @dataclasses.dataclass(init=False, slots=True, frozen=True)
 class BlockReferenceType(StatelessType):
   pass
 
+@IRObjectJsonTypeName("assetdata_ref_t")
 @dataclasses.dataclass(init=False, slots=True, frozen=True)
-class _AssetDataReferenceType(StatelessType):
+class AssetDataReferenceType(StatelessType):
   # this type is only for asset data internal reference (from Asset instance to AssetData instance)
   # we use this to implement copy-on-write
   # usually no user code need to work with it
   pass
 
+@IRObjectJsonTypeName("void_t")
 @dataclasses.dataclass(init=False, slots=True, frozen=True)
 class VoidType(StatelessType):
   def __str__(self) -> str:
     return "空类型"
 
+@IRObjectJsonTypeName("int_t")
 @dataclasses.dataclass(init=False, slots=True, frozen=True)
 class IntType(StatelessType):
   def __str__(self) -> str:
     return "整数类型"
 
+@IRObjectJsonTypeName("float_t")
 @dataclasses.dataclass(init=False, slots=True, frozen=True)
 class FloatType(StatelessType):
   def __str__(self) -> str:
     return "浮点数类型"
 
+@IRObjectJsonTypeName("bool_t")
 @dataclasses.dataclass(init=False, slots=True, frozen=True)
 class BoolType(StatelessType):
   def __str__(self) -> str:
     return "逻辑类型"
 
+@IRObjectJsonTypeName("str_t")
 @dataclasses.dataclass(init=False, slots=True, frozen=True)
 class StringType(StatelessType):
   def __str__(self) -> str:
     return "字符串类型"
 
+@IRObjectJsonTypeName("text_style_t")
 @dataclasses.dataclass(init=False, slots=True, frozen=True)
 class TextStyleType(StatelessType):
   def __str__(self) -> str:
     return "文本格式类型"
 
+@IRObjectJsonTypeName("text_t")
 @dataclasses.dataclass(init=False, slots=True, frozen=True)
 class TextType(StatelessType):
   # string + style (style can be empty)
   def __str__(self) -> str:
     return "文本类型"
 
+@IRObjectJsonTypeName("image_t")
 @dataclasses.dataclass(init=False, slots=True, frozen=True)
 class ImageType(StatelessType):
   def __str__(self) -> str:
     return "图片类型"
 
+@IRObjectJsonTypeName("audio_t")
 @dataclasses.dataclass(init=False, slots=True, frozen=True)
 class AudioType(StatelessType):
   def __str__(self) -> str:
     return "声音类型"
 
+@IRObjectJsonTypeName("aggr_text_t")
 @dataclasses.dataclass(init=False, slots=True, frozen=True)
 class AggregateTextType(StatelessType):
   # 列表，表格，代码段等结构化的文本内容
@@ -697,6 +1014,7 @@ class AggregateTextType(StatelessType):
 # Major classes
 # ------------------------------------------------------------------------------
 
+@IRObjectJsonTypeName("value")
 class Value(IRObject):
   # __slots__ = ('_type', '_uselist')
   # value is either a block argument or an operation result
@@ -717,17 +1035,34 @@ class Value(IRObject):
   def json_import_init(self, *, importer: IRJsonImporter, init_src: dict, **kwargs) -> None:
     # 因为有些值（比如同时继承了 Symbol 和 Value 的）不需要从存档里读取值类型，
     # 这些值的类型完全可以从子类决定，
-    # 我们建一个新的函数 import_bypass_value(), 子类可以覆盖该函数来提供类型
+    # 我们建一个新的函数 get_fixed_value_type(), 子类可以覆盖该函数来提供类型
     super().json_import_init(importer=importer, init_src=init_src, **kwargs)
-    if ty := self.import_bypass_value(importer):
-      self._type = ty
+    if ty := self.get_fixed_value_type():
+      assert issubclass(ty, ValueType)
+      self._type = ty.get(importer.context)
     else:
       self._type = importer.get_value_type(init_src[IRJsonRepr.VALUE_VALUETYPE.value])
     self._uselist = IList(self)
     importer.claim_value_id(init_src[IRJsonRepr.VALUE_VALUEID.value], self)
 
-  def import_bypass_value(self, importer: IRJsonImporter) -> ValueType:
+  def json_export_impl(self, *, exporter: IRJsonExporter, dest: dict, **kwargs) -> None:
+    super().json_export_impl(exporter=exporter, dest=dest, **kwargs)
+    dest[IRJsonRepr.VALUE_VALUEID.value] = exporter.get_value_id(self)
+    if self.get_fixed_value_type() is None:
+      # 我们需要把值类型也保存下来
+      dest[IRJsonRepr.VALUE_VALUETYPE.value] = exporter.get_value_type_repr(self.valuetype)
+
+  @staticmethod
+  def get_fixed_value_type() -> type | None:
+    # 如果某些子类只会使用一种值类型，那么在这里返回类型
     return None
+
+  @classmethod
+  def json_export_type_action(cls, exporter: IRJsonExporter, type_obj: dict):
+    super().json_export_type_action(exporter, type_obj)
+    if ty := cls.get_fixed_value_type():
+      json_name = exporter.get_type_str(ty)
+      type_obj["value"] = {"value_type": json_name}
 
   @property
   def uses(self) -> IList[Use]:
@@ -782,6 +1117,10 @@ class NameReferencedValue(Value, NameDictNode):
   def parent(self) -> Block | Operation:
     return super().parent
 
+  def json_export_impl(self, *, exporter: IRJsonExporter, dest: dict, **kwargs) -> None:
+    super().json_export_impl(exporter=exporter, dest=dest, **kwargs)
+    dest[IRJsonRepr.ANY_NAME.value] = self.name
+
 class Use(IListNode):
   # __slots__ = ('_user', '_argno')
   _user : User
@@ -810,11 +1149,11 @@ class Use(IListNode):
       # pylint: disable=protected-access
       v._uselist.push_back(self)
 
+@IRObjectJsonTypeName("user")
 class User:
   _operandlist : list[Use]
 
   def __init__(self, **kwargs) -> None:
-    # passthrough kwargs for cooperative multiple inheritance
     super().__init__(**kwargs)
     self._operandlist = []
 
@@ -847,6 +1186,12 @@ class User:
       u.set_value(None)
     self._operandlist.clear()
 
+  def json_export_user_valuelist(self, *, exporter : IRJsonExporter, **kwargs):
+    result = []
+    for use in self._operandlist:
+      result.append(exporter.get_value_repr(use.value))
+    return result
+
 class OpOperand(User, NameDictNode):
   def __init__(self) -> None:
     super().__init__()
@@ -873,6 +1218,7 @@ class BlockArgument(NameReferencedValue):
     return super().parent
 
 # reference: https://mlir.llvm.org/doxygen/classmlir_1_1Operation.html
+@IRObjectJsonTypeName("op")
 class Operation(IRObject, IListNode):
   _s_traits : typing.ClassVar[tuple[type]] = () # operation traits; take types as operand so that we can attach static methods to the traits
 
@@ -884,7 +1230,7 @@ class Operation(IRObject, IListNode):
   _loc : Location
   _operands : NameDict[OpOperand]
   _results : NameDict[OpResult]
-  _attributes : collections.OrderedDict[str, int | str | bool | float]
+  _attributes : collections.OrderedDict[str, int | str | bool | decimal.Decimal]
   _regions : NameDict[Region]
   #_terminator_info : OpTerminatorInfo
 
@@ -931,6 +1277,55 @@ class Operation(IRObject, IListNode):
       operand.post_copy_value_remap(value_mapper=value_mapper, **kwargs)
     for r in self.regions:
       r.post_copy_value_remap(value_mapper=value_mapper, **kwargs)
+
+  @staticmethod
+  def _json_export_dump_region(r : Region, exporter : IRJsonExporter) -> dict :
+    body = []
+    if isinstance(r, SymbolTableRegion):
+      for symb in r:
+        # 为保证 symbol 的顺序能够在 JSON 中保存下来，我们在这一定使用 list 而不是 dict
+        symb_dest = {}
+        symb.export_json_impl(exporter=exporter, dest=symb_dest)
+        body.append(symb_dest)
+    else:
+      assert type(r) == Region
+      for block in r.blocks:
+        body.append(block.json_export_block(exporter=exporter))
+    dest = {}
+    dest[IRJsonRepr.ANY_BODY.value] = body
+    dest[IRJsonRepr.ANY_KIND.value] = r.JSON_TYPE_NAME
+    # 不保存区名，应该在上层就放进去了
+    return dest
+
+  def json_export_impl(self, *, exporter: IRJsonExporter, dest: dict, **kwargs) -> None:
+    super().json_export_impl(exporter=exporter, dest=dest, **kwargs)
+    if len(self.name) > 0:
+      dest[IRJsonRepr.ANY_NAME.value] = self.name
+    if self.location is not self.context.null_location:
+      dest[IRJsonRepr.OP_LOCATION.value] = exporter.get_metadata_id(self.location)
+    if len(self.operands) > 0:
+      operands = {}
+      for name, operand in self.operands.items():
+        operands[name] = operand.json_export_user_valuelist(exporter=exporter)
+      dest[IRJsonRepr.OP_OPERAND.value] = operands
+    if len(self.results) > 0:
+      opresults = []
+      for name, opresult in self.results.items():
+        dest_dict = {}
+        opresult.json_export_impl(exporter=exporter, dest=dest_dict)
+        opresults.append(dest_dict)
+      dest[IRJsonRepr.OP_RESULT.value] = opresults
+    if len(self.attributes) > 0:
+      attrs = {}
+      for key, value in self.attributes.items():
+        assert isinstance(key, str) and isinstance(value, (int, str, decimal.Decimal, bool))
+        attrs[key] = exporter.get_plain_value_repr(value)
+      dest[IRJsonRepr.OP_ATTRIBUTE.value] = attrs
+    if self.get_num_regions() > 0:
+      regions_dict = {}
+      for r in self.regions:
+        regions_dict[r.name] = self._json_export_dump_region(r, exporter)
+      dest[IRJsonRepr.OP_REGION.value] = regions_dict
 
   def _add_result(self, name : str, ty : ValueType) -> OpResult:
     r = OpResult(init_mode=IRObjectInitMode.CONSTRUCT, context=ty.context, ty=ty)
@@ -981,7 +1376,7 @@ class Operation(IRObject, IListNode):
   def set_attr(self, name : str, value: typing.Any) -> None:
     self._attributes[name] = value
 
-  def get_attr(self, name : str) -> int | str | bool | float | None:
+  def get_attr(self, name : str) -> int | str | bool | decimal.Decimal | None:
     return self._attributes.get(name, None)
 
   def has_attr(self, name : str) -> bool:
@@ -1130,6 +1525,7 @@ class Operation(IRObject, IListNode):
     dump = writer.write_op(self)
     print(dump.decode('utf-8'))
 
+@IRObjectJsonTypeName("symbol_op")
 class Symbol(Operation):
 
   @Operation.name.setter
@@ -1153,10 +1549,12 @@ class Symbol(Operation):
     # pylint: disable=protected-access
     table._drop_symbol(self.name)
 
+@IRObjectJsonTypeName("metadata_op")
 class MetadataOp(Operation):
   # 所有不带语义的操作项的基类（错误记录，注释，等等）
   pass
 
+@IRObjectJsonTypeName("error_op")
 class ErrorOp(MetadataOp):
   # 错误项用以记录编译中遇到的错误
   # 所有错误项需要(1)一个错误编号，(2)一个错误消息
@@ -1186,6 +1584,7 @@ class ErrorOp(MetadataOp):
   def create(error_code : str, context : Context, error_msg : StringLiteral = None, name: str = '', loc: Location = None) -> ErrorOp:
     return ErrorOp(init_mode=IRObjectInitMode.CONSTRUCT, context=context, error_code = error_code, error_msg = error_msg, name = name, loc = loc)
 
+@IRObjectJsonTypeName("comment_op")
 class CommentOp(MetadataOp):
   # 注释项用以保留源中的用户输入的注释
   # 一般来说我们努力将其保留到输出源文件中
@@ -1242,8 +1641,29 @@ class Block(Value, IListNode):
     for op in self._ops:
       op.post_copy_value_remap(value_mapper=value_mapper, **kwargs)
 
-  def import_bypass_value(self, importer: IRJsonImporter) -> ValueType:
-    return BlockReferenceType.get(importer.context)
+  def json_export_block(self, *, exporter: IRJsonExporter, **kwargs) -> dict:
+    # 该函数只有在正常区时会被调用，符号表区导出时会越过块级，直接输出子操作项
+    dest = {}
+    if len(self.name) > 0:
+      dest[IRJsonRepr.ANY_NAME.value] = self.name
+    if len(self.args) > 0:
+      args = []
+      for a in self.args.values():
+        dest_dict = {}
+        a.json_export_impl(exporter=exporter, dest=dest_dict)
+        args.append(dest_dict)
+      dest[IRJsonRepr.BLOCK_ARGUMENT.value] = args
+    if len(self.body) > 0:
+      body = []
+      for op in self.body:
+        cur_op = {}
+        op.json_export_impl(exporter=exporter, dest=cur_op)
+      dest[IRJsonRepr.ANY_BODY.value] = body
+    return dest
+
+  @staticmethod
+  def get_fixed_value_type():
+    return BlockReferenceType
 
   @property
   def context(self) -> Context:
@@ -1313,6 +1733,7 @@ class Block(Value, IListNode):
     dump = writer.write_block(self)
     print(dump.decode('utf-8'))
 
+@IRObjectJsonTypeName("region_r")
 class Region(NameDictNode):
   _blocks : IList[Block, Region]
 
@@ -1397,6 +1818,7 @@ class Region(NameDictNode):
     dump = writer.write_region(self)
     print(dump.decode('utf-8'))
 
+@IRObjectJsonTypeName("symbol_r")
 class SymbolTableRegion(Region, collections.abc.Sequence):
   # if a region is a symbol table, it will always have one block
   _lookup_dict : collections.OrderedDict[str, Symbol]
@@ -1454,6 +1876,7 @@ class SymbolTableRegion(Region, collections.abc.Sequence):
   def add(self, symbol : Symbol):
     self._block.push_back(symbol)
 
+@IRObjectJsonTypeName('literal_l')
 @IRObjectUniqueTrait
 class Literal(Value, IRObject):
   # __slots__ = ('_value')
@@ -1477,6 +1900,7 @@ class Literal(Value, IRObject):
   def _get_literal_impl(literal_cls : type, value : typing.Any, context : Context) -> typing.Any:
     return context.get_literal_uniquing_dict(literal_cls).get_or_create(value, lambda : literal_cls(init_mode = IRObjectInitMode.CONSTRUCT, context = context, value = value))
 
+@IRObjectJsonTypeName('undef_l')
 class UndefLiteral(Literal):
   # 我们会使用 Undef 在特定条件下替换别的值
   # （比如如果一个Op要被删了，如果它还在被使用的话，所有的引用都会替换为这种值）
@@ -1490,6 +1914,7 @@ class UndefLiteral(Literal):
     return ty.context.get_literal_uniquing_dict(UndefLiteral).get_or_create((ty, msg),
       lambda : UndefLiteral(init_mode = IRObjectInitMode.CONSTRUCT, context = ty.context, ty = ty, value = msg))
 
+@IRObjectJsonTypeName('class_l')
 class ClassLiteral(Literal):
   # 某些情况下我们需要用一个字面值来找到一个类
   # （比如 VNModel 中我们按名字查找转场效果）
@@ -1508,6 +1933,7 @@ class ClassLiteral(Literal):
     return context.get_literal_uniquing_dict(ClassLiteral).get_or_create((baseclass, value),
       lambda : ClassLiteral(init_mode = IRObjectInitMode.CONSTRUCT, context = context, baseclass = baseclass, value = value))
 
+@IRObjectJsonTypeName('constexpr_ce')
 @IRObjectUniqueTrait
 class ConstExpr(Value, User):
   # ConstExpr 是引用其他 Value 的 Value，自身像 Literal 那样也是保证无重复的。虽然大部分参数应该是 Literal 但也可以用别的
@@ -1598,7 +2024,7 @@ class Context:
   def get_stateless_type(self, ty : type) -> typing.Any:
     if ty in self._stateless_type_dict:
       return self._stateless_type_dict[ty]
-    instance = ty(context=self)
+    instance = ty(init_mode=IRObjectInitMode.CONSTRUCT, context=self)
     self._stateless_type_dict[ty] = instance
     return instance
 
@@ -1668,6 +2094,7 @@ class Context:
 # Assets
 # ------------------------------------------------------------------------------
 
+@IRObjectJsonTypeName('assetdata_ad')
 class AssetData(Value, IListNode):
   # an asset data represent a pure asset; no (IR-related) metadata
   # any asset data is immutable; they cannot be modified after creation
@@ -1684,7 +2111,7 @@ class AssetData(Value, IListNode):
   #_backing_store_path : str # if it is in the temporary directory, this asset data owns it; otherwise the source is read-only; empty string if no backing store
 
   def __init__(self, context : Context, **kwargs) -> None:
-    ty = _AssetDataReferenceType.get(context)
+    ty = AssetDataReferenceType.get(context)
     super().__init__(ty, **kwargs)
     context._add_asset_data(self)
 
@@ -1726,6 +2153,7 @@ class AssetData(Value, IListNode):
   def __hash__(self) -> int:
     return hash(id(self))
 
+@IRObjectJsonTypeName('bytes_ad')
 class BytesAssetData(AssetData):
   _backing_store_path : str
   _data : bytes
@@ -1749,7 +2177,7 @@ class BytesAssetData(AssetData):
     else:
       shutil.copy2(self._backing_store_path, dest_path, follow_symlinks=False)
 
-
+@IRObjectJsonTypeName('image_ad')
 class ImageAssetData(AssetData):
   _backing_store_path : str
   _data : PIL.Image.Image
@@ -1797,6 +2225,7 @@ class ImageAssetData(AssetData):
       image = PIL.Image.open(self._backing_store_path)
       image.save(dest_path)
 
+@IRObjectJsonTypeName('audio_ad')
 class AudioAssetData(AssetData):
   _backing_store_path : str
   _data : pydub.AudioSegment
@@ -1875,14 +2304,15 @@ class AssetBase(User):
 # Debug info (DI)
 # ------------------------------------------------------------------------------
 
+@IRObjectJsonTypeName('difile_dl')
 @IRObjectMetadataTrait
-@dataclasses.dataclass(init=False, slots=True)
+@dataclasses.dataclass(init=False, slots=True, frozen=True)
 class DIFile(Location):
   filepath : str
 
   def construct_init(self, *, filepath : str, **kwargs) -> None:
     super(DIFile, self).construct_init(**kwargs)
-    self.filepath = filepath
+    object.__setattr__(self, 'filepath', filepath)
 
   @staticmethod
   def get_json_repr() -> dict[str, str]:
@@ -1891,8 +2321,9 @@ class DIFile(Location):
   def __str__(self) -> str:
     return self.filepath
 
+@IRObjectJsonTypeName('dilocation_dl')
 @IRObjectMetadataTrait
-@dataclasses.dataclass(init=False, slots=True)
+@dataclasses.dataclass(init=False, slots=True, frozen=True)
 class DILocation(Location):
   # 描述一个文档位置
   # 对于文档而言，页数可以用 page breaks 来定 （ODF 有 <text:soft-page-break/>）
@@ -1906,10 +2337,10 @@ class DILocation(Location):
 
   def construct_init(self, *, file : DIFile, page : int, row : int, column : int, **kwargs) -> None:
     super(DILocation, self).construct_init(**kwargs)
-    self.file = file
-    self.page = page
-    self.row = row
-    self.column = column
+    object.__setattr__(self, 'file', file)
+    object.__setattr__(self, 'page', page)
+    object.__setattr__(self, 'row', row)
+    object.__setattr__(self, 'column', column)
 
   def __str__(self) -> str:
     return str(self.file) + '#P' + str(self.page) + ':' + str(self.row) + ':' + str(self.column)
@@ -1918,14 +2349,16 @@ class DILocation(Location):
 # Literals
 # ------------------------------------------------------------------------------
 
+@IRObjectJsonTypeName('int_l')
 class IntLiteral(Literal):
   def construct_init(self, *, context : Context, value : int, **kwargs) -> None:
     assert isinstance(value, int)
     ty = IntType.get(context)
     return super().construct_init(ty=ty, value=value, **kwargs)
 
-  def import_bypass_value(self, importer: IRJsonImporter) -> ValueType:
-    return IntType.get(importer.context)
+  @staticmethod
+  def get_fixed_value_type():
+    return IntType
 
   @property
   def value(self) -> int:
@@ -1935,14 +2368,16 @@ class IntLiteral(Literal):
   def get(value : int, context : Context) -> IntLiteral:
     return Literal._get_literal_impl(IntLiteral, value, context)
 
+@IRObjectJsonTypeName('bool_l')
 class BoolLiteral(Literal):
   def construct_init(self, *, context : Context, value: bool, **kwargs) -> None:
     assert isinstance(value, bool)
     ty = BoolType.get(context)
     super().construct_init(ty=ty, value=value, **kwargs)
 
-  def import_bypass_value(self, importer: IRJsonImporter) -> ValueType:
-    return BoolType.get(importer.context)
+  @staticmethod
+  def get_fixed_value_type():
+    return BoolType
 
   @property
   def value(self) -> bool:
@@ -1952,23 +2387,26 @@ class BoolLiteral(Literal):
   def get(value : bool, context : Context) -> BoolLiteral:
     return Literal._get_literal_impl(BoolLiteral, value, context)
 
+@IRObjectJsonTypeName('float_l')
 class FloatLiteral(Literal):
-  def construct_init(self, *, context : Context, value: float, **kwargs) -> None:
-    assert isinstance(value, float)
+  def construct_init(self, *, context : Context, value: decimal.Decimal, **kwargs) -> None:
+    assert isinstance(value, decimal.Decimal)
     ty = FloatType.get(context)
     super().construct_init(ty=ty, value=value, **kwargs)
 
-  def import_bypass_value(self, importer: IRJsonImporter) -> ValueType:
-    return FloatType.get(importer.context)
+  @staticmethod
+  def get_fixed_value_type():
+    return FloatType
 
   @property
-  def value(self) -> float:
+  def value(self) -> decimal.Decimal:
     return super().value
 
   @staticmethod
-  def get(value : float, context : Context) -> FloatLiteral:
+  def get(value : decimal.Decimal, context : Context) -> FloatLiteral:
     return Literal._get_literal_impl(FloatLiteral, value, context)
 
+@IRObjectJsonTypeName('str_l')
 class StringLiteral(Literal):
   # 字符串常量的值不包含样式等信息，就是纯字符串
 
@@ -1977,8 +2415,9 @@ class StringLiteral(Literal):
     ty = StringType.get(context)
     super().construct_init(ty=ty, value=value, **kwargs)
 
-  def import_bypass_value(self, importer: IRJsonImporter) -> ValueType:
-    return StringType.get(importer.context)
+  @staticmethod
+  def get_fixed_value_type():
+    return StringType
 
   @property
   def value(self) -> str:
@@ -1991,6 +2430,7 @@ class StringLiteral(Literal):
   def get(value : str, context : Context) -> StringLiteral:
     return Literal._get_literal_impl(StringLiteral, value, context)
 
+@IRObjectJsonTypeName('text_style_l')
 class TextStyleLiteral(Literal):
   # 文字样式常量只包含文字样式信息
 
@@ -1998,8 +2438,9 @@ class TextStyleLiteral(Literal):
     ty = TextStyleType.get(context)
     super().construct_init(ty=ty, value=value, **kwargs)
 
-  def import_bypass_value(self, importer: IRJsonImporter) -> ValueType:
-    return TextStyleType.get(importer.context)
+  @staticmethod
+  def get_fixed_value_type():
+    return TextStyleType
 
   @property
   def value(self) -> tuple[tuple[TextAttribute, typing.Any]]:
@@ -2063,6 +2504,7 @@ class TextStyleLiteral(Literal):
         return e[1]
     return None
 
+@IRObjectJsonTypeName('literalexpr_le')
 class LiteralExpr(Literal, User):
   # 字面值表达式是只引用其他字面值的表达式
   # 所有字面值表达式都只由：(1)表达式类型，(2)参数 这两项决定
@@ -2077,6 +2519,7 @@ class LiteralExpr(Literal, User):
     return context.get_literal_uniquing_dict(cls).get_or_create(value_tuple,
       lambda : cls(init_mode=IRObjectInitMode.CONSTRUCT, context=context, value_tuple=value_tuple))
 
+@IRObjectJsonTypeName('text_frag_le')
 class TextFragmentLiteral(LiteralExpr):
   # 文本常量的值包含字符串以及样式信息（大小字体、字体颜色、背景色（高亮颜色），或是附注（Ruby text））
   # 单个文本片段常量内容所使用的样式需是一致的，如果不一致则可以把内容进一步切分，按照样式来进行分节
@@ -2089,8 +2532,9 @@ class TextFragmentLiteral(LiteralExpr):
     ty = TextType.get(context)
     super().construct_init(ty=ty, value_tuple=value_tuple, **kwargs)
 
-  def import_bypass_value(self, importer: IRJsonImporter) -> ValueType:
-    return TextType.get(importer.context)
+  @staticmethod
+  def get_fixed_value_type():
+    return TextType
 
   @property
   def value(self) -> tuple[StringLiteral, TextStyleLiteral]:
@@ -2115,6 +2559,7 @@ class TextFragmentLiteral(LiteralExpr):
       raise RuntimeError("styles 参数应为对文本样式常量的引用")
     return TextFragmentLiteral._get_literalexpr_impl((string, styles), context)
 
+@IRObjectJsonTypeName('text_le')
 class TextLiteral(LiteralExpr):
   # 文本常量是一个或多个文本片段常量组成的串
 
@@ -2123,8 +2568,9 @@ class TextLiteral(LiteralExpr):
     ty = TextType.get(context)
     super().construct_init(ty=ty, value_tuple=value_tuple, **kwargs)
 
-  def import_bypass_value(self, importer: IRJsonImporter) -> ValueType:
-    return TextType.get(importer.context)
+  @staticmethod
+  def get_fixed_value_type():
+    return TextType
 
   def get_string(self) -> str:
     result = ''
@@ -2151,6 +2597,7 @@ class TextLiteral(LiteralExpr):
     value_tuple = tuple(value)
     return TextLiteral._get_literalexpr_impl(value_tuple, context)
 
+@IRObjectJsonTypeName('enum_l')
 class EnumLiteral(typing.Generic[T], Literal):
 
   def construct_init(self, *, context : Context, value: T, **kwargs) -> None:
@@ -2158,7 +2605,7 @@ class EnumLiteral(typing.Generic[T], Literal):
     ty = EnumType.get(type(value), context)
     super().construct_init(ty=ty, value=value, **kwargs)
 
-  # 我们需要 value 的值来确定类型，所以不覆盖 import_bypass_value()
+  # 我们需要 value 的值来确定类型，所以不覆盖 get_fixed_value_type()
 
   @property
   def value(self) -> T:
