@@ -42,6 +42,7 @@ import enum
 from .irbase import *
 from .commontypes import *
 
+@IRObjectJsonTypeName("im_element_op")
 class IMElementOp(Operation):
   # InputModel 中代表内容的Operation (可能是文本也可能是图案等）。这个类将内容的值与位置信息组合起来。
   _content_operand : OpOperand
@@ -70,6 +71,7 @@ class IMElementOp(Operation):
     # 如果段落中有其他不是 IMElementOp 的操作项（比如命令等）则直接忽略
     return _collect_text_from_paragraph_impl(b)
 
+@IRObjectJsonTypeName("im_err_element_op")
 class IMErrorElementOp(ErrorOp):
   # 该类代表读取中发生的错误
   # 内容项是对内容的最合适的形式的表述，错误项是关于该错误的字符串描述
@@ -92,6 +94,7 @@ class IMErrorElementOp(ErrorOp):
   def content(self):
     return self._content_operand
 
+@IRObjectJsonTypeName("im_frame_op")
 class IMFrameOp(Operation):
   # frame 代表一个文档或文本框的顶层结构
   # 我们使用 IR 的 block 来代表文档内的一个 block，所以不需要专门的类；这些 block 将直接在 body 区内
@@ -114,6 +117,7 @@ class IMFrameOp(Operation):
   def create(name : str, loc : Location):
     return IMFrameOp(init_mode=IRObjectInitMode.CONSTRUCT, context=loc.context, name=name, loc=loc)
 
+@IRObjectJsonTypeName("im_list_op")
 class IMListOp(Operation):
   # 该类代表一个列表(bullet point list / numbered list)
   # 虽然list也可作为资源（asset），但由于这样的列表可能会生成不同的结构（比如分支选项等），我们在前端先用这个类来表述，之后如果确定以资源的方式生成的话再把它们打包成资源。
@@ -163,6 +167,7 @@ class IMListOp(Operation):
   def create(name : str, loc : Location):
     return IMListOp(init_mode=IRObjectInitMode.CONSTRUCT, context=loc.context, name=name, loc=loc)
 
+@IRObjectJsonTypeName("im_document_op")
 class IMDocumentOp(IMFrameOp):
   # 该类代表一个完整的文档
 
