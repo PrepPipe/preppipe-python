@@ -306,6 +306,13 @@ class IRObject:
 
   json_name_dict : typing.ClassVar[dict[str, type]] = {}
 
+  # 如果 IR 中的一个类型满足以下条件：
+  # 1. 不会被用户代码继承
+  # 2. 所有实例出现的地方一定不需要类型
+  # 那么可以用 JSON_NAME_NOT_USED 作为 @IRObjectJsonTypeName 的类型标识
+  # (现在只有 OpResult 使用)
+  JSON_NAME_NOT_USED : typing.ClassVar[str] = '---'
+
   # 由于 Python 不像 C++ 那样支持多个构造函数，我们在这里提供我们所需要的 不同构造函数的接口
   # ****** 该函数不应该被覆盖 ******
   def __init__(self, *, init_mode : IRObjectInitMode, context : Context, **kwargs) -> None:
@@ -351,7 +358,9 @@ class IRObject:
   def json_export_impl(self, *, exporter : IRJsonExporter, dest : dict, **kwargs) -> None:
     if 'JSON_TYPE_NAME' not in type(self).__dict__:
       raise RuntimeError('Type '+ type(self).__name__ + ' not registered with @IRObjectJsonTypeName("<name>") decorator')
-    dest[IRJsonRepr.ANY_TYPE.value] = type(self).__dict__['JSON_TYPE_NAME']
+    json_name = type(self).__dict__['JSON_TYPE_NAME']
+    if json_name != IRObject.JSON_NAME_NOT_USED:
+      dest[IRJsonRepr.ANY_TYPE.value] = json_name
 
   @classmethod
   def json_export_type_action(cls, exporter : IRJsonExporter, type_obj : dict):
@@ -371,12 +380,12 @@ class IRObject:
       result.post_copy_value_remap(value_mapper=value_mapper)
     return result
 
-  def json_export(self, exporter : IRJsonExporter = None) -> str:
+  def json_export(self, exporter : IRJsonExporter = None) -> dict:
     if exporter is None:
       exporter = IRJsonExporter(self.context)
     toplevel = {}
     self.json_export_impl(exporter=exporter, dest=toplevel)
-    return exporter.write_json(toplevel)
+    return toplevel
 
 @dataclasses.dataclass
 class IRValueMapper:
@@ -402,8 +411,9 @@ def IRObjectJsonTypeName(name : str):
   assert isinstance(name, str) and len(name) > 0
   def inner_regr(cls):
     assert isinstance(cls, type)
-    assert name not in IRObject.json_name_dict
-    IRObject.json_name_dict[name] = cls
+    if name != IRObject.JSON_NAME_NOT_USED:
+      assert name not in IRObject.json_name_dict
+      IRObject.json_name_dict[name] = cls
     setattr(cls, 'JSON_TYPE_NAME', name)
     return cls
   return inner_regr
@@ -437,6 +447,15 @@ class IRJsonRepr(enum.Enum):
   BLOCK_ARGUMENT = 'arg'
   MDLIKE_VALUEKIND_TYPE = 'm_type'
   MDLIKE_VALUEKIND_REF  = 'm_ref'
+  VALUE_KIND_LITERALEXPR = 'literalexpr'
+  VALUE_KIND_CONSTEXPR = 'constexpr'
+  VALUE_KIND_MISC_LITERAL = 'literal' # 除整数、字符串、逻辑值、浮点数之外的字面值
+
+  TEXTATTR_BOLD           = 'ts_bold'
+  TEXTATTR_ITALIC         = 'ts_italic'
+  TEXTATTR_SIZE           = 'ts_size'
+  TEXTATTR_TEXTCOLOR      = 'ts_textcolor'
+  TEXTATTR_HIGHLIGHTCOLOR = 'ts_highlightcolor'
 
 class IRJsonExporter:
   # 每个实例对应一个 JSON 导出文件，管理其中需要去重或特殊处理的内容
@@ -447,6 +466,7 @@ class IRJsonExporter:
   md_dict : dict[Metadata, int] # 从元数据对象到元数据结点 ID 的映射
   vty_dict : dict[ValueType, str] # 从值类型到表达值的映射
   vty_index_dict : dict[type, int] # 对于每个值类型，下一个下标应该是多少
+  value_index_dict : dict[Value, int] # 每个（非字面值等的）值的索引
   protocol_ver : int # 协议版本
   output_type_dict : dict[str, typing.Any] # (要放到结果里的) Python 类型标注
   output_metadata_list : list # 元数据列表
@@ -459,6 +479,7 @@ class IRJsonExporter:
     self.md_dict = {}
     self.vty_dict = {}
     self.vty_index_dict = {}
+    self.value_index_dict = {}
     self.protocol_ver = 0
     self.output_type_dict = {}
     self.output_metadata_list = []
@@ -475,9 +496,10 @@ class IRJsonExporter:
       return self.type_dict[ty]
     # 如果碰到一个没见过的类型，那么我们需要把他注册到 output_type_dict 里面
     assert issubclass(ty, IRObject)
-    if ty not in IRObject.json_name_dict:
+    if 'JSON_TYPE_NAME' not in ty.__dict__:
       raise RuntimeError('Type not registered with @IRObjectJsonTypeName("<object_json_name>"): ' + ty.__name__)
-    json_name = IRObject.json_name_dict[ty]
+    json_name = getattr(ty, 'JSON_TYPE_NAME')
+    assert isinstance(json_name, str)
     # 把类型所有的直接父类列出来
     bases = []
     for parent in ty.__bases__:
@@ -556,37 +578,144 @@ class IRJsonExporter:
         assert value is self.context
         continue
       data[field.name] = self._emit_metadata_like_value(value, toplevel_type)
-    type_str = self.get_type_str(obj)
+    type_str = self.get_type_str(type(obj))
     return {IRJsonRepr.ANY_TYPE.value : type_str, IRJsonRepr.ANY_BODY.value : data}
 
   def get_metadata_id(self, md : Metadata) -> int:
     if md in self.md_dict:
       return self.md_dict[md]
     # 需要把该元数据加到输出里
-    # TODO
-    if 'JSON_TYPE_NAME' not in type(md).__dict__:
-      raise RuntimeError('ValueType ' + type(md).__name__ + ' not registered with @IRObjectJsonTypeName("<name>") decorator')
-    raise NotImplementedError()
+    dest_dict = self.export_metadata_like_object(md)
+    index = len(self.output_metadata_list)
+    self.output_metadata_list.append(dest_dict)
+    self.md_dict[md] = index
+    return index
+
+  def emit_color(self, c : Color) -> str:
+    return c.getString()
 
   def get_value_repr(self, value : Value) -> dict | str | int | bool:
     # 该函数是在导出对值的引用（不是定义）时调用的
+
+    if not isinstance(value, (Literal, ConstExpr)):
+      # 如果不是这类常量的话我们生成一个对值的引用就完事了
+      result_dict = {}
+      result_dict[IRJsonRepr.ANY_KIND.value] = IRJsonRepr.ANY_REF.value
+      result_dict[IRJsonRepr.ANY_REF.value] = self.get_value_id(value)
+      return result_dict
+
+    # 以下所有情况都需要使用类型标识
+    if 'JSON_TYPE_NAME' not in type(value).__dict__:
+      raise RuntimeError('Value type ' + type(value).__name__ + ' not decorated with @IRObjectJsonTypeName("<name>")')
+    json_name = type(value).__dict__['JSON_TYPE_NAME']
+
+    # 资源的话我们需要另起一个类似 Metadata-like 区域来存放，暂不支持
+    if isinstance(value, AssetData):
+      raise NotImplementedError()
+
+    # 处理复合值的情况
+    if isinstance(value, (LiteralExpr, ConstExpr)):
+      result_dict = {}
+      value_kind : IRJsonRepr = None
+      if isinstance(value, LiteralExpr):
+        value_kind = IRJsonRepr.VALUE_KIND_LITERALEXPR
+      else:
+        value_kind = IRJsonRepr.VALUE_KIND_CONSTEXPR
+      result_dict[IRJsonRepr.ANY_KIND.value] = value_kind.value
+      result_dict[IRJsonRepr.ANY_TYPE.value] = json_name
+      body_array = []
+      for v in value.value:
+        cur_repr = self.get_value_repr(v)
+        body_array.append(cur_repr)
+      result_dict[IRJsonRepr.ANY_BODY.value] = body_array
+      return result_dict
+
+    # 以下情况都是单值
     # 如果用到的是字符串字面值，就用 str
     # 如果用到的是整数字面值，就用 int
     # 如果用到的是逻辑类型的字面值，就用 bool
     # 如果用到的是其他值，就用 Object
-    raise NotImplementedError()
+    if isinstance(value, StringLiteral):
+      assert isinstance(value.value, str)
+      return value.value
+    if isinstance(value, IntLiteral):
+      assert isinstance(value.value, int)
+      return value.value
+    if isinstance(value, BoolLiteral):
+      assert isinstance(value.value, bool)
+      return value.value
+    if isinstance(value, FloatLiteral):
+      assert isinstance(value.value, decimal.Decimal)
+      return self.emit_float(value.value)
+    result_dict = {}
+    result_dict[IRJsonRepr.ANY_KIND.value] = IRJsonRepr.VALUE_KIND_MISC_LITERAL.value
+    result_dict[IRJsonRepr.ANY_TYPE.value] = json_name
+    if isinstance(value, ClassLiteral):
+      assert isinstance(value.value, type)
+      result_dict[IRJsonRepr.ANY_BODY.value] = self.get_type_str(value.value)
+    elif isinstance(value, TextStyleLiteral):
+      body_dict = {}
+      for attr, v in value.value:
+        match attr:
+          case TextAttribute.Bold:
+            body_dict[IRJsonRepr.TEXTATTR_BOLD.value] = True
+          case TextAttribute.Italic:
+            body_dict[IRJsonRepr.TEXTATTR_ITALIC.value] = True
+          case TextAttribute.Size:
+            body_dict[IRJsonRepr.TEXTATTR_SIZE.value] = v
+          case TextAttribute.TextColor:
+            body_dict[IRJsonRepr.TEXTATTR_TEXTCOLOR.value] = self.emit_color(v)
+          case TextAttribute.BackgroundColor:
+            body_dict[IRJsonRepr.TEXTATTR_HIGHLIGHTCOLOR.value] = self.emit_color(v)
+          case _:
+            raise NotImplementedError('Unexpected text attribute')
+      result_dict[IRJsonRepr.ANY_BODY.value] = body_dict
+    elif isinstance(value, UndefLiteral):
+      # 不需要额外值
+      pass
+    else:
+      raise NotImplementedError()
+    return result_dict
 
   def get_value_id(self, value: Value) -> int:
     # 该函数是在导出对值的定义（不是引用）时调用的
     # 如果是基础的字面值的话根本不会调用该函数（在应该引用处就内嵌其值了）
-    raise NotImplementedError()
+    if value in self.value_index_dict:
+      return self.value_index_dict[value]
+    # 到这的话我们需要新加值
+    # 以下类型都是在导出时会特殊处理的，不应该有 ValueID
+    assert not isinstance(value, (Literal, ConstExpr, AssetData))
+
+    # 目前应该只有以下值会需要 ValueID
+    assert isinstance(value, (BlockArgument, Block, OpResult, Operation))
+    index = len(self.value_index_dict)
+    self.value_index_dict[value] = index
+    return index
 
   def get_value_type_repr(self, vty : ValueType) -> str:
     if 'JSON_TYPE_NAME' not in type(vty).__dict__:
       raise RuntimeError('ValueType ' + type(vty).__name__ + ' not registered with @IRObjectJsonTypeName("<name>") decorator')
-    # TODO
-    # 可以使用 export_metadata_like_object() 来辅助输出
-    raise NotImplementedError()
+    json_name = type(vty).__dict__['JSON_TYPE_NAME']
+    if isinstance(vty, StatelessType):
+      return json_name
+    if isinstance(vty, ParameterizedType):
+      # vty_dict : dict[ValueType, str] # 从值类型到表达值的映射
+      # vty_index_dict : dict[type, int] # 对于每个值类型，下一个下标应该是多少
+      if vty in self.vty_dict:
+        return self.vty_dict[vty]
+      next_index = 0
+      cur_ty = type(vty)
+      if cur_ty in self.vty_index_dict:
+        next_index = self.vty_index_dict[cur_ty]
+      self.vty_index_dict[cur_ty] = next_index + 1
+      name_str = json_name + '_' + str(next_index)
+      vty_dict = self.export_metadata_like_object(vty)
+      self.output_valuetype_dict[name_str] = vty_dict
+      self.vty_dict[vty] = name_str
+      return name_str
+
+    # 到这里的话就既不是 StatelessType 也不是 ParameterizedType
+    raise RuntimeError("Value type is neither stateless nor parameterized: " + type(vty).__name__)
 
   def get_plain_value_repr(self, value : str | int | bool | decimal.Decimal) -> dict | str | int | bool:
     assert isinstance(value, (int, str, bool, decimal.Decimal))
@@ -604,7 +733,7 @@ class IRJsonExporter:
     json_obj["metadata"] = self.output_metadata_list
     json_obj["valuetype"] = self.output_valuetype_dict
     json_obj["toplevel"] = toplevel
-    return json.dumps(json_obj, allow_nan=False)
+    return json.dumps(json_obj, allow_nan=False, ensure_ascii=False)
 
   def init_protocol_0(self):
     base_types = [
@@ -1207,11 +1336,13 @@ class OpOperand(User, NameDictNode):
 
   # 可以调用 User.drop_all_uses() 来取消所有引用
 
+@IRObjectJsonTypeName(IRObject.JSON_NAME_NOT_USED)
 class OpResult(NameReferencedValue):
   @property
   def parent(self) -> Operation:
     return super().parent
 
+@IRObjectJsonTypeName(IRObject.JSON_NAME_NOT_USED)
 class BlockArgument(NameReferencedValue):
   @property
   def parent(self) -> Block:
@@ -1285,9 +1416,11 @@ class Operation(IRObject, IListNode):
       for symb in r:
         # 为保证 symbol 的顺序能够在 JSON 中保存下来，我们在这一定使用 list 而不是 dict
         symb_dest = {}
-        symb.export_json_impl(exporter=exporter, dest=symb_dest)
+        symb.json_export_impl(exporter=exporter, dest=symb_dest)
         body.append(symb_dest)
     else:
+      # 如果冒出来不是 SymbolTableRegion 的其他 Region 的子类，我们想要报错，所以这里用等号做检查
+      # pylint: disable=unidomatic-typecheck
       assert type(r) == Region
       for block in r.blocks:
         body.append(block.json_export_block(exporter=exporter))
@@ -1658,6 +1791,7 @@ class Block(Value, IListNode):
       for op in self.body:
         cur_op = {}
         op.json_export_impl(exporter=exporter, dest=cur_op)
+        body.append(cur_op)
       dest[IRJsonRepr.ANY_BODY.value] = body
     return dest
 

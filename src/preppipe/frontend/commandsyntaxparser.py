@@ -30,6 +30,7 @@ from ..pipeline import TransformBase, MiddleEndDecl
 # Command AST definition
 # ------------------------------------------------------------------------------
 
+@IRObjectJsonTypeName("cmd_positional_arg_op")
 class CMDPositionalArgOp(Operation):
   # representing a positional argument
   # this is the only "value" without a name
@@ -54,6 +55,7 @@ class CMDPositionalArgOp(Operation):
   def create(name: str, loc : Location, value : Value):
     return CMDPositionalArgOp(init_mode=IRObjectInitMode.CONSTRUCT, context=loc.context, value=value, name=name, loc=loc)
 
+@IRObjectJsonTypeName("cmd_value_symbol_op")
 class CMDValueSymbol(Symbol):
   # representing a value in the command, or an argument value
   # name is the value / argument name
@@ -76,10 +78,12 @@ class CMDValueSymbol(Symbol):
   def create(name: str, loc: Location, value : Value):
     return CMDValueSymbol(init_mode=IRObjectInitMode.CONSTRUCT, context=loc.context, value=value, name=name, loc=loc)
 
+@IRObjectJsonTypeName("cmd_call_ref_t")
 class CommandCallReferenceType(StatelessType):
   # type of GeneralCommandOp so that it can be a value
   pass
 
+@IRObjectJsonTypeName("cmd_general_cmd_op")
 class GeneralCommandOp(Operation):
   # 所有能被识别的命令（能找到命令名以及参数列表）
   _head_region : SymbolTableRegion # name + raw_args (raw args make life easier for commands with custom parsing)
