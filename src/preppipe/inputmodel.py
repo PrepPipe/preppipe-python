@@ -47,7 +47,7 @@ class IMElementOp(Operation):
   # InputModel 中代表内容的Operation (可能是文本也可能是图案等）。这个类将内容的值与位置信息组合起来。
   _content_operand : OpOperand
 
-  def construct_init(self, *, content : Value, name: str = '', loc: Location = None, **kwargs) -> None:
+  def construct_init(self, *, content : Value, name: str = '', loc: Location | None = None, **kwargs) -> None:
     super().construct_init(name=name, loc=loc, **kwargs)
     self._add_operand_with_value('content', content)
 
@@ -78,7 +78,7 @@ class IMErrorElementOp(ErrorOp):
   #_error_operand : OpOperand
   _content_operand : OpOperand
 
-  def construct_init(self, *, content : Value, error_code: str, error_msg: StringLiteral = None, name: str = '', loc: Location = None, **kwargs) -> None:
+  def construct_init(self, *, content : Value, error_code: str, error_msg: StringLiteral | None = None, name: str = '', loc: Location | None = None, **kwargs) -> None:
     super().construct_init(error_code=error_code, error_msg=error_msg, name=name, loc=loc, **kwargs)
     self._add_operand_with_value('content', content)
 
@@ -87,7 +87,7 @@ class IMErrorElementOp(ErrorOp):
     self._content_operand = self.get_operand_inst('content')
 
   @staticmethod
-  def create(name: str, loc: Location, content : Value, error_code : str, error_msg : StringLiteral = None):
+  def create(name: str, loc: Location, content : Value, error_code : str, error_msg : StringLiteral | None = None):
     return IMErrorElementOp(init_mode=IRObjectInitMode.CONSTRUCT, context=loc.context, content=content, error_code=error_code, error_msg=error_msg, name=name, loc=loc)
 
   @property
@@ -101,7 +101,7 @@ class IMFrameOp(Operation):
   # (在前端，刚开始生成时，一个块代表一段（<p>），块内是一堆 IMElementOp)
   _body_region : Region
 
-  def construct_init(self, *, name: str = '', loc: Location = None, **kwargs) -> None:
+  def construct_init(self, *, name: str = '', loc: Location | None = None, **kwargs) -> None:
     super().construct_init(name=name, loc=loc, **kwargs)
     self._add_region('body')
 
@@ -124,7 +124,7 @@ class IMListOp(Operation):
   # 大部分的列表应该会被生成成其他东西，以表格活不到VNModel
   # 每个选项均是一个区
 
-  def construct_init(self, *, name: str = '', loc: Location = None, **kwargs) -> None:
+  def construct_init(self, *, name: str = '', loc: Location | None = None, **kwargs) -> None:
     super().construct_init(name=name, loc=loc, **kwargs)
     self.set_attr('IsNumbered', False)
 
@@ -136,7 +136,9 @@ class IMListOp(Operation):
 
   @property
   def is_numbered(self) -> bool:
-    return self.get_attr('IsNumbered')
+    v = self.get_attr('IsNumbered')
+    assert isinstance(v, bool)
+    return v
 
   @is_numbered.setter
   def is_numbered(self, v : bool) -> None:
@@ -178,7 +180,7 @@ class IMDocumentOp(IMFrameOp):
 class InputModelV2(Operation):
   _content : Region
 
-  def construct_init(self, *, name: str = '', loc: Location = None, **kwargs) -> None:
+  def construct_init(self, *, name: str = '', loc: Location | None = None, **kwargs) -> None:
     # name 作为项目名，loc 是初始目录的位置
     super().construct_init(name=name, loc=loc, **kwargs)
     self._add_region('content')
@@ -206,7 +208,7 @@ class IMSettings:
     if os.path.isdir(v):
       self._accessible_directories_whitelist.append(os.path.abspath(v))
 
-  def search(self, querypath : str, basepath : str, filecheckCB : callable) -> typing.Any:
+  def search(self, querypath : str, basepath : str, filecheckCB : typing.Callable) -> typing.Any:
     # querypath 是申请访问的文件名（来自文档内容，不可信），可能含后缀也可能不含，可能是绝对路径也可能是相对路径
     # basepath 是访问发起的文件路径，绝对路径
     # filecheckCB 是回调函数，接受一个绝对路径，若文件不符合要求则返回 None ，如果符合则返回任意非 None 的值，作为该 search() 的返回值
