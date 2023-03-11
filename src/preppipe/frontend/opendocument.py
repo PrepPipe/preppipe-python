@@ -246,9 +246,18 @@ class _ODParseContext:
         err = value[1]
         return IMErrorElementOp.create(name = '', loc = loc, content = content, error_code='odf-bad-image-ref', error_msg = err)
 
-    value : Value = None
+    value = None
     if href in self.odfhandle.Pictures:
       (FilenameOrImage, data, mediatype) = self.odfhandle.Pictures[href]
+      fmt = ImageAssetData.get_format_from_mime_type(mediatype)
+      if fmt is None:
+        # 图片类型不支持
+        # 输出一个错误
+        textstr = StringLiteral.get(href, self.ctx)
+        msgstr = StringLiteral.get(mediatype, self.ctx)
+        self.asset_reference_dict[href] = (textstr, msgstr)
+        return IMErrorElementOp.create(name = '', loc = loc, content = textstr, error_code='odf-unrecognized-image-mime', error_msg = msgstr)
+
       if FilenameOrImage == odf.opendocument.IS_FILENAME:
         # not sure when will this happen...
         raise NotImplementedError('odf.opendocument.IS_FILENAME for image reference not supported yet')
@@ -256,12 +265,12 @@ class _ODParseContext:
         #entry = self.parent.get_image_asset_entry_from_path(imagePath, mediatype)
       elif FilenameOrImage == odf.opendocument.IS_IMAGE:
         # the image is embedded in the file
-        raise NotImplementedError()
+        value = self.ctx.create_image_asset_data_embedded(href, data, fmt)
         # entry = self.parent.get_image_asset_entry_from_inlinedata(data, mediatype, self.filePath, href)
     else:
       # the image is a link to outside file
       imagePath = os.path.join(self.filePath, href)
-      def fileCheckCB(path) -> ImageAssetData:
+      def fileCheckCB(path) -> ImageAssetData | None:
         if os.path.isfile(path):
           return self.cache.query_image_asset(path)
         return None

@@ -17,6 +17,7 @@ from .nameresolution import NamespaceNodeInterface, NameResolver
 
 # ------------------------------------------------------------------------------
 # 类型特质 (type traits)
+# TODO 不使用特质
 # ------------------------------------------------------------------------------
 
 class VNDisplayableTrait:
@@ -35,61 +36,39 @@ class VNAudioTrait(VNDurationTrait):
 # 类型
 # ------------------------------------------------------------------------------
 
-class VNTimeOrderType(ValueType):
+@IRObjectJsonTypeName("vn_time_t")
+@dataclasses.dataclass(init=False, slots=True, frozen=True)
+class VNTimeOrderType(StatelessType):
   # 时间顺序类型，不是一个具体的值，由该型输入输出所形成的依赖关系链条决定了指令间的顺序
-  def __init__(self, context: Context) -> None:
-    super().__init__(context)
-
   def __str__(self) -> str:
     return "时间顺序类型"
 
-  @staticmethod
-  def get(ctx : Context) -> VNTimeOrderType:
-    return ctx.get_stateless_type(VNTimeOrderType)
-
-class VNDeviceReferenceType(ParameterizedType):
-  _data_type : ValueType # what kinds of data can be written to the device
-
-  def __init__(self, data_type : ValueType) -> None:
-    super().__init__(data_type.context, [data_type])
-    self._data_type = data_type
-
-  @property
-  def element_type(self) -> ValueType:
-    return self._data_type
-
+@IRObjectJsonTypeName("vn_devref_t")
+@dataclasses.dataclass(init=False, slots=True, frozen=True)
+class VNDeviceReferenceType(SingleElementParameterizedType):
   def __str__(self) -> str:
-    return "设备<" + str(self._data_type) + ">"
+    return "设备<" + str(self.element_type) + ">"
 
-  @staticmethod
-  def get(data_type : ValueType) -> VNDeviceReferenceType:
-    assert not isinstance(data_type, VNDeviceReferenceType)
-    return data_type.context.get_parameterized_type_dict(VNDeviceReferenceType).get_or_create([data_type], lambda : VNDeviceReferenceType(data_type))
+  @classmethod
+  def _get_typecheck(cls, element_type : ValueType) -> None:
+    assert not isinstance(element_type, VNDeviceReferenceType)
 
-class VNHandleType(ParameterizedType):
+@IRObjectJsonTypeName("vn_handle_t")
+@dataclasses.dataclass(init=False, slots=True, frozen=True)
+class VNHandleType(SingleElementParameterizedType):
   # handles for persistent instances (image/audio/video/text)
   # corresponding values are created when using show instructions
-  _data_type : ValueType
-
-  def __init__(self, data_type : ValueType) -> None:
-    super().__init__(data_type.context, [data_type])
-    self._data_type = data_type
-
-  @property
-  def element_type(self) -> ValueType:
-    return self._data_type
 
   def __str__(self) -> str:
-    return "句柄<" + str(self._data_type) + ">"
+    return "句柄<" + str(self.element_type) + ">"
 
-  @staticmethod
-  def get(data_type : ValueType) -> VNHandleType:
-    assert not isinstance(data_type, VNHandleType)
-    return data_type.context.get_parameterized_type_dict(VNHandleType).get_or_create([data_type], lambda : VNHandleType(data_type))
+  @classmethod
+  def _get_typecheck(cls, element_type : ValueType) -> None:
+    assert not isinstance(element_type, VNHandleType)
 
-
-
-class VNDisplayableType(ValueType):
+@IRObjectJsonTypeName("vn_displayable_t")
+@dataclasses.dataclass(init=False, slots=True, frozen=True)
+class VNDisplayableType(StatelessType):
   # 可显示类型描述一个类似图片的内容，该内容的（像素）大小已知，但是不包含其他信息（比如是否透明，显示在哪，有无转场等）
   # 文字可以在套壳之后作为可显示类型输出到图形输出类型中
   # this type is for values representing a displayable stuff (like an image) on screen
@@ -101,171 +80,119 @@ class VNDisplayableType(ValueType):
 
   _s_traits : typing.ClassVar[tuple[type]] = (VNDisplayableTrait)
 
-  def __init__(self, context: Context) -> None:
-    super().__init__(context)
-
-  @staticmethod
-  def get(ctx : Context) -> VNDisplayableType:
-    return ctx.get_stateless_type(VNDisplayableType)
-
-class VNAudioType(ValueType):
+@IRObjectJsonTypeName("vn_audio_t")
+@dataclasses.dataclass(init=False, slots=True, frozen=True)
+class VNAudioType(StatelessType):
   # this type is for audios that have at least the "duration" attribute
   # again, not for assets that are just read
 
   _s_traits : typing.ClassVar[tuple[type]] = (VNAudioTrait)
 
-  def __init__(self, context: Context) -> None:
-    super().__init__(context)
-
-  @staticmethod
-  def get(ctx : Context) -> VNAudioType:
-    return ctx.get_stateless_type(VNAudioType)
-
-class VNVideoType(ValueType):
-
+@IRObjectJsonTypeName("vn_video_t")
+@dataclasses.dataclass(init=False, slots=True, frozen=True)
+class VNVideoType(StatelessType):
   _s_traits : typing.ClassVar[tuple[type]] = (VNDisplayableTrait, VNAudioTrait)
 
-  def __init__(self, context: Context) -> None:
-    super().__init__(context)
-
-  @staticmethod
-  def get(ctx : Context) -> VNVideoType:
-    return ctx.get_stateless_type(VNVideoType)
-
-class VNCharacterDeclType(ValueType):
+@IRObjectJsonTypeName("vn_chardecl_t")
+@dataclasses.dataclass(init=False, slots=True, frozen=True)
+class VNCharacterDeclType(StatelessType):
   # for character identity
-
-  def __init__(self, context: Context) -> None:
-    super().__init__(context)
-
   def __str__(self) -> str:
     return "人物声明类型"
 
-  @staticmethod
-  def get(ctx : Context) -> VNCharacterDeclType:
-    return ctx.get_stateless_type(VNCharacterDeclType)
-
-class VNSceneDeclType(ValueType):
+@IRObjectJsonTypeName("vn_scenedecl_t")
+@dataclasses.dataclass(init=False, slots=True, frozen=True)
+class VNSceneDeclType(StatelessType):
   # for location identity
-
-  def __init__(self, context: Context) -> None:
-    super().__init__(context)
-
   def __str__(self) -> str:
     return "场景声明类型"
 
-  @staticmethod
-  def get(ctx : Context) -> VNSceneDeclType:
-    return ctx.get_stateless_type(VNSceneDeclType)
-
-class VNFunctionReferenceType(ValueType):
+@IRObjectJsonTypeName("vn_funcref_t")
+@dataclasses.dataclass(init=False, slots=True, frozen=True)
+class VNFunctionReferenceType(StatelessType):
   # the value type for VNFunction
   # all VNFunctions take no arguments; all states passed through variables, so this is a stateless type
-  def __init__(self, context: Context) -> None:
-    super().__init__(context)
 
   def __str__(self) -> str:
     return "函数类型"
 
-  @staticmethod
-  def get(ctx : Context) -> VNFunctionReferenceType:
-    return ctx.get_stateless_type(VNFunctionReferenceType)
-
+@IRObjectJsonTypeName("vn_datafunc_t")
+@dataclasses.dataclass(init=False, slots=True, frozen=True)
 class VNDataFunctionType(ParameterizedType):
   # the function type for VNLambdaRecord data evaluation
-  _return_type : tuple[ValueType] # tuple of zero or more types
-  _argument_type : tuple[ValueType] # tuple of zero or more types
+  def construct_init(self, *, context: Context, args : tuple[ValueType], returns : tuple[ValueType], **kwargs) -> None:
+    super().construct_init(context=context, parameters=[*returns, None, *args], **kwargs)
 
-  def __init__(self, context: Context, args : tuple[ValueType], returns : tuple[ValueType]) -> None:
-    super().__init__(context, [*returns, None, *args])
-    self._argument_type = args
-    self._return_type = returns
-    for arg in self._argument_type:
-      assert isinstance(arg, ValueType)
-    for arg in self._return_type:
-      assert isinstance(arg, ValueType)
+  def get_return_type_tuple(self) -> tuple[ValueType]:
+    breakloc = self.parameters.indexof(None)
+    return self.parameters[:breakloc]
+
+  def get_argument_type_tuple(self) -> tuple[ValueType]:
+    breakloc = self.parameters.indexof(None)
+    return self.parameters[breakloc+1:]
 
   def __str__(self) -> str:
     return_type_str = '空'
-    if len(self._return_type) > 0:
-      if len(self._return_type) == 1:
-        return_type_str = str(self._return_type[0])
+    return_type_tuple = self.get_return_type_tuple()
+    if len(return_type_tuple) > 0:
+      if len(return_type_tuple) == 1:
+        return_type_str = str(return_type_tuple[0])
       else:
-        return_type_str = '<' + ', '.join([str(x) for x in self._return_type]) + '>'
-    arg_type_str = '(' + ', '.join([str(x) for x in self._argument_type]) + ')'
+        return_type_str = '<' + ', '.join([str(x) for x in return_type_tuple]) + '>'
+    arg_type_str = '(' + ', '.join([str(x) for x in self.get_argument_type_tuple()]) + ')'
     return return_type_str + arg_type_str
 
   @staticmethod
   def get(ctx: Context, args : typing.Iterable[ValueType], returns : typing.Iterable[ValueType]) -> VNDataFunctionType:
     argument_tuple = tuple(args)
     return_tuple = tuple(returns)
-    return ctx.get_parameterized_type_dict(VNDataFunctionType).get_or_create([*return_tuple, None, *argument_tuple], lambda : VNDataFunctionType(ctx, args, returns))
+    return ctx.get_or_create_parameterized_type(VNDataFunctionType, [*return_tuple, None, *argument_tuple], lambda : VNDataFunctionType(init_mode=IRObjectInitMode.CONSTRUCT, context = ctx, args=args, returns=returns))
 
+@IRObjectJsonTypeName("vn_varref_t")
+@dataclasses.dataclass(init=False, slots=True, frozen=True)
 class VNVariableReferenceType(ParameterizedType):
-  _variable_type : ValueType
-
-  def __init__(self, variable_type : ValueType) -> None:
-    super().__init__(variable_type.context, [variable_type])
-    self._variable_type = variable_type
-
-  @property
-  def variable_type(self) -> ValueType:
-    return self._variable_type
-
   def __str__(self) -> str:
-    return "变量引用<" + str(self._variable_type) + ">"
+    return "变量引用<" + str(self.element_type) + ">"
 
-  @staticmethod
-  def get(variable_type : ValueType) -> VNVariableReferenceType:
-    assert not isinstance(variable_type, VNVariableReferenceType)
-    return variable_type.context.get_parameterized_type_dict(VNVariableReferenceType).get_or_create([variable_type], lambda : VNVariableReferenceType(variable_type))
+  @classmethod
+  def _get_typecheck(cls, element_type : ValueType) -> None:
+    assert not isinstance(element_type, VNVariableReferenceType)
 
-class VNScreenCoordinateType(ValueType):
+@IRObjectJsonTypeName("vn_coord_t")
+@dataclasses.dataclass(init=False, slots=True, frozen=True)
+class VNScreenCoordinateType(StatelessType):
   # 屏幕坐标类型，一对整数型值<x,y>，坐标原点是屏幕左上角，x沿右边增加，y向下方增加，单位都是像素值
   # 根据使用场景，坐标有可能被当做大小、偏移量，或是其他值来使用
-
-  def __init__(self, context: Context) -> None:
-    super().__init__(context)
-
   def __str__(self) -> str:
     return "屏幕坐标类型"
 
-  @staticmethod
-  def get(ctx : Context) -> VNScreenCoordinateType:
-    return ctx.get_stateless_type(VNScreenCoordinateType)
-
-class VNEffectFunctionType(ValueType):
+@IRObjectJsonTypeName("vn_sefunc_t")
+@dataclasses.dataclass(init=False, slots=True, frozen=True)
+class VNEffectFunctionType(StatelessType):
   # 特效函数类型，所有的转场（入场、出场等）函数记录都用这种类型
-
   _s_traits : typing.ClassVar[tuple[type]] = (VNDurationTrait)
-
-  def __init__(self, context: Context) -> None:
-    super().__init__(context)
 
   def __str__(self) -> str:
     return "特效函数类型"
-
-  @staticmethod
-  def get(ctx : Context) -> VNEffectFunctionType:
-    return ctx.get_stateless_type(VNEffectFunctionType)
 
 # ------------------------------------------------------------------------------
 # 记录
 # ------------------------------------------------------------------------------
 
+@IRObjectJsonTypeName("vn_record_op")
 class VNRecord(Symbol, Value):
   # 记录是在输出脚本中 ODR 定义的、没有控制流的、可以赋予名称的、以自身所承载信息为主的实体
   # （输入输出）设备，变量，资源（图片、声音等），都算记录
   # 有些内容（比如缩放后的图片，纯色图片等）既可以作为常量表达式也可以作为记录，但是只要需要赋予名称，他们一定需要绑为记录(可用 VNConstExprAsRecord 解决)
   # 有些内容（比如预设的转场效果等）主要是代码，参数部分很少，我们可以为它们新定义字面值(Literal)，然后用常量表达式来表示对它们的引用
+  pass
 
-  def __init__(self, name: str, loc: Location, ty : ValueType, **kwargs) -> None:
-    super().__init__(name = name, loc = loc, ty = ty, **kwargs)
-
+@IRObjectJsonTypeName("vn_cexpr_record_op")
 class VNConstExprAsRecord(VNRecord):
-  def __init__(self, name: str, loc: Location, cexpr : ConstExpr, **kwargs) -> None:
-    super().__init__(name, loc, cexpr.valuetype, **kwargs)
+  def construct_init(self, *, name: str, loc: Location, cexpr : ConstExpr, **kwargs) -> None:
+    super().construct_init(name=name, loc=loc, ty=cexpr.valuetype, **kwargs)
     self._add_operand_with_value('value', cexpr)
+
 
 # ------------------------------------------------------------------------------
 # 设备记录
@@ -276,6 +203,7 @@ class VNConstExprAsRecord(VNRecord):
 #（比如RenPy会用 scene 来切换背景，用 Character 来实现 side image，用 Config 来指定 UI 外观，等等）
 # 对这些标准设备的操作是可移植的，所有后端都应当支持它们
 
+@IRWrappedStatelessClassJsonName("vn_stddev_kind_e")
 class VNStandardDeviceKind(enum.Enum):
   # 输出设备
   O_BGM_AUDIO = enum.auto() # 背景音乐
@@ -322,6 +250,7 @@ class VNStandardDeviceKind(enum.Enum):
       case _:
         raise NotImplementedError()
 
+@IRObjectJsonTypeName("vn_device_record_op")
 class VNDeviceRecord(VNRecord):
   # 所有输入输出设备记录的基类
   # 实例一般记录运行时的外观等设置，比如对话框背景图片和对话框位置
@@ -331,14 +260,19 @@ class VNDeviceRecord(VNRecord):
   _std_device_kind_op : OpOperand # 如果设备是某个标准设备的话，这是标准设备的类型
   _subdevice_table : SymbolTableRegion # 如果设备有子设备的话（比如发言，除了内容之外还要有说话者和侧边头像），它们都应该在这里
 
-  def __init__(self, name: str, loc: Location, content_type: ValueType, std_device_kind : VNStandardDeviceKind = None, **kwargs) -> None:
-    self_type = VNDeviceReferenceType.get(content_type)
-    super().__init__(name, loc, self_type, **kwargs)
+  def construct_init(self, name: str, loc: Location, content_type: ValueType, std_device_kind : VNStandardDeviceKind = None, **kwargs) -> None:
+    ty = VNDeviceReferenceType.get(content_type)
+    super().construct_init(name=name, loc=loc, ty=ty, **kwargs)
     std_device_kind_value = None
     if std_device_kind is not None and isinstance(std_device_kind, VNStandardDeviceKind):
-      std_device_kind_value = EnumLiteral.get(self_type.context, std_device_kind)
-    self._std_device_kind_op = self._add_operand_with_value('std_device', std_device_kind_value)
-    self._subdevice_table = self._add_symbol_table('subdevice')
+      std_device_kind_value = EnumLiteral.get(ty.context, std_device_kind)
+    self._add_operand_with_value('std_device', std_device_kind_value)
+    self._add_symbol_table('subdevice')
+
+  def post_init(self) -> None:
+    super().post_init()
+    self._std_device_kind_op = self.get_operand_inst('std_device')
+    self._subdevice_table = self.get_symbol_table('subdevice')
 
   def get_std_device_kind(self) -> VNStandardDeviceKind | None:
     kind_value = self._std_device_kind_op.get()
@@ -381,6 +315,7 @@ class VNEnvironmentValueRecord(VNValueRecord):
   # 所有用户无法写入的值，主要是版本号、是否有子命名空间，等等
   pass
 
+@IRWrappedStatelessClassJsonName("vn_var_storage_e")
 class VNVariableStorageModel(enum.Enum):
   # 决定某个变量的存储方式
   PERSISTENT  = enum.auto() # 可与其他程序、游戏共享的变量，游戏重装不清除。对应 RenPy 中的 MultiPersistent
