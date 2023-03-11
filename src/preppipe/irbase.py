@@ -17,6 +17,9 @@ import webbrowser
 import io
 import abc
 import json
+import hashlib
+import mimetypes
+import base64
 
 import PIL.Image
 import pydub
@@ -30,6 +33,8 @@ from ._version import __version__
 # ADT needed for IR
 # ------------------------------------------------------------------------------
 
+T = typing.TypeVar('T')
+
 # we create our own list type here because of the following reasons:
 # 1. IDE (e.g., VSCode) may not be able to get information from llist module for auto-completion, etc
 # 2. Certain API is easy to misuse for our use case (we will subclass the nodes)
@@ -37,17 +42,16 @@ from ._version import __version__
 #       * llist.dllist.insert(), etc will create NEW nodes instead of directly using the node passed in, and this is not what we want
 #       * iterating over a dllist is getting the VALUE on the nodes, instead of getting the nodes
 
-T = typing.TypeVar('T') # typevar for the node subclass
-
-class IList(typing.Generic[T], llist.dllist):
+_IListNodeTypeVar = typing.TypeVar('_IListNodeTypeVar', bound='IListNode')
+class IList(typing.Generic[_IListNodeTypeVar, T], llist.dllist):
   # __slots__ = ('_parent')
   _parent : typing.Any
-  def __init__(self, parent : typing.Any) -> None:
+  def __init__(self, parent : T) -> None:
     super().__init__()
     self._parent = parent
 
   @property
-  def parent(self) -> typing.Any:
+  def parent(self) -> T:
     return self._parent
 
   @property
@@ -55,7 +59,7 @@ class IList(typing.Generic[T], llist.dllist):
     return super().size
 
   @property
-  def front(self) -> T:
+  def front(self) -> _IListNodeTypeVar:
     # return the first node if available, None if not
     return super().first
 
@@ -64,23 +68,23 @@ class IList(typing.Generic[T], llist.dllist):
     return super().first is None
 
   @property
-  def back(self) -> T:
+  def back(self) -> _IListNodeTypeVar:
     # return the last node if available, None if not
     return super().last
 
-  def insert(self, where : T, node : T):
+  def insert(self, where : _IListNodeTypeVar, node : _IListNodeTypeVar):
     super().insertnodebefore(node, where)
     node.node_inserted(self.parent)
 
-  def push_back(self, node : T):
+  def push_back(self, node : _IListNodeTypeVar):
     super().appendnode(node)
     node.node_inserted(self.parent)
 
-  def push_front(self, node : T):
+  def push_front(self, node : _IListNodeTypeVar):
     super().insertnodebefore(node, super().first)
     node.node_inserted(self.parent)
 
-  def get_index_of(self, node : T) -> int:
+  def get_index_of(self, node : _IListNodeTypeVar) -> int:
     # -1 if node not found, node index if found
     cur_index = 0
     cur_node = self.front
@@ -93,7 +97,7 @@ class IList(typing.Generic[T], llist.dllist):
       cur_index += 1
     return -1
 
-  def merge_into(self, dest : IList[T]):
+  def merge_into(self, dest : IList[_IListNodeTypeVar, T]):
     while self.front is not None:
       v = self.front
       assert isinstance(v, IListNode)
@@ -102,7 +106,7 @@ class IList(typing.Generic[T], llist.dllist):
       super().remove(v)
       dest.push_back(v)
 
-  def __iter__(self) -> IListIterator[T]:
+  def __iter__(self) -> IListIterator[_IListNodeTypeVar]:
     return IListIterator(super().first)
 
   # pylint: disable=invalid-length-returned
@@ -110,7 +114,7 @@ class IList(typing.Generic[T], llist.dllist):
     assert self.size >= 0
     return self.size
 
-  def __getitem__(self, index : int) -> T:
+  def __getitem__(self, index : int) -> _IListNodeTypeVar:
     return super().__getitem__(index)
 
   def clear(self):
@@ -121,16 +125,16 @@ class IList(typing.Generic[T], llist.dllist):
       v.node_removed(self.parent)
       super().remove(v)
 
-class IListIterator(typing.Generic[T]):
+class IListIterator(typing.Generic[_IListNodeTypeVar]):
   # __slots__ = ('_node')
 
-  _node : T
+  _node : _IListNodeTypeVar
 
-  def __init__(self, n : T) -> None:
+  def __init__(self, n : _IListNodeTypeVar) -> None:
     super().__init__()
     self._node = n
 
-  def __next__(self) -> T:
+  def __next__(self) -> _IListNodeTypeVar:
     if self._node is None:
       raise StopIteration
     curnode = self._node
@@ -139,14 +143,14 @@ class IListIterator(typing.Generic[T]):
 
 # if the list intends to be mutable, element node should inherit from this class
 # otherwise, just inheriting from llist.dllistnode is fine
-class IListNode(typing.Generic[T], llist.dllistnode):
+class IListNode(typing.Generic[_IListNodeTypeVar], llist.dllistnode):
   # __slots__ = ()
 
   def __init__(self, **kwargs) -> None:
     # passthrough kwargs for cooperative multiple inheritance
     super().__init__(**kwargs)
 
-  def _try_get_owner(self) -> IList:
+  def _try_get_owner(self) -> IList | None:
     # first, weakref itself can be None if it never referenced another object
     # second, weakref may lose reference to the target
     # we use this function to dereference a weakref
@@ -155,7 +159,7 @@ class IListNode(typing.Generic[T], llist.dllistnode):
     return None
 
   # pylint: disable=protected-access
-  def insert_before(self, ip : IListNode[T]) -> None:
+  def insert_before(self, ip : IListNode[_IListNodeTypeVar]) -> None:
     owner = self._try_get_owner()
     ipowner = ip._try_get_owner()
     assert ipowner is not None
@@ -186,15 +190,15 @@ class IListNode(typing.Generic[T], llist.dllistnode):
     pass
 
   @property
-  def prev(self) -> T:
+  def prev(self) -> _IListNodeTypeVar:
     return super().prev
 
   @property
-  def next(self) -> T:
+  def next(self) -> _IListNodeTypeVar:
     return super().next
 
   @property
-  def parent(self):
+  def parent(self) -> IList[_IListNodeTypeVar, typing.Any] | None:
     # return the parent of the list
     # to get a type hint, override this method in derived class to add it
     owner = self._try_get_owner()
@@ -209,10 +213,11 @@ class IListNode(typing.Generic[T], llist.dllistnode):
     # pylint: disable=no-member
     return owner.get_index_of(self)
 
-class NameDict(collections.abc.MutableMapping, typing.Generic[T]):
+_NameDictNodeTypeVar = typing.TypeVar('_NameDictNodeTypeVar', bound='NameDictNode')
+class NameDict(collections.abc.MutableMapping[str, _NameDictNodeTypeVar], typing.Generic[_NameDictNodeTypeVar]):
   # __slots__ = ('_parent', '_dict')
   _parent : typing.Any
-  _dict : collections.OrderedDict[str, NameDictNode[T]]
+  _dict : collections.OrderedDict[str, _NameDictNodeTypeVar]
 
   def __init__(self, parent : typing.Any) -> None:
     super().__init__()
@@ -222,14 +227,14 @@ class NameDict(collections.abc.MutableMapping, typing.Generic[T]):
   def __contains__(self, key : str) -> bool:
     return self._dict.__contains__(key)
 
-  def __getitem__(self, key : str) -> T:
+  def __getitem__(self, key : str) -> _NameDictNodeTypeVar:
     return self._dict.__getitem__(key)
 
-  def __setitem__(self, key : str, value : T) -> None:
+  def __setitem__(self, key : str, value : _NameDictNodeTypeVar) -> None:
     if value.dictref is not None:
       raise RuntimeError("Inserting one node into more than one NameDict")
     self._dict[key] = value
-    value._update_parent_info(self, key)
+    value._update_parent_info(self, key) # type: ignore
 
   def __delitem__(self, key : str):
     value = self._dict[key]
@@ -253,9 +258,9 @@ class NameDict(collections.abc.MutableMapping, typing.Generic[T]):
   def parent(self):
     return self._parent
 
-class NameDictNode(typing.Generic[T]):
+class NameDictNode(typing.Generic[_NameDictNodeTypeVar]):
   # 因为我们想要保证 Value 可以用 slots，但该类可能与 Value 同时被继承（比如 OpResult），所以这里不加 slots
-  _dictref : NameDict[T]
+  _dictref : NameDict[_NameDictNodeTypeVar] | None
   _name : str
 
   def __init__(self, **kwargs) -> None:
@@ -268,16 +273,17 @@ class NameDictNode(typing.Generic[T]):
   def name(self) -> str:
     return self._name
 
-  def _update_parent_info(self, parent: NameDict[T], name : str) -> None:
+  def _update_parent_info(self, parent: NameDict[_NameDictNodeTypeVar] | None, name : str) -> None:
     self._dictref = parent
     self._name = name
 
   def remove_from_parent(self):
-    del self.dictref[self.name]
+    if self.dictref is not None:
+      del self.dictref[self.name]
     #self.dictref.__delitem__(self.name)
 
   @property
-  def dictref(self) -> NameDict[T]:
+  def dictref(self) -> NameDict[_NameDictNodeTypeVar] | None:
     return self._dictref
 
   @property
@@ -285,6 +291,7 @@ class NameDictNode(typing.Generic[T]):
     if self._dictref is not None:
       return self._dictref.parent
     return None
+
 
 # ------------------------------------------------------------------------------
 # IR classes
@@ -295,6 +302,7 @@ class IRObjectInitMode(enum.Enum):
   COPY = enum.auto() # 复制一个现成的对象
   IMPORT_JSON = enum.auto() # 导入之前保存的 JSON
 
+_IRObjectTypeVar = typing.TypeVar('_IRObjectTypeVar', bound='IRObject')
 class IRObject:
   # （除了 Context 和基础类型之外的）IR 对象的基类
   # 提供此类的主要目的是将对象的创建过程统一
@@ -304,6 +312,10 @@ class IRObject:
   # 。。现在先不用 slots，问题太多
   # __slots__ = ()
 
+  # 从JSON字符串名字到类型的映射
+  # 注意，这里不仅会有 IRObject 的子类，还会有外部的类型
+  # 像 User 这种 IR 内部的类也会在这里
+  # 我们要求如果类型不是 IRObject 的子类，则该类型必须无状态，要么不创建实例要么可以用cls()的方式创建实例
   json_name_dict : typing.ClassVar[dict[str, type]] = {}
 
   # 如果 IR 中的一个类型满足以下条件：
@@ -312,6 +324,9 @@ class IRObject:
   # 那么可以用 JSON_NAME_NOT_USED 作为 @IRObjectJsonTypeName 的类型标识
   # (现在只有 OpResult 使用)
   JSON_NAME_NOT_USED : typing.ClassVar[str] = '---'
+
+  # 这是一个应该由 @IRObjectJsonTypeName 设置的值
+  JSON_TYPE_NAME : typing.ClassVar[str]
 
   # 由于 Python 不像 C++ 那样支持多个构造函数，我们在这里提供我们所需要的 不同构造函数的接口
   # ****** 该函数不应该被覆盖 ******
@@ -372,7 +387,7 @@ class IRObject:
   def context(self) -> Context:
     raise NotImplementedError()
 
-  def clone(self, value_mapper : IRValueMapper = None):
+  def clone(self : _IRObjectTypeVar, value_mapper : IRValueMapper | None = None) -> _IRObjectTypeVar:
     if value_mapper is None:
       value_mapper = IRValueMapper(self.context, option_ignore_values_with_no_use=True)
     result = self.__class__(init_mode = IRObjectInitMode.COPY, context=self.context, init_src=self, value_mapper=value_mapper)
@@ -380,41 +395,45 @@ class IRObject:
       result.post_copy_value_remap(value_mapper=value_mapper)
     return result
 
-  def json_export(self, exporter : IRJsonExporter = None) -> dict:
+  def json_export(self, exporter : IRJsonExporter | None = None) -> dict:
     if exporter is None:
       exporter = IRJsonExporter(self.context)
     toplevel = {}
     self.json_export_impl(exporter=exporter, dest=toplevel)
     return toplevel
 
-@dataclasses.dataclass
-class IRValueMapper:
-  context : Context
-  option_ignore_values_with_no_use : bool = False
-  value_map : dict[Value, Value] = dataclasses.field(default_factory=dict)
-
-  def add_value_map(self, old_value : Value, new_value : Value):
-    if self.option_ignore_values_with_no_use:
-      if old_value.use_empty():
-        return
-    self.value_map[old_value] = new_value
-
-  def get_mapped_value(self, key : Value) -> Value | None:
-    if key in self.value_map:
-      return self.value_map[key]
-    return None
-
-  def is_require_value_remap(self) -> bool:
-    return len(self.value_map) > 0
+def _register_json_type_name(cls : type, name : str):
+  if name != IRObject.JSON_NAME_NOT_USED:
+    assert name not in IRObject.json_name_dict
+    IRObject.json_name_dict[name] = cls
+  setattr(cls, 'JSON_TYPE_NAME', name)
 
 def IRObjectJsonTypeName(name : str):
+  '''使 IRObject 可以在 JSON 中表示。name 将是该类在 JSON 中的名称。'''
+  assert isinstance(name, str) and len(name) > 0
+  def inner_regr(cls : typing.Type[_IRObjectTypeVar]) -> typing.Type[_IRObjectTypeVar]:
+    _register_json_type_name(cls, name)
+    return cls
+  return inner_regr
+
+def _IRInnerConstructJsonTypeName(name : str):
   assert isinstance(name, str) and len(name) > 0
   def inner_regr(cls):
-    assert isinstance(cls, type)
-    if name != IRObject.JSON_NAME_NOT_USED:
-      assert name not in IRObject.json_name_dict
-      IRObject.json_name_dict[name] = cls
-    setattr(cls, 'JSON_TYPE_NAME', name)
+    _register_json_type_name(cls, name)
+    return cls
+  return inner_regr
+
+def IRWrappedStatelessClassJsonName(name : str):
+  '''使非 IRObject 的类型可以在 JSON 中表示。name 将是该类在 JSON 中的名称。
+  用于 ClassLiteral 和 EnumLiteral 中的类会需要这个修饰符.
+
+  被修饰的类型要么不会有实例（比如 ClassLiteral 中只需要取得类型对象即可），
+  要么可以以已知的方式创建实例（比如 EnumLiteral）
+  '''
+  assert isinstance(name, str) and len(name) > 0
+  def inner_regr(cls):
+    assert not issubclass(cls, IRObject)
+    _register_json_type_name(cls, name)
     return cls
   return inner_regr
 
@@ -483,10 +502,10 @@ class IRJsonExporter:
     self.protocol_ver = 0
     self.output_type_dict = {}
     self.output_metadata_list = []
-    self.output_valuetype_dict = []
+    self.output_valuetype_dict = {}
     self.init_protocol_0()
 
-  def add_base_type(self, ty : type):
+  def add_base_type(self, ty : typing.Type[IRObject]):
     json_name = ty.JSON_TYPE_NAME
     assert isinstance(json_name, str)
     self.type_dict[ty] = json_name
@@ -562,14 +581,13 @@ class IRJsonExporter:
 
   def export_metadata_like_object(self, obj : Metadata | ValueType) -> dict:
     assert dataclasses.is_dataclass(obj)
-    toplevel_type : type = None
+    toplevel_type = None
     if isinstance(obj, Metadata):
       toplevel_type = Metadata
     elif isinstance(obj, ValueType):
       toplevel_type = ValueType
     else:
       raise RuntimeError('Unexpected metadata-like type: ' + type(obj).__name__)
-
     data = {}
     for field in dataclasses.fields(obj):
       value = getattr(obj, field.name)
@@ -616,7 +634,7 @@ class IRJsonExporter:
     # 处理复合值的情况
     if isinstance(value, (LiteralExpr, ConstExpr)):
       result_dict = {}
-      value_kind : IRJsonRepr = None
+      value_kind = None
       if isinstance(value, LiteralExpr):
         value_kind = IRJsonRepr.VALUE_KIND_LITERALEXPR
       else:
@@ -624,7 +642,7 @@ class IRJsonExporter:
       result_dict[IRJsonRepr.ANY_KIND.value] = value_kind.value
       result_dict[IRJsonRepr.ANY_TYPE.value] = json_name
       body_array = []
-      for v in value.value:
+      for v in value.get_value_tuple():
         cur_repr = self.get_value_repr(v)
         body_array.append(cur_repr)
       result_dict[IRJsonRepr.ANY_BODY.value] = body_array
@@ -751,6 +769,7 @@ class IRJsonExporter:
 
       # types
       ParameterizedType,
+      SingleElementParameterizedType,
       OptionalType,
       EnumType,
       ClassType,
@@ -806,21 +825,24 @@ def _metadata_object_json_import_init(self, *, importer : IRJsonImporter, init_s
   raise NotImplementedError()
 
 def IRObjectUniqueTrait(cls):
-  # 该修饰符用于不可被复制的对象（比如他们需要在 Context 被去重，比如字面值）
-  cls.copy_init = _stub_copy_init
+  '''该修饰符用于不可被复制的对象（比如他们需要在 Context 被去重，比如字面值）'''
+  cls.copy_init = _stub_copy_init # type: ignore
   return cls
 
 def IRObjectMetadataTrait(cls):
-  # 该修饰符用于所有以元数据(Metadata)的方式进行 JSON 导入导出的对象：
-  # 1.  对象不可复制，将会在 Context 层面被去重
-  # 2.  对象是 dataclass 并且所有成员值只能包含(1)字面值（整数，字符串，等等），(2)Python 类型，(3)对其他元数据项的引用，(4) Context
-  #     对象不可以包含对 Value 的引用，不能是 User
-  # 3.  对其他元数据的引用不可以包含环，必须最多是 DAG
-  # 4.  对象的每一个值都有 "json_repr" 的元数据，描述（除 Context 以外）所有参数的 JSON 形式
-  # 目前该修饰符只用于位置信息 (DIFile, DILocation)和值类型
-  # （注意我们需要使用 object.__setattr__(obj, "field_name", value) 来进行初始化，不然我们不能动 frozen 的 dataclass）
-  cls.copy_init = _stub_copy_init
-  cls.json_import_init = _metadata_object_json_import_init
+  '''该修饰符用于所有以元数据(Metadata)的方式进行 JSON 导入导出的对象：
+1.  对象不可复制，将会在 Context 层面被去重
+2.  对象是 dataclass 并且所有成员值只能包含(1)字面值（整数，字符串，等等），(2)Python 类型，(3)对其他元数据项的引用，(4) Context
+    对象不可以包含对 Value 的引用，不能是 User
+3.  对其他元数据的引用不可以包含环，必须最多是 DAG
+4.  对象的每一个值都有 "json_repr" 的元数据，描述（除 Context 以外）所有参数的 JSON 形式
+
+目前该修饰符只用于位置信息 (DIFile, DILocation)和值类型
+
+（注意我们需要使用 object.__setattr__(obj, "field_name", value) 来进行初始化，不然我们不能动 frozen 的 dataclass）
+'''
+  cls.copy_init = _stub_copy_init # type: ignore
+  cls.json_import_init = _metadata_object_json_import_init # type: ignore
   return cls
 
 # 。。下面这些注释作废了
@@ -859,6 +881,7 @@ class IRJsonImporter:
     # 2.  类型列表 (Python 类型到 ID)
     # 3.  元数据节点，包括 DIFile/DILocation 和各种 ValueType
     # 4.  顶层操作项
+    raise NotImplementedError()
 
 
   def get_value_type(self, value_type_id : int):
@@ -881,7 +904,7 @@ class IRJsonImporter:
     if value_id in self._placeholder_value_dict:
       return self._placeholder_value_dict[value_id]
     # 创建新的占位值
-    placeholder : PlaceholderValue = None
+    placeholder = None
     if len(self._placeholder_recycle_list) > 0:
       placeholder = self._placeholder_recycle_list.pop()
     else:
@@ -938,6 +961,10 @@ class ValueType(IRObject):
   def __str__(self) -> str:
     return type(self).__name__
 
+  @staticmethod
+  def get(*args, **kwargs):
+    raise NotImplementedError()
+
 @IRObjectJsonTypeName("parameterized_t")
 @dataclasses.dataclass(init=False, slots=True, frozen=True)
 class ParameterizedType(ValueType):
@@ -973,27 +1000,42 @@ class ParameterizedType(ValueType):
   def __repr__(self) -> str:
     return  type(self).__name__ + '<' + ParameterizedType._get_parameter_repr(self.parameters) + '>'
 
-@IRObjectJsonTypeName("optional_t")
+@IRObjectJsonTypeName("singleparam_t")
 @dataclasses.dataclass(init=False, slots=True, frozen=True)
-class OptionalType(ParameterizedType):
-  # dependent type that is optional of the specified type (either have the data or None)
-
+class SingleElementParameterizedType(ParameterizedType):
   def construct_init(self, *, element_type: ValueType, **kwargs) -> None:
     return super().construct_init(context=element_type.context, parameters=[element_type], **kwargs)
 
   @property
   def element_type(self) -> ValueType:
-    return super().parameters[0]
+    return super().parameters[0] # type: ignore
 
+  @classmethod
+  def _get_typecheck(cls, element_type : ValueType) -> None:
+    # 对所提供的类型进行检查，不符合要求就抛出异常
+    pass
+
+  @classmethod
+  def get(cls, element_type : ValueType) -> SingleElementParameterizedType:
+    cls._get_typecheck(element_type)
+    return element_type.context.get_or_create_parameterized_type(
+      cls,
+      [element_type],
+      lambda : cls(init_mode = IRObjectInitMode.CONSTRUCT,
+                   context = element_type.context,
+                   element_type=element_type)
+    )
+
+@IRObjectJsonTypeName("optional_t")
+@dataclasses.dataclass(init=False, slots=True, frozen=True)
+class OptionalType(SingleElementParameterizedType):
+  # dependent type that is optional of the specified type (either have the data or None)
   def __str__(self) -> str:
     return "可选<" + str(self.element_type) + ">"
 
-  @staticmethod
-  def get(ty : ValueType) -> OptionalType:
-    # skip degenerate case
-    if isinstance(ty, OptionalType):
-      return ty
-    return ty.context.get_parameterized_type_dict(OptionalType).get_or_create([ty], lambda : OptionalType(init_mode = IRObjectInitMode.CONSTRUCT, context = ty.context, element_type=ty))
+  @classmethod
+  def _get_typecheck(cls, element_type : ValueType) -> None:
+    assert not isinstance(element_type, OptionalType)
 
 @IRObjectJsonTypeName("enum_t")
 @dataclasses.dataclass(init=False, slots=True, frozen=True)
@@ -1003,15 +1045,14 @@ class EnumType(ParameterizedType):
 
   @property
   def element_type(self) -> type:
-    return super().parameters[0]
+    return super().parameters[0] # type: ignore
 
   def __str__(self) -> str:
     return "枚举类型<" + str(self.element_type) + ">"
 
-
   @staticmethod
   def get(ty : type, context : Context) -> EnumType:
-    return context.get_parameterized_type_dict(EnumType).get_or_create([ty], lambda : EnumType(init_mode = IRObjectInitMode.CONSTRUCT, context = context, ty = ty))
+    return context.get_or_create_parameterized_type(EnumType, [ty], lambda : EnumType(init_mode = IRObjectInitMode.CONSTRUCT, context = context, ty = ty))
 
 @IRObjectJsonTypeName("class_t")
 @dataclasses.dataclass(init=False, slots=True, frozen=True)
@@ -1024,11 +1065,11 @@ class ClassType(ParameterizedType):
 
   @property
   def element_type(self) -> type:
-    return super().parameters[0]
+    return super().parameters[0] # type: ignore
 
   @staticmethod
   def get(base_cls : type, context : Context) -> ClassType:
-    return context.get_parameterized_type_dict(ClassType).get_or_create([base_cls], lambda : ClassType(init_mode=IRObjectInitMode.CONSTRUCT, context=context, base_cls=base_cls))
+    return context.get_or_create_parameterized_type(ClassType, [base_cls], lambda : ClassType(init_mode=IRObjectInitMode.CONSTRUCT, context=context, base_cls=base_cls))
 
 class ParameterizedTypeUniquingDict:
   # this class is used by Context to manage all parameterized type objects
@@ -1039,7 +1080,7 @@ class ParameterizedTypeUniquingDict:
     self._pty = pty
     assert isinstance(pty, type)
 
-  def get_or_create(self, parameters : typing.List[ValueType | type | int | str | bool | None], ctor : callable):
+  def get_or_create(self, parameters : typing.List[ValueType | type | int | str | bool | None], ctor : typing.Callable):
     # pylint: disable=protected-access
     reprstr = ParameterizedType._get_parameter_repr(parameters)
     if reprstr in self._instance_dict:
@@ -1142,14 +1183,16 @@ class AggregateTextType(StatelessType):
 # ------------------------------------------------------------------------------
 # Major classes
 # ------------------------------------------------------------------------------
+_ValueTypeVar = typing.TypeVar('_ValueTypeVar', bound='Value')
 
 @IRObjectJsonTypeName("value")
 class Value(IRObject):
   # __slots__ = ('_type', '_uselist')
   # value is either a block argument or an operation result
   _type : ValueType
-  _uselist : IList[Use]
+  _uselist : IList[Use, Value]
 
+  # pylint: disable=arguments-differ
   def construct_init(self, *, ty : ValueType, **kwargs) -> None:
     super().construct_init(**kwargs)
     self._type = ty
@@ -1194,7 +1237,7 @@ class Value(IRObject):
       type_obj["value"] = {"value_type": json_name}
 
   @property
-  def uses(self) -> IList[Use]:
+  def uses(self) -> IList[Use, Value]:
     return self._uselist
 
   def use_empty(self) -> bool:
@@ -1250,37 +1293,39 @@ class NameReferencedValue(Value, NameDictNode):
     super().json_export_impl(exporter=exporter, dest=dest, **kwargs)
     dest[IRJsonRepr.ANY_NAME.value] = self.name
 
-class Use(IListNode):
+
+
+class Use(IListNode, typing.Generic[_ValueTypeVar]):
   # __slots__ = ('_user', '_argno')
-  _user : User
+  _user : User[_ValueTypeVar]
   _argno : int
-  def __init__(self, user : User, argno : int) -> None:
+  def __init__(self, user : User[_ValueTypeVar], argno : int) -> None:
     super().__init__()
     self._user = user
     self._argno = argno
 
   @property
-  def value(self) -> Value:
-    return super().parent
+  def value(self) -> _ValueTypeVar:
+    return super().parent # type: ignore
 
   @property
-  def user(self) -> User:
+  def user(self) -> User[_ValueTypeVar]:
     return self._user
 
   @property
   def argno(self) -> int:
     return self._argno
 
-  def set_value(self, v : Value):
+  def set_value(self, v : _ValueTypeVar | None):
     if super().parent is not None:
       super().remove_from_parent()
     if v is not None:
       # pylint: disable=protected-access
-      v._uselist.push_back(self)
+      v._uselist.push_back(self) # type: ignore
 
-@IRObjectJsonTypeName("user")
-class User:
-  _operandlist : list[Use]
+@_IRInnerConstructJsonTypeName("user")
+class User(typing.Generic[_ValueTypeVar]):
+  _operandlist : list[Use[_ValueTypeVar]]
 
   def __init__(self, **kwargs) -> None:
     super().__init__(**kwargs)
@@ -1289,17 +1334,17 @@ class User:
   def post_copy_value_remap(self, *, value_mapper : IRValueMapper, **kwargs):
     for u in self._operandlist:
       if newvalue := value_mapper.get_mapped_value(u.value):
-        u.set_value(newvalue)
+        u.set_value(newvalue) # type: ignore
 
-  def get_operand(self, index : int) -> Value:
+  def get_operand(self, index : int) -> _ValueTypeVar:
     return self._operandlist[index].value
 
-  def set_operand(self, index : int, value : Value) -> None:
+  def set_operand(self, index : int, value : _ValueTypeVar) -> None:
     if len(self._operandlist) == index:
       return self.add_operand(value)
     self._operandlist[index].set_value(value)
 
-  def add_operand(self, value : Value) -> None:
+  def add_operand(self, value : _ValueTypeVar) -> None:
     u = Use(self, len(self._operandlist))
     self._operandlist.append(u)
     u.set_value(value)
@@ -1307,7 +1352,7 @@ class User:
   def get_num_operands(self) -> int:
     return len(self._operandlist)
 
-  def operanduses(self) -> typing.Iterable[Use]:
+  def operanduses(self) -> typing.Iterable[Use[_ValueTypeVar]]:
     return self._operandlist
 
   def drop_all_uses(self) -> None:
@@ -1321,7 +1366,7 @@ class User:
       result.append(exporter.get_value_repr(use.value))
     return result
 
-class OpOperand(User, NameDictNode):
+class OpOperand(User[_ValueTypeVar], NameDictNode, typing.Generic[_ValueTypeVar]):
   def __init__(self) -> None:
     super().__init__()
 
@@ -1329,20 +1374,20 @@ class OpOperand(User, NameDictNode):
   def parent(self) -> Operation:
     return super().parent
 
-  def get(self, index : typing.Optional[int] = None) -> Value:
+  def get(self, index : typing.Optional[int] = None) -> _ValueTypeVar:
     if index is not None:
       return super().get_operand(index)
     return super().get_operand(0)
 
   # 可以调用 User.drop_all_uses() 来取消所有引用
 
-@IRObjectJsonTypeName(IRObject.JSON_NAME_NOT_USED)
+@_IRInnerConstructJsonTypeName(IRObject.JSON_NAME_NOT_USED)
 class OpResult(NameReferencedValue):
   @property
   def parent(self) -> Operation:
     return super().parent
 
-@IRObjectJsonTypeName(IRObject.JSON_NAME_NOT_USED)
+@_IRInnerConstructJsonTypeName(IRObject.JSON_NAME_NOT_USED)
 class BlockArgument(NameReferencedValue):
   @property
   def parent(self) -> Block:
@@ -1351,12 +1396,6 @@ class BlockArgument(NameReferencedValue):
 # reference: https://mlir.llvm.org/doxygen/classmlir_1_1Operation.html
 @IRObjectJsonTypeName("op")
 class Operation(IRObject, IListNode):
-  _s_traits : typing.ClassVar[tuple[type]] = () # operation traits; take types as operand so that we can attach static methods to the traits
-
-  @classmethod
-  def get_operation_traits(cls) -> tuple[type]:
-    return cls._s_traits
-
   _name : str
   _loc : Location
   _operands : NameDict[OpOperand]
@@ -1374,7 +1413,7 @@ class Operation(IRObject, IListNode):
     self._attributes = collections.OrderedDict()
     self._regions = NameDict(self)
 
-  def construct_init(self, *, name : str = '', loc : Location = None, **kwargs) -> None:
+  def construct_init(self, *, name : str = '', loc : Location | None = None, **kwargs) -> None:
     super().construct_init(name=name, loc=loc,**kwargs)
     self._name = name
     if loc is not None:
@@ -1482,7 +1521,7 @@ class Operation(IRObject, IListNode):
     self._operands[name] = o
     return o
 
-  def _add_operand_with_value(self, name : str, value : Value) -> OpOperand:
+  def _add_operand_with_value(self, name : str, value : Value | None) -> OpOperand:
     o = self._add_operand(name)
     if value is not None:
       o.add_operand(value)
@@ -1495,13 +1534,17 @@ class Operation(IRObject, IListNode):
     return o
 
   def get_result(self, name : str) -> OpResult:
-    return self._results.get(name)
+    if v := self._results.get(name):
+      return v
+    raise RuntimeError('Result not found')
 
   def get_operand_inst(self, name : str) -> OpOperand:
-    return self._operands.get(name)
+    if v := self._operands.get(name):
+      return v
+    raise RuntimeError('Operand not found')
 
-  def get_operand(self, name : str) -> Value:
-    o : OpOperand = self._operands.get(name)
+  def get_operand(self, name : str) -> Value | None:
+    o = self._operands.get(name)
     if o is not None:
       return o.get()
     return None
@@ -1537,10 +1580,12 @@ class Operation(IRObject, IListNode):
     return r
 
   def get_region(self, name : str) -> Region:
-    return self._regions.get(name)
+    r = self._regions.get(name)
+    assert r is not None and type(r) == Region
+    return r
 
   def get_symbol_table(self, name : str) -> SymbolTableRegion:
-    r = self.get_region(name)
+    r = self._regions.get(name)
     assert isinstance(r, SymbolTableRegion)
     return r
 
@@ -1557,13 +1602,13 @@ class Operation(IRObject, IListNode):
   def regions(self) -> typing.Iterable[Region]:
     return self._regions.values()
 
-  def get_first_region(self) -> Region:
+  def get_first_region(self) -> Region | None:
     try:
       return next(iter(self._regions.values()))
     except StopIteration:
       return None
 
-  def get_last_region(self) -> Region:
+  def get_last_region(self) -> Region | None:
     try:
       return self._regions[next(reversed(self._regions))]
     except StopIteration:
@@ -1626,13 +1671,13 @@ class Operation(IRObject, IListNode):
     return self._loc.context
 
   @property
-  def parent_region(self) -> Region:
+  def parent_region(self) -> Region | None:
     if self.parent is not None:
       return self.parent.parent
     return None
 
   @property
-  def parent_op(self) -> Operation:
+  def parent_op(self) -> Operation | None:
     parent_region = self.parent_region
     if parent_region is not None:
       return parent_region.parent
@@ -1664,20 +1709,20 @@ class Symbol(Operation):
   @Operation.name.setter
   def name(self, n : str):
     if self.parent is not None:
-      table : SymbolTableRegion = self.parent.parent
+      table = self.parent.parent
       # pylint: disable=protected-access
       assert isinstance(table, SymbolTableRegion)
       table._rename_symbol(self, n)
     self._name = n
 
   def node_inserted(self, parent : Block):
-    table : SymbolTableRegion = parent.parent
+    table = parent.parent
     assert isinstance(table, SymbolTableRegion)
     # pylint: disable=protected-access
     table._add_symbol(self)
 
   def node_removed(self, parent : Block):
-    table : SymbolTableRegion = parent.parent
+    table = parent.parent
     assert isinstance(table, SymbolTableRegion)
     # pylint: disable=protected-access
     table._drop_symbol(self.name)
@@ -1692,9 +1737,9 @@ class ErrorOp(MetadataOp):
   # 错误项用以记录编译中遇到的错误
   # 所有错误项需要(1)一个错误编号，(2)一个错误消息
   # 一般来说所有转换都需要忽视这些错误项，把它们留在IR里不去动它们
-  _error_message_operand : OpOperand
+  _error_message_operand : OpOperand[StringLiteral]
 
-  def construct_init(self, *, error_code : str, error_msg : StringLiteral = None, name: str = '', loc: Location = None,  **kwargs) -> None:
+  def construct_init(self, *, error_code : str, error_msg : StringLiteral | None = None, name: str = '', loc: Location | None = None,  **kwargs) -> None:
     assert isinstance(error_code, str)
     if error_msg is not None:
       assert isinstance(error_msg, StringLiteral)
@@ -1707,14 +1752,14 @@ class ErrorOp(MetadataOp):
 
   @property
   def error_code(self) -> str:
-    return self.get_attr('Code')
+    return self.get_attr('Code') # type: ignore
 
   @property
   def error_message(self) -> StringLiteral:
     return self._error_message_operand.get()
 
   @staticmethod
-  def create(error_code : str, context : Context, error_msg : StringLiteral = None, name: str = '', loc: Location = None) -> ErrorOp:
+  def create(error_code : str, context : Context, error_msg : StringLiteral | None = None, name: str = '', loc: Location | None = None) -> ErrorOp:
     return ErrorOp(init_mode=IRObjectInitMode.CONSTRUCT, context=context, error_code = error_code, error_msg = error_msg, name = name, loc = loc)
 
 @IRObjectJsonTypeName("comment_op")
@@ -1723,7 +1768,7 @@ class CommentOp(MetadataOp):
   # 一般来说我们努力将其保留到输出源文件中
   _comment_operand : OpOperand
 
-  def construct_init(self, *, comment : StringLiteral, name: str = '', loc: Location = None, **kwargs) -> None:
+  def construct_init(self, *, comment : StringLiteral, name: str = '', loc: Location | None = None, **kwargs) -> None:
     super().construct_init(name = name, loc = loc, **kwargs)
     self._add_operand_with_value('comment', comment)
 
@@ -1735,7 +1780,7 @@ class CommentOp(MetadataOp):
     return self._comment_operand.get()
 
   @staticmethod
-  def create(comment : StringLiteral, name: str = '', loc: Location = None) -> CommentOp:
+  def create(comment : StringLiteral, name: str = '', loc: Location | None = None) -> CommentOp:
     return CommentOp(init_mode=IRObjectInitMode.CONSTRUCT, context=comment.context, comment = comment, name = name, loc = loc)
 
 class Block(Value, IListNode):
@@ -1767,7 +1812,7 @@ class Block(Value, IListNode):
       value_mapper.add_value_map(arg, new_arg)
     for op in init_src._ops:
       clonedop = op.clone(value_mapper)
-      self._ops.push_back(clonedop)
+      self._ops.push_back(clonedop) # type: ignore
 
   def post_copy_value_remap(self, *, value_mapper : IRValueMapper, **kwargs):
     super().post_copy_value_remap(value_mapper=value_mapper, **kwargs)
@@ -1830,7 +1875,7 @@ class Block(Value, IListNode):
     return self.next
 
   def add_argument(self, name : str, ty : ValueType) -> BlockArgument:
-    arg = BlockArgument(ty)
+    arg = BlockArgument(init_mode=IRObjectInitMode.CONSTRUCT, context=ty.context, ty=ty)
     self._args[name] = arg
     return arg
 
@@ -1867,9 +1912,11 @@ class Block(Value, IListNode):
     dump = writer.write_block(self)
     print(dump.decode('utf-8'))
 
-@IRObjectJsonTypeName("region_r")
+@_IRInnerConstructJsonTypeName("region_r")
 class Region(NameDictNode):
   _blocks : IList[Block, Region]
+
+  JSON_TYPE_NAME: typing.ClassVar[str]
 
   def __init__(self) -> None:
     super().__init__()
@@ -1878,6 +1925,7 @@ class Region(NameDictNode):
   def copy_init(self, *, init_src : Region, value_mapper : IRValueMapper, **kwargs):
     for b in init_src._blocks:
       new_block = b.clone(value_mapper)
+      assert isinstance(new_block, Block)
       self._blocks.push_back(new_block)
       value_mapper.add_value_map(b, new_block)
 
@@ -1952,7 +2000,7 @@ class Region(NameDictNode):
     dump = writer.write_region(self)
     print(dump.decode('utf-8'))
 
-@IRObjectJsonTypeName("symbol_r")
+@_IRInnerConstructJsonTypeName("symbol_r")
 class SymbolTableRegion(Region, collections.abc.Sequence):
   # if a region is a symbol table, it will always have one block
   _lookup_dict : collections.OrderedDict[str, Symbol]
@@ -1969,6 +2017,7 @@ class SymbolTableRegion(Region, collections.abc.Sequence):
   def copy_init(self, *, init_src: SymbolTableRegion, value_mapper: IRValueMapper, **kwargs):
     for symbol in init_src:
       new_symbol = symbol.clone(value_mapper)
+      assert isinstance(new_symbol, Symbol)
       self.add(new_symbol)
 
   def _get_anonymous_name(self):
@@ -2012,7 +2061,7 @@ class SymbolTableRegion(Region, collections.abc.Sequence):
 
 @IRObjectJsonTypeName('literal_l')
 @IRObjectUniqueTrait
-class Literal(Value, IRObject):
+class Literal(Value):
   # __slots__ = ('_value')
   _value : typing.Any
 
@@ -2028,7 +2077,7 @@ class Literal(Value, IRObject):
     return self._value
 
   def get_context(self) -> Context:
-    return self.valuetype.context
+    return super().valuetype.context
 
   @staticmethod
   def _get_literal_impl(literal_cls : type, value : typing.Any, context : Context) -> typing.Any:
@@ -2104,6 +2153,10 @@ class ConstExpr(Value, User):
     for user in dead_cexpr:
       user.destroy_constant()
 
+  def get_value_tuple(self) -> tuple[Value]:
+    return tuple(u.value for u in self.operanduses())
+
+
   @classmethod
   def _get_impl(cexpr_cls, ty : ValueType, values : typing.Iterable[Value]):
     key_tuple = (cexpr_cls, *values)
@@ -2118,7 +2171,7 @@ class LiteralUniquingDict:
     self._ty = ty
     self._inst_dict = collections.OrderedDict()
 
-  def get_or_create(self, data : typing.Any, ctor : callable) -> Value:
+  def get_or_create(self, data : typing.Any, ctor : typing.Callable) -> Value:
     if data in self._inst_dict:
       return self._inst_dict[data]
     inst = ctor()
@@ -2138,11 +2191,11 @@ class Context:
   _parameterized_type_dict : collections.OrderedDict[type, ParameterizedTypeUniquingDict]
   _literal_dict : collections.OrderedDict[type, LiteralUniquingDict]
   _constexpr_dict : collections.OrderedDict[type, ConstExprUniquingDict]
-  _asset_data_list : IList[AssetData]
-  _asset_temp_dir : tempfile.TemporaryDirectory # created on-demand
+  _asset_data_list : IList[AssetData, Context]
+  _asset_temp_dir : tempfile.TemporaryDirectory | None # created on-demand
   _null_location : Location # a dummy location value with only a reference to the context
   _difile_dict : collections.OrderedDict[str, DIFile] # from filepath string to the DIFile object
-  _diloc_dict : collections.OrderedDict[DIFile, dict[tuple[int, int, int], DILocation]] # <file> -> <page, row, column> -> DILocation
+  _diloc_dict : collections.OrderedDict[DIFile, collections.OrderedDict[tuple[int, int, int], DILocation]] # <file> -> <page, row, column> -> DILocation
 
   def __init__(self) -> None:
     self._stateless_type_dict = collections.OrderedDict()
@@ -2161,6 +2214,9 @@ class Context:
     instance = ty(init_mode=IRObjectInitMode.CONSTRUCT, context=self)
     self._stateless_type_dict[ty] = instance
     return instance
+
+  def get_or_create_parameterized_type(self, ty : typing.Type[T], parameters : typing.List[ValueType | type | int | str | bool | None], ctor : typing.Callable) -> T:
+    return self.get_parameterized_type_dict(ty).get_or_create(parameters, ctor) # type: ignore
 
   def get_parameterized_type_dict(self, ty : type) -> ParameterizedTypeUniquingDict:
     if ty in self._parameterized_type_dict:
@@ -2194,8 +2250,44 @@ class Context:
     self._constexpr_dict[ty] = result
     return result
 
+  def create_name_for_asset(self, underdir : str, preferred_path : str, data : bytes) -> str:
+    # 我们把所有素材文件都放一个目录下
+    # 用该函数给素材命名，保证文件名不重复
+    # 如果 preferred_path 有提供，则我们保证最终使用的文件名一定含有相同的后缀名
+    # （这是为了保证使用后缀名确定格式的资源能够正常读取）
+    if len(preferred_path) > 0:
+      preferred_path = os.path.basename(preferred_path)
+    basename = ''
+    ext = '.bin'
+    if len(preferred_path) > 0:
+      basename, ext = os.path.splitext(preferred_path)
+    if len(basename) == 0:
+      m = hashlib.sha512()
+      m.update(data)
+      basename = m.digest().hex()
+    index = 0
+    cur_full_path = basename + ext
+    while os.path.exists(os.path.join(underdir, cur_full_path)):
+      index += 1
+      cur_full_path = basename + '_' + str(index) + ext
+    return cur_full_path
+
+  def create_image_asset_data_embedded(self, preferred_path : str, data : bytes, img_format : str | None = None) -> ImageAssetData:
+    tmppath = self.get_backing_dir()
+    filename = self.create_name_for_asset(tmppath.name, preferred_path, data)
+    backing_store_path = os.path.join(tmppath.name, filename)
+    with open(backing_store_path, "wb") as f:
+      f.write(data)
+    asset = ImageAssetData(init_mode=IRObjectInitMode.CONSTRUCT, context=self, backing_store_path=backing_store_path, format = img_format)
+    self._add_asset_data(asset)
+    return asset
+
+  def create_image_asset_data_external(self, ext_path : str, img_format : str | None = None) -> ImageAssetData:
+    asset = ImageAssetData(init_mode=IRObjectInitMode.CONSTRUCT, context=self, backing_store_path=ext_path)
+    self._add_asset_data(asset)
+    return asset
+
   def _add_asset_data(self, asset : AssetData):
-    # should only be called from the constructor of AssetData
     asset.remove_from_parent()
     self._asset_data_list.push_back(asset)
 
@@ -2211,25 +2303,34 @@ class Context:
     return result
 
   def get_DILocation(self, file : str | DIFile, page : int, row : int, column: int) -> DILocation:
-    difile : DIFile = file
+    difile = file
     if isinstance(file, str):
       difile = self.get_DIFile(file)
     assert isinstance(difile, DIFile)
     assert difile.context is self
+    if difile in self._diloc_dict:
+      filedict = self._diloc_dict[difile]
+    else:
+      filedict = collections.OrderedDict()
+      self._diloc_dict[difile] = filedict
     key = (page, row, column)
-    if key in self._diloc_dict:
-      return self._diloc_dict[key]
+    if key in filedict:
+      return filedict[key]
     # file : DIFile, page : int, row : int, column : int,
     result = DILocation(init_mode=IRObjectInitMode.CONSTRUCT, context=self, file=difile, page=page, row=row, column=column)
-    self._diloc_dict[key] = result
+    filedict[key] = result
     return result
 
 # ------------------------------------------------------------------------------
 # Assets
 # ------------------------------------------------------------------------------
 
+_DataTV = typing.TypeVar('_DataTV')
+_FmtTV = typing.TypeVar('_FmtTV')
+
 @IRObjectJsonTypeName('assetdata_ad')
-class AssetData(Value, IListNode):
+@IRObjectUniqueTrait
+class AssetData(Value, IListNode, typing.Generic[_DataTV, _FmtTV]):
   # an asset data represent a pure asset; no (IR-related) metadata
   # any asset data is immutable; they cannot be modified after creation
   # if we want to convert the type, a new asset data instance should be created
@@ -2242,27 +2343,58 @@ class AssetData(Value, IListNode):
 
   # if analysis would like to have a big working set involving multiple assets, they can implement their own cache
 
-  #_backing_store_path : str # if it is in the temporary directory, this asset data owns it; otherwise the source is read-only; empty string if no backing store
+  _backing_store_path : str # if it is in the temporary directory, this asset data owns it; otherwise the source is read-only; empty string if no backing store
+  _data : _DataTV | None
+  _format : _FmtTV | None
 
-  def __init__(self, context : Context, **kwargs) -> None:
+  def construct_init(self, *, context : Context, backing_store_path : str = '', data : _DataTV | None = None, format : _FmtTV | None = None, **kwargs) -> None:
     ty = AssetDataReferenceType.get(context)
-    super().__init__(ty, **kwargs)
-    context._add_asset_data(self)
+    super().construct_init(context=context, ty=ty, **kwargs)
+    # context._add_asset_data(self)
+    self._backing_store_path = backing_store_path
+    self._data = data
+    # invariants check: either backing_store_path is provided, or data is provided
+    assert (self._data is not None) == (len(self._backing_store_path) == 0)
+    if format is not None:
+      self._format = format
+    else:
+      self._format = self.get_format_in_construction(backing_store_path, data) # pylint: disable=assignment-from-none
+
+  def get_format_in_construction(self, backing_store_path : str, data : _DataTV | None) -> _FmtTV | None:
+    return None # type: ignore
 
   #@property
   #def backing_store_path(self) -> str:
   #  return self._backing_store_path
 
-  def load(self) -> typing.Any:
+  @property
+  def backing_store_path(self) -> str:
+    return self._backing_store_path
+
+  @property
+  def data(self) -> _DataTV | None:
+    return self._data
+
+  @property
+  def format(self) -> _FmtTV | None:
+    return self._format
+
+  def load(self) -> _DataTV:
     # load the asset data to memory
     # should be implemented in the derived classes
-    pass
+    if self._data is not None:
+      return self._data
+    return self.load_from_storage()
+
+  def load_from_storage(self) -> _DataTV:
+    # load the asset from the backing store path
+    raise NotImplementedError()
 
   def export(self, dest_path : str) -> None:
     # save the asset data to the specified path
     # we do not try to create another AssetData instance here
     # if the caller want one, they can always create one using the dest_path
-    pass
+    raise NotImplementedError()
 
   @staticmethod
   def secure_overwrite(exportpath: str, write_callback: typing.Callable):
@@ -2288,102 +2420,95 @@ class AssetData(Value, IListNode):
     return hash(id(self))
 
 @IRObjectJsonTypeName('bytes_ad')
-class BytesAssetData(AssetData):
-  _backing_store_path : str
-  _data : bytes
-  def __init__(self, context: Context, *, backing_store_path : str = '', data : bytes = None,  **kwargs) -> None:
-    super().__init__(context, **kwargs)
-    self._backing_store_path = backing_store_path
-    self._data = data
-    # invariants check: either backing_store_path is provided, or data is provided
-    assert (self._data is not None) == (len(self._backing_store_path) == 0)
-
-  def load(self) -> bytes:
-    if self._data is not None:
-      return self._data
-    with open(self._backing_store_path, 'rb') as f:
+class BytesAssetData(AssetData[bytes, None]):
+  def load_from_storage(self) -> bytes:
+    with open(self.backing_store_path, 'rb') as f:
       return f.read()
 
   def export(self, dest_path: str) -> None:
-    if self._data is not None:
+    if data := self.data:
       with open(dest_path, 'wb') as f:
-        f.write(self._data)
+        f.write(data)
     else:
-      shutil.copy2(self._backing_store_path, dest_path, follow_symlinks=False)
+      shutil.copy2(self.backing_store_path, dest_path, follow_symlinks=False)
 
 @IRObjectJsonTypeName('image_ad')
-class ImageAssetData(AssetData):
-  _backing_store_path : str
-  _data : PIL.Image.Image
-  _format : str # format parameter used by PIL (e.g., 'png', 'bmp', ...)
+class ImageAssetData(AssetData[PIL.Image.Image, str]):
+  _SUPPORTED_FORMAT_BIDICT : typing.ClassVar[bidict.bidict[str, str]] | None = None
+  @staticmethod
+  def get_format_dict():
+    if ImageAssetData._SUPPORTED_FORMAT_BIDICT is not None:
+      return ImageAssetData._SUPPORTED_FORMAT_BIDICT
+    ImageAssetData._SUPPORTED_FORMAT_BIDICT = bidict.bidict()
+    mimetypes.init()
+    # make sure basic types are in
+    assert '.png' in mimetypes.types_map
+    assert '.jpg' in mimetypes.types_map
+    for ext, fmt in PIL.Image.registered_extensions().items():
+      if ext not in mimetypes.types_map:
+        continue
+      mime = mimetypes.types_map[ext]
+      # skip 1-to-N mappings
+      if mime in ImageAssetData._SUPPORTED_FORMAT_BIDICT or fmt in ImageAssetData._SUPPORTED_FORMAT_BIDICT.inverse:
+        continue
+      ImageAssetData._SUPPORTED_FORMAT_BIDICT[mime] = fmt
+    return ImageAssetData._SUPPORTED_FORMAT_BIDICT
 
-  def __init__(self, context: Context, *, backing_store_path : str = '', data : PIL.Image.Image = None, **kwargs) -> None:
-    super().__init__(context, **kwargs)
-    self._backing_store_path = backing_store_path
-    self._data = data
-    self._format = None
-    # invariants check: either backing_store_path or data is provided
-    if len(self._backing_store_path) == 0:
-      assert self._data is not None
-      self._format = self._data.format # can be None
-      # no other checks for now
+  @staticmethod
+  def get_format_from_mime_type(mime : str) -> str | None:
+    d = ImageAssetData.get_format_dict()
+    if mime in d:
+      return d[mime]
+    return None
+
+  @staticmethod
+  def get_mime_type_from_format(fmt : str) -> str | None:
+    d =  ImageAssetData.get_format_dict().inverse
+    if fmt in d:
+      return d[fmt]
+    return None
+
+  def get_format_in_construction(self, backing_store_path: str, data: PIL.Image.Image | None) -> str | None:
+    if len(backing_store_path) == 0:
+      assert data is not None
+      return data.format # can be None
     else:
-      assert self._data is None
       # verify that the image file is valid
-      with PIL.Image.open(self._backing_store_path) as image:
-        self._format = image.format.lower()
-        assert len(self._format) > 0
+      with PIL.Image.open(backing_store_path) as image:
+        format = image.format
+        assert format is not None and len(format) > 0 # should have a format if loaded from storage
         image.verify()
+        return format.lower()
 
-  @property
-  def format(self) -> str | None:
-    # we can have no formats if the data is from a temporary PIL image
-    return self._format
-
-  def load(self) -> PIL.Image.Image:
-    if self._data is not None:
-      return self._data
-    return PIL.Image.open(self._backing_store_path)
+  def load_from_storage(self) -> PIL.Image.Image:
+    return PIL.Image.open(self.backing_store_path)
 
   def export(self, dest_path : str) -> None:
-    if self._data is not None:
-      self._data.save(dest_path)
+    if data := self._data:
+      data.save(dest_path)
       return
     # we do file copy iff the source and dest format matches
     # otherwise, we open the source file and save it in the destination
-    _srcname, srcext = os.path.splitext(self._backing_store_path)
+    _srcname, srcext = os.path.splitext(self.backing_store_path)
     _destname, destext = os.path.splitext(dest_path)
     if srcext == destext:
-      shutil.copy2(self._backing_store_path, dest_path, follow_symlinks=False)
+      shutil.copy2(self.backing_store_path, dest_path, follow_symlinks=False)
     else:
-      image = PIL.Image.open(self._backing_store_path)
+      image = PIL.Image.open(self.backing_store_path)
       image.save(dest_path)
 
 @IRObjectJsonTypeName('audio_ad')
-class AudioAssetData(AssetData):
-  _backing_store_path : str
-  _data : pydub.AudioSegment
-  _format : str
+class AudioAssetData(AssetData[pydub.AudioSegment, str]):
+  _SUPPORTED_FORMATS : typing.ClassVar[tuple[str, ...]] = ("wav", "aac", "ogg", "m4a", "aiff", "flac", "mp3")
 
-  _supported_formats : typing.ClassVar[list[str]] = ["wav", "aac", "ogg", "m4a", "aiff", "flac", "mp3"]
-
-  def __init__(self, context: Context, *, backing_store_path : str, data : pydub.AudioSegment, **kwargs) -> None:
-    super().__init__(context, **kwargs)
-    self._backing_store_path = backing_store_path
-    self._data = data
-    self._format = None
-    # invariants check: either backing_store_path or data is provided
-    if len(self._backing_store_path) == 0:
-      assert self._data is not None
-      self._format = None
-      # no other checks for now
+  def get_format_in_construction(self, backing_store_path: str, data: pydub.AudioSegment | None) -> str | None:
+    if len(backing_store_path) == 0:
+      return None
     else:
-      assert self._data is None
-      # check that the file extension is what we recognize
-      _basepath, ext = os.path.splitext(self._backing_store_path)
+      _basepath, ext = os.path.splitext(backing_store_path)
       ext = ext.lower()
-      if ext in self._supported_formats:
-        self._format = ext
+      if ext in self._SUPPORTED_FORMATS:
+        return ext
       else:
         raise RuntimeError("Unrecognized audio file format: " + ext)
 
@@ -2391,15 +2516,13 @@ class AudioAssetData(AssetData):
   def format(self) -> str | None:
     return self._format
 
-  def load(self) -> pydub.AudioSegment:
-    if self._data is not None:
-      return self._data
+  def load_from_storage(self) -> pydub.AudioSegment:
     return pydub.AudioSegment.from_file(self._backing_store_path, format = self._format)
 
   def export(self, dest_path: str) -> None:
     _basepath, ext = os.path.splitext(dest_path)
     fmt = ext.lower()
-    assert fmt in self._supported_formats
+    assert fmt in self._SUPPORTED_FORMATS
     if self._data is not None:
       self._data.export(dest_path, format=fmt)
       return
@@ -2409,20 +2532,20 @@ class AudioAssetData(AssetData):
       data : pydub.AudioSegment = pydub.AudioSegment.from_file(self._backing_store_path, format = self._format)
       data.export(dest_path, format=fmt)
 
-class AssetBase(User):
+#class AssetBase(User):
   # base class of assets that other IR components can reference
   # depending on the use case, the asset may or may not reference an actual asset data
   # (e.g., if we are at backend, the asset can just export the asset and do not track it)
-  def __init__(self, **kwargs) -> None:
-    super().__init__(**kwargs)
+#  def __init__(self, **kwargs) -> None:
+#    super().__init__(**kwargs)
 
-  def load(self) -> typing.Any:
-    data : AssetData = self.get_operand(0)
-    if data is not None:
-      return data.load()
-    return None
+#  def load(self) -> typing.Any:
+#    data : AssetData = self.get_operand(0)
+#    if data is not None:
+#      return data.load()
+#    return None
 
-  def set_data(self, data : typing.Any):
+#  def set_data(self, data : typing.Any):
     # the correct way of modifying an asset data is:
     # 1. load the asset data to memory (call AssetBase.load())
     # 2. do modification on it
@@ -2432,7 +2555,7 @@ class AssetBase(User):
     # 6. call AssetBase.set_operand(0, ...)
     # AssetBase.set_data() takes care of step 3-6 above
     # should be implemented in derived classes
-    raise NotImplementedError("AssetBase.set_data() not overriden in " + type(self).__name__)
+#    raise NotImplementedError("AssetBase.set_data() not overriden in " + type(self).__name__)
 
 # ------------------------------------------------------------------------------
 # Debug info (DI)
@@ -2638,18 +2761,23 @@ class TextStyleLiteral(Literal):
         return e[1]
     return None
 
+_LiteralExprTV = typing.TypeVar('_LiteralExprTV', bound = 'LiteralExpr')
+
 @IRObjectJsonTypeName('literalexpr_le')
 class LiteralExpr(Literal, User):
   # 字面值表达式是只引用其他字面值的表达式
   # 所有字面值表达式都只由：(1)表达式类型，(2)参数 这两项决定
-  def construct_init(self, *, ty: ValueType, value_tuple: tuple[Literal], **kwargs) -> None:
+  def construct_init(self, *, ty: ValueType, value_tuple: tuple[Literal, ...], **kwargs) -> None:
     super().construct_init(ty=ty, value=value_tuple, **kwargs)
     for v in value_tuple:
       assert isinstance(v, Literal)
       self.add_operand(v)
 
+  def get_value_tuple(self) -> tuple[Literal]:
+    return self.value
+
   @classmethod
-  def _get_literalexpr_impl(cls, value_tuple, context):
+  def _get_literalexpr_impl(cls : typing.Type[_LiteralExprTV], value_tuple, context) -> _LiteralExprTV:
     return context.get_literal_uniquing_dict(cls).get_or_create(value_tuple,
       lambda : cls(init_mode=IRObjectInitMode.CONSTRUCT, context=context, value_tuple=value_tuple))
 
@@ -2733,6 +2861,8 @@ class TextLiteral(LiteralExpr):
 
 @IRObjectJsonTypeName('enum_l')
 class EnumLiteral(typing.Generic[T], Literal):
+  # 用于将 Python Enum 打包成字面值
+  # 用于 JSON 输入输出时，如果枚举类型不存在或字段值不存在，则使用 UnknownEnumLiteral 进行替代
 
   def construct_init(self, *, context : Context, value: T, **kwargs) -> None:
     assert isinstance(value, enum.Enum)
@@ -2748,6 +2878,27 @@ class EnumLiteral(typing.Generic[T], Literal):
   @staticmethod
   def get(context : Context, value : T) -> EnumLiteral[T]:
     return Literal._get_literal_impl(EnumLiteral, value, context)
+
+class UnknownEnumLiteral(Literal):
+  # 用于 JSON 输入输出 EnumLiteral 时，如果枚举类型或字段值不存在，则使用此值
+  # （比如新版本加了一个值后使用旧代码读取新IR，或者删了一个值后用新代码读取旧IR）
+  # value 应该是一个 (enum_type, enum_value) 的 tuple
+  def construct_init(self, *, context : Context, value: tuple[type | str, str], **kwargs) -> None:
+    enum_type : type | str = value[0]
+    # enum_value : str = value[1]
+
+    # 如果 enum_type 已知，则还是可以沿用 EnumType，否则使用空类型
+    ty = None
+    if isinstance(enum_type, type):
+      ty = EnumType.get(enum_type, context)
+    else:
+      ty = VoidType.get(context)
+    super().construct_init(ty=ty, value=value, **kwargs)
+
+  @staticmethod
+  def get(context : Context, enum_type : type | str, enum_value : str) -> UnknownEnumLiteral:
+    return Literal._get_literal_impl(EnumLiteral, (enum_type, enum_value), context)
+
 
 # TODO 这个还没有代码用到，先去掉
 #class TextListLiteral(Literal, User):
@@ -2808,19 +2959,42 @@ class EnumLiteral(typing.Generic[T], Literal):
 # IR dumping
 # ------------------------------------------------------------------------------
 
+@dataclasses.dataclass
+class IRValueMapper:
+  context : Context
+  option_ignore_values_with_no_use : bool = False
+  value_map : dict[Value, Value] = dataclasses.field(default_factory=dict)
+
+  def add_value_map(self, old_value : Value, new_value : Value):
+    if self.option_ignore_values_with_no_use:
+      if old_value.use_empty():
+        return
+    self.value_map[old_value] = new_value
+
+  def get_mapped_value(self, key : Value) -> Value | None:
+    if key in self.value_map:
+      return self.value_map[key]
+    return None
+
+  def is_require_value_remap(self) -> bool:
+    return len(self.value_map) > 0
+
+# ------------------------------------------------------------------------------
+# IR dumping
+# ------------------------------------------------------------------------------
+
 class IRWriter:
   _ctx : Context
   _asset_pin_dict : dict[AssetData, str]
-  _asset_export_dict : dict[str, AssetData]
+  _asset_export_dict : dict[str, AssetData] | None
   _asset_export_cache : dict[AssetData, bytes] # exported HTML expression for the asset
-  _asset_index_dict : dict[AssetData, int] # index of the asset in the context
   _output_body : io.BytesIO # the <body> part
   _output_asset : io.BytesIO # the <style> part
   _max_indent_level : int # maximum indent level; we need this to create styles for text with different indents
   _html_dump : bool # True: output HTML; False: output text dump
   _element_id_map : dict[int, int] # id(obj) -> export_id(obj)
 
-  def __init__(self, ctx : Context, html_dump : bool, asset_pin_dict : dict[AssetData, str], asset_export_dict : dict[str, AssetData] | None) -> None:
+  def __init__(self, ctx : Context, html_dump : bool, asset_pin_dict : dict[AssetData, str] | None, asset_export_dict : dict[str, AssetData] | None) -> None:
     # assets in asset_pin_dict are already exported and we can simply use the mapped value to reference the specified asset
     # if asset_export_dict is not None, the printer expect all remaining assets to be exported with path as key and content as value
     # if asset_export_dict is None, then the printer writes all remaining assets embedded in the export HTML
@@ -2828,10 +3002,11 @@ class IRWriter:
     self._ctx = ctx
     self._output_body = io.BytesIO()
     self._output_asset = io.BytesIO()
+    if asset_pin_dict is None:
+      asset_pin_dict = {}
     self._asset_pin_dict = asset_pin_dict
-    self._asset_export_dict = asset_export_dict
+    self._asset_export_dict = asset_export_dict # TODO this is not used
     self._asset_export_cache = {}
-    self._asset_index_dict = None
     self._max_indent_level = 0
     self._html_dump = html_dump
     self._element_id_map = {}
@@ -2868,48 +3043,74 @@ class IRWriter:
     if self._html_dump:
       self._write_body(content)
 
-  def _index_assets(self) -> dict[AssetData, int]:
-    if self._asset_index_dict is not None:
-      return self._asset_index_dict
-    # populate self._asset_index_dict
-    self._asset_index_dict = {}
-    num = 0
-    # pylint: disable=protected-access
-    for asset in self._ctx._asset_data_list:
-      self._asset_index_dict[asset] = num
-      num += 1
-    return self._asset_index_dict
-
   def _emit_asset_reference_to_path(self, asset : AssetData, path : str) -> bytes:
-    pass
-
-  def _emit_asset(self, asset : AssetData) -> bytes:
-    # TODO actually implement this function
-    # for now we don't try to emit any asset; just print their ID as a text element and done
-    asset_id = self._index_assets()[asset]
-    asset_name = type(asset).__name__
-    body_str = '#' + hex(asset_id) + " " + asset_name
-    if not self._html_dump:
-      return body_str
-    s = "<span class=\"AssetPlaceholder\">" + self.escape(body_str) + "</span>"
+    s = "<span class=\"AssetPathReference\">" + self.escape(path) + "</span>"
     return s.encode('utf-8')
 
+  def _write_asset(self, asset : AssetData) -> bytes | None:
+    asset_id = self.get_export_id(asset)
+    asset_name = type(asset).__name__
+    body_str = "#" + str(asset_id) + " " + asset_name
+    if not self._html_dump:
+      self._write_body(body_str)
+    else:
+      self._write_body("<span class=\"AssetPlaceholder\">" + self.escape(body_str) + "</span>")
+    # do not write data if doing textual dump
+    if not self._html_dump:
+      return None
+
+    # now try to write data
     # check if we have already exported it
-    #if asset in self._asset_export_cache:
-    #  return self._asset_export_cache[asset]
-
+    if asset in self._asset_export_cache:
+      return self._asset_export_cache[asset]
     # if the asset is already exported (i.e., it is in self._asset_pin_dict), just use the expression there
-    #if self._asset_pin_dict is not None and asset in self._asset_pin_dict:
-    #  asset_path = self._asset_pin_dict[asset]
-    #  result = self._emit_asset_reference_to_path(asset, asset_path)
-    #  self._asset_export_cache[asset] = result
-    #  return result
+    if self._asset_pin_dict is not None and asset in self._asset_pin_dict:
+      asset_path = self._asset_pin_dict[asset]
+      result = self._emit_asset_reference_to_path(asset, asset_path)
+      self._asset_export_cache[asset] = result
+      return result
+    style_name_str = "assetdata_" + str(asset_id)
+    b64data = None
+    mimetype = None
+    if isinstance(asset, ImageAssetData):
+      if asset.backing_store_path is not None:
+        # 如果能猜 MIME 的话就不用读了
+        if asset.format is not None:
+          mimetype = ImageAssetData.get_mime_type_from_format(asset.format)
+        else:
+          guessed_ty, _guessed_encoding = mimetypes.guess_type(asset.backing_store_path)
+          if guessed_ty is not None:
+            mimetype = guessed_ty
+        if mimetype is not None and mimetype in ('image/png', 'image/jpeg', 'image/gif'):
+          # 不用读为 PIL.Image，直接转
+          with open(asset.backing_store_path, 'rb') as f:
+            image_as_bytes = f.read()
+          b64data = base64.b64encode(image_as_bytes)
+      if b64data is None:
+        image_pil = asset.load()
+        assert isinstance(image_pil, PIL.Image.Image)
+        save_fmt = image_pil.format
+        if save_fmt is None or save_fmt.upper() not in ('PNG', 'JPEG', 'GIF'):
+          save_fmt = 'PNG'
+          mimetype = 'image/png'
+        else:
+          mimetype = ImageAssetData.get_mime_type_from_format(save_fmt)
+        buffer = io.BytesIO()
+        image_pil.save(buffer, format=save_fmt)
+        b64data = base64.b64encode(buffer.getvalue())
+      assert mimetype is not None
+      style_header = "." + style_name_str + "{content:url(data:" + mimetype + ";base64,"
+      style_ending = ")}\n"
+      self._output_asset.write(style_header.encode("utf-8"))
+      self._output_asset.write(b64data)
+      self._output_asset.write(style_ending.encode("utf-8"))
+      delayed_data_str = "<img class=\"" + style_name_str + "\"/>"
+      delayed_data_bytes = delayed_data_str.encode('utf-8')
+      self._asset_export_cache[asset] = delayed_data_bytes
+      return delayed_data_bytes
 
-    # otherwise, if we export the asset as separate files (self._asset_export_dict not None), we do that
-    #if self._asset_export_dict is not None:
-    #  pass
-    # otherwise, we emit the expression in self._output_asset
-    #pass
+    # unrecognized case
+    return None
 
   def _get_indent_stylename(self, level : int) -> str:
     return 'dump_indent_level_' + str(level)
@@ -2939,12 +3140,13 @@ class IRWriter:
     result += ')'
     return result
 
-  def _walk_value(self, value : Value) -> bytes | None:
+  def _walk_value(self, value : Value) -> typing.OrderedDict[str, bytes] | None:
     # write the current value to body. if the content is too big (e.g., a table), a stub is written first and the return value is the full content
     # we must be in a <p> element
+    delayed_content : typing.OrderedDict[str, bytes] | None = None
     if isinstance(value, OpResult):
       self._write_body(self.escape(self._get_operation_short_name(value.parent) + '.' + value.name))
-      return None
+      return delayed_content
     if isinstance(value, BlockArgument):
       raise NotImplementedError('TODO')
     if isinstance(value, Literal):
@@ -2953,40 +3155,50 @@ class IRWriter:
           self._write_body('true')
         else:
           self._write_body('false')
-        return None
+        return delayed_content
       elif isinstance(value, FloatLiteral):
         self._write_body(self.escape(str(value.value)))
-        return None
+        return delayed_content
       elif isinstance(value, IntLiteral):
         self._write_body(self.escape(str(value.value)))
-        return None
+        return delayed_content
       elif isinstance(value, StringLiteral):
         self._write_body(self.escape('"' + value.value + '"'))
-        return None
+        return delayed_content
       elif isinstance(value, TextFragmentLiteral):
         self._write_body(self.escape('TextFrag["' + value.content.value + '",' + self._get_text_style_str(value.style) + ']'))
-        return None
+        return delayed_content
       elif isinstance(value, TextStyleLiteral):
         self._write_body(self.escape(self._get_text_style_str(value)))
-        return None
+        return delayed_content
       elif isinstance(value, TextLiteral):
         self._write_body(self.escape('Text{'))
         for u in value.operanduses():
           # pylint: disable=assignment-from-none
           res = self._walk_value(u.value)
-          assert res is None
+          if res is not None:
+            if delayed_content is None:
+              delayed_content = res
+            else:
+              delayed_content.update(res)
           self._write_body(',')
         self._write_body(self.escape('}'))
-        return None
+        return delayed_content
       #elif isinstance(value, TextListLiteral):
       #  raise NotImplementedError('TODO')
       #elif isinstance(value, TableLiteral):
       #  raise NotImplementedError('TODO')
       else:
         raise NotImplementedError('Unexpected literal type for dumping')
+    if isinstance(value, AssetData):
+      if res := self._write_asset(value):
+        if delayed_content is None:
+          delayed_content = typing.OrderedDict()
+        delayed_content[self.get_id_str(value)] = res
+      return delayed_content
     # unknown value types
     self._write_body(self.escape('[' + self.get_id_str(value) + ' ' + type(value).__name__ + ']'))
-    return None
+    return delayed_content
 
   def _walk_operation(self, op : Operation, level : int) -> None:
     # [#<id> ClassName]"Name"(operand=...) -> (result)[attr=...]<loc>
@@ -3019,6 +3231,7 @@ class IRWriter:
     self._write_body(self.escape(self._get_operation_short_name(op))) # [#<id> ClassName]"Name"
 
     # operands
+    delayed_content = None
     self._write_body(self.escape('('))
     isFirst = True
     for operand_name in op.operands:
@@ -3036,9 +3249,12 @@ class IRWriter:
         else:
           self._write_body(',')
         # pylint: disable=assignment-from-none
-        delayed_content = self._walk_value(operand.get_operand(i))
-        if delayed_content is not None:
-          raise NotImplementedError('TODO')
+        cur_delayed_content = self._walk_value(operand.get_operand(i))
+        if cur_delayed_content is not None:
+          if delayed_content is None:
+            delayed_content = cur_delayed_content
+          else:
+            delayed_content.update(cur_delayed_content)
       self._write_body(self.escape(']'))
     self._write_body(self.escape(')'))
 
@@ -3072,7 +3288,14 @@ class IRWriter:
     self._write_body(self.escape('<' + str(op.location) + '>'))
     self._write_body(optail + '\n')
 
-    # TODO write terminator info
+    # delayed content (assets)
+    if self._html_dump and delayed_content is not None:
+      self._write_body('<ul class="tree">\n')
+      for idstr, rep in delayed_content.items():
+        self._write_body('<li><details open><summary>' + idstr + "</summary>\n")
+        self._output_body.write(rep)
+        self._write_body('</li>\n')
+      self._write_body('</ul>\n')
 
     # regions
     if isHasBody:
@@ -3193,6 +3416,12 @@ class IRWriter:
   text-align: center;
 }
 ''')
+    self._output_asset.write(b'''.AssetPathReference {
+  border-width: 1px;
+  border-style: solid;
+  border-color: black;
+  text-align: center;
+}''')
     self._output_body.write(b'<body>\n')
     # write styles for indent levels
     #for curlevel in range(0, self._max_indent_level):
