@@ -2185,6 +2185,8 @@ class ConstExprUniquingDict(LiteralUniquingDict):
   def erase_constant(self, data : typing.Any):
     del self._inst_dict[data]
 
+_AssetTV = typing.TypeVar('_AssetTV', bound='AssetData')
+
 class Context:
   # the object that we use to keep track of unique constructs (types, constant expressions, file assets)
   _stateless_type_dict : collections.OrderedDict[type, ValueType]
@@ -2193,6 +2195,7 @@ class Context:
   _constexpr_dict : collections.OrderedDict[type, ConstExprUniquingDict]
   _asset_data_list : IList[AssetData, Context]
   _asset_temp_dir : tempfile.TemporaryDirectory | None # created on-demand
+  _asset_import_cache : collections.OrderedDict[str, AssetData] # for avoiding importing external assets multiple times during import
   _null_location : Location # a dummy location value with only a reference to the context
   _difile_dict : collections.OrderedDict[str, DIFile] # from filepath string to the DIFile object
   _diloc_dict : collections.OrderedDict[DIFile, collections.OrderedDict[tuple[int, int, int], DILocation]] # <file> -> <page, row, column> -> DILocation
@@ -2202,11 +2205,13 @@ class Context:
     self._parameterized_type_dict = collections.OrderedDict()
     self._asset_data_list = IList(self)
     self._asset_temp_dir = None
+    self._asset_import_cache = collections.OrderedDict()
     self._literal_dict = collections.OrderedDict()
     self._constexpr_dict = collections.OrderedDict()
     self._null_location = Location(init_mode=IRObjectInitMode.CONSTRUCT, context=self)
     self._difile_dict = collections.OrderedDict()
     self._diloc_dict = collections.OrderedDict()
+    mimetypes.init()
 
   def get_stateless_type(self, ty : type) -> typing.Any:
     if ty in self._stateless_type_dict:
@@ -2272,24 +2277,51 @@ class Context:
       cur_full_path = basename + '_' + str(index) + ext
     return cur_full_path
 
-  def create_image_asset_data_embedded(self, preferred_path : str, data : bytes, img_format : str | None = None) -> ImageAssetData:
+  def _create_asset_data_embedded(self, asset_cls : typing.Type[_AssetTV], full_embed_path : str, data : bytes, asset_format : typing.Any) -> _AssetTV:
     tmppath = self.get_backing_dir()
-    filename = self.create_name_for_asset(tmppath.name, preferred_path, data)
+    filename = self.create_name_for_asset(tmppath.name, full_embed_path, data)
     backing_store_path = os.path.join(tmppath.name, filename)
     with open(backing_store_path, "wb") as f:
       f.write(data)
-    asset = ImageAssetData(init_mode=IRObjectInitMode.CONSTRUCT, context=self, backing_store_path=backing_store_path, format = img_format)
-    self._add_asset_data(asset)
-    return asset
-
-  def create_image_asset_data_external(self, ext_path : str, img_format : str | None = None) -> ImageAssetData:
-    asset = ImageAssetData(init_mode=IRObjectInitMode.CONSTRUCT, context=self, backing_store_path=ext_path)
-    self._add_asset_data(asset)
-    return asset
-
-  def _add_asset_data(self, asset : AssetData):
-    asset.remove_from_parent()
+    loc = self.get_DIFile(full_embed_path)
+    asset = asset_cls(init_mode=IRObjectInitMode.CONSTRUCT, context=self, backing_store_path=backing_store_path, format = asset_format, loc = loc)
     self._asset_data_list.push_back(asset)
+    return asset
+
+  def _get_or_create_asset_data_external(self, asset_cls : typing.Type[_AssetTV], ext_path : str, asset_format : typing.Any) -> _AssetTV:
+    if ext_path in self._asset_import_cache:
+      result = self._asset_import_cache[ext_path]
+      assert isinstance(result, asset_cls)
+      return result
+    loc = self.get_DIFile(ext_path)
+    asset = asset_cls(init_mode=IRObjectInitMode.CONSTRUCT, context=self, backing_store_path=ext_path, format=asset_format, loc=loc)
+    self._asset_data_list.push_back(asset)
+    self._asset_import_cache[ext_path] = asset
+    return asset
+
+  def get_or_create_unknown_asset_data_external(self, ext_path : str) -> AssetData | None:
+    mimety, encoding = mimetypes.guess_type(ext_path)
+    if mimety is None:
+      return None
+    if not os.path.isfile(ext_path):
+      return None
+    if img_format := ImageAssetData.get_format_from_mime_type(mimety):
+      return self.get_or_create_image_asset_data_external(ext_path, img_format)
+    if audio_format := AudioAssetData.get_format_from_mime_type(mimety):
+      return self.get_or_create_audio_asset_data_external(ext_path, audio_format)
+    return None
+
+  def create_image_asset_data_embedded(self, full_embed_path : str, data : bytes, img_format : str | None = None) -> ImageAssetData:
+    return self._create_asset_data_embedded(ImageAssetData, full_embed_path, data, img_format)
+
+  def get_or_create_image_asset_data_external(self, ext_path : str, img_format : str | None = None) -> ImageAssetData:
+    return self._get_or_create_asset_data_external(ImageAssetData, ext_path, img_format)
+
+  def create_audio_asset_data_embedded(self, full_embed_path : str, data : bytes, audio_format : str | None = None) -> AudioAssetData:
+    return self._create_asset_data_embedded(AudioAssetData, full_embed_path, data, audio_format)
+
+  def get_or_create_audio_asset_data_external(self, ext_path : str, audio_format : str | None = None) -> AudioAssetData:
+    return self._get_or_create_asset_data_external(AudioAssetData, ext_path, audio_format)
 
   @property
   def null_location(self) -> Location:
@@ -2343,14 +2375,16 @@ class AssetData(Value, IListNode, typing.Generic[_DataTV, _FmtTV]):
 
   # if analysis would like to have a big working set involving multiple assets, they can implement their own cache
 
+  _loc : DIFile | None # non-null if the asset is from external file (i.e., not created on the fly)
   _backing_store_path : str # if it is in the temporary directory, this asset data owns it; otherwise the source is read-only; empty string if no backing store
   _data : _DataTV | None
   _format : _FmtTV | None
 
-  def construct_init(self, *, context : Context, backing_store_path : str = '', data : _DataTV | None = None, format : _FmtTV | None = None, **kwargs) -> None:
+  def construct_init(self, *, context : Context, backing_store_path : str = '', data : _DataTV | None = None, format : _FmtTV | None = None, loc : DIFile | None = None, **kwargs) -> None:
     ty = AssetDataReferenceType.get(context)
     super().construct_init(context=context, ty=ty, **kwargs)
     # context._add_asset_data(self)
+    self._loc = loc
     self._backing_store_path = backing_store_path
     self._data = data
     # invariants check: either backing_store_path is provided, or data is provided
@@ -2378,6 +2412,10 @@ class AssetData(Value, IListNode, typing.Generic[_DataTV, _FmtTV]):
   @property
   def format(self) -> _FmtTV | None:
     return self._format
+
+  @property
+  def location(self) -> DIFile | None:
+    return self._loc
 
   def load(self) -> _DataTV:
     # load the asset data to memory
@@ -2499,7 +2537,35 @@ class ImageAssetData(AssetData[PIL.Image.Image, str]):
 
 @IRObjectJsonTypeName('audio_ad')
 class AudioAssetData(AssetData[pydub.AudioSegment, str]):
+  _SUPPORTED_FORMAT_BIDICT : typing.ClassVar[bidict.bidict[str, str]] | None = None
+
+  # exclude formats that MAY contain video (e.g., webm)
   _SUPPORTED_FORMATS : typing.ClassVar[tuple[str, ...]] = ("wav", "aac", "ogg", "m4a", "aiff", "flac", "mp3")
+
+  @staticmethod
+  def get_format_dict():
+    if AudioAssetData._SUPPORTED_FORMAT_BIDICT is not None:
+      return AudioAssetData._SUPPORTED_FORMAT_BIDICT
+    AudioAssetData._SUPPORTED_FORMAT_BIDICT = bidict.bidict()
+    mimetypes.init()
+    for fmt in AudioAssetData._SUPPORTED_FORMATS:
+      mime = mimetypes.types_map['.' + fmt]
+      AudioAssetData._SUPPORTED_FORMAT_BIDICT[mime] = fmt
+    return AudioAssetData._SUPPORTED_FORMAT_BIDICT
+
+  @staticmethod
+  def get_format_from_mime_type(mime : str) -> str | None:
+    d = AudioAssetData.get_format_dict()
+    if mime in d:
+      return d[mime]
+    return None
+
+  @staticmethod
+  def get_mime_type_from_format(fmt : str) -> str | None:
+    d =  AudioAssetData.get_format_dict().inverse
+    if fmt in d:
+      return d[fmt]
+    return None
 
   def get_format_in_construction(self, backing_store_path: str, data: pydub.AudioSegment | None) -> str | None:
     if len(backing_store_path) == 0:
@@ -2988,8 +3054,8 @@ class IRWriter:
   _asset_pin_dict : dict[AssetData, str]
   _asset_export_dict : dict[str, AssetData] | None
   _asset_export_cache : dict[AssetData, bytes] # exported HTML expression for the asset
-  _output_body : io.BytesIO # the <body> part
-  _output_asset : io.BytesIO # the <style> part
+  _output_body : io.BytesIO # the output buffer
+  _output_asset_delayed : dict[str, bytes] # we use javascript to set the src attributes
   _max_indent_level : int # maximum indent level; we need this to create styles for text with different indents
   _html_dump : bool # True: output HTML; False: output text dump
   _element_id_map : dict[int, int] # id(obj) -> export_id(obj)
@@ -3001,7 +3067,7 @@ class IRWriter:
     # https://stackoverflow.com/questions/38014918/how-to-reuse-base64-image-repeatedly-in-html-file
     self._ctx = ctx
     self._output_body = io.BytesIO()
-    self._output_asset = io.BytesIO()
+    self._output_asset_delayed = {}
     if asset_pin_dict is None:
       asset_pin_dict = {}
     self._asset_pin_dict = asset_pin_dict
@@ -3047,10 +3113,77 @@ class IRWriter:
     s = "<span class=\"AssetPathReference\">" + self.escape(path) + "</span>"
     return s.encode('utf-8')
 
+  def _write_asset_data_delayed(self, style_name_str : str, b64data : bytes, mimetype : str) -> None:
+    fullstr = "data:" + mimetype + ";base64,"
+    self._output_asset_delayed[style_name_str] = fullstr.encode("utf-8") + b64data
+
+  def _write_image_asset(self, asset : ImageAssetData, style_name_str : str) -> bytes:
+    b64data = None
+    mimetype = None
+    if asset.backing_store_path is not None:
+      # 如果能猜 MIME 的话就不用读了
+      if asset.format is not None:
+        mimetype = ImageAssetData.get_mime_type_from_format(asset.format)
+      else:
+        guessed_ty, _guessed_encoding = mimetypes.guess_type(asset.backing_store_path)
+        if guessed_ty is not None:
+          mimetype = guessed_ty
+      if mimetype is not None and mimetype in ('image/png', 'image/jpeg', 'image/gif'):
+        # 不用读为 PIL.Image，直接转
+        with open(asset.backing_store_path, 'rb') as f:
+          image_as_bytes = f.read()
+        b64data = base64.b64encode(image_as_bytes)
+    if b64data is None:
+      image_pil = asset.load()
+      assert isinstance(image_pil, PIL.Image.Image)
+      save_fmt = image_pil.format
+      if save_fmt is None or save_fmt.upper() not in ('PNG', 'JPEG', 'GIF'):
+        save_fmt = 'PNG'
+        mimetype = 'image/png'
+      else:
+        mimetype = ImageAssetData.get_mime_type_from_format(save_fmt)
+      buffer = io.BytesIO()
+      image_pil.save(buffer, format=save_fmt)
+      b64data = base64.b64encode(buffer.getvalue())
+    assert mimetype is not None
+    self._write_asset_data_delayed(style_name_str, b64data, mimetype)
+    delayed_data_str = "<img class=\"" + style_name_str + "\"/>"
+    return delayed_data_str.encode('utf-8')
+
+  def _write_audio_asset(self, asset : AudioAssetData, style_name_str : str) -> bytes:
+    b64data = None
+    mimetype = None
+    if asset.backing_store_path is not None:
+      # 如果能猜 MIME 的话就不用读了
+      if asset.format is not None:
+        mimetype = AudioAssetData.get_mime_type_from_format(asset.format)
+      else:
+        guessed_ty, _guessed_encoding = mimetypes.guess_type(asset.backing_store_path)
+        if guessed_ty is not None:
+          mimetype = guessed_ty
+      # https://en.wikipedia.org/wiki/HTML5_audio
+      if mimetype is not None and mimetype in ('audio/wav', 'audio/mpeg', 'audio/ogg', 'audio/flac'):
+        with open(asset.backing_store_path, 'rb') as f:
+          data_as_bytes = f.read()
+        b64data = base64.b64encode(data_as_bytes)
+    if b64data is None:
+      audio_seg = asset.load()
+      assert isinstance(audio_seg, pydub.AudioSegment)
+      mimetype = 'audio/mpeg'
+      fhandle = audio_seg.export(format='mp3')
+      assert isinstance(fhandle, io.BytesIO)
+      b64data = base64.b64encode(fhandle.getvalue())
+    assert mimetype is not None
+    self._write_asset_data_delayed(style_name_str, b64data, mimetype)
+    delayed_data_str = "<audio controls class=\"" + style_name_str + "\"/>"
+    return delayed_data_str.encode('utf-8')
+
   def _write_asset(self, asset : AssetData) -> bytes | None:
     asset_id = self.get_export_id(asset)
     asset_name = type(asset).__name__
     body_str = "#" + str(asset_id) + " " + asset_name
+    if loc := asset.location:
+      body_str += ' <' + str(loc) + '>'
     if not self._html_dump:
       self._write_body(body_str)
     else:
@@ -3070,47 +3203,18 @@ class IRWriter:
       self._asset_export_cache[asset] = result
       return result
     style_name_str = "assetdata_" + str(asset_id)
-    b64data = None
-    mimetype = None
+    delayed_data_bytes = None
     if isinstance(asset, ImageAssetData):
-      if asset.backing_store_path is not None:
-        # 如果能猜 MIME 的话就不用读了
-        if asset.format is not None:
-          mimetype = ImageAssetData.get_mime_type_from_format(asset.format)
-        else:
-          guessed_ty, _guessed_encoding = mimetypes.guess_type(asset.backing_store_path)
-          if guessed_ty is not None:
-            mimetype = guessed_ty
-        if mimetype is not None and mimetype in ('image/png', 'image/jpeg', 'image/gif'):
-          # 不用读为 PIL.Image，直接转
-          with open(asset.backing_store_path, 'rb') as f:
-            image_as_bytes = f.read()
-          b64data = base64.b64encode(image_as_bytes)
-      if b64data is None:
-        image_pil = asset.load()
-        assert isinstance(image_pil, PIL.Image.Image)
-        save_fmt = image_pil.format
-        if save_fmt is None or save_fmt.upper() not in ('PNG', 'JPEG', 'GIF'):
-          save_fmt = 'PNG'
-          mimetype = 'image/png'
-        else:
-          mimetype = ImageAssetData.get_mime_type_from_format(save_fmt)
-        buffer = io.BytesIO()
-        image_pil.save(buffer, format=save_fmt)
-        b64data = base64.b64encode(buffer.getvalue())
-      assert mimetype is not None
-      style_header = "." + style_name_str + "{content:url(data:" + mimetype + ";base64,"
-      style_ending = ")}\n"
-      self._output_asset.write(style_header.encode("utf-8"))
-      self._output_asset.write(b64data)
-      self._output_asset.write(style_ending.encode("utf-8"))
-      delayed_data_str = "<img class=\"" + style_name_str + "\"/>"
-      delayed_data_bytes = delayed_data_str.encode('utf-8')
-      self._asset_export_cache[asset] = delayed_data_bytes
-      return delayed_data_bytes
+      delayed_data_bytes = self._write_image_asset(asset, style_name_str)
+    elif isinstance(asset, AudioAssetData):
+      delayed_data_bytes = self._write_audio_asset(asset, style_name_str)
+    else:
+      # unrecognized case
+      return None
 
-    # unrecognized case
-    return None
+    assert delayed_data_bytes is not None
+    self._asset_export_cache[asset] = delayed_data_bytes
+    return delayed_data_bytes
 
   def _get_indent_stylename(self, level : int) -> str:
     return 'dump_indent_level_' + str(level)
@@ -3398,39 +3502,31 @@ class IRWriter:
     self._write_body(block_end)
     return None
 
-  def write_html_boilerplate(self, content : io.BytesIO, name : str) -> None:
+  def start_write_html(self, name : str) -> None:
     title = 'Anonymous dump'
     if len(name) > 0:
       assert isinstance(name, str)
       title = self.escape(name)
-    content.write(b'''<!DOCTYPE html>
+    self._output_body.write(b'''<!DOCTYPE html>
 <html>
 <head>
 ''')
-    content.write(b'<title>' + title.encode('utf-8') + b'</title>')
-    self._output_asset.write(b'<style>\n')
-    self._output_asset.write(b'''.AssetPlaceholder {
+    self._output_body.write(b'<title>' + title.encode('utf-8') + b'</title>')
+    # https://iamkate.com/code/tree-views/
+    self._output_body.write(b'''
+<style>
+.AssetPlaceholder {
   border-width: 1px;
   border-style: solid;
   border-color: black;
   text-align: center;
 }
-''')
-    self._output_asset.write(b'''.AssetPathReference {
+.AssetPathReference {
   border-width: 1px;
   border-style: solid;
   border-color: black;
   text-align: center;
-}''')
-    self._output_body.write(b'<body>\n')
-    # write styles for indent levels
-    #for curlevel in range(0, self._max_indent_level):
-    #  stylestr = 'p.' + self._get_indent_stylename(curlevel) + '{ text-indent: ' + str(curlevel * 15) + 'px}\n'
-    #  self._output_asset.write(stylestr.encode())
-
-    # write styles for lists
-    # https://iamkate.com/code/tree-views/
-    self._output_asset.write(b'''
+}
 .tree{
   --spacing : 1.5rem;
   --radius  : 10px;
@@ -3511,22 +3607,40 @@ class IRWriter:
 .tree details[open] > summary::before{
   content : '-';
 }
+</style>
+<body>
 ''')
 
-  def write_html_end(self, content : io.BytesIO):
-    self._output_asset.write(b'</style>')
-    self._output_body.write(b'</body>')
-    content.write(self._output_asset.getbuffer())
-    content.write(self._output_body.getbuffer())
-    content.write(b'</html>\n')
+  def write_html_end(self):
+    if len (self._output_asset_delayed) > 0:
+      # write the assets to javascript dict
+      self._output_body.write(b'''
+<script>
+var asset_dict = {
+''')
+      for k, v in self._output_asset_delayed.items():
+        self._output_body.write(k.encode('utf-8') + b': "')
+        self._output_body.write(v)
+        self._output_body.write(b'",\n')
+      self._output_body.write(b'''
+};
+for (asset_name in asset_dict) {
+  var elementlist = document.getElementsByClassName(asset_name);
+  for (var i = 0; i < elementlist.length; ++i) {
+    elementlist.item(i).setAttribute('src', asset_dict[asset_name]);
+  }
+}
+</script>
+''')
+
+    self._output_body.write(b'</body></html>\n')
 
   def write_op_html(self, op : Operation) -> bytes:
     # perform an HTML export with op as the top-level Operation. The return value is the HTML
-    content = io.BytesIO()
-    self.write_html_boilerplate(content, op.name)
+    self.start_write_html(op.name)
     self._walk_operation(op, 0)
-    self.write_html_end(content)
-    return content.getvalue()
+    self.write_html_end()
+    return self._output_body.getvalue()
 
   def write_op(self, op : Operation) -> bytes:
     assert isinstance(op, Operation)
@@ -3538,13 +3652,12 @@ class IRWriter:
   def write_region(self, r : Region) -> bytes:
     assert isinstance(r, Region)
     if self._html_dump:
-      content = io.BytesIO()
-      self.write_html_boilerplate(content, r.name)
+      self.start_write_html(r.name)
       self._write_body_html('<ul class="tree">')
       self._walk_region(r, 0)
       self._write_body_html('</ul>')
-      self.write_html_end(content)
-      return content.getvalue()
+      self.write_html_end()
+      return self._output_body.getvalue()
     # text dump
     self._walk_region(r, 0)
     return self._output_body.getvalue()
@@ -3552,13 +3665,12 @@ class IRWriter:
   def write_block(self, b : Block) -> bytes:
     assert isinstance(b, Block)
     if self._html_dump:
-      content = io.BytesIO()
-      self.write_html_boilerplate(content, b.name)
+      self.start_write_html(b.name)
       self._write_body_html('<ul class="tree">')
       self._walk_block(b, 0)
       self._write_body_html('</ul>')
-      self.write_html_end(content)
-      return content.getvalue()
+      self.write_html_end()
+      return self._output_body.getvalue()
     # text dump
     self._walk_block(b, 0)
     return self._output_body.getvalue()
