@@ -7,6 +7,8 @@ from warnings import warn
 import PIL.Image
 
 import odf.opendocument
+import zipfile
+import urllib
 
 from ..inputmodel import *
 import argparse
@@ -76,9 +78,9 @@ class _ODParseContext:
 
   ctx : Context
   settings : IMSettings
-  cache : IMParseCache
   filePath : str
   odfhandle: odf.opendocument.OpenDocument
+  ziphandle : zipfile.ZipFile
   difile : DIFile
   documentname : str
 
@@ -101,13 +103,13 @@ class _ODParseContext:
 
   # ------------------------------------------------------------------
 
-  def __init__(self, ctx : Context, settings : IMSettings, cache : IMParseCache, filePath : str) -> None:
+  def __init__(self, ctx : Context, settings : IMSettings, filePath : str) -> None:
     filePath = os.path.realpath(filePath, strict=True)
     self.ctx = ctx
     self.settings = settings
-    self.cache = cache
     self.filePath = filePath
     self.odfhandle = odf.opendocument.load(filePath)
+    self.ziphandle = zipfile.ZipFile(filePath, mode = "r")
     self.difile = ctx.get_DIFile(filePath)
 
     self.style_data = {}
@@ -122,6 +124,9 @@ class _ODParseContext:
     #self.num_total_paragraph = 0
     #self.last_paragraph_text = ""
     #self.num_paragraph_past_last_text = 0
+
+  def cleanup(self):
+    self.ziphandle.close()
 
   @staticmethod
   def _get_element_attribute(node: odf.element.Element, attr: str) -> str:
@@ -236,6 +241,9 @@ class _ODParseContext:
     #node = IMTextElement(text)
     #return node
 
+  def get_full_path_from_href(self, href : str) -> str:
+    return os.path.normpath(os.path.join(self.filePath, urllib.parse.unquote(href)))
+
   def create_image_reference(self, href : str, loc : DILocation) -> IMElementOp:
     if href in self.asset_reference_dict:
       value = self.asset_reference_dict[href]
@@ -247,6 +255,7 @@ class _ODParseContext:
         return IMErrorElementOp.create(name = '', loc = loc, content = content, error_code='odf-bad-image-ref', error_msg = err)
 
     value = None
+    href_full_path = self.get_full_path_from_href(href)
     if href in self.odfhandle.Pictures:
       (FilenameOrImage, data, mediatype) = self.odfhandle.Pictures[href]
       fmt = ImageAssetData.get_format_from_mime_type(mediatype)
@@ -265,16 +274,12 @@ class _ODParseContext:
         #entry = self.parent.get_image_asset_entry_from_path(imagePath, mediatype)
       elif FilenameOrImage == odf.opendocument.IS_IMAGE:
         # the image is embedded in the file
-        value = self.ctx.create_image_asset_data_embedded(href, data, fmt)
+        value = self.ctx.create_image_asset_data_embedded(href_full_path, data, fmt)
         # entry = self.parent.get_image_asset_entry_from_inlinedata(data, mediatype, self.filePath, href)
     else:
       # the image is a link to outside file
-      imagePath = os.path.join(self.filePath, href)
-      def fileCheckCB(path) -> ImageAssetData | None:
-        if os.path.isfile(path):
-          return self.cache.query_image_asset(path)
-        return None
-      value = self.settings.search(imagePath, self.filePath, fileCheckCB)
+      if self.settings.check_is_path_accessible(href_full_path):
+        value = self.ctx.get_or_create_image_asset_data_external(href_full_path)
 
     if not isinstance(value, ImageAssetData):
       msg = "Cannot resolve reference to image \"" + href + "\" (please check file presence or security violation)"
@@ -286,6 +291,56 @@ class _ODParseContext:
 
     self.asset_reference_dict[href] = value
     return IMElementOp.create(name = '', loc = loc, content = value)
+
+  def create_media_reference(self, href : str, loc : Location) -> IMElementOp:
+    if href in self.asset_reference_dict:
+      value = self.asset_reference_dict[href]
+      if isinstance(value, AssetData):
+        return IMElementOp.create(name = '', loc = loc, content = value)
+      else:
+        content = value[0]
+        err = value[1]
+        return IMErrorElementOp.create(name = '', loc = loc, content = content, error_code='odf-bad-media-ref', error_msg = err)
+    value = None
+    href_full_path = self.get_full_path_from_href(href)
+    if href in self.ziphandle.namelist():
+      assert href.startswith('Media/')
+      data = self.ziphandle.read(href)
+
+      mime, encoding = mimetypes.guess_type(href)
+      if mime is None:
+        msg = "Unknown media type for media \"" + href + "\""
+        MessageHandler.critical_warning(msg, self.filePath)
+        textstr = StringLiteral.get(href, self.ctx)
+        msgstr = StringLiteral.get(msg, self.ctx)
+        self.asset_reference_dict[href] = (textstr, msgstr)
+        return IMErrorElementOp.create(name = '', loc = loc, content = textstr, error_code='odf-bad-media-ref', error_msg = msgstr)
+      if fmt := ImageAssetData.get_format_from_mime_type(mime):
+        value = self.ctx.create_image_asset_data_embedded(href_full_path, data, fmt)
+      elif fmt := AudioAssetData.get_format_from_mime_type(mime):
+        value = self.ctx.create_audio_asset_data_embedded(href_full_path, data, fmt)
+      else:
+        textstr = StringLiteral.get(href, self.ctx)
+        msgstr = StringLiteral.get(mime, self.ctx)
+        self.asset_reference_dict[href] = (textstr, msgstr)
+        return IMErrorElementOp.create(name = '', loc = loc, content = textstr, error_code='odf-bad-media-ref', error_msg = msgstr)
+    else:
+      # the href is a link to outside file
+      if self.settings.check_is_path_accessible(href_full_path):
+        value = self.ctx.get_or_create_unknown_asset_data_external(href_full_path)
+
+    if value is None:
+      msg = "Cannot resolve reference to media \"" + href + "\" (please check file presence or security violation)"
+      MessageHandler.critical_warning(msg, self.filePath)
+      textstr = StringLiteral.get(href, self.ctx)
+      msgstr = StringLiteral.get(msg, self.ctx)
+      self.asset_reference_dict[href] = (textstr, msgstr)
+      return IMErrorElementOp.create(name = '', loc = loc, content = textstr, error_code='odf-bad-media-ref', error_msg = msgstr)
+
+    assert isinstance(value, AssetData)
+    self.asset_reference_dict[href] = value
+    return IMElementOp.create(name = '', loc = loc, content = value)
+
 
   def _get_unsupported_element_op(self, element : odf.element.Element) -> IMErrorElementOp:
     loc = self.get_DILocation(self.cur_page_count, self.cur_row_count, self.cur_column_count)
@@ -345,6 +400,13 @@ class _ODParseContext:
               loc = self.get_DILocation(self.cur_page_count, self.cur_row_count, self.cur_column_count)
               image_element = self.create_image_reference(href, loc)
               paragraph.push_back(image_element)
+
+            elif firstChild.nodeType == 1 and first_child_name == "plugin" and self._get_element_attribute(firstChild, 'mime-type') == 'application/vnd.sun.star.media':
+              # audio / video
+              href = self._get_element_attribute(firstChild, "href")
+              loc = self.get_DILocation(self.cur_page_count, self.cur_row_count, self.cur_column_count)
+              media_element = self.create_media_reference(href, loc)
+              paragraph.push_back(media_element)
 
             elif firstChild.nodeType == 1 and first_child_name == "text-box":
               # we do not support nested textbox. If we are already in frame, we skip this text box
@@ -816,29 +878,29 @@ class _ODParseContext:
     self.transform_pass_reassociate_lists(result)
     return result
 
-def parse_odf(ctx : Context, settings : IMSettings, cache : IMParseCache, filePath : str):
+def parse_odf(ctx : Context, settings : IMSettings, filePath : str):
   # ctx : Context, settings : IMSettings, cache : IMParseCache, filePath : str
-  pc = _ODParseContext(ctx = ctx, settings = settings, cache = cache, filePath = filePath)
-  return pc.parse_odf()
+  pc = _ODParseContext(ctx = ctx, settings = settings, filePath = filePath)
+  result = pc.parse_odf()
+  pc.cleanup()
+  return result
 
 @FrontendDecl('odf', input_decl=IODecl('OpenDocument files', match_suffix=('.odf',), nargs='+'), output_decl=IMDocumentOp)
 class ReadOpenDocument(TransformBase):
   _ctx : Context
   _settings : IMSettings
-  _cache : IMParseCache
 
   def __init__(self, _ctx: Context) -> None:
     super().__init__(_ctx)
     self._ctx = _ctx
     self._settings = IMSettings()
-    self._cache = IMParseCache(self._ctx)
 
   def run(self) -> IMDocumentOp | typing.List[IMDocumentOp]:
     if len(self.inputs) == 1:
-      return parse_odf(self._ctx, self._settings, self._cache, self.inputs[0])
+      return parse_odf(self._ctx, self._settings, self.inputs[0])
     results = []
     for f in self.inputs:
-      results.append(parse_odf(self._ctx, self._settings, self._cache, f))
+      results.append(parse_odf(self._ctx, self._settings, f))
     return results
 
 def _main():
@@ -847,9 +909,8 @@ def _main():
     sys.exit(1)
   ctx = Context()
   settings = IMSettings()
-  cache = IMParseCache(ctx)
   filePath = sys.argv[1]
-  doc = parse_odf(ctx, settings, cache, filePath)
+  doc = parse_odf(ctx, settings, filePath)
   doc.view()
 
 if __name__ == "__main__":

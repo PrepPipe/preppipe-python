@@ -208,6 +208,11 @@ class IMSettings:
     if os.path.isdir(v):
       self._accessible_directories_whitelist.append(os.path.abspath(v))
 
+  def check_is_path_accessible(self, abspath : str) -> bool:
+    # 检查 abspath 是否为目录白名单中之一
+    # TODO 现在还是暂时不做这个
+    return True
+
   def search(self, querypath : str, basepath : str, filecheckCB : typing.Callable) -> typing.Any:
     # querypath 是申请访问的文件名（来自文档内容，不可信），可能含后缀也可能不含，可能是绝对路径也可能是相对路径
     # basepath 是访问发起的文件路径，绝对路径
@@ -216,18 +221,6 @@ class IMSettings:
 
   def __init__(self) -> None:
     self._accessible_directories_whitelist = []
-
-class IMParseCache:
-  # 该类用于暂时存储设置，读取完毕后可扔
-  _ctx : Context
-  _extern_asset_dict : dict[str, AssetData] # 避免反复对同一个外部资源创建资源类实例
-
-  def __init__(self, ctx : Context) -> None:
-    self._ctx = ctx
-
-  def query_image_asset(self, abspath : str) -> ImageAssetData:
-    # abspath 应已通过审查
-    raise NotImplementedError()
 
 def _collect_text_from_paragraph_impl(b : Block) -> tuple[str, list[AssetData]]:
   content_str = ''
