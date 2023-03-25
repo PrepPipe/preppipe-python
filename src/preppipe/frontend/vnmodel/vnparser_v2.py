@@ -28,7 +28,7 @@ class UnrecognizedCommandOp(ErrorOp):
     self._head_region = self._add_symbol_table('head')
     self._positionalarg_region = self._add_region('positional_arg')
     self._keywordarg_region = self._add_symbol_table('keyword_arg')
-    self._positionalarg_block = self._positionalarg_region.add_block('')
+    self._positionalarg_block = self._positionalarg_region.create_block('')
     src_head = src.get_symbol_table('head')
     src_name_symbol = src_head.get('name')
     assert isinstance(src_name_symbol, CMDValueSymbol)
