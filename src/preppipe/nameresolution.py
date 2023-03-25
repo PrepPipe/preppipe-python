@@ -7,6 +7,7 @@ from __future__ import annotations
 import typing
 import enum
 import dataclasses
+import abc
 
 # ------------------------------------------------------------------------------
 # 类似C++的命名解析在语涵编译器中至少有两处应用：
@@ -102,7 +103,7 @@ class NameResolver(typing.Generic[T]):
       return None
     return self._lookup_name(target_namespace, name)
 
-class NamespaceNodeInterface(typing.Generic[T]):
+class NamespaceNodeInterface(typing.Generic[T], abc.ABC):
   @dataclasses.dataclass
   class AliasEntry:
     ns_path: tuple[str]
@@ -111,9 +112,11 @@ class NamespaceNodeInterface(typing.Generic[T]):
   def __init__(self, **kwargs) -> None:
     super().__init__(**kwargs)
 
+  @abc.abstractmethod
   def get_namespace_parent_node(self) -> NamespaceNodeInterface[T] | None:
     raise NotImplementedError()
 
+  @abc.abstractmethod
   def get_namespace_path(self) -> tuple[str]:
     raise NotImplementedError()
 
@@ -122,6 +125,7 @@ class NamespaceNodeInterface(typing.Generic[T]):
     # (比如 using namespace DDD; --> 在此返回[('DDD')])
     return None
 
+  @abc.abstractmethod
   def lookup_name(self, name : str) -> NamespaceNodeInterface[T] | T | AliasEntry | None:
     raise NotImplementedError()
 

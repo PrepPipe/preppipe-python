@@ -940,6 +940,9 @@ class Metadata(IRObject):
 @dataclasses.dataclass(init=False, slots=True, frozen=True)
 class Location(Metadata):
 
+  def __str__(self) -> str:
+    return "NullLocation"
+
   @staticmethod
   def getNullLocation(ctx: Context):
     return ctx.null_location
@@ -972,7 +975,7 @@ class ParameterizedType(ValueType):
   parameters : tuple[ValueType | type | int | str | bool | None] = dataclasses.field(metadata={'json_repr': IRJsonRepr.TYPE_PARAMETERIZED_PARAM}) # None for separator
 
   def construct_init(self, *, context : Context, parameters : typing.Iterable[ValueType | type | int | str | bool | None], **kwargs) -> None:
-    super().construct_init(context=context,**kwargs)
+    super(ParameterizedType, self).construct_init(context=context,**kwargs)
     object.__setattr__(self, 'parameters', tuple(parameters))
 
   @staticmethod
@@ -1004,11 +1007,11 @@ class ParameterizedType(ValueType):
 @dataclasses.dataclass(init=False, slots=True, frozen=True)
 class SingleElementParameterizedType(ParameterizedType):
   def construct_init(self, *, element_type: ValueType, **kwargs) -> None:
-    return super().construct_init(context=element_type.context, parameters=[element_type], **kwargs)
+    return super(SingleElementParameterizedType, self).construct_init(parameters=[element_type], **kwargs)
 
   @property
   def element_type(self) -> ValueType:
-    return super().parameters[0] # type: ignore
+    return self.parameters[0] # type: ignore
 
   @classmethod
   def _get_typecheck(cls, element_type : ValueType) -> None:
@@ -1041,7 +1044,7 @@ class OptionalType(SingleElementParameterizedType):
 @dataclasses.dataclass(init=False, slots=True, frozen=True)
 class EnumType(ParameterizedType):
   def construct_init(self, *, ty : type, context : Context, **kwargs) -> None:
-    return super().construct_init(context=context, parameters=[ty], **kwargs)
+    return super(EnumType, self).construct_init(context=context, parameters=[ty], **kwargs)
 
   @property
   def element_type(self) -> type:
@@ -1527,10 +1530,11 @@ class Operation(IRObject, IListNode):
       o.add_operand(value)
     return o
 
-  def _add_operand_with_value_list(self, name : str, values : typing.Iterable[Value]) -> OpOperand:
+  def _add_operand_with_value_list(self, name : str, values : typing.Iterable[Value] | None) -> OpOperand:
     o = self._add_operand(name)
-    for v in values:
-      o.add_operand(v)
+    if values is not None:
+      for v in values:
+        o.add_operand(v)
     return o
 
   def get_result(self, name : str) -> OpResult:
@@ -1597,6 +1601,9 @@ class Operation(IRObject, IListNode):
 
   def get_next_node(self) -> Operation:
     return self.next
+
+  def get_prev_node(self) -> Operation:
+    return self.prev
 
   @property
   def regions(self) -> typing.Iterable[Region]:
@@ -1884,6 +1891,10 @@ class Block(Value, IListNode):
       return self._args[name]
     return self.add_argument(name, ty)
 
+  def get_argument(self, name : str) -> BlockArgument:
+    assert name in self._args
+    return self._args[name]
+
   def drop_all_references(self) -> None:
     for op in self._ops:
       op.drop_all_references()
@@ -1972,7 +1983,7 @@ class Region(NameDictNode):
   def parent(self) -> Operation:
     return super().parent
 
-  def add_block(self, name : str = '') -> Block:
+  def create_block(self, name : str = '') -> Block:
     ctx = self.context
     if ctx is None:
       raise RuntimeError('Cannot find context')
@@ -2112,9 +2123,9 @@ class ClassLiteral(Literal):
     return super().value
 
   @staticmethod
-  def get(baseclass : type, value : type, context : Context):
+  def get(baseclass : type, value : type, context : Context) -> ClassLiteral:
     return context.get_literal_uniquing_dict(ClassLiteral).get_or_create((baseclass, value),
-      lambda : ClassLiteral(init_mode = IRObjectInitMode.CONSTRUCT, context = context, baseclass = baseclass, value = value))
+      lambda : ClassLiteral(init_mode = IRObjectInitMode.CONSTRUCT, context = context, baseclass = baseclass, value = value)) # type: ignore
 
 @IRObjectJsonTypeName('constexpr_ce')
 @IRObjectUniqueTrait
@@ -2125,6 +2136,7 @@ class ConstExpr(Value, User):
   # 在有依赖关系的 Operation 被更换或者被删除时， ConstExpr 会被删掉， Literal 的值不可能有改变
   # 子 IR 类型可以定义新的 Literal 和 ConstExpr ，并以“是否可能依赖 Operation”为标准区分两者
   # 不过 ConstExpr 也可以不引用从 Operation 来的值
+  # 一般而言推荐子类只继承自 ConstExpr ，不使用 LiteralExpr
 
   def construct_init(self, *, ty: ValueType, values : typing.Iterable[Value], **kwargs) -> None:
     super().construct_init(ty=ty, **kwargs)
@@ -2727,6 +2739,7 @@ class FloatLiteral(Literal):
 
   @staticmethod
   def get(value : decimal.Decimal, context : Context) -> FloatLiteral:
+    assert isinstance(value, decimal.Decimal)
     return Literal._get_literal_impl(FloatLiteral, value, context)
 
 @IRObjectJsonTypeName('str_l')
@@ -3252,7 +3265,12 @@ class IRWriter:
       self._write_body(self.escape(self._get_operation_short_name(value.parent) + '.' + value.name))
       return delayed_content
     if isinstance(value, BlockArgument):
-      raise NotImplementedError('TODO')
+      block = value.parent
+      blockstr = self.get_id_str(block)
+      if len(block.name) > 0:
+        blockstr += ':"' + block.name + '"'
+      self._write_body(self.escape(blockstr + '.' + (value.name if len(value.name) > 0 else '<anon>')))
+      return delayed_content
     if isinstance(value, Literal):
       if isinstance(value, BoolLiteral):
         if value.value == True:
@@ -3287,6 +3305,10 @@ class IRWriter:
               delayed_content.update(res)
           self._write_body(',')
         self._write_body(self.escape('}'))
+        return delayed_content
+      elif isinstance(value, EnumLiteral):
+        ev = value.value
+        self._write_body(self.escape(type(ev).__name__ + '.' + ev.name))
         return delayed_content
       #elif isinstance(value, TextListLiteral):
       #  raise NotImplementedError('TODO')

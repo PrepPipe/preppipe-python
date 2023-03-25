@@ -110,12 +110,12 @@ class GeneralCommandOp(Operation):
     name_symbol = CMDValueSymbol.create('name', name_loc, name_value)
     self._head_region.add(name_symbol)
     # initialize the positional args region
-    self._positionalarg_block = self._positionalarg_region.add_block('')
+    self._positionalarg_block = self._positionalarg_region.create_block('')
     # no initialization for keyword args region
     # initialize the nested call region
-    self._nested_callexpr_block = self._nested_callexpr_region.add_block('')
+    self._nested_callexpr_block = self._nested_callexpr_region.create_block('')
     # initialize the extend data region
-    self._extend_data_block = self._extend_data_region.add_block('')
+    self._extend_data_block = self._extend_data_region.create_block('')
 
   def post_init(self) -> None:
     super().post_init()

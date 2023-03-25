@@ -513,7 +513,11 @@ def pipeline_main(args : typing.List[str] = None):
       is_append_result = True
       pass
     if len(t.inputs) == 0:
-      raise RuntimeError('At pipeline step ' + str(step_count) + ': (' + info.flag + '): No input available')
+      if isinstance(info.input_decl, IODecl) and info.input_decl.nargs in [0, '?']:
+        # in this case it is permissible to have zero input
+        pass
+      else:
+        raise RuntimeError('At pipeline step ' + str(step_count) + ': (' + info.flag + '): No input available')
     run_result = t.run()
     if isinstance(info.output_decl, type):
       # 该转换输出 IR
