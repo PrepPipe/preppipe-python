@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2022 PrepPipe's Contributors
+# SPDX-FileCopyrightText: 2022-2023 PrepPipe's Contributors
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -781,6 +781,7 @@ class IRJsonExporter:
       FloatType,
       BoolType,
       StringType,
+      ColorType,
       TextStyleType,
       TextType,
       ImageType,
@@ -796,12 +797,16 @@ class IRJsonExporter:
       UndefLiteral,
       ClassLiteral,
       IntLiteral,
+      IntTupleLiteral,
       BoolLiteral,
       FloatLiteral,
+      FloatTupleLiteral,
       StringLiteral,
+      ColorLiteral,
       TextStyleLiteral,
       TextFragmentLiteral,
       TextLiteral,
+      StringListLiteral,
       EnumLiteral,
 
       # metadata
@@ -1150,6 +1155,12 @@ class BoolType(StatelessType):
 class StringType(StatelessType):
   def __str__(self) -> str:
     return "字符串类型"
+
+@IRObjectJsonTypeName("color_t")
+@dataclasses.dataclass(init=False, slots=True, frozen=True)
+class ColorType(StatelessType):
+  def __str__(self) -> str:
+    return "颜色类型"
 
 @IRObjectJsonTypeName("text_style_t")
 @dataclasses.dataclass(init=False, slots=True, frozen=True)
@@ -2703,6 +2714,24 @@ class IntLiteral(Literal):
   def get(value : int, context : Context) -> IntLiteral:
     return Literal._get_literal_impl(IntLiteral, value, context)
 
+@IRObjectJsonTypeName('int_tuple_l')
+class IntTupleLiteral(Literal):
+  # 整数元组，一般用于像素坐标或大小
+  def construct_init(self, *, context : Context, value: tuple[int, ...], **kwargs) -> None:
+    return super().construct_init(ty=VoidType.get(context), value=value, **kwargs)
+
+  @staticmethod
+  def get_fixed_value_type():
+    return VoidType
+
+  @property
+  def value(self) -> tuple[int, ...]:
+    return super().value
+
+  @staticmethod
+  def get(value : tuple[int, ...], context : Context) -> IntTupleLiteral:
+    return Literal._get_literal_impl(IntTupleLiteral, value, context)
+
 @IRObjectJsonTypeName('bool_l')
 class BoolLiteral(Literal):
   def construct_init(self, *, context : Context, value: bool, **kwargs) -> None:
@@ -2742,6 +2771,24 @@ class FloatLiteral(Literal):
     assert isinstance(value, decimal.Decimal)
     return Literal._get_literal_impl(FloatLiteral, value, context)
 
+@IRObjectJsonTypeName('float_tuple_l')
+class FloatTupleLiteral(Literal):
+  # 浮点数元组，用于描述锚点位置等
+  def construct_init(self, *, context : Context, value: tuple[decimal.Decimal, ...], **kwargs) -> None:
+    return super().construct_init(ty=VoidType.get(context), value=value, **kwargs)
+
+  @staticmethod
+  def get_fixed_value_type():
+    return VoidType
+
+  @property
+  def value(self) -> tuple[decimal.Decimal, ...]:
+    return super().value
+
+  @staticmethod
+  def get(value : tuple[decimal.Decimal, ...], context : Context) -> FloatTupleLiteral:
+    return Literal._get_literal_impl(FloatTupleLiteral, value, context)
+
 @IRObjectJsonTypeName('str_l')
 class StringLiteral(Literal):
   # 字符串常量的值不包含样式等信息，就是纯字符串
@@ -2765,6 +2812,24 @@ class StringLiteral(Literal):
   @staticmethod
   def get(value : str, context : Context) -> StringLiteral:
     return Literal._get_literal_impl(StringLiteral, value, context)
+
+@IRObjectJsonTypeName('color_l')
+class ColorLiteral(Literal):
+  def construct_init(self, *, context : Context, value: Color, **kwargs) -> None:
+    assert isinstance(value, Color)
+    super().construct_init(ty=ColorType.get(context), value=value, **kwargs)
+
+  @staticmethod
+  def get_fixed_value_type():
+    return ColorType
+
+  @property
+  def value(self) -> Color:
+    return super().value
+
+  @staticmethod
+  def get(value : Color, context : Context) -> ColorLiteral:
+    return Literal._get_literal_impl(ColorLiteral, value, context)
 
 @IRObjectJsonTypeName('text_style_l')
 class TextStyleLiteral(Literal):
@@ -2852,7 +2917,7 @@ class LiteralExpr(Literal, User):
       assert isinstance(v, Literal)
       self.add_operand(v)
 
-  def get_value_tuple(self) -> tuple[Literal]:
+  def get_value_tuple(self) -> tuple[Literal, ...]:
     return self.value
 
   @classmethod
@@ -2923,20 +2988,34 @@ class TextLiteral(LiteralExpr):
 
   @staticmethod
   def _check_value_tuple(value: tuple[TextFragmentLiteral]) -> None:
-    isCheckFailed = False
-    if not isinstance(value, tuple):
-      isCheckFailed = True
-    else:
-      for v in value:
-        if not isinstance(v, TextFragmentLiteral):
-          isCheckFailed = True
-    if isCheckFailed:
-      raise RuntimeError("文本常量的值应为仅由文本片段常量组成的元组")
+    assert isinstance(value, tuple) and all(isinstance(v, TextFragmentLiteral) for v in value)
 
   @staticmethod
   def get(context : Context, value : typing.Iterable[TextFragmentLiteral]) -> TextLiteral:
     value_tuple = tuple(value)
     return TextLiteral._get_literalexpr_impl(value_tuple, context)
+
+@IRObjectJsonTypeName('strlist_le')
+class StringListLiteral(LiteralExpr):
+  # 字符串列表字面值由零到N个字符串字面值组成
+  # 一般用于像属性列表（每个属性一个字符串）或是内嵌汇编（每行一个字符串）等需要多个字符串的场景
+  def construct_init(self, *, context : Context, value_tuple: tuple[StringLiteral, ...], **kwargs) -> None:
+    ty = StringType.get(context)
+    return super().construct_init(ty=ty, value_tuple=value_tuple, **kwargs)
+
+  @staticmethod
+  def get_fixed_value_type():
+    return StringType
+
+  @staticmethod
+  def _check_value_tuple(value: tuple[StringLiteral, ...]) -> None:
+    assert isinstance(value, tuple) and all(isinstance(v, StringLiteral) for v in value)
+
+  @staticmethod
+  def get(context : Context, value : typing.Iterable[StringLiteral]) -> StringListLiteral:
+    value_tuple = tuple(value)
+    return StringListLiteral._get_literalexpr_impl(value_tuple, context)
+
 
 @IRObjectJsonTypeName('enum_l')
 class EnumLiteral(typing.Generic[T], Literal):
@@ -2978,6 +3057,39 @@ class UnknownEnumLiteral(Literal):
   def get(context : Context, enum_type : type | str, enum_value : str) -> UnknownEnumLiteral:
     return Literal._get_literal_impl(EnumLiteral, (enum_type, enum_value), context)
 
+def convert_literal(value, ctx : Context | None, type_hint : type | None = None) -> Literal | None | bool:
+  '''尝试把一个值转换为 Literal 类型的字面值(返回 Literal|None)。如果 ctx 没有提供，则只做类型检查(返回 bool)'''
+  if isinstance(value, int):
+    if type_hint is IntLiteral or type_hint is None:
+      return IntLiteral.get(value, ctx) if ctx is not None else True
+    elif type_hint is FloatLiteral:
+      return FloatLiteral.get(decimal.Decimal(value), ctx) if ctx is not None else True
+    else:
+      return None  if ctx is not None else False
+  elif isinstance(value, float):
+    if type_hint is FloatLiteral or type_hint is None:
+      return FloatLiteral.get(decimal.Decimal(value), ctx) if ctx is not None else True
+    else:
+      return None if ctx is not None else False
+  elif isinstance(value, str):
+    if type_hint is StringLiteral or type_hint is None:
+      value = StringLiteral.get(value, ctx) if ctx is not None else True
+    elif type_hint is TextFragmentLiteral:
+      value = TextFragmentLiteral.get(ctx, StringLiteral.get(value, ctx), TextStyleLiteral.get({}, ctx)) if ctx is not None else True
+    else:
+      return None if ctx is not None else False
+  elif isinstance(value, bool):
+    if type_hint is BoolLiteral or type_hint is None:
+      return BoolLiteral.get(value, ctx) if ctx is not None else True
+    else:
+      return None if ctx is not None else False
+  elif isinstance(value, enum.Enum):
+    if type_hint is EnumLiteral or type_hint is None:
+      return EnumLiteral.get(ctx, value) if ctx is not None else True
+    else:
+      return None if ctx is not None else False
+  else:
+    return None if ctx is not None else False
 
 # TODO 这个还没有代码用到，先去掉
 #class TextListLiteral(Literal, User):
