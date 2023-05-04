@@ -14,9 +14,11 @@ from .. import irdataop
 # 抽象基类
 #-----------------------------------------------------------
 
+@irdataop.IROperationDataclass
 class RenPyNode(Operation):
   # 代表一个 AST 节点的基类，对应 renpy 的 renpy/ast.py
-  pass
+  def accept(self, visitor):
+    return getattr(visitor, "visit" + self.__class__.__name__)(self)
 
 @irdataop.IROperationDataclassWithValue(VoidType)
 class RenPyASMNode(RenPyNode, Value):
@@ -28,132 +30,9 @@ class RenPyASMNode(RenPyNode, Value):
       asm = StringListLiteral.get(context, (asm,))
     return RenPyASMNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, asm=asm, name=name, loc=loc)
 
-class RenPySayNode(RenPyNode):
-  #'who' 发言者
-  #'what' 发言内容
-  # 'with_' with 从句
-  # 'interact', bool, 是否等待玩家点击
-  # 'attributes', 执行后持久施加给角色的属性
-  # 'temporary_attributes', 只在该发言时施加给角色的属性
-  # 'identifier',发言的ID，用于与语音绑定等
-  # 'arguments' 忽略
-  # 'rollback', 忽略
-  # <who> [<attribute>] [@ <temporary attribute>] <what> [noninteract] [id <identifier>] [with <with_>]
-  pass
 
-class RenPyInitNode(RenPyNode):
-  # RenPy 的 init 块
-  # 除了优先级外基本上只有个 body
-  # priority : int
-  # body : region
-  pass
-
-class RenPyLabelNode(RenPyNode):
-  # 主文章：RenPy Labels & Control Flow
-  # https://www.renpy.org/doc/html/label.html#labels-control-flow
-  # hide: 忽略
-  #name : str
-  #parameters: RenPyNode
-  pass
-
-class RenPyPythonNode(RenPyNode):
-  # 普通的内嵌 Python 代码块
-  # code : RenPyPyCodeObject
-  # hide : bool # 是否使用局部词典、避免污染上层环境的变量词典
-  # store : str = 'store' # 使用哪个 store 对象来存值，暂不支持
-  pass
-
-class RenPyEarlyPythonNode(RenPyPythonNode):
-  pass
-
-class RenPyImageNode(RenPyNode):
-  #name : str
-  #displayable : str # atl or PyCode
-  pass
-
-class RenPyTransformNode(RenPyNode):
-  # store : str = 'store'
-  # name : str
-  # atl : ATL code block
-  # parameters : 应该表述为类似 inspect.signature 的对象，
-  pass
-
-class RenPyShowNode(RenPyNode):
-  # imspec: list[str]
-  # atl
-  pass
-
-class RenPyShowLayerNode(RenPyNode):
-  # 可以暂时不做
-  # layer : str
-  # at_list : list[str]
-  # atl
-  pass
-
-class RenPyCameraNode(RenPyNode):
-  # 语义和 ShowLayer 有细微差别，其他完全一样
-  # 可以暂时不做
-  # layer : str
-  # at_list : list[str]
-  # atl
-  pass
-
-class RenPySceneNode(RenPyNode):
-  # 'imspec' : list[str]
-  # 'layer' : str
-  # 'atl',
-  pass
-
-class RenPyHideNode(RenPyNode):
-  # 'imspec' : list[str]
-  pass
-
-class RenPyWithNode(RenPyNode):
-  # expr : str
-  # paired: 暂时不管
-  pass
-
-class RenPyCallNode(RenPyNode):
-  # label : str
-  # arguments: 暂时不管
-  # expression : bool, 决定 label 是否是一个表达式
-  pass
-
-class RenPyReturnNode(RenPyNode):
-  # expr : str
-  pass
-
-class RenPyMenuNode(RenPyNode):
-  # https://www.renpy.org/doc/html/menus.html
-  # items : list[tuple[label : str, condition : expr, block]]
-  # set : str (执行选单时如果某项的标题已在 set 中存在，则该选项不会出现。用这个来实现“排除选项”的功能)
-  # with_: with 从句
-  # has_caption: bool, 暂时不管
-  # arguments, item_arguments: 暂时不管
-  pass
-
-class RenPyJumpNode(RenPyNode):
-  # target : str
-  # expression : bool, target是否是表达式
-  pass
-
-class RenPyPassNode(RenPyNode):
-  pass
-
-class RenPyWhileNode(RenPyNode):
-  # condition : bool expr
-  # block
-  pass
-
-class RenPyIfNode(RenPyNode):
-  # entries : list[tuple[condition : bool expr, block]]
-  pass
-
-# TODO UserStatement, PostUserStatement
-
-
-@irdataop.IROperationDataclass
-class RenPyCharacterExpr(RenPyNode):
+@irdataop.IROperationDataclassWithValue(VoidType)
+class RenPyCharacterExpr(RenPyNode, Value):
   kind      : OpOperand[StringLiteral] # str （可以指定另一个 Character 并获取默认值，或者指定 adv / nvl）
   image     : OpOperand[StringLiteral] # str (头像图片)
   voicetag  : OpOperand[StringLiteral] # str (voice_tag)
@@ -175,7 +54,188 @@ class RenPyCharacterExpr(RenPyNode):
   show_params : OpOperand[StringListLiteral] # RenPyASMNode，应该是一串 "show_param1=xxx" "show_param2=yyy" 这样的参数
   body        : Block # 放需要的 RenPyASMNode
 
+@irdataop.IROperationDataclass
+class RenPySayNode(RenPyNode):
+  #'who' 发言者
+  #'what' 发言内容
+  # 'with_' with 从句
+  # 'interact', bool, 是否等待玩家点击
+  # 'attributes', 执行后持久施加给角色的属性
+  # 'temporary_attributes', 只在该发言时施加给角色的属性
+  # 'identifier',发言的ID，用于与语音绑定等
+  # 'arguments' 忽略
+  # 'rollback', 忽略
+  # <who> [<attribute>] [@ <temporary attribute>] <what> [noninteract] [id <identifier>] [with <with_>]
+  who : OpOperand[RenPyCharacterExpr]
+  what : OpOperand[Value] # StringLiteral, TextFragmentLiteral, string-type variables
+  with_ : OpOperand[StringLiteral] = irdataop.operand_field(lookup_name="with")
+  interact : OpOperand[BoolLiteral]
+  attributes : OpOperand[StringLiteral]
+  temporary_attributes : OpOperand[StringLiteral]
+  identifier : OpOperand[StringLiteral]
 
+@irdataop.IROperationDataclass
+class RenPyInitNode(RenPyNode):
+  # RenPy 的 init 块
+  # 除了优先级外基本上只有个 body
+  # priority : int
+  # body : region
+  priority : OpOperand[IntLiteral]
+  body : Block
+
+@irdataop.IROperationDataclass
+class RenPyLabelNode(RenPyNode):
+  # 主文章：RenPy Labels & Control Flow
+  # https://www.renpy.org/doc/html/label.html#labels-control-flow
+  # hide: 忽略
+  #name : str
+  #parameters: RenPyNode
+  codename : OpOperand[StringLiteral]
+  parameters : OpOperand[StringLiteral]
+
+@irdataop.IROperationDataclass
+class RenPyPythonNode(RenPyNode):
+  # 普通的内嵌 Python 代码块
+  # code : RenPyPyCodeObject
+  # hide : bool # 是否使用局部词典、避免污染上层环境的变量词典
+  # store : str = 'store' # 使用哪个 store 对象来存值，暂不支持
+  code : OpOperand[RenPyASMNode]
+  hide : OpOperand[BoolLiteral]
+  body : Block
+
+@irdataop.IROperationDataclass
+class RenPyEarlyPythonNode(RenPyPythonNode):
+  pass
+
+@irdataop.IROperationDataclass
+class RenPyImageNode(RenPyNode):
+  #name : str
+  #displayable : str # atl or PyCode
+  codename : OpOperand[StringLiteral]
+  displayable : OpOperand[RenPyASMNode]
+  body : Block
+
+@irdataop.IROperationDataclass
+class RenPyTransformNode(RenPyNode):
+  # store : str = 'store'
+  # name : str
+  # atl : ATL code block
+  # parameters : 应该表述为类似 inspect.signature 的对象
+  codename : OpOperand[StringLiteral]
+  store : OpOperand[StringLiteral]
+  parameters : OpOperand[StringLiteral]
+  atl : OpOperand[RenPyASMNode]
+  body : Block
+
+@irdataop.IROperationDataclass
+class RenPyShowNode(RenPyNode):
+  # imspec: list[str]
+  # atl
+  imspec : OpOperand[StringListLiteral]
+  atl : OpOperand[RenPyASMNode] # at block
+  body : Block # only for ATL
+  behind : OpOperand[StringLiteral] # 0-N 个图片名
+
+#class RenPyShowLayerNode(RenPyNode):
+  # 可以暂时不做
+  # layer : str
+  # at_list : list[str]
+  # atl
+#  pass
+
+#class RenPyCameraNode(RenPyNode):
+  # 语义和 ShowLayer 有细微差别，其他完全一样
+  # 可以暂时不做
+  # layer : str
+  # at_list : list[str]
+  # atl
+#  pass
+
+@irdataop.IROperationDataclass
+class RenPySceneNode(RenPyNode):
+  # 'imspec' : list[str]
+  # 'layer' : str
+  # 'atl',
+  imspec : OpOperand[StringListLiteral]
+  layer : OpOperand[StringLiteral]
+  atl : OpOperand[RenPyASMNode]
+  body : Block # only for ATL
+
+@irdataop.IROperationDataclass
+class RenPyHideNode(RenPyNode):
+  # 'imspec' : list[str]
+  imspec : OpOperand[StringListLiteral]
+
+@irdataop.IROperationDataclass
+class RenPyWithNode(RenPyNode):
+  # expr : str
+  # paired: 暂时不管
+  expr : OpOperand[StringLiteral]
+
+@irdataop.IROperationDataclass
+class RenPyCallNode(RenPyNode):
+  # label : str
+  # arguments: 暂时不管
+  # expression : bool, 决定 label 是否是一个表达式
+  label : OpOperand[StringLiteral]
+  is_expr : OpOperand[BoolLiteral] # label 是否是表达式
+
+@irdataop.IROperationDataclass
+class RenPyReturnNode(RenPyNode):
+  # expr : str
+  expr : OpOperand[StringLiteral]
+
+@irdataop.IROperationDataclass
+class RenPyMenuItemNode(RenPyNode):
+  # 用于 menu 命令
+  # "<label>" (<arguments>) if <condition>:
+  #    <body>
+  label : OpOperand[TextLiteral]
+  condition : OpOperand[StringLiteral]
+  arguments : OpOperand[StringLiteral]
+  body : Block
+
+@irdataop.IROperationDataclass
+class RenPyMenuNode(RenPyNode):
+  # https://www.renpy.org/doc/html/menus.html
+  # items : list[tuple[label : str, condition : expr, block]]
+  # set : str (执行选单时如果某项的标题已在 set 中存在，则该选项不会出现。用这个来实现“排除选项”的功能)
+  # with_: with 从句, 暂时不管
+  # has_caption: bool, 暂时不管
+  menuset : OpOperand[StringLiteral]
+  arguments : OpOperand[StringLiteral]
+  items : Block # 里面应该都是 RenPyMenuItemNode
+
+@irdataop.IROperationDataclass
+class RenPyJumpNode(RenPyNode):
+  # target : str
+  # expression : bool, target是否是表达式
+  target : OpOperand[StringLiteral]
+  is_expr : OpOperand[BoolLiteral] # target是否是表达式
+
+@irdataop.IROperationDataclass
+class RenPyPassNode(RenPyNode):
+  pass
+
+@irdataop.IROperationDataclass
+class RenPyCondBodyPair(RenPyNode):
+  # 用于 if 和 while
+  condition : OpOperand[StringLiteral]
+  body : Block
+
+
+@irdataop.IROperationDataclass
+class RenPyWhileNode(RenPyCondBodyPair):
+  # condition : bool expr
+  # block
+  pass
+
+@irdataop.IROperationDataclass
+class RenPyIfNode(RenPyNode):
+  # entries : list[tuple[condition : bool expr, block]]
+  entries : Block # 里面应该是一串 RenPyCondBodyPair, 按照判断顺序排列
+
+@irdataop.IROperationDataclass
 class RenPyDefineNode(RenPyNode):
   # 用来定义像角色、图片等信息
   # https://www.renpy.org/doc/html/python.html#define-statement
@@ -183,14 +243,22 @@ class RenPyDefineNode(RenPyNode):
   # varname : str
   # operator : enum: '=', '+=', '|='
   # expr : RenPyCharacterExpr / RenPyImageExpr / RenPyASMNode
-  pass
+  store : OpOperand[StringLiteral]
+  varname : OpOperand[StringLiteral]
+  assign_operator : OpOperand[StringLiteral] # enum: '=', '+=', '|='
+  expr : OpOperand[Value] # RenPyCharacterExpr / RenPyImageExpr / RenPyASMNode
+  body : Block
 
+@irdataop.IROperationDataclass
 class RenPyDefaultNode(RenPyNode):
   # 用来给变量做声明、赋初值
   # store : str = 'store'
   # varname : str
   # expr
-  pass
+  store : OpOperand[StringLiteral]
+  varname : OpOperand[StringLiteral]
+  expr : OpOperand[StringLiteral]
+  body : Block
 
 # 其他像 Screen 什么的先不做
 
@@ -224,6 +292,67 @@ class RenPyScriptFileOp(Symbol):
   def create(context : Context, name : str, loc : Location | None = None, indent : int | None = None):
     return RenPyScriptFileOp(init_mode=IRObjectInitMode.CONSTRUCT, context=context, name=name, loc=loc, indent=indent)
 
+# pylint: disable=invalid-name,too-many-public-methods
+class RenPyASTVisitor:
+  def visitChildren(self, v : Operation):
+    for r in v.regions:
+      for b in r.blocks:
+        for op in b.body:
+          if isinstance(op, RenPyNode):
+            op.accept(self)
+
+  def start_visit(self, v : RenPyScriptFileOp):
+    assert isinstance(v, RenPyScriptFileOp)
+    return self.visitChildren(v)
+
+  def visitRenPyASMNode(self, v : RenPyASMNode):
+    return self.visitChildren(v)
+  def visitRenPyCharacterExpr(self, v : RenPyCharacterExpr):
+    return self.visitChildren(v)
+  def visitRenPySayNode(self, v : RenPySayNode):
+    return self.visitChildren(v)
+  def visitRenPyInitNode(self, v : RenPyInitNode):
+    return self.visitChildren(v)
+  def visitRenPyLabelNode(self, v : RenPyLabelNode):
+    return self.visitChildren(v)
+  def visitRenPyPythonNode(self, v : RenPyPythonNode):
+    return self.visitChildren(v)
+  def visitRenPyEarlyPythonNode(self, v : RenPyEarlyPythonNode):
+    return self.visitChildren(v)
+  def visitRenPyImageNode(self, v : RenPyImageNode):
+    return self.visitChildren(v)
+  def visitRenPyTransformNode(self, v : RenPyTransformNode):
+    return self.visitChildren(v)
+  def visitRenPyShowNode(self, v : RenPyShowNode):
+    return self.visitChildren(v)
+  def visitRenPySceneNode(self, v : RenPySceneNode):
+    return self.visitChildren(v)
+  def visitRenPyWithNode(self, v : RenPyWithNode):
+    return self.visitChildren(v)
+  def visitRenPyHideNode(self, v : RenPyHideNode):
+    return self.visitChildren(v)
+  def visitRenPyCallNode(self, v : RenPyCallNode):
+    return self.visitChildren(v)
+  def visitRenPyReturnNode(self, v : RenPyReturnNode):
+    return self.visitChildren(v)
+  def visitRenPyMenuItemNode(self, v : RenPyMenuItemNode):
+    return self.visitChildren(v)
+  def visitRenPyMenuNode(self, v : RenPyMenuNode):
+    return self.visitChildren(v)
+  def visitRenPyJumpNode(self, v : RenPyJumpNode):
+    return self.visitChildren(v)
+  def visitRenPyPassNode(self, v : RenPyPassNode):
+    return self.visitChildren(v)
+  def visitRenPyCondBodyPair(self, v : RenPyCondBodyPair):
+    return self.visitChildren(v)
+  def visitRenPyWhileNode(self, v : RenPyWhileNode):
+    return self.visitChildren(v)
+  def visitRenPyIfNode(self, v : RenPyIfNode):
+    return self.visitChildren(v)
+  def visitRenPyDefaultNode(self, v : RenPyDefaultNode):
+    return self.visitChildren(v)
+
+
 @irdataop.IROperationDataclass
 class RenPyModel(Operation):
   _script_region : SymbolTableRegion = irdataop.symtable_field(lookup_name="script") # RenPyScriptFileOp
@@ -244,3 +373,4 @@ class RenPyModel(Operation):
   @staticmethod
   def create(context : Context) -> RenPyModel:
     return RenPyModel(init_mode=IRObjectInitMode.CONSTRUCT, context=context)
+
