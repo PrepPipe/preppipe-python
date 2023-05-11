@@ -72,14 +72,14 @@ class Color:
     if self.a < 0 or self.a > 255:
       raise AttributeError("Color.a (" + str(self.a) + ") out of range [0, 255]")
 
-  def getString(self) -> str:
+  def get_string(self) -> str:
     result = "#" + '{:02x}'.format(self.r) + '{:02x}'.format(self.g) + '{:02x}'.format(self.b)
     if self.a != 255:
       result += '{:02x}'.format(self.a)
     return result
 
   def __str__(self) -> str:
-    return self.getString()
+    return self.get_string()
 
   @staticmethod
   def get(src: typing.Any):

@@ -33,15 +33,16 @@ class RenPyASMNode(RenPyNode, Value):
 
 @irdataop.IROperationDataclassWithValue(VoidType)
 class RenPyCharacterExpr(RenPyNode, Value):
-  kind      : OpOperand[StringLiteral] # str （可以指定另一个 Character 并获取默认值，或者指定 adv / nvl）
-  image     : OpOperand[StringLiteral] # str (头像图片)
-  voicetag  : OpOperand[StringLiteral] # str (voice_tag)
+  displayname : OpOperand[StringLiteral]
+  kind        : OpOperand[StringLiteral] # str （可以指定另一个 Character 并获取默认值，或者指定 adv / nvl）
+  image       : OpOperand[StringLiteral] # str (头像图片)
+  voicetag    : OpOperand[StringLiteral] # str (voice_tag)
   what_prefix : OpOperand[StringLiteral]
   what_suffix : OpOperand[StringLiteral]
   who_prefix  : OpOperand[StringLiteral]
   who_suffix  : OpOperand[StringLiteral]
   dynamic   : OpOperand[RenPyASMNode] # 取一个从 RenPyASMNode 来的值
-  ondition  : OpOperand[RenPyASMNode] # 取一个从 RenPyASMNode 来的值
+  condition : OpOperand[RenPyASMNode] # 取一个从 RenPyASMNode 来的值
   interact  : OpOperand[BoolLiteral] # bool，是否等待用户点击
   advance   : OpOperand[BoolLiteral] # bool, 用户是否可以通过点击来继续。（不行的话可能必须要点一个链接或是执行其他操作来继续）
   mode      : OpOperand[StringLiteral] # str: https://www.renpy.org/doc/html/modes.html#modes
@@ -54,25 +55,64 @@ class RenPyCharacterExpr(RenPyNode, Value):
   show_params : OpOperand[StringListLiteral] # RenPyASMNode，应该是一串 "show_param1=xxx" "show_param2=yyy" 这样的参数
   body        : Block # 放需要的 RenPyASMNode
 
+  @staticmethod
+  def create(context : Context, displayname : StringLiteral | str) -> RenPyCharacterExpr:
+    return RenPyCharacterExpr(init_mode=IRObjectInitMode.CONSTRUCT, context=context, displayname=displayname)
+
+@irdataop.IROperationDataclassWithValue(VoidType)
+class RenPyDefineNode(RenPyNode, Value):
+  # 用来定义像角色、图片等信息
+  # https://www.renpy.org/doc/html/python.html#define-statement
+  # store : str = 'store'
+  # varname : str
+  # operator : enum: '=', '+=', '|='
+  # expr : RenPyCharacterExpr / RenPyImageExpr / RenPyASMNode
+  store : OpOperand[StringLiteral]
+  varname : OpOperand[StringLiteral]
+  assign_operator : OpOperand[StringLiteral] # enum: '=', '+=', '|='
+  expr : OpOperand[Value] # RenPyCharacterExpr / RenPyImageExpr / RenPyASMNode
+  body : Block
+
+  @staticmethod
+  def create(context : Context, varname : StringLiteral | str, expr : Value) -> RenPyDefineNode:
+    return RenPyDefineNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, varname=varname, expr=expr)
+
+  @staticmethod
+  def create_character(context : Context, varname : StringLiteral | str, displayname : StringLiteral | str) -> tuple[RenPyDefineNode, RenPyCharacterExpr]:
+    charexpr = RenPyCharacterExpr.create(context, displayname)
+    defnode = RenPyDefineNode.create(context, varname=varname, expr=charexpr)
+    defnode.body.push_back(charexpr)
+    return (defnode, charexpr)
+
+  def get_varname_str(self) -> str:
+    vname = self.varname.get().get_string()
+    if s := self.store.try_get_value():
+      return s.get_string() + '.' + vname
+    return vname
+
 @irdataop.IROperationDataclass
 class RenPySayNode(RenPyNode):
   #'who' 发言者
   #'what' 发言内容
   # 'with_' with 从句
   # 'interact', bool, 是否等待玩家点击
-  # 'attributes', 执行后持久施加给角色的属性
+  # 'attributes' --> 'persistent_attributes', 执行后持久施加给角色的属性
   # 'temporary_attributes', 只在该发言时施加给角色的属性
   # 'identifier',发言的ID，用于与语音绑定等
   # 'arguments' 忽略
   # 'rollback', 忽略
   # <who> [<attribute>] [@ <temporary attribute>] <what> [noninteract] [id <identifier>] [with <with_>]
-  who : OpOperand[RenPyCharacterExpr]
+  who : OpOperand[RenPyDefineNode]
   what : OpOperand[Value] # StringLiteral, TextFragmentLiteral, string-type variables
   with_ : OpOperand[StringLiteral] = irdataop.operand_field(lookup_name="with")
   interact : OpOperand[BoolLiteral]
-  attributes : OpOperand[StringLiteral]
+  persistent_attributes : OpOperand[StringLiteral]
   temporary_attributes : OpOperand[StringLiteral]
   identifier : OpOperand[StringLiteral]
+
+  @staticmethod
+  def create(context : Context, who : RenPyDefineNode | None, what : typing.Iterable[Value] | Value | str) -> RenPySayNode:
+    return RenPySayNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, who=who, what=what)
 
 @irdataop.IROperationDataclass
 class RenPyInitNode(RenPyNode):
@@ -92,6 +132,11 @@ class RenPyLabelNode(RenPyNode):
   #parameters: RenPyNode
   codename : OpOperand[StringLiteral]
   parameters : OpOperand[StringLiteral]
+  body : Block
+
+  @staticmethod
+  def create(context : Context, codename : StringLiteral | str) -> RenPyLabelNode:
+    return RenPyLabelNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, codename=codename)
 
 @irdataop.IROperationDataclass
 class RenPyPythonNode(RenPyNode):
@@ -235,19 +280,7 @@ class RenPyIfNode(RenPyNode):
   # entries : list[tuple[condition : bool expr, block]]
   entries : Block # 里面应该是一串 RenPyCondBodyPair, 按照判断顺序排列
 
-@irdataop.IROperationDataclass
-class RenPyDefineNode(RenPyNode):
-  # 用来定义像角色、图片等信息
-  # https://www.renpy.org/doc/html/python.html#define-statement
-  # store : str = 'store'
-  # varname : str
-  # operator : enum: '=', '+=', '|='
-  # expr : RenPyCharacterExpr / RenPyImageExpr / RenPyASMNode
-  store : OpOperand[StringLiteral]
-  varname : OpOperand[StringLiteral]
-  assign_operator : OpOperand[StringLiteral] # enum: '=', '+=', '|='
-  expr : OpOperand[Value] # RenPyCharacterExpr / RenPyImageExpr / RenPyASMNode
-  body : Block
+
 
 @irdataop.IROperationDataclass
 class RenPyDefaultNode(RenPyNode):
@@ -309,6 +342,8 @@ class RenPyASTVisitor:
     return self.visitChildren(v)
   def visitRenPyCharacterExpr(self, v : RenPyCharacterExpr):
     return self.visitChildren(v)
+  def visitRenPyDefineNode(self, v : RenPyDefineNode):
+    return self.visitChildren(v)
   def visitRenPySayNode(self, v : RenPySayNode):
     return self.visitChildren(v)
   def visitRenPyInitNode(self, v : RenPyInitNode):
@@ -369,6 +404,12 @@ class RenPyModel(Operation):
 
   def add_asset(self, asset : RenPyFileAssetOp):
     self._asset_region.add(asset)
+
+  def scripts(self) -> typing.Iterable[RenPyScriptFileOp]:
+    return self._script_region
+
+  def assets(self) -> typing.Iterable[RenPyFileAssetOp]:
+    return self._asset_region
 
   @staticmethod
   def create(context : Context) -> RenPyModel:
