@@ -7,12 +7,14 @@ import dataclasses
 import typing
 import types
 import collections
+import collections.abc
 import decimal
 
 from . import irbase
 
 _FIELDS = "_irop_dataclass_fields_"
 _PARAMS = "_irop_dataclass_params_"
+_HELPER = "_irop_dataclass_helper_"
 _POST_INIT_NAME = "_custom_postinit_"
 
 # pylint: disable=invalid-name,too-few-public-methods
@@ -82,111 +84,128 @@ def IROperationDataclass(cls : type[_OperationVT]) -> type[_OperationVT]:
 # implementation details below
 # ==========================================================
 
-# pylint: disable=protected-access,too-many-branches
-def _construct_init(inst : irbase.Operation, **kwargs):
-  assert isinstance(inst, irbase.Operation)
-  if isinstance(inst, irbase.Value):
-    vty = getattr(type(inst), _PARAMS)["vty"]
-    assert issubclass(vty, irbase.StatelessType)
-    super(type(inst), inst).construct_init(value_type=vty.get(kwargs['context']), **kwargs)
-  else:
-    super(type(inst), inst).construct_init(**kwargs)
-  cls_fields : typing.OrderedDict[str, OpField] = getattr(inst, _FIELDS)
-  for name, f in cls_fields.items():
-    assert f.name == name
-    if not f.stored:
-      if f.default is MISSING and f.default_factory is MISSING:
-        value = kwargs[f.name]
-      else:
-        value = f.default if f.default is not MISSING else f.default_factory()
-      object.__setattr__(inst, name, value)
-      continue
-    match f.base_type:
-      case irbase.OpOperand:
-        if f.name in kwargs:
+class _DataOpHelper:
+  instcls : type
+  def __init__(self, instcls : type) -> None:
+    self.instcls = instcls
+
+  # pylint: disable=protected-access,too-many-branches
+  def help_construct_init(self, inst : irbase.Operation, **kwargs):
+    assert isinstance(inst, irbase.Operation)
+    if isinstance(inst, irbase.Value):
+      if 'ty' not in kwargs:
+        vty = getattr(type(inst), _PARAMS)["vty"]
+        assert issubclass(vty, irbase.StatelessType)
+        kwargs['ty'] = vty.get(kwargs['context'])
+    super(self.instcls, inst).construct_init(**kwargs)
+    cls_fields : typing.OrderedDict[str, OpField] = getattr(self.instcls, _FIELDS)
+    for name, f in cls_fields.items():
+      assert f.name == name
+      if not f.stored:
+        if f.default is MISSING and f.default_factory is MISSING:
           value = kwargs[f.name]
         else:
-          assert f.default_factory is MISSING
-          value = f.default if f.default is not MISSING else None
-        # replace the value by the literal type
-        if value is not None and not isinstance(value, irbase.Value):
-          if converted := irbase.convert_literal(value, inst.context, f.value_annotation):
-            value = converted
-          else:
-            raise RuntimeError("Unexpected initializer value type")
-        if value is not None:
-          assert isinstance(value, irbase.Value)
-        value = inst._add_operand_with_value(f.lookup_name, value)
-      case irbase.OpResult:
-        if f.name in kwargs:
-          vty = kwargs[f.name]
-          assert isinstance(vty, irbase.ValueType)
-        else:
-          if f.res_valuetype is None:
-            raise RuntimeError("Missing value type for " + f.name + " (either specify in construction or in field declaration)")
-          assert issubclass(f.res_valuetype, irbase.StatelessType)
-          vty = f.res_valuetype.get(ctx=inst.context)
-        value = inst._add_result(f.lookup_name, vty)
-      case irbase.SymbolTableRegion:
-        value = inst._add_symbol_table(f.lookup_name)
-      case irbase.Region:
-        value = inst._add_region(f.lookup_name)
-        if f.r_create_entry_block:
-          value.create_block()
-      case irbase.Block:
-        if f.b_parent is None:
-          value = inst._add_region(f.lookup_name).create_block()
-        else:
-          value = inst.get_or_create_region(f.b_parent).create_block(f.lookup_name)
-      case _:
-        raise RuntimeError("Unexpected member type")
-    object.__setattr__(inst, name, value)
-
-def _post_init(inst : irbase.Operation):
-  super(type(inst), inst).post_init()
-  cls_fields : typing.OrderedDict[str, OpField] = getattr(inst, _FIELDS)
-  for f in cls_fields.values():
-    value = None
-    if f.default is not MISSING:
-      value = f.default
-    elif f.default_factory is not MISSING:
-      value = (f.default_factory)()
-    else:
+          value = f.default if f.default is not MISSING else f.default_factory()
+        object.__setattr__(inst, name, value)
+        continue
       match f.base_type:
-        # we have to use the dot '.' here, otherwise the name (e.g., "OpOperand") will be treated as dest variable
-        # https://stackoverflow.com/questions/71441761/how-to-use-match-case-with-a-class-type
         case irbase.OpOperand:
-          value = inst.get_operand_inst(f.lookup_name)
+          if f.name in kwargs:
+            value = kwargs[f.name]
+          else:
+            assert f.default_factory is MISSING
+            value = f.default if f.default is not MISSING else None
+          # replace the value by the literal type
+          # if the value is an iterable that is not a string, we loop over them and handle each one
+          def convert_value(v) -> irbase.Value | None:
+            if v is not None and not isinstance(v, irbase.Value):
+              if converted := irbase.convert_literal(v, inst.context, f.value_annotation):
+                v = converted
+              else:
+                raise RuntimeError("Unexpected initializer value type")
+            if v is not None:
+              assert isinstance(v, irbase.Value)
+            return v
+          if isinstance(value, collections.abc.Iterable) and not isinstance(value, str):
+            initializer = []
+            for v in value:
+              if v is not None:
+                if converted := convert_value(v):
+                  initializer.append(converted)
+            value = inst._add_operand_with_value_list(f.lookup_name, initializer)
+          else:
+            initializer = convert_value(value)
+            value = inst._add_operand_with_value(f.lookup_name, initializer)
         case irbase.OpResult:
-          value = inst.get_result(f.lookup_name)
-        case irbase.Region:
-          value = inst.get_region(f.lookup_name)
+          if f.name in kwargs:
+            vty = kwargs[f.name]
+            assert isinstance(vty, irbase.ValueType)
+          else:
+            if f.res_valuetype is None:
+              raise RuntimeError("Missing value type for " + f.name + " (either specify in construction or in field declaration)")
+            assert issubclass(f.res_valuetype, irbase.StatelessType)
+            vty = f.res_valuetype.get(ctx=inst.context)
+          value = inst._add_result(f.lookup_name, vty)
         case irbase.SymbolTableRegion:
-          value = inst.get_symbol_table(f.lookup_name)
+          value = inst._add_symbol_table(f.lookup_name)
+        case irbase.Region:
+          value = inst._add_region(f.lookup_name)
+          if f.r_create_entry_block:
+            value.create_block()
         case irbase.Block:
           if f.b_parent is None:
-            value = inst.get_region(f.lookup_name).entry_block
+            value = inst._add_region(f.lookup_name).create_block()
           else:
-            for b in inst.get_region(f.b_parent).blocks:
-              if b.name == f.lookup_name:
-                value = b
-                break
-            if value is None:
-              raise RuntimeError("Cannot find block \"" + f.lookup_name + "\" in region \"" + f.b_parent + '"')
+            value = inst.get_or_create_region(f.b_parent).create_block(f.lookup_name)
         case _:
-          raise RuntimeError("Cannot initialize field")
-    super(type(inst), inst).__setattr__(f.name, value)
-  if hasattr(inst, _POST_INIT_NAME):
-    getattr(inst, _POST_INIT_NAME)()
+          raise RuntimeError("Unexpected member type")
+      object.__setattr__(inst, name, value)
 
-def _setattr(inst : irbase.Operation, name : str, value : typing.Any):
-  # check if any field is being written
-  cls_fields : typing.OrderedDict[str, OpField] = getattr(inst, _FIELDS)
-  if name in cls_fields:
-    f = cls_fields[name]
-    if f.stored:
-      raise AttributeError("Cannot assign to dataop member \"" + name + '"')
-  return super(type(inst), inst).__setattr__(name, value)
+  def help_post_init(self, inst : irbase.Operation):
+    super(self.instcls, inst).post_init()
+    cls_fields : typing.OrderedDict[str, OpField] = getattr(self.instcls, _FIELDS)
+    for f in cls_fields.values():
+      value = None
+      if f.default is not MISSING:
+        value = f.default
+      elif f.default_factory is not MISSING:
+        value = (f.default_factory)()
+      else:
+        match f.base_type:
+          # we have to use the dot '.' here, otherwise the name (e.g., "OpOperand") will be treated as dest variable
+          # https://stackoverflow.com/questions/71441761/how-to-use-match-case-with-a-class-type
+          case irbase.OpOperand:
+            value = inst.get_operand_inst(f.lookup_name)
+          case irbase.OpResult:
+            value = inst.get_result(f.lookup_name)
+          case irbase.Region:
+            value = inst.get_region(f.lookup_name)
+          case irbase.SymbolTableRegion:
+            value = inst.get_symbol_table(f.lookup_name)
+          case irbase.Block:
+            if f.b_parent is None:
+              value = inst.get_region(f.lookup_name).entry_block
+            else:
+              for b in inst.get_region(f.b_parent).blocks:
+                if b.name == f.lookup_name:
+                  value = b
+                  break
+              if value is None:
+                raise RuntimeError("Cannot find block \"" + f.lookup_name + "\" in region \"" + f.b_parent + '"')
+          case _:
+            raise RuntimeError("Cannot initialize field")
+      super(self.instcls, inst).__setattr__(f.name, value)
+    if hasattr(inst, _POST_INIT_NAME):
+      getattr(inst, _POST_INIT_NAME)()
+
+  def help_setattr(self, inst : irbase.Operation, name : str, value : typing.Any):
+    # check if any field is being written
+    cls_fields : typing.OrderedDict[str, OpField] = getattr(self.instcls, _FIELDS)
+    if name in cls_fields:
+      f = cls_fields[name]
+      if f.stored:
+        raise AttributeError("Cannot assign to dataop member \"" + name + '"')
+    return super(self.instcls, inst).__setattr__(name, value)
 
 def _get_fixed_value_type(cls):
   return getattr(cls, _PARAMS)["vty"]
@@ -199,7 +218,8 @@ def _process_class(cls : type[_OperationVT], vty : type | None) -> type[_Operati
   assert issubclass(cls, irbase.Operation)
 
   if vty is not None:
-    assert issubclass(cls, irbase.Value)
+    if not issubclass(cls, irbase.Value):
+      raise RuntimeError('class ' + cls.__name__ + " annotated with @IROperationDataclassWithValue must inherit from Value")
     if not issubclass(vty, irbase.StatelessType):
       raise RuntimeError("Only stateless type can be used for op value (value type passed in: " + vty.__name__ + '"')
     setattr(cls, 'get_fixed_value_type', classmethod(_get_fixed_value_type))
@@ -211,10 +231,12 @@ def _process_class(cls : type[_OperationVT], vty : type | None) -> type[_Operati
     if special_methods in cls.__dict__:
       raise RuntimeError(cls.__name__ + " should not provide custom " + special_methods + "()")
 
+  helper = _DataOpHelper(cls)
   setattr(cls, _PARAMS, {"vty": vty})
-  setattr(cls, 'construct_init', _construct_init)
-  setattr(cls, 'post_init', _post_init)
-  setattr(cls, '__setattr__', _setattr)
+  setattr(cls, _HELPER, helper)
+  setattr(cls, 'construct_init',  lambda inst, __DATAOP_HELPER__=helper, **kwargs     : __DATAOP_HELPER__.help_construct_init(inst, **kwargs))
+  setattr(cls, 'post_init',       lambda inst, __DATAOP_HELPER__=helper               : __DATAOP_HELPER__.help_post_init(inst))
+  setattr(cls, '__setattr__',     lambda inst, name, value, __DATAOP_HELPER__=helper  : __DATAOP_HELPER__.help_setattr(inst, name, value))
 
   if cls.__module__ in sys.modules:
     globals = sys.modules[cls.__module__].__dict__
@@ -233,6 +255,9 @@ def _process_class(cls : type[_OperationVT], vty : type | None) -> type[_Operati
   region_dict : dict[str, str] = {}
 
   for name, annotation in cls_annotations.items():
+    # make sure there is no name conflict
+    if hasattr(irbase.Operation, name):
+      raise RuntimeError("cannot override Operation's existing attribute \"" + name + '"')
     default = getattr(cls, name, MISSING)
     if isinstance(default, types.MemberDescriptorType):
       # This is a field in __slots__, so it has no default value.
