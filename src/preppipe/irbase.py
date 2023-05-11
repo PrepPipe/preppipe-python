@@ -610,7 +610,7 @@ class IRJsonExporter:
     return index
 
   def emit_color(self, c : Color) -> str:
-    return c.getString()
+    return c.get_string()
 
   def get_value_repr(self, value : Value) -> dict | str | int | bool:
     # 该函数是在导出对值的引用（不是定义）时调用的
@@ -1365,6 +1365,14 @@ class User(typing.Generic[_ValueTypeVar]):
 
   def get_num_operands(self) -> int:
     return len(self._operandlist)
+
+  def has_value(self) -> bool:
+    return len(self._operandlist) > 0
+
+  def try_get_value(self) -> _ValueTypeVar | None:
+    if len(self._operandlist) > 0:
+      return self._operandlist[0].value
+    return None
 
   def operanduses(self) -> typing.Iterable[Use[_ValueTypeVar]]:
     return self._operandlist
@@ -3072,10 +3080,10 @@ def convert_literal(value, ctx : Context | None, type_hint : type | None = None)
     else:
       return None if ctx is not None else False
   elif isinstance(value, str):
-    if type_hint is StringLiteral or type_hint is None:
-      value = StringLiteral.get(value, ctx) if ctx is not None else True
+    if type_hint in (StringLiteral, Value) or type_hint is None:
+      return StringLiteral.get(value, ctx) if ctx is not None else True
     elif type_hint is TextFragmentLiteral:
-      value = TextFragmentLiteral.get(ctx, StringLiteral.get(value, ctx), TextStyleLiteral.get({}, ctx)) if ctx is not None else True
+      return TextFragmentLiteral.get(ctx, StringLiteral.get(value, ctx), TextStyleLiteral.get({}, ctx)) if ctx is not None else True
     else:
       return None if ctx is not None else False
   elif isinstance(value, bool):
