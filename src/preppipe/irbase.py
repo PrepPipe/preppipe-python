@@ -3007,6 +3007,7 @@ class TextLiteral(LiteralExpr):
 class StringListLiteral(LiteralExpr):
   # 字符串列表字面值由零到N个字符串字面值组成
   # 一般用于像属性列表（每个属性一个字符串）或是内嵌汇编（每行一个字符串）等需要多个字符串的场景
+  # 如果用在 OpOperand 上且字符串会经常变动，则应使用 OpOperand[StringLiteral] 而不是 OpOperand[StringListLiteral]
   def construct_init(self, *, context : Context, value_tuple: tuple[StringLiteral, ...], **kwargs) -> None:
     ty = StringType.get(context)
     return super().construct_init(ty=ty, value_tuple=value_tuple, **kwargs)
@@ -3024,6 +3025,8 @@ class StringListLiteral(LiteralExpr):
     value_tuple = tuple(value)
     return StringListLiteral._get_literalexpr_impl(value_tuple, context)
 
+  def has_single_value(self) -> bool:
+    return len(self.value) == 1
 
 @IRObjectJsonTypeName('enum_l')
 class EnumLiteral(typing.Generic[T], Literal):

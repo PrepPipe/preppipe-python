@@ -47,8 +47,10 @@ class RenPyExportVisitor(RenPyASTVisitor):
       return None
     if isinstance(value, StringLiteral):
       return '"' + value.get_string() + '"'
+    if isinstance(value, RenPyASMExpr):
+      return 'r"""' + value.get_string() + '"""'
     if isinstance(value, RenPyASMNode):
-      return 'r"""' + self.stringtize_asm(value.asm.get(), False) + '"""'
+      return 'r"""' + self.stringtize_multiline_asm(value.asm.get(), False) + '"""'
     if isinstance(value, BoolLiteral):
       if value.value:
         return "True"
@@ -60,7 +62,7 @@ class RenPyExportVisitor(RenPyASTVisitor):
       if s := self.stringtize_value_if_nondefault(value, default):
         pieces.append(", " + name + '=' + s)
 
-  def stringtize_asm(self, sl : StringListLiteral, is_python : bool = False) -> str:
+  def stringtize_multiline_asm(self, sl : StringListLiteral, is_require_python_escape : bool = False) -> str:
     # is_python: 如果是纯 Python 代码的话，我们需要在缩进之后再添加 "$ "
     assert isinstance(sl, StringListLiteral)
     pieces = []
@@ -91,7 +93,7 @@ class RenPyExportVisitor(RenPyASTVisitor):
                 linetext = RenPyExportVisitor.drop_leading_ws(linetext, leadingws)
       if num_lines > 0:
         pieces.append(self.get_eol_with_ws(num_indent_level))
-      if is_python:
+      if is_require_python_escape:
         pieces.append("$ ")
       num_lines += 1
       pieces.append(linetext)
@@ -197,7 +199,11 @@ class RenPyExportVisitor(RenPyASTVisitor):
   def walk_body_with_incr_level(self, b : Block):
     cur_level = self.indent_level
     self.indent_level += 1
-    self.walk_body(b)
+    if len(b.body) > 0:
+      self.walk_body(b)
+    else:
+      self.dest.write(self.get_eol_with_ws())
+      self.dest.write("pass")
     self.indent_level = cur_level
 
   def collect_strings(self, o : OpOperand[StringLiteral]) -> list[str]:
@@ -206,7 +212,10 @@ class RenPyExportVisitor(RenPyASTVisitor):
   def visitRenPyASMNode(self, v: RenPyASMNode):
     # 以这种方式碰到的 ASM 都视为 RenPy 脚本
     # 需要 Python 内容的地方都会由父节点直接处理
-    self.dest.write(self.stringtize_asm(v.asm.get(), False))
+    self.dest.write(self.stringtize_multiline_asm(v.asm.get(), False))
+
+  def visitRenPyASMExpr(self, v : RenPyASMExpr):
+    self.dest.write(v.get_string())
 
   def visitRenPyCharacterExpr(self, v : RenPyCharacterExpr):
     pieces = ["Character(" + '"' + self.stringmarshal(v.displayname) + '"']
@@ -229,10 +238,10 @@ class RenPyExportVisitor(RenPyASTVisitor):
     self.populate_operand(pieces, "ctc_timedpause", v.ctc_timedpause)
     self.populate_operand(pieces, "ctc_position", v.ctc_position)
     self.populate_operand(pieces, "screen", v.screen)
-    if show_params := v.show_params.try_get_value():
+    if v.show_params.has_value():
       params = []
-      for i in range(0, show_params.get_num_operands()):
-        p = show_params.get_operand(i)
+      for i in range(0, v.show_params.get_num_operands()):
+        p = v.show_params.get_operand(i)
         params.append(p.get_string())
       pieces.append(', ' + ', '.join(params))
     self.dest.write(''.join(pieces))
@@ -240,7 +249,7 @@ class RenPyExportVisitor(RenPyASTVisitor):
 
   def visitRenPyImageNode(self, v : RenPyImageNode):
     self.dest.write('image ' + ' '.join(self.collect_strings(v.codename)) + ' = ')
-    self.visitRenPyASMNode(v.displayable.get())
+    self.visitRenPyASMExpr(v.displayable.get())
 
   def visitRenPySayNode(self, v : RenPySayNode):
     pieces = []
@@ -273,6 +282,7 @@ class RenPyExportVisitor(RenPyASTVisitor):
     return None
 
   def visitRenPyLabelNode(self, v : RenPyLabelNode):
+    self.dest.write(self.get_eol_with_ws())
     self.dest.write('label ' + v.codename.get().get_string())
     if v.parameters.has_value():
       self.dest.write('(')
@@ -294,48 +304,177 @@ class RenPyExportVisitor(RenPyASTVisitor):
     # done
     return None
 
+  def visitRenPyDefaultNode(self, v : RenPyDefaultNode):
+    self.dest.write('default ' + v.get_varname_str() + ' = ' + v.expr.get().get_string())
+
   def visitRenPyShowNode(self, v : RenPyShowNode):
-    raise NotImplementedError()
-
-  def visitRenPyInitNode(self, v : RenPyInitNode):
-    raise NotImplementedError()
-    return self.visitChildren(v)
-
-
-  def visitRenPyTransformNode(self, v : RenPyTransformNode):
-    return self.visitChildren(v)
+    pieces = ["show"]
+    pieces.extend(self.collect_strings(v.imspec))
+    if showas := v.showas.try_get_value():
+      pieces.append('as')
+      pieces.append(showas.get_string())
+    if atl := v.atl.try_get_value():
+      pieces.append('at')
+      pieces.append(atl.get_string())
+    if v.behind.has_value():
+      pieces.append('behind')
+      pieces.append(','.join(self.collect_strings(v.behind)))
+    if zorder := v.zorder.try_get_value():
+      pieces.append('zorder')
+      pieces.append(str(zorder.value))
+    if onlayer := v.onlayer.try_get_value():
+      pieces.append('onlayer')
+      pieces.append(onlayer.get_string())
+    self.dest.write(' '.join(pieces))
+    if with_ := v.with_.try_get_value():
+      self.dest.write(' ')
+      self.visitRenPyWithNode(with_)
 
   def visitRenPySceneNode(self, v : RenPySceneNode):
-    raise NotImplementedError()
-  def visitRenPyWithNode(self, v : RenPyWithNode):
-    raise NotImplementedError()
+    self.dest.write('scene ' + ' '.join(self.collect_strings(v.imspec)))
+    if with_ := v.with_.try_get_value():
+      self.dest.write(' ')
+      self.visitRenPyWithNode(with_)
+
   def visitRenPyHideNode(self, v : RenPyHideNode):
-    raise NotImplementedError()
+    self.dest.write('hide ' + ' '.join(self.collect_strings(v.imspec)))
+    if onlayer := v.onlayer.try_get_value():
+      self.dest.write('onlayer ' + onlayer.get_string())
+    if with_ := v.with_.try_get_value():
+      self.dest.write(' ')
+      self.visitRenPyWithNode(with_)
+
+  def visitRenPyWithNode(self, v : RenPyWithNode):
+    self.dest.write('with ' + ' '.join(self.collect_strings(v.expr)))
+
   def visitRenPyCallNode(self, v : RenPyCallNode):
-    raise NotImplementedError()
+    self.dest.write('call ')
+    if is_expr_l := v.is_expr.try_get_value():
+      if is_expr_l.value:
+        self.dest.write("expression ")
+    self.dest.write(v.label.get().get_string())
+
   def visitRenPyReturnNode(self, v : RenPyReturnNode):
-    raise NotImplementedError()
-  def visitRenPyMenuItemNode(self, v : RenPyMenuItemNode):
-    raise NotImplementedError()
-  def visitRenPyMenuNode(self, v : RenPyMenuNode):
-    raise NotImplementedError()
+    self.dest.write("return")
+    if retval := v.expr.try_get_value():
+      self.dest.write(' ' + retval.get_string())
+
   def visitRenPyJumpNode(self, v : RenPyJumpNode):
-    raise NotImplementedError()
+    self.dest.write("jump ")
+    if is_expr_l := v.is_expr.try_get_value():
+      if is_expr_l.value:
+        self.dest.write("expression ")
+    self.dest.write(v.target.get().get_string())
+
   def visitRenPyPassNode(self, v : RenPyPassNode):
-    raise NotImplementedError()
+    self.dest.write("pass")
+
+  def visitRenPyMenuItemNode(self, v : RenPyMenuItemNode):
+    self.dest.write('"' + self.stringmarshal(v.label) + '"')
+    if arguments := v.arguments.try_get_value():
+      self.dest.write('(' + arguments.get_string() + ')')
+    if condition := v.condition.try_get_value():
+      self.dest.write(" if ")
+      self.dest.write(condition.get_string())
+    self.dest.write(':')
+    self.walk_body_with_incr_level(v.body)
+
+  def visitRenPyMenuNode(self, v : RenPyMenuNode):
+    self.dest.write("menu")
+    if varname := v.varname.try_get_value():
+      if len(varname.get_string()) > 0:
+        self.dest.write(' ' + varname.get_string())
+    if arguments := v.arguments.try_get_value():
+      self.dest.write('(' + arguments.get_string() + ')')
+    self.dest.write(':')
+    if menuset := v.menuset.try_get_value():
+      self.dest.write(self.get_eol_with_ws(1) + 'set ' + menuset.get_string())
+    self.walk_body_with_incr_level(v.items)
+
   def visitRenPyCondBodyPair(self, v : RenPyCondBodyPair):
-    raise NotImplementedError()
+    raise RuntimeError("Should not be visited")
+
   def visitRenPyWhileNode(self, v : RenPyWhileNode):
-    raise NotImplementedError()
+    self.dest.write('while ' + v.condition.get().get_string() + ':')
+    self.walk_body_with_incr_level(v.body)
+
   def visitRenPyIfNode(self, v : RenPyIfNode):
-    raise NotImplementedError()
-  def visitRenPyDefaultNode(self, v : RenPyDefaultNode):
-    raise NotImplementedError()
+    is_first_branch = True
+    for branch in v.entries.body:
+      assert isinstance(branch, RenPyCondBodyPair)
+      if condition := branch.condition.try_get_value():
+        if is_first_branch:
+          self.dest.write('if ')
+          is_first_branch = False
+        else:
+          self.dest.write(self.get_eol_with_ws())
+          self.dest.write('elif ')
+        self.dest.write(condition.get_string() + ':')
+      else:
+        if is_first_branch:
+          raise RuntimeError("if statement without condition")
+        self.dest.write(self.get_eol_with_ws())
+        self.dest.write('else:')
+      self.walk_body_with_incr_level(branch.body)
+
+  def visitRenPyInitNode(self, v : RenPyInitNode):
+    self.dest.write('init')
+    if priority := v.priority.try_get_value():
+      self.dest.write(' ' + str(priority.value))
+    if code := v.pythoncode.try_get_value():
+      # init python
+      self.dest.write(' python:')
+      curlevel = self.indent_level
+      self.indent_level += 1
+      asmstr = self.stringtize_multiline_asm(code.asm.get(), False)
+      if len(asmstr) == 0:
+        asmstr = "pass"
+      self.dest.write(self.get_eol_with_ws())
+      self.dest.write(asmstr)
+      self.indent_level = curlevel
+    else:
+      # init
+      self.dest.write(':')
+      self.walk_body_with_incr_level(v.body)
+
+#  def visitRenPyTransformNode(self, v : RenPyTransformNode):
+#    raise NotImplementedError()
 
   def visitRenPyPythonNode(self, v : RenPyPythonNode):
-    raise NotImplementedError()
+    # 如果没有 store/hide 且只有一行，我们使用内联的形式
+    # 否则使用 python 块
+    asm = v.code.get().asm.get()
+    if len(asm.value) == 0:
+      self.dest.write('$ # No code')
+      return
+    if asm.has_single_value():
+      if not v.store.has_value() and not v.hide.has_value():
+        self.dest.write(self.stringtize_multiline_asm(asm, True))
+        return
+    self.dest.write("python")
+    if hide := v.hide.try_get_value():
+      if hide.value:
+        self.dest.write(" hide")
+    if store := v.store.try_get_value():
+      self.dest.write(" in " + store.get_string())
+    self.dest.write(':')
+    curlevel = self.indent_level
+    self.indent_level += 1
+    self.dest.write(self.get_eol_with_ws())
+    self.dest.write(self.stringtize_multiline_asm(asm, False))
+    self.indent_level = curlevel
+
   def visitRenPyEarlyPythonNode(self, v : RenPyEarlyPythonNode):
-    raise NotImplementedError()
+    assert not v.store.has_value() and not v.hide.has_value()
+    asm = v.code.get().asm.get()
+    if len(asm.value) == 0:
+      return
+    self.dest.write('python early:')
+    curlevel = self.indent_level
+    self.indent_level += 1
+    self.dest.write(self.get_eol_with_ws())
+    self.dest.write(self.stringtize_multiline_asm(asm, False))
+    self.indent_level = curlevel
 
 def export_renpy(m : RenPyModel, out_path : str, template_dir : str = '') -> None:
   assert isinstance(m, RenPyModel)
