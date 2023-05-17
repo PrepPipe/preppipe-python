@@ -5,15 +5,36 @@ import os
 import io
 import pathlib
 import typing
-import PIL.Image
 import pydub
 import pathlib
 import enum
 from enum import Enum
 
+import PIL.Image
+
+from preppipe.irbase import Value
+
 from .commontypes import *
 from .irbase import *
+from .irdataop import *
 from .nameresolution import NamespaceNodeInterface, NameResolver
+
+# VNModel 只保留核心的、基于文本的IR信息，其他内容（如图片显示位置等）大部分都会放在抽象接口后
+# 像图片位置（2D屏幕坐标）、设备外观（对话框贴图）等信息，在后端生成时会用到，所以需要在IR中记录
+# 但是他们的具体内容、格式等可能每个引擎都不一样，强求统一的话一定会影响可拓展性
+# 所以我们使用如下策略：
+# 1. 当部分内容有比较统一的格式，后端可以只通过继承现有类而不改变现有类时（比如转场效果，都是实现+参数），我们把基类包含在此
+# 2. 当内容没有比较统一的格式，后端可以支持的内容有较大差异时（比如屏幕坐标，可以基于"mid","left"这样的词或者是具体的2D屏幕坐标），
+#    我们在需要此信息的操作项（Operation）中放一个 SymbolTable ，然后各种不同的格式以 Symbol 的形式接在该表中
+# 最主要的分析主要基于控制流（哪些会被执行）和数据流（需要哪些素材），不需要有关具体的表现形式的信息，
+
+# 对于操作项的名字：
+# 1. 对于函数、基本块、场景、角色：
+#     操作项的 name 是用户可读的名称（如“第一章”，“选项前”，“教室”，“苏语涵”）
+#         （这样按名搜索更符合用户预期）
+#     操作项带个 codename 参数，表示后端可用的名称（如"ch01", "ch01.beforechoice", "classroom", "yuhan"）
+#         （codename 可以包含也可以不包含，在后端生成时再生成）
+# 2. 对于指令：name 无意义，可以随意选择；一般用于调试信息（比如标记指令是由什么输入、什么转换生成的）
 
 # ------------------------------------------------------------------------------
 # 类型特质 (type traits)
@@ -45,13 +66,19 @@ class VNTimeOrderType(StatelessType):
 
 @IRObjectJsonTypeName("vn_devref_t")
 @dataclasses.dataclass(init=False, slots=True, frozen=True)
-class VNDeviceReferenceType(SingleElementParameterizedType):
-  def __str__(self) -> str:
-    return "设备<" + str(self.element_type) + ">"
+class VNDeviceReferenceType(ParameterizedType):
+  #def __str__(self) -> str:
+  #  return "设备<" + str(self.element_type) + ">"
 
-  @classmethod
-  def _get_typecheck(cls, element_type : ValueType) -> None:
-    assert not isinstance(element_type, VNDeviceReferenceType)
+  @staticmethod
+  def get(element_types : typing.Iterable[ValueType], context : Context) -> VNDeviceReferenceType:
+    return context.get_or_create_parameterized_type(
+      VNDeviceReferenceType,
+      list(element_types),
+      lambda : VNDeviceReferenceType(init_mode = IRObjectInitMode.CONSTRUCT,
+                   context = context,
+                   parameters=tuple(element_types))
+    )
 
 @IRObjectJsonTypeName("vn_handle_t")
 @dataclasses.dataclass(init=False, slots=True, frozen=True)
@@ -150,7 +177,7 @@ class VNDataFunctionType(ParameterizedType):
 
 @IRObjectJsonTypeName("vn_varref_t")
 @dataclasses.dataclass(init=False, slots=True, frozen=True)
-class VNVariableReferenceType(ParameterizedType):
+class VNVariableReferenceType(SingleElementParameterizedType):
   def __str__(self) -> str:
     return "变量引用<" + str(self.element_type) + ">"
 
@@ -158,9 +185,9 @@ class VNVariableReferenceType(ParameterizedType):
   def _get_typecheck(cls, element_type : ValueType) -> None:
     assert not isinstance(element_type, VNVariableReferenceType)
 
-@IRObjectJsonTypeName("vn_coord_t")
+@IRObjectJsonTypeName("vn_coord2d_t")
 @dataclasses.dataclass(init=False, slots=True, frozen=True)
-class VNScreenCoordinateType(StatelessType):
+class VNScreenCoordinate2DType(StatelessType):
   # 屏幕坐标类型，一对整数型值<x,y>，坐标原点是屏幕左上角，x沿右边增加，y向下方增加，单位都是像素值
   # 根据使用场景，坐标有可能被当做大小、偏移量，或是其他值来使用
   def __str__(self) -> str:
@@ -179,17 +206,16 @@ class VNEffectFunctionType(StatelessType):
 # 记录
 # ------------------------------------------------------------------------------
 
+@IROperationDataclassWithValue(VoidType)
 @IRObjectJsonTypeName("vn_record_op")
-class VNRecord(Symbol, Value):
-  # 记录是在输出脚本中 ODR 定义的、没有控制流的、可以赋予名称的、以自身所承载信息为主的实体
-  # （输入输出）设备，变量，资源（图片、声音等），都算记录
-  # 有些内容（比如缩放后的图片，纯色图片等）既可以作为常量表达式也可以作为记录，但是只要需要赋予名称，他们一定需要绑为记录(可用 VNConstExprAsRecord 解决)
+class VNSymbol(Symbol, Value):
+  # 所有能够按名查找的（全局、顶层）内容的基类
+  # 有些内容（比如缩放后的图片，纯色图片等）既可以作为常量表达式也可以作为符号，但是只要需要赋予名称，他们一定需要绑为符号(可用 VNConstExprAsSymbol 解决)
   # 有些内容（比如预设的转场效果等）主要是代码，参数部分很少，我们可以为它们新定义字面值(Literal)，然后用常量表达式来表示对它们的引用
-  def construct_init(self, *, ty : ValueType, name: str = '', loc: Location | None = None, **kwargs) -> None:
-    return super().construct_init(name=name, loc=loc, ty=ty, **kwargs)
+  codename : OpOperand[StringLiteral]
 
 @IRObjectJsonTypeName("vn_cexpr_record_op")
-class VNConstExprAsRecord(VNRecord):
+class VNConstExprAsSymbol(VNSymbol):
   def construct_init(self, *, name: str, loc: Location, cexpr : ConstExpr, **kwargs) -> None:
     super().construct_init(name=name, loc=loc, ty=cexpr.valuetype, **kwargs)
     self._add_operand_with_value('value', cexpr)
@@ -273,60 +299,48 @@ class VNStandardDeviceKind(enum.Enum):
   def get_standard_device_name(kind: VNStandardDeviceKind) -> str:
     return getattr(VNStandardDeviceKind, kind.name + '_DNAME').value
 
-
+@IROperationDataclass
 @IRObjectJsonTypeName("vn_device_record_op")
-class VNDeviceRecord(VNRecord):
+class VNDeviceSymbol(VNSymbol):
   # 所有输入输出设备记录的基类
   # 实例一般记录运行时的外观等设置，比如对话框背景图片和对话框位置
   # 现在还没开始做外观所以留白
   # 对于显示设备来说，所有的坐标都是相对于父设备的
   # 所有的显示设备都构成一棵树，最顶层是屏幕，屏幕包含一系列子设备（背景、前景、发言、遮罩）
   # 为了便于在命名空间层级查找设备名称，我们使用 def-use chain 来记录子设备，所有的设备记录实例都在同一个（命名空间的）表内
-  _std_device_kind_op : OpOperand # 如果设备是某个标准设备的话，这是标准设备的类型
-  _parent_operand : OpOperand # 如果该设备是含在另一个设备中的子设备，这里记录父设备的 _devnode_ref
-  _devnode_ref : OpResult # 如果该设备包含子设备（比如发言，除了内容之外还要有说话者和侧边头像），则子设备的所有 _parent_operand 将引用该值
+  std_device_kind : OpOperand[EnumLiteral[VNStandardDeviceKind]] # 如果设备是某个标准设备的话，这是标准设备的类型
+  parent_device : OpOperand # OpOperand[VNDeviceSymbol] # 如果该设备是含在另一个设备中的子设备，这里保留对父设备的引用
 
-  def construct_init(self, name: str, loc: Location, content_type: ValueType, std_device_kind : VNStandardDeviceKind | None = None, **kwargs) -> None:
-    ty = VNDeviceReferenceType.get(content_type)
-    super().construct_init(name=name, loc=loc, ty=ty, **kwargs)
-    std_device_kind_value = None
-    if std_device_kind is not None and isinstance(std_device_kind, VNStandardDeviceKind):
-      std_device_kind_value = EnumLiteral.get(ty.context, std_device_kind)
-    self._std_device_kind_op = self._add_operand_with_value('std_device', std_device_kind_value)
-    self._parent_operand = self._add_operand('parent')
-    self._devnode_ref = self._add_result('devnode_ref', ty)
+  def get_parent_device(self) -> VNDeviceSymbol | None:
+    return self.parent_device.try_get_value()
 
-  def post_init(self) -> None:
-    super().post_init()
-    self._std_device_kind_op = self.get_operand_inst('std_device')
-    self._parent_operand = self.get_operand_inst('parent')
-    self._devnode_ref = self.get_result('devnode_ref')
-
-  def get_parent_device(self) -> VNDeviceRecord | None:
-    return self._parent_operand.get()
-
-  def set_parent_device(self, parent : VNDeviceRecord):
-    self._parent_operand.set_operand(0, parent.get_devnode_reference())
-
-  def get_devnode_reference(self) -> OpResult:
-    return self._devnode_ref
+  def set_parent_device(self, parent : VNDeviceSymbol):
+    self.parent_device.set_operand(0, parent)
 
   def get_std_device_kind(self) -> VNStandardDeviceKind | None:
-    kind_value = self._std_device_kind_op.get()
-    if isinstance(kind_value, EnumLiteral):
+    if kind_value := self.std_device_kind.try_get_value():
       return kind_value.value
     return None
 
   @staticmethod
-  def create_standard_device(context : Context, std_device_kind : VNStandardDeviceKind, name : str | None = None) -> VNDeviceRecord:
+  def create_standard_device(context : Context, std_device_kind : VNStandardDeviceKind, name : str | None = None, parent_device : VNDeviceSymbol | None = None) -> VNDeviceSymbol:
+    # 目前定义的标准设备都只有一种内容类型，所以下面这里只用单个 content_ty
     content_ty = VNStandardDeviceKind.get_device_content_type(std_device_kind, context)
+    ty = VNDeviceReferenceType.get((content_ty,), context)
     if name is None:
       name = VNStandardDeviceKind.get_standard_device_name(std_device_kind)
-    return VNDeviceRecord(init_mode=IRObjectInitMode.CONSTRUCT, context=context, name=name, loc=context.null_location, content_type=content_ty, std_device_kind=std_device_kind)
+    std_device_kind_value = EnumLiteral.get(context, std_device_kind)
+    return VNDeviceSymbol(init_mode=IRObjectInitMode.CONSTRUCT, context=context, name=name, loc=context.null_location, ty=ty, std_device_kind=std_device_kind_value, parent_device=parent_device)
 
   @staticmethod
-  def create(context : Context, name: str, loc: Location, content_type: ValueType, std_device_kind : VNStandardDeviceKind | None = None) -> VNDeviceRecord:
-    return VNDeviceRecord(init_mode=IRObjectInitMode.CONSTRUCT, context=context, name=name, loc=loc, content_type=content_type, std_device_kind = std_device_kind)
+  def create(context : Context, name: str, loc: Location, content_types: typing.Iterable[ValueType] | ValueType, std_device_kind : VNStandardDeviceKind | None = None, parent_device : VNDeviceSymbol | None = None) -> VNDeviceSymbol:
+    if isinstance(content_types, ValueType):
+      ty = VNDeviceReferenceType.get((content_types,), context)
+    else:
+      for t in content_types:
+        assert isinstance(t, ValueType)
+      ty = VNDeviceReferenceType.get(content_types, context)
+    return VNDeviceSymbol(init_mode=IRObjectInitMode.CONSTRUCT, context=context, name=name, loc=loc, ty=ty, std_device_kind = std_device_kind, parent_device=parent_device)
 
   DEFAULT_AUDIO_ROOT_NAME : typing.ClassVar[str] = "dev_audio_root"
   STANDARD_DEVICE_TREE : typing.ClassVar[dict] = {
@@ -356,14 +370,14 @@ class VNDeviceRecord(VNRecord):
 
   @staticmethod
   def create_standard_device_tree(ns : VNNamespace, tree: dict | None = None, loc : Location | None = None) -> None:
-    def handle_entry(parent : VNDeviceRecord | None, name : str, entry : tuple[VNStandardDeviceKind, dict] | VNStandardDeviceKind):
+    def handle_entry(parent : VNDeviceSymbol | None, name : str, entry : tuple[VNStandardDeviceKind, dict] | VNStandardDeviceKind):
       nonlocal ns
       if isinstance(entry, tuple):
         kind, child = entry
       else:
         kind = entry
         child = None
-      cur_entry = VNDeviceRecord.create_standard_device(ns.context, kind, name)
+      cur_entry = VNDeviceSymbol.create_standard_device(ns.context, kind, name)
       ns.add_record(cur_entry)
       if parent is not None:
         cur_entry.set_parent_device(parent)
@@ -371,7 +385,7 @@ class VNDeviceRecord(VNRecord):
         for name, entry in child.items():
           handle_entry(cur_entry, name, entry)
     if tree is None:
-      tree = VNDeviceRecord.STANDARD_DEVICE_TREE
+      tree = VNDeviceSymbol.STANDARD_DEVICE_TREE
     for toplevel_name, toplevel_entry in tree.items():
       handle_entry(None, toplevel_name, toplevel_entry)
 
@@ -396,14 +410,14 @@ class VNDeviceRecord(VNRecord):
 # (有了 ConstExpr 之后，对 VNRecord 的需求就下降了，VNContentRecordBase 什么的就不用再移过来了)
 
 @IRObjectJsonTypeName("vn_value_record_op")
-class VNValueRecord(VNRecord):
+class VNValueSymbol(VNSymbol):
   # 任何类型的编译时未知的量，包括用户定义的变量，设置（游戏名、版本号等），系统参数（引擎名称或版本，是否支持Live2D），有无子命名空间(有无DLC), 等等
   # 部分值只在特定命名空间有效，值的含义（如版本号）可能会由命名空间的不同而改变（比如是主游戏的版本还是DLC的版本，等等）
   pass
 
 
 @IRObjectJsonTypeName("vn_env_value_record_op")
-class VNEnvironmentValueRecord(VNValueRecord):
+class VNEnvironmentValueSymbol(VNValueSymbol):
   # 所有用户无法写入的值，主要是版本号、是否有子命名空间，等等
   pass
 
@@ -417,7 +431,7 @@ class VNVariableStorageModel(enum.Enum):
 
 
 @IRObjectJsonTypeName("vn_var_value_record_op")
-class VNVariableRecord(VNValueRecord):
+class VNVariableRecord(VNValueSymbol):
   # 所有用户可以写入的值，包括用户定义的值和系统设置等引擎定义的值
   _storage_model_operand : OpOperand
   _initializer_operand : OpOperand
@@ -447,43 +461,36 @@ class VNCharacterKind(enum.Enum):
   NARRATOR = enum.auto() # 旁白角色
   SYSTEM = enum.auto() # 用来代表一些游戏系统的消息（错误信息等）
 
+@IROperationDataclassWithValue(VNCharacterDeclType)
 @IRObjectJsonTypeName("vn_char_record_op")
-class VNCharacterRecord(VNRecord):
-  _kind_operand : OpOperand
-
+class VNCharacterSymbol(VNSymbol):
   NARRATOR_DEFAULT_NAME : typing.ClassVar[str] = "narrator"
 
-  def construct_init(self, *, context : Context, kind : VNCharacterKind, name: str, loc: Location | None = None, **kwargs) -> None:
-    ty = VNCharacterDeclType.get(context)
-    super().construct_init(context=context, ty=ty, name=name, loc=loc, **kwargs)
-    kind_value = EnumLiteral.get(context, kind)
-    self._kind_operand = self._add_operand_with_value('kind', kind_value)
-
-  def post_init(self) -> None:
-    super().post_init()
-    self._kind_operand = self.get_operand_inst('kind')
+  kind : OpOperand[EnumLiteral[VNCharacterKind]]
 
   @staticmethod
-  def get_fixed_value_type() -> type:
-    return VNCharacterDeclType
+  def create(context : Context, kind : EnumLiteral[VNCharacterKind] | VNCharacterKind, name : str, codename : StringLiteral | str | None = None, loc : Location | None = None) -> VNCharacterSymbol:
+    if isinstance(kind, VNCharacterKind):
+      kind = EnumLiteral.get(context, kind)
+    assert isinstance(kind, EnumLiteral)
+    return VNCharacterSymbol(init_mode=IRObjectInitMode.CONSTRUCT, context=context, kind = kind, codename=codename, name=name, loc=loc)
 
   @staticmethod
-  def create(context : Context, kind : VNCharacterKind, name : str, loc : Location | None = None) -> VNCharacterRecord:
-    return VNCharacterRecord(init_mode=IRObjectInitMode.CONSTRUCT, context=context, kind = kind, name=name, loc=loc)
+  def create_narrator(context : Context) -> VNCharacterSymbol:
+    return VNCharacterSymbol(init_mode=IRObjectInitMode.CONSTRUCT, context=context, kind = EnumLiteral.get(context,VNCharacterKind.NARRATOR), name=VNCharacterSymbol.NARRATOR_DEFAULT_NAME, loc=context.null_location)
 
   @staticmethod
-  def create_narrator(context : Context) -> VNCharacterRecord:
-    return VNCharacterRecord(init_mode=IRObjectInitMode.CONSTRUCT, context=context, kind = VNCharacterKind.NARRATOR, name=VNCharacterRecord.NARRATOR_DEFAULT_NAME, loc=context.null_location)
+  def create_normal_sayer(context : Context, name : str, codename : StringLiteral | str | None = None, loc : Location | None = None) -> VNCharacterSymbol:
+    return VNCharacterSymbol(init_mode=IRObjectInitMode.CONSTRUCT, context=context, kind=EnumLiteral.get(context,VNCharacterKind.NORMAL), codename=codename, name=name, loc=loc)
 
-@IRObjectJsonTypeName("vn_scene_record_op")
-class VNSceneRecord(VNRecord):
-  def construct_init(self, *, context : Context, name: str = '', loc: Location | None = None, **kwargs) -> None:
-    ty = VNSceneDeclType.get(context)
-    super().construct_init(context=context, ty=ty, name=name, loc=loc, **kwargs)
+
+@IROperationDataclassWithValue(VNSceneDeclType)
+@IRObjectJsonTypeName("vn_scene_symbol_op")
+class VNSceneSymbol(VNSymbol):
 
   @staticmethod
-  def get_fixed_value_type() -> type:
-    return VNSceneDeclType
+  def create(context : Context, name : str, codename : StringLiteral | str | None = None, loc : Location | None = None):
+    return VNSceneSymbol(init_mode=IRObjectInitMode.CONSTRUCT, context=context, codename=codename, name=name, loc=loc)
 
 # ------------------------------------------------------------------------------
 # (对于显示内容、非音频的)转场效果
@@ -493,7 +500,7 @@ class VNSceneRecord(VNRecord):
 # 在这里我们定义一些(1)能满足自动演出需要的，(2)比较常见、足以在大多数作品中表述所有用到的转场效果的
 # 我们对所有的转场效果(不管是这里定义的还是后端或者用户定义的)都有如下要求：
 # 1.  对转场效果的含义和参数有明确的定义；后端可以定义在语义上有些许不同的同一转场效果
-# 2.  所有定义在此的(通用)转场效果必须在所有后端都有实现
+# 2.  所有定义在此的(通用)转场效果必须在所有后端都有实现(可以转化为其他效果)
 # 3.  所有其他来源定义的转场效果必须指定如何使用通用转场效果来替换该效果
 #     (定义中也可以指定在某个后端如何进行特化的实现)
 # 由于转场效果的生成比较复杂，每种独特的转场效果都由两部分实现:
@@ -573,43 +580,48 @@ class VNTransitionEffectConstExpr(ConstExpr):
 # 函数、指令等
 # ------------------------------------------------------------------------------
 
+@IROperationDataclassWithValue(VNFunctionReferenceType)
 @IRObjectJsonTypeName("vn_function_op")
-class VNFunction(Symbol, Value):
+class VNFunction(VNSymbol):
   # 为了保证用户能够理解“为什么有一部分内容没有在函数中出现”，
   # 我们需要保留没有被转为有效输出的内容
   # 现在他们都被放在 lost 区中，都以 MetadataOp 的形式保存
-  _lost : Region # 编译中碰到的不属于任何其他函数或命令的内容
-  _body: Region # 内容主体
+  # 如果一个函数的函数体(body)是空的，那么这是一个函数声明，否则这是一个定义
 
-  def construct_init(self, *, context : Context, name: str = '', loc: Location | None = None, **kwargs) -> None:
-    ty = VNFunctionReferenceType.get(context)
-    super().construct_init(context=context, ty=ty, name=name, loc=loc, **kwargs)
-    self._body = self._add_region('body')
-    self._lost = self._add_region('lost')
+  # 函数属性标记
+  ATTR_ENTRYPOINT : typing.ClassVar[str] = "EntryPoint" # 表示该函数应当作为引擎的某个入口。带一个字符串参数，表示是什么入口。
+  ATTRVAL_ENTRYPOINT_MAIN : typing.ClassVar[str] = "main"
 
-  def post_init(self) -> None:
-    super().post_init()
-    self._body = self.get_region('body')
-    self._lost = self.get_region('lost')
+  lost : Region # 编译中碰到的不属于任何其他函数或命令的内容
+  body: Region # 内容主体
 
   def set_lost_block_prebody(self, block : Block):
-    assert self._lost.blocks.empty
+    assert self.lost.blocks.empty
     block.name = 'prebody'
-    self._lost.blocks.push_back(block)
+    self.lost.blocks.push_back(block)
 
   def set_lost_block_postbody(self, block : Block):
     assert self._lost.blocks.size < 2
     block.name = 'postbody'
-    self._lost.blocks.push_back(block)
+    self.lost.blocks.push_back(block)
 
   def create_block(self, name : str) -> Block:
-    b = self._body.create_block(name)
+    b = self.body.create_block(name)
     b.add_argument('start', VNTimeOrderType.get(self.context))
     return b
 
-  @property
-  def body(self) -> Region:
-    return self._body
+  def has_body(self) -> bool:
+    return not self.body.blocks.empty
+
+  def get_entry_point(self) -> str | None:
+    return self.get_attr(VNFunction.ATTR_ENTRYPOINT)
+
+  def set_as_entry_point(self, entryname : str | None = None):
+    if entryname is None:
+      self.remove_attr(VNFunction.ATTR_ENTRYPOINT)
+    else:
+      assert isinstance(entryname, str)
+      self.set_attr(VNFunction.ATTR_ENTRYPOINT, entryname)
 
   @staticmethod
   def create(context : Context, name : str, loc : Location | None = None):
@@ -638,61 +650,59 @@ class VNInstruction(Operation):
   def get_finish_time(self) -> OpResult:
     return self._finish_time_result
 
+@IROperationDataclass
 @IRObjectJsonTypeName("vn_instrgroup_op")
 class VNInstructionGroup(VNInstruction):
-  # 指令组都只有一个块，有时间输入、输出，其他则由各指令组子类决定
-  _body : Block
-  _body_start_time_arg : BlockArgument
+  # 指令组都只有一个块，指令组内的指令使用的时间直接取上层的（来自指令组外的）值
+  # 为了方便计算指令组本身所用的时间，我们把：
+  # 1.  指令组内“最先”的指令的时间输入作为指令组的时间输入
+  # 2.  指令组的“时间输出”是个输入参数，引用指令组内的时间输出结果
+  #     如果指令组内的指令输出多个时间，则一般把“最后”的时间输出作为指令组的时间输出结果
+  # 指令组本身的 finish_time 即为 finish_time_operand 的取值
 
-  def construct_init(self, *, context: Context, start_time: typing.Iterable[Value] | Value | None = None, name: str = '', loc: Location | None = None, **kwargs) -> None:
-    super().construct_init(context=context, start_time=start_time, name=name, loc=loc, **kwargs)
-    self._body = Block.create('body', context)
-    self._add_region('').push_back(self._body)
-    self._body_start_time_arg = self._body.add_argument('start', VNTimeOrderType.get(context))
+  body : Block
+  group_finish_time : OpOperand[Value]
 
-  def post_init(self) -> None:
-    self._body = self.get_region('').entry_block
-    self._body_start_time_arg = self._body.get_argument('start')
+  def get_finish_time_src(self) -> Value | None:
+    return self.group_finish_time.try_get_value()
 
-  @property
-  def body(self) -> Block:
-    return self._body
-
-  @property
-  def body_start_time(self) -> BlockArgument:
-    return self._body_start_time_arg
-
+@IROperationDataclass
 @IRObjectJsonTypeName("vn_backend_instrgroup_op")
 class VNBackendInstructionGroup(VNInstructionGroup):
   # 后端指令组，用于放置一些后端独有的指令
   # 执行顺序、时间参数等均由后端决定
-  # 其中的指令不一定是（或者说大概率不是）VNInstruction 的子类，开始时间参数完全可以不用
+  # 其中的指令不一定是（或者说大概率不是）VNInstruction 的子类
   pass
 
+@IROperationDataclass
 @IRObjectJsonTypeName("vn_say_instrgroup_op")
 class VNSayInstructionGroup(VNInstructionGroup):
   # 发言指令组，用于将单次人物发言的所有有关内容（说话者，说话内容，侧边头像，等等）组合起来的指令组
   # 一个发言指令组对应回溯记录（Backlog）里的一条记录
   # 发言人可以不止一个，语音、文本也可以不止一条，但是后端有可能会不支持
-  _sayer_operand : OpOperand
+  sayer : OpOperand[VNCharacterSymbol]
 
-  def construct_init(self, *, context: Context, start_time: Value, sayer : VNCharacterRecord, name: str = '', loc: Location | None = None, **kwargs) -> None:
-    super().construct_init(context=context, name=name, loc=loc, start_time=start_time, **kwargs)
-    self._sayer_operand = self._add_operand_with_value('sayer', sayer)
-
-  def post_init(self) -> None:
-    super().post_init()
-    self._sayer_operand = self.get_operand_inst('sayer')
-
-  def get_single_sayer(self) -> VNCharacterRecord:
-    return self._sayer_operand.get()
-
-  def get_sayer_operand(self) -> OpOperand:
-    return self._sayer_operand
+  def get_single_sayer(self) -> VNCharacterSymbol:
+    return self.sayer.get()
 
   @staticmethod
-  def create(context : Context, start_time : Value, sayer : VNCharacterRecord, name: str = '', loc: Location | None = None):
+  def create(context : Context, start_time : Value, sayer : VNCharacterSymbol, name: str = '', loc: Location | None = None):
     return VNSayInstructionGroup(init_mode=IRObjectInitMode.CONSTRUCT, context=context, start_time=start_time, sayer=sayer, name=name, loc=loc)
+
+@IROperationDataclass
+@IRObjectJsonTypeName("vn_scene_switch_instrgroup_op")
+class VNSceneSwitchInstructionGroup(VNInstructionGroup):
+  # 场景切换指令组，用于将场景切换有关的内容组合起来
+  # 部分后端有单个指令完成多个操作（如 RenPy 中的 scene 命令可以实现清屏+切换背景），该指令组用于引导该类指令生成
+  # 该指令组应当包含所有由于“场景切换”所需的指令，这样如果后端有指令能够完成多个操作，则可以用这些特殊指令
+  # 如果指令组中的指令无法全部由单个指令实现，则剩余指令可像其他情况那样视为单独的指令进行生成
+  # 每个函数开始时，默认当前场景的内容都未定义（或者说就是一片黑）
+  # 每个函数即将结束时也可有一个场景切换指令组，将当前的所有内容清除（目标场景可以为 None）；否则下一个函数（或者返回到调用者后）无法将场上的内容清除
+  dest_scene : OpOperand[VNSceneSymbol]
+
+  @staticmethod
+  def create(context : Context, start_time : Value, dest_scene : VNSceneSymbol | None = None, name: str = '', loc: Location | None = None):
+    return VNSceneSwitchInstructionGroup(init_mode=IRObjectInitMode.CONSTRUCT, context=context, start_time=start_time, dest_scene=dest_scene, name=name, loc=loc)
 
 @IRObjectJsonTypeName("vn_wait_instr_op")
 class VNWaitInstruction(VNInstruction):
@@ -700,51 +710,72 @@ class VNWaitInstruction(VNInstruction):
   def create(context : Context, start_time : Value, name: str = '', loc: Location | None = None):
     return VNWaitInstruction(init_mode=IRObjectInitMode.CONSTRUCT, context=context, start_time=start_time, name=name, loc=loc)
 
-class VNPutInst(VNInstruction):
+@IROperationDataclass
+class VNPlacementInstBase(VNInstruction):
+  content : OpOperand[Value]
+  device : OpOperand[VNDeviceSymbol]
+  placeat : SymbolTableRegion
+  transition : OpOperand[Value]
+
+@IROperationDataclass
+class VNPutInst(VNPlacementInstBase):
   # 放置指令会在目标设备上创建一个内容，但是与创建指令不同，该指令不返回句柄
   # 放置指令创建的内容的有效期由设备、环境等决定，而不是由程序显式地去移除
   # 常用的场景如在发言指令组内设置头像、发言内容等，有效期到下一条发言为止
   # 放置指令所创建的内容一般不会在非正常跳转时保留（比如用户指定跳转到某位置）
   # 如需要播放音频，放置指令将在设备上当前播放的内容结束后播放
-  _content_operand : OpOperand
-  _device_operand : OpOperand
-
-  def construct_init(self, *, context: Context, start_time: Value, content : Value | None = None, device : VNDeviceRecord | None = None, name: str = '', loc: Location | None = None, **kwargs) -> None:
-    super().construct_init(context=context, name=name, loc=loc, start_time=start_time, **kwargs)
-    self._content_operand = self._add_operand_with_value('content', content)
-    self._device_operand = self._add_operand_with_value('device', device)
-
-  def post_init(self) -> None:
-    super().post_init()
-    self._content_operand = self.get_operand_inst('content')
-    self._device_operand = self.get_operand_inst('device')
-
-  @property
-  def device(self) -> VNDeviceRecord | None:
-    return self._device_operand.get()
-
-  @device.setter
-  def device(self, dev : VNDeviceRecord) -> None:
-    self._device_operand.set_operand(0, dev)
-
-  @property
-  def content(self) -> Value:
-    return self._content_operand.get()
-
-  @content.setter
-  def content(self, v : Value):
-    self._content_operand.set_operand(0, v)
-
-  @content.deleter
-  def content(self, v : Value):
-    self._content_operand.drop_all_uses()
 
   @staticmethod
-  def create(context : Context, start_time: Value, content : Value | None = None, device : VNDeviceRecord | None = None, name: str = '', loc: Location | None = None) -> VNPutInst:
+  def create(context : Context, start_time: Value, content : Value | None = None, device : VNDeviceSymbol | None = None, name: str = '', loc: Location | None = None) -> VNPutInst:
     return VNPutInst(init_mode=IRObjectInitMode.CONSTRUCT, context=context, start_time=start_time, content=content, device=device, name=name, loc=loc)
 
+@IROperationDataclass
+class VNCreateInst(VNPlacementInstBase, Value):
+  # 创建指令基本同放置指令，唯一区别是会有一个句柄值
+
+  @staticmethod
+  def create(context : Context, start_time: Value, content : Value | None = None, ty : VNHandleType | None = None, device : VNDeviceSymbol | None = None, name: str = '', loc: Location | None = None) -> VNPutInst:
+    if ty is not None:
+      assert isinstance(ty, VNHandleType)
+    elif content is not None:
+      vty = content.valuetype
+      ty = VNHandleType.get(vty)
+    else:
+      raise RuntimeError("Need to know content type")
+    return VNCreateInst(init_mode=IRObjectInitMode.CONSTRUCT, context=context, start_time=start_time, content=content, device=device, ty=ty, name=name, loc=loc)
+
+@IROperationDataclass
+class VNModifyInstBase(VNInstruction):
+  # 所有对某对象的改变的指令基类，包括呈现方式更改（如位置）和内容更改（删除，切换，等等）
+  # 如果我们对场景进行切换，我们也使用基于该指令的子类
+  # 更改指令不能更改所在的设备，不能更改内容的类型（比如不能用视频替换文本）
+  handlein : OpOperand
+  handleout : OpResult = result_field(gettypefrom='handlein')
+  transition : OpOperand[Value]
+
+@IROperationDataclass
+class VNTerminatorInstBase(VNInstruction):
+  pass
+
+
+@IROperationDataclass
+class VNReturnInst(VNTerminatorInstBase):
+  # 返回调用者
+  @staticmethod
+  def create(context : Context, start_time: Value, name : str = '', loc : Location | None = None):
+    return VNReturnInst(init_mode=IRObjectInitMode.CONSTRUCT, context=context, start_time=start_time, name=name, loc=loc)
+
+@IROperationDataclass
+class VNTailCallInst(VNTerminatorInstBase):
+  target : OpOperand[VNFunction]
+
+  # 跳转到目标函数，不返回
+  @staticmethod
+  def create(context : Context, start_time: Value, target : VNFunction, name : str = '', loc : Location | None = None):
+    return VNTailCallInst(init_mode=IRObjectInitMode.CONSTRUCT, context=context, start_time=start_time, target=target, name=name, loc=loc)
+
 @IRObjectJsonTypeName("vn_namespace_op")
-class VNNamespace(Symbol, NamespaceNodeInterface[VNFunction | VNRecord]):
+class VNNamespace(Symbol, NamespaceNodeInterface[VNSymbol]):
   _function_region : SymbolTableRegion
   _record_region : SymbolTableRegion
   _asset_region : SymbolTableRegion
@@ -782,17 +813,17 @@ class VNNamespace(Symbol, NamespaceNodeInterface[VNFunction | VNRecord]):
   def get_function(self, name : str) -> VNFunction:
     return self._function_region.get(name)
 
-  def add_record(self, record : VNRecord) -> VNRecord:
-    assert isinstance(record, VNRecord)
+  def add_record(self, record : VNSymbol) -> VNSymbol:
+    assert isinstance(record, VNSymbol)
     self._record_region.add(record)
     return record
 
-  def get_record(self, name : str) -> VNRecord:
+  def get_record(self, name : str) -> VNSymbol:
     return self._record_region.get(name)
 
-  def get_device_record(self, name : str) -> VNDeviceRecord:
+  def get_device_record(self, name : str) -> VNDeviceSymbol:
     record = self._record_region.get(name)
-    assert isinstance(record, VNDeviceRecord)
+    assert isinstance(record, VNDeviceSymbol)
     return record
 
   def get_namespace_path(self) -> tuple[str]:
@@ -805,7 +836,7 @@ class VNNamespace(Symbol, NamespaceNodeInterface[VNFunction | VNRecord]):
     assert isinstance(toplevel, VNModel)
     return toplevel.get_namespace(VNNamespace.stringize_namespace_path(self._namespace_path_tuple[:-1]))
 
-  def lookup_name(self, name: str) -> VNNamespace | VNFunction | VNRecord | NamespaceNodeInterface.AliasEntry | None:
+  def lookup_name(self, name: str) -> VNNamespace | VNFunction | VNSymbol | NamespaceNodeInterface.AliasEntry | None:
     if func := self._function_region.get(name):
       return func
     if record := self._record_region.get(name):
@@ -843,7 +874,7 @@ class VNModel(Operation):
   def create(context : Context, name : str = '', loc : Location = None) -> VNModel:
     return VNModel(init_mode=IRObjectInitMode.CONSTRUCT, context=context, name=name, loc=loc)
 
-class VNModelNameResolver(NameResolver[VNFunction | VNRecord]):
+class VNModelNameResolver(NameResolver[VNFunction | VNSymbol]):
   _model : VNModel
 
   def __init__(self, model : VNModel) -> None:
@@ -860,9 +891,10 @@ class VNInstructionBuilder:
   _block : Block
   _loc : Location
   _time : Value
+  _time_writeback : OpOperand[Value] | None
   _insert_before_op : VNInstruction | None # if none, insert at the end of block
 
-  def __init__(self, loc : Location, block : Block, insert_before : VNInstruction | None = None, time : Value | None = None) -> None:
+  def __init__(self, loc : Location, block : Block, insert_before : VNInstruction | None = None, time : Value | None = None, time_writeback : OpOperand[Value] | None = None) -> None:
     assert block is not None or insert_before is not None
     self._block = block
     self._insert_before_op = insert_before
@@ -885,9 +917,11 @@ class VNInstructionBuilder:
         if not self._block.body.empty:
           if last_inst := self.get_last_vninst_before_pos(self._block.body.back):
             self._time = last_inst.get_finish_time()
-    assert self._time is not None
-    if isinstance(self._time, OpResult):
-      assert self._time.parent.parent_block is self._block
+    assert self._time is not None and isinstance(self._time.valuetype, VNTimeOrderType)
+    self._time_writeback = time_writeback
+    if time_writeback is not None:
+      assert isinstance(time_writeback, OpOperand)
+      time_writeback.set_operand(0, self._time)
 
   @staticmethod
   def get_last_vninst_before_pos(op : Operation) -> VNInstruction | None:
@@ -929,18 +963,29 @@ class VNInstructionBuilder:
       instr.insert_before(self._insert_before_op)
     if update_time:
       self._time = instr.get_finish_time()
+      if self._time_writeback is not None:
+        self._time_writeback.set_operand(0, self._time)
     return instr
 
-  def createSayInstructionGroup(self, sayer : VNCharacterRecord, name : str = '', loc : Location | None = None, update_time : bool = True) -> tuple[VNSayInstructionGroup, VNInstructionBuilder]:
+  def createSayInstructionGroup(self, sayer : VNCharacterSymbol, name : str = '', loc : Location | None = None, update_time : bool = True) -> tuple[VNSayInstructionGroup, VNInstructionBuilder]:
     group = VNSayInstructionGroup.create(self._loc.context, self._time, sayer=sayer, name=name, loc=loc)
+    builder = VNInstructionBuilder(group.location, group.body, time=self._time, time_writeback=group.group_finish_time)
     self.place_instr(update_time, group)
-    builder = VNInstructionBuilder(group.location, group.body)
     return (group, builder)
 
-  def createPut(self, content : Value, device : VNDeviceRecord, name : str = '', loc : Location | None = None):
-    # put instructions default NOT to update the start time
-    return self.place_instr(False, VNPutInst.create(context=self._loc.context, start_time=self._time, content=content, device=device, name=name, loc=loc))
+  def createSceneSwitchInstructionGroup(self, scene : VNSceneSymbol, name : str = '', loc : Location | None = None, update_time : bool = True) -> tuple[VNSceneSwitchInstructionGroup, VNInstructionBuilder]:
+    group = VNSceneSwitchInstructionGroup.create(self._loc.context, self._time, dest_scene=scene, name=name, loc=loc)
+    builder = VNInstructionBuilder(group.location, group.body, time=self._time, time_writeback=group.group_finish_time)
+    self.place_instr(update_time, group)
+    return (group, builder)
 
-  def createWait(self, name : str = '', loc : Location | None = None):
-    return self.place_instr(True, VNWaitInstruction.create(self._loc.context, self._time, name, loc))
+  def createPut(self, content : Value, device : VNDeviceSymbol, update_time : bool = False, name : str = '', loc : Location | None = None):
+    # put instructions default NOT to update the start time
+    return self.place_instr(update_time, VNPutInst.create(context=self._loc.context, start_time=self._time, content=content, device=device, name=name, loc=loc))
+
+  def createCreate(self, content : Value, device : VNDeviceSymbol, update_time : bool = True, name : str = '', loc : Location | None = None):
+    return self.place_instr(update_time, VNCreateInst.create(context=self._loc.context, start_time=self._time, content=content, device=device, name=name, loc=loc))
+
+  def createWait(self, update_time : bool = True, name : str = '', loc : Location | None = None):
+    return self.place_instr(update_time, VNWaitInstruction.create(self._loc.context, self._time, name, loc))
 

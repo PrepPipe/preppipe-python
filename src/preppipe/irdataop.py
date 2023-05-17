@@ -32,6 +32,7 @@ class OpField:
   # then base_type is OpOperand, and value_annotation is IntLiteral
   base_type : type = MISSING # type: ignore
   value_annotation : type | None = MISSING # type: ignore
+  value_annotation_params : tuple[type,...] | None = MISSING # type: ignore
 
   # either specified or filled afterwards
   # name of operand / region, as well as accessor (e.g., "XXX" in "get_XXX()")
@@ -44,6 +45,7 @@ class OpField:
   default_factory : typing.Callable = MISSING # type: ignore
   # fields for OpResult
   res_valuetype : type | None = MISSING # type: ignore
+  res_gettypefrom : str | None = MISSING # type: ignore
   # fields for Region
   r_create_entry_block : bool = MISSING # type: ignore
   # fields for block
@@ -55,8 +57,9 @@ class OpField:
 def operand_field(*, lookup_name = MISSING, default=MISSING, default_factory=MISSING) -> irbase.OpOperand:
   return OpField(lookup_name=lookup_name, base_type=irbase.OpOperand, default=default, default_factory=default_factory) # type: ignore
 
-def result_field(*, lookup_name = MISSING, valuetype : type) -> irbase.OpResult:
-  return OpField(lookup_name=lookup_name, base_type=irbase.OpResult, res_valuetype=valuetype) # type: ignore
+def result_field(*, lookup_name = MISSING, valuetype : type = MISSING, gettypefrom : str = MISSING) -> irbase.OpResult:
+  # gettypefrom: the name of an OpOperand field that determines the type of this result
+  return OpField(lookup_name=lookup_name, base_type=irbase.OpResult, res_valuetype=valuetype, res_gettypefrom=gettypefrom) # type: ignore
 
 def region_field(*, lookup_name = MISSING, create_entry_block : bool = False) -> irbase.Region:
   return OpField(lookup_name=lookup_name, base_type=irbase.Region, r_create_entry_block=create_entry_block) # type: ignore
@@ -119,7 +122,7 @@ class _DataOpHelper:
           # if the value is an iterable that is not a string, we loop over them and handle each one
           def convert_value(v) -> irbase.Value | None:
             if v is not None and not isinstance(v, irbase.Value):
-              if converted := irbase.convert_literal(v, inst.context, f.value_annotation):
+              if converted := irbase.convert_literal(v, inst.context, f.value_annotation, f.value_annotation_params):
                 v = converted
               else:
                 raise RuntimeError("Unexpected initializer value type")
@@ -141,10 +144,15 @@ class _DataOpHelper:
             vty = kwargs[f.name]
             assert isinstance(vty, irbase.ValueType)
           else:
-            if f.res_valuetype is None:
+            vty = None
+            if f.res_gettypefrom is not None:
+              if curvalue := inst.get_operand_inst(f.res_gettypefrom).try_get_value():
+                vty = curvalue.valuetype
+            if vty is None and f.res_valuetype is not None:
+              assert issubclass(f.res_valuetype, irbase.StatelessType)
+              vty = f.res_valuetype.get(ctx=inst.context)
+            if vty is None:
               raise RuntimeError("Missing value type for " + f.name + " (either specify in construction or in field declaration)")
-            assert issubclass(f.res_valuetype, irbase.StatelessType)
-            vty = f.res_valuetype.get(ctx=inst.context)
           value = inst._add_result(f.lookup_name, vty)
         case irbase.SymbolTableRegion:
           value = inst._add_symbol_table(f.lookup_name)
@@ -224,8 +232,10 @@ def _process_class(cls : type[_OperationVT], vty : type | None) -> type[_Operati
       raise RuntimeError("Only stateless type can be used for op value (value type passed in: " + vty.__name__ + '"')
     setattr(cls, 'get_fixed_value_type', classmethod(_get_fixed_value_type))
   else:
-    if issubclass(cls, irbase.Value):
-      raise RuntimeError("Subclass of Value must provide the value type")
+    # We may have subclasses proving value type during construction
+    pass
+    #if issubclass(cls, irbase.Value):
+    #  raise RuntimeError("Subclass of Value must provide the value type")
 
   for special_methods in ('construct_init', 'post_init', '__setattr__'):
     if special_methods in cls.__dict__:
@@ -249,7 +259,7 @@ def _process_class(cls : type[_OperationVT], vty : type | None) -> type[_Operati
     globals = {}
 
   cls_annotations = inspect.get_annotations(cls, globals=globals, eval_str=True)
-  cls_fields = collections.OrderedDict()
+  cls_fields : collections.OrderedDict[str, OpField] = collections.OrderedDict()
 
   # for checking duplicated regions
   region_dict : dict[str, str] = {}
@@ -266,14 +276,22 @@ def _process_class(cls : type[_OperationVT], vty : type | None) -> type[_Operati
     # analyze the types
     base_type = annotation
     value_annotation = None
+    value_annotation_params = None
     if isinstance(annotation, (types.GenericAlias, typing._GenericAlias)):
       if len(annotation.__args__) != 1:
         raise RuntimeError("Expecting exactly one argument for types.GenericAlias (did you specify more than one type in the square bracket [] ?)")
       base_type = annotation.__origin__
       value_annotation = annotation.__args__[0]
+      if base_type is typing.ClassVar:
+        # classvar annotations are not instance members and we exclude them
+        continue
     assert isinstance(base_type, type)
     if value_annotation is not None:
-      assert isinstance(value_annotation, type)
+      if not isinstance(value_annotation, type):
+        assert isinstance(value_annotation, (types.GenericAlias, typing._GenericAlias))
+        value_annotation_params = value_annotation.__args__
+        value_annotation = value_annotation.__origin__
+        assert value_annotation is irbase.EnumLiteral
     if isinstance(default, OpField):
       f = default
     else:
@@ -304,6 +322,7 @@ def _process_class(cls : type[_OperationVT], vty : type | None) -> type[_Operati
     else:
       f.base_type = base_type
     f.value_annotation = value_annotation
+    f.value_annotation_params = value_annotation_params
     if f.lookup_name is MISSING:
       f.lookup_name = name
     if len(f.lookup_name) == 0:
@@ -324,15 +343,26 @@ def _process_class(cls : type[_OperationVT], vty : type | None) -> type[_Operati
       case irbase.OpOperand:
         # if a default value is provided, check whether the types match
         if f.default is not MISSING and f.default is not None:
-          if not irbase.convert_literal(value=f.default, ctx=None, type_hint=f.value_annotation):
+          if not irbase.convert_literal(value=f.default, ctx=None, type_hint=f.value_annotation, type_hint_params=f.value_annotation_params):
             raise RuntimeError("Field \"" + f.name + "\": initializer " + str(f.default) + " cannot be converted to " + f.value_annotation.__name__ if f.value_annotation is not None else "Value")
       case irbase.OpResult:
+        if f.res_gettypefrom is not MISSING:
+          assert isinstance(f.res_gettypefrom, str)
+          if not f.res_gettypefrom in cls_fields:
+            raise RuntimeError("Field \"" + f.name + "\": gettypefrom \"" + f.res_gettypefrom + "\" must be declared before this result field")
+          src = cls_fields[f.res_gettypefrom]
+          if src.base_type is not irbase.OpOperand:
+            raise RuntimeError("Field \"" + f.name + "\": gettypefrom \"" + f.res_gettypefrom + "\" must be an OpOperand field")
+        else:
+          f.res_gettypefrom = None
         if f.res_valuetype is not MISSING:
           assert isinstance(f.res_valuetype, type)
           if not issubclass(f.res_valuetype, irbase.StatelessType):
             raise RuntimeError("Field \"" + f.name + "\": cannot use type " + f.res_valuetype.__name__ + " because it is not stateless")
         else:
           f.res_valuetype = None
+        if f.res_gettypefrom is None and f.res_valuetype is None:
+          raise RuntimeError("Field \"" + f.name + "\": must specify either valuetype or gettypefrom")
       case irbase.Region:
         assert isinstance(f.r_create_entry_block, bool)
         check_dup_region_name(f.lookup_name, f.name)

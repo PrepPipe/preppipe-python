@@ -1578,6 +1578,9 @@ class Operation(IRObject, IListNode):
   def get_attr(self, name : str) -> int | str | bool | decimal.Decimal | None:
     return self._attributes.get(name, None)
 
+  def remove_attr(self, name : str):
+    del self._attributes[name]
+
   def has_attr(self, name : str) -> bool:
     return name in self._attributes
 
@@ -3068,7 +3071,7 @@ class UnknownEnumLiteral(Literal):
   def get(context : Context, enum_type : type | str, enum_value : str) -> UnknownEnumLiteral:
     return Literal._get_literal_impl(EnumLiteral, (enum_type, enum_value), context)
 
-def convert_literal(value, ctx : Context | None, type_hint : type | None = None) -> Literal | None | bool:
+def convert_literal(value, ctx : Context | None, type_hint : type | None = None, type_hint_params : tuple[type,...] | None = None) -> Literal | None | bool:
   '''尝试把一个值转换为 Literal 类型的字面值(返回 Literal|None)。如果 ctx 没有提供，则只做类型检查(返回 bool)'''
   if isinstance(value, int):
     if type_hint is IntLiteral or type_hint is None:
@@ -3096,6 +3099,8 @@ def convert_literal(value, ctx : Context | None, type_hint : type | None = None)
       return None if ctx is not None else False
   elif isinstance(value, enum.Enum):
     if type_hint is EnumLiteral or type_hint is None:
+      if type_hint is EnumLiteral and type_hint_params is not None:
+        assert isinstance(value, type_hint_params[0])
       return EnumLiteral.get(ctx, value) if ctx is not None else True
     else:
       return None if ctx is not None else False
@@ -3438,7 +3443,8 @@ class IRWriter:
       #elif isinstance(value, TableLiteral):
       #  raise NotImplementedError('TODO')
       else:
-        raise NotImplementedError('Unexpected literal type for dumping')
+        self._write_body(self.escape(str(value)))
+        return delayed_content
     if isinstance(value, AssetData):
       if res := self._write_asset(value):
         if delayed_content is None:
