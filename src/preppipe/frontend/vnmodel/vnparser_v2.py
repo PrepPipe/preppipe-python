@@ -84,16 +84,16 @@ class VNParsingState:
 
   # 当前场景信息
   # state_sayer_states 和 state_scene_states 需要深层复制
-  state_default_sayer : VNCharacterRecord = None # 默认发言者; None 为旁白
-  state_current_scene : VNSceneRecord = None # 当前场景
-  state_sayer_states : collections.OrderedDict[VNCharacterRecord, VNParsingStateForSayer] = None # 每个发言者当前的状态
+  state_default_sayer : VNCharacterSymbol = None # 默认发言者; None 为旁白
+  state_current_scene : VNSceneSymbol = None # 当前场景
+  state_sayer_states : collections.OrderedDict[VNCharacterSymbol, VNParsingStateForSayer] = None # 每个发言者当前的状态
   state_scene_states : list[str] = None # 场景的状态标签
 
   # 当前设备
   # 所有的都是浅层复制
-  state_current_device_say_name : VNDeviceRecord = None
-  state_current_device_say_text : VNDeviceRecord = None
-  state_current_device_say_sideimage : VNDeviceRecord = None
+  state_current_device_say_name : VNDeviceSymbol = None
+  state_current_device_say_text : VNDeviceSymbol = None
+  state_current_device_say_sideimage : VNDeviceSymbol = None
 
   def __deepcopy__(self, memo):
     # deep copy of VNParserState would cause handles like VNCharacterRecord being copied as well
@@ -176,7 +176,7 @@ class VNParser(FrontendParserBase[VNParsingState]):
     # 虽然前端并不支持在文本中夹杂命令，这不妨碍我们在处理文本的过程中执行命令
     # 以后也有可能添加在文本中加入命令的语法
     # TODO 继续完成该函数
-    text_sayer_ref : VNCharacterRecord = None
+    text_sayer_ref : VNCharacterSymbol = None
     pending_say_text_contents = []
     def try_emit_pending_content():
       pass
