@@ -745,34 +745,59 @@ class VNCreateInst(VNPlacementInstBase, Value):
     return VNCreateInst(init_mode=IRObjectInitMode.CONSTRUCT, context=context, start_time=start_time, content=content, device=device, ty=ty, name=name, loc=loc)
 
 @IROperationDataclass
-class VNModifyInstBase(VNInstruction):
+class VNModifyInstBase(VNInstruction, Value):
   # 所有对某对象的改变的指令基类，包括呈现方式更改（如位置）和内容更改（删除，切换，等等）
   # 如果我们对场景进行切换，我们也使用基于该指令的子类
   # 更改指令不能更改所在的设备，不能更改内容的类型（比如不能用视频替换文本）
   handlein : OpOperand
-  handleout : OpResult = result_field(gettypefrom='handlein')
   transition : OpOperand[Value]
 
 @IROperationDataclass
 class VNTerminatorInstBase(VNInstruction):
   pass
 
+@IROperationDataclass
+class VNCallInst(VNInstruction):
+  target : OpOperand[VNFunction]
+  destroyed_handle_list : OpOperand[Value]
+  # 跳转到目标函数，但仍返回；当前所有句柄不保留
+  @staticmethod
+  def create(context : Context, start_time: Value, target : VNFunction, destroyed_handle_list : typing.Iterable[Value] | None = None, name : str = '', loc : Location | None = None):
+    return VNCallInst(init_mode=IRObjectInitMode.CONSTRUCT, context=context, start_time=start_time, target=target, destroyed_handle_list=destroyed_handle_list, name=name, loc=loc)
 
 @IROperationDataclass
 class VNReturnInst(VNTerminatorInstBase):
-  # 返回调用者
+  # 返回调用者，当前所有句柄不保留
   @staticmethod
   def create(context : Context, start_time: Value, name : str = '', loc : Location | None = None):
     return VNReturnInst(init_mode=IRObjectInitMode.CONSTRUCT, context=context, start_time=start_time, name=name, loc=loc)
 
 @IROperationDataclass
-class VNTailCallInst(VNTerminatorInstBase):
-  target : OpOperand[VNFunction]
-
-  # 跳转到目标函数，不返回
+class VNTailCallInst(VNTerminatorInstBase, VNCallInst):
+  # 跳转到目标函数，不返回；当前所有句柄不保留
   @staticmethod
-  def create(context : Context, start_time: Value, target : VNFunction, name : str = '', loc : Location | None = None):
-    return VNTailCallInst(init_mode=IRObjectInitMode.CONSTRUCT, context=context, start_time=start_time, target=target, name=name, loc=loc)
+  def create(context : Context, start_time: Value, target : VNFunction, destroyed_handle_list : typing.Iterable[Value] | None = None, name : str = '', loc : Location | None = None):
+    return VNTailCallInst(init_mode=IRObjectInitMode.CONSTRUCT, context=context, start_time=start_time, target=target, destroyed_handle_list=destroyed_handle_list, name=name, loc=loc)
+
+@IROperationDataclass
+class VNBranchInst(VNTerminatorInstBase):
+  # 所有的函数内跳转（不管有无条件）都用这个
+  # defaultbranch 一定不为空
+  # 若是有条件跳转，condition_list 和 target_list 内的参数应当一样多
+  # handle_list 被用作传递 BlockArgument 的值，它们一起取代 PHI 结点
+  defaultbranch : OpOperand[Block] # 如果没有条件满足，则跳转到该块（else 从句目标）
+  condition_list : OpOperand[Value] # 所有的条件（各个 if 的条件，应该都是 BoolType）（无条件跳转的话可以为空）
+  target_list : OpOperand[Block] # 所有的跳转目标（各个 if 从句的目标块）（无条件跳转的话可以为空）
+  handle_list : OpOperand[Value] # 当前所有的句柄
+
+  def add_branch(self, condition : Value, target : Block):
+    assert isinstance(condition.valuetype, BoolType) and isinstance(target, Block)
+    self.condition_list.add_operand(condition)
+    self.target_list.add_operand(target)
+
+  @staticmethod
+  def create(context : Context, start_time: Value, defaultbranch : Block, name : str = '', loc : Location | None = None):
+    return VNBranchInst(init_mode=IRObjectInitMode.CONSTRUCT, context=context, start_time=start_time, defaultbranch=defaultbranch, name=name, loc=loc)
 
 @IRObjectJsonTypeName("vn_namespace_op")
 class VNNamespace(Symbol, NamespaceNodeInterface[VNSymbol]):
@@ -967,6 +992,14 @@ class VNInstructionBuilder:
         self._time_writeback.set_operand(0, self._time)
     return instr
 
+  def move_ip_to_end_of_block(self, target : Block):
+    self._block = target
+    self._time = self._block.get_argument('start')
+    self._insert_before_op = None
+    if not self._block.body.empty:
+      if last_inst := self.get_last_vninst_before_pos(self._block.body.back):
+        self._time = last_inst.get_finish_time()
+
   def createSayInstructionGroup(self, sayer : VNCharacterSymbol, name : str = '', loc : Location | None = None, update_time : bool = True) -> tuple[VNSayInstructionGroup, VNInstructionBuilder]:
     group = VNSayInstructionGroup.create(self._loc.context, self._time, sayer=sayer, name=name, loc=loc)
     builder = VNInstructionBuilder(group.location, group.body, time=self._time, time_writeback=group.group_finish_time)
@@ -979,13 +1012,24 @@ class VNInstructionBuilder:
     self.place_instr(update_time, group)
     return (group, builder)
 
-  def createPut(self, content : Value, device : VNDeviceSymbol, update_time : bool = False, name : str = '', loc : Location | None = None):
+  def createPut(self, content : Value, device : VNDeviceSymbol, update_time : bool = False, name : str = '', loc : Location | None = None) -> VNPutInst:
     # put instructions default NOT to update the start time
     return self.place_instr(update_time, VNPutInst.create(context=self._loc.context, start_time=self._time, content=content, device=device, name=name, loc=loc))
 
-  def createCreate(self, content : Value, device : VNDeviceSymbol, update_time : bool = True, name : str = '', loc : Location | None = None):
+  def createCreate(self, content : Value, device : VNDeviceSymbol, update_time : bool = True, name : str = '', loc : Location | None = None) -> VNCreateInst:
     return self.place_instr(update_time, VNCreateInst.create(context=self._loc.context, start_time=self._time, content=content, device=device, name=name, loc=loc))
 
-  def createWait(self, update_time : bool = True, name : str = '', loc : Location | None = None):
+  def createWait(self, update_time : bool = True, name : str = '', loc : Location | None = None) -> VNWaitInstruction:
     return self.place_instr(update_time, VNWaitInstruction.create(self._loc.context, self._time, name, loc))
 
+  def createBranch(self, defaultbranch : Block, move_ip : bool = True,  name : str = '', loc : Location | None = None) -> VNBranchInst:
+    result = self.place_instr(False, VNBranchInst.create(context=self._loc.context, start_time=self._time, defaultbranch=defaultbranch, name=name, loc=loc))
+    if move_ip:
+      self.move_ip_to_end_of_block(defaultbranch)
+    return result
+
+  def createCall(self, target : VNFunction, destroyed_handle_list : typing.Iterable[Value] | None = None, update_time : bool = True, name : str = '', loc : Location | None = None) -> VNCallInst:
+    return self.place_instr(update_time, VNCallInst.create(context=self._loc.context, start_time=self._time, target=target, destroyed_handle_list=destroyed_handle_list, name=name, loc=loc))
+
+  def createReturn(self, name : str = '', loc : Location | None = None) -> VNReturnInst:
+    return self.place_instr(False, VNReturnInst.create(context=self._loc.context, start_time=self._time, name=name, loc=loc))
