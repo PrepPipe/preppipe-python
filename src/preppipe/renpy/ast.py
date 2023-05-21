@@ -54,8 +54,10 @@ class RenPyCharacterExpr(RenPyNode, Value):
   kind        : OpOperand[StringLiteral] # str （可以指定另一个 Character 并获取默认值，或者指定 adv / nvl）
   image       : OpOperand[StringLiteral] # str (头像图片)
   voicetag    : OpOperand[StringLiteral] # str (voice_tag)
+  what_color  : OpOperand[StringLiteral]
   what_prefix : OpOperand[StringLiteral]
   what_suffix : OpOperand[StringLiteral]
+  who_color   : OpOperand[StringLiteral]
   who_prefix  : OpOperand[StringLiteral]
   who_suffix  : OpOperand[StringLiteral]
   dynamic   : OpOperand[RenPyASMExpr]
