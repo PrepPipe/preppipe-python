@@ -6,6 +6,8 @@ from .ast import *
 from ..pipeline import *
 from ..irbase import *
 from .export import export_renpy
+from .codegen import codegen_renpy
+from ..vnmodel_v4 import VNModel
 import shutil
 
 @FrontendDecl('test-renpy-build', input_decl=IODecl(description='<No Input>', nargs=0), output_decl=RenPyModel)
@@ -86,3 +88,13 @@ class _RenPyExport(TransformBase):
       if not os.path.isdir(out_path):
         raise RuntimeError("renpy-export: exporting to non-directory path: " + out_path)
     return export_renpy(self.inputs[0], out_path, _RenPyExport._template_dir)
+
+@MiddleEndDecl('renpy-codegen', input_decl=VNModel, output_decl=RenPyModel)
+class _RenPyCodeGen(TransformBase):
+  def run(self) -> RenPyModel | None:
+    if len(self._inputs) == 0:
+      return None
+    if len(self._inputs) > 1:
+      raise RuntimeError("renpy-codegen: exporting multiple input IR is not supported")
+    return codegen_renpy(self._inputs[0])
+  pass
