@@ -2033,10 +2033,13 @@ class Region(NameDictNode):
     dump = writer.write_region(self)
     print(dump.decode('utf-8'))
 
+
+_SymbolTypeVar = typing.TypeVar('_SymbolTypeVar', bound='Symbol')
+
 @_IRInnerConstructJsonTypeName("symbol_r")
-class SymbolTableRegion(Region, collections.abc.Sequence):
+class SymbolTableRegion(Region, collections.abc.Sequence, typing.Generic[_SymbolTypeVar]):
   # if a region is a symbol table, it will always have one block
-  _lookup_dict : collections.OrderedDict[str, Symbol]
+  _lookup_dict : collections.OrderedDict[str, _SymbolTypeVar]
   _block : Block
   _anonymous_count : int # we use numeric default names if a symbol without name is added
 
@@ -2047,7 +2050,7 @@ class SymbolTableRegion(Region, collections.abc.Sequence):
     self._anonymous_count = 0
     self._lookup_dict = collections.OrderedDict()
 
-  def copy_init(self, *, init_src: SymbolTableRegion, value_mapper: IRValueMapper, **kwargs):
+  def copy_init(self, *, init_src: SymbolTableRegion[_SymbolTypeVar], value_mapper: IRValueMapper, **kwargs):
     for symbol in init_src:
       new_symbol = symbol.clone(value_mapper)
       assert isinstance(new_symbol, Symbol)
@@ -2061,7 +2064,7 @@ class SymbolTableRegion(Region, collections.abc.Sequence):
   def _drop_symbol(self, name : str):
     self._lookup_dict.pop(name, None)
 
-  def _add_symbol(self, symbol : Symbol):
+  def _add_symbol(self, symbol : _SymbolTypeVar):
     # make sure _add_symbol is called BEFORE adding the symbol to list
     # to avoid infinite recursion
     if len(symbol.name) == 0:
@@ -2069,16 +2072,19 @@ class SymbolTableRegion(Region, collections.abc.Sequence):
     assert symbol.name not in self._lookup_dict
     self._lookup_dict[symbol.name] = symbol
 
-  def _rename_symbol(self, symbol : Symbol, newname : str):
+  def _rename_symbol(self, symbol : _SymbolTypeVar, newname : str):
     assert newname not in self._lookup_dict
     self._lookup_dict.pop(symbol.name, None)
     self._lookup_dict[newname] = symbol
 
-  def __getitem__(self, key : str) -> Symbol:
-    return self._lookup_dict.get(key, None)
+  def __getitem__(self, key : str) -> _SymbolTypeVar:
+    return self._lookup_dict.get(key, None) # type: ignore
 
-  def get(self, key : str) -> Symbol:
-    return self._lookup_dict.get(key, None)
+  def get(self, key : str) -> _SymbolTypeVar:
+    return self._lookup_dict.get(key, None) # type: ignore
+
+  def keys(self):
+    return self._lookup_dict.keys()
 
   def __iter__(self):
     return iter(self._lookup_dict.values())
@@ -2086,10 +2092,10 @@ class SymbolTableRegion(Region, collections.abc.Sequence):
   def __len__(self):
     return len(self._lookup_dict)
 
-  def __contains__(self, value: Symbol) -> bool:
+  def __contains__(self, value: _SymbolTypeVar) -> bool:
     return self._lookup_dict.get(value.name, None) == value
 
-  def add(self, symbol : Symbol):
+  def add(self, symbol : _SymbolTypeVar):
     self._block.push_back(symbol)
 
 @IRObjectJsonTypeName('literal_l')
@@ -3018,6 +3024,9 @@ class StringListLiteral(LiteralExpr):
   @staticmethod
   def get_fixed_value_type():
     return StringType
+
+  def __str__(self) -> str:
+    return "StringListLiteral[" + ','.join(['"' + v.get_string() + '"' for v in self.value]) + ']'
 
   @staticmethod
   def _check_value_tuple(value: tuple[StringLiteral, ...]) -> None:

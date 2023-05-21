@@ -1,0 +1,424 @@
+# SPDX-FileCopyrightText: 2023 PrepPipe's Contributors
+# SPDX-License-Identifier: Apache-2.0
+
+import re
+import dataclasses
+import typing
+
+from .ast import *
+from ..vnmodel_v4 import *
+from ..util import nameconvert
+
+@dataclasses.dataclass
+class _FunctionCodeGenHelper:
+  codename : StringLiteral = dataclasses.field(init=True, kw_only=True)
+  numeric_blocks : int = 0
+  local_labels : dict[str, RenPyLabelNode] = dataclasses.field(default_factory=dict)
+  block_dict : dict[Block, RenPyLabelNode] = dataclasses.field(default_factory=dict)
+  used_names : set[str] = dataclasses.field(default_factory=set)
+  # block_order_dict : dict[Block, dict[VNInstruction, int]] = dataclasses.field(default_factory=dict) # block -> inst -> #order
+
+  def reserve_block_name(self, block : Block) -> None:
+    self.used_names.add(block.name)
+
+  def generate_anonymous_local_label(self) -> str:
+    codename = '.anon_' + str(self.numeric_blocks)
+    self.numeric_blocks += 1
+    while codename in self.used_names or codename in self.local_labels:
+      codename = '.anon_' + str(self.numeric_blocks)
+      self.numeric_blocks += 1
+    return codename
+
+  def create_block_local_label(self, block : Block) -> RenPyLabelNode:
+    # 给新遇到的这个块生成函数内的局部标签
+    if len(block.name) == 0:
+      # 块没有提供名字，按照数值生成它们
+      codename = self.generate_anonymous_local_label()
+    else:
+      codename = block.name
+      assert codename not in self.local_labels
+    label = RenPyLabelNode.create(block.context, codename)
+    self.local_labels[codename] = label
+    self.block_dict[block] = label
+    return label
+
+  #def compute_inst_order(self, block : Block) -> dict[VNInstruction, int]:
+    # 给块中的指令赋予一个整数表示他们的顺序（即顺序号）
+    # 如果碰到指令组，则指令组内的所有 VNInstruction (去掉后端指令)也要有顺序号
+  #  raise NotImplementedError()
+
+
+class _RenPyCodeGenHelper:
+  model : VNModel
+  cur_namespace : VNNamespace
+  cur_path_prefix : str
+  cur_mainscript : RenPyScriptFileOp | None
+  cur_toplevel_insertionpoint : RenPyNode | None
+  result : RenPyModel
+
+  # 所有的全局状态（不论命名空间）
+  char_dict : collections.OrderedDict[VNCharacterSymbol, collections.OrderedDict[str, RenPyDefineNode]]
+  func_dict : collections.OrderedDict[VNFunction, _FunctionCodeGenHelper]
+  global_name_dict : collections.OrderedDict # 避免命名冲突的全局名称字典
+
+  # 辅助信息
+  CODEGEN_MATCH_TREE : typing.ClassVar[dict] = {}
+
+  def __init__(self, model : VNModel) -> None:
+    self.model = model
+    self.cur_namespace = None # type: ignore
+    self.cur_path_prefix = None # type: ignore
+    self.cur_mainscript = None
+    self.cur_toplevel_insertionpoint = None
+    self.result = None # type: ignore
+    self.char_dict = collections.OrderedDict()
+    self.func_dict = collections.OrderedDict()
+    self.global_name_dict = collections.OrderedDict()
+
+    if len(_RenPyCodeGenHelper.CODEGEN_MATCH_TREE) == 0:
+      _RenPyCodeGenHelper.init_matchtable()
+
+  @property
+  def context(self) -> Context:
+    return self.model.context
+
+  def get_codegen_path(self, n: VNNamespace) -> str:
+    return n.name
+
+  def get_unique_global_name(self, displayname : str) -> str:
+    codename = nameconvert.str2identifier(displayname)
+    if codename in self.global_name_dict:
+      # 加一个后缀来避免命名冲突
+      codename_base = codename + '_'
+      num = 1
+      codename = codename_base + str(num)
+      while codename in self.global_name_dict:
+        num += 1
+        codename = codename_base + str(num)
+    return codename
+
+  #def handle_device(self, dev : VNDeviceSymbol):
+    # 目前什么都不干
+    #pass
+
+  def handle_all_devices(self):
+    # 目前什么都不干
+    pass
+
+  def handle_all_values(self):
+    # 目前什么都不干
+    pass
+
+  def label_all_functions(self):
+    # 确定每个函数的入口标签，便于在其他函数体中生成对该函数的调用
+    for func in self.cur_namespace.functions:
+      displayname = func.name
+      assert len(displayname) > 0
+      codename_l = func.codename.try_get_value()
+      if codename_l is None:
+        codename = self.get_unique_global_name(displayname)
+        codename_l = StringLiteral.get(codename, self.context)
+      else:
+        codename = codename_l.get_string()
+        if codename_l in self.global_name_dict:
+          raise RuntimeError("Global name conflict: \"" + codename + '"')
+      self.global_name_dict[codename] = func
+      self.func_dict[func] = _FunctionCodeGenHelper(codename = codename_l)
+
+  def handle_asset(self, asset : VNConstExprAsSymbol):
+    raise NotImplementedError("TODO")
+
+  def handle_character(self, character : VNCharacterSymbol):
+    # 为角色生成 character 对象
+    ms = self.get_mainscript()
+    displayname = character.name
+    if len(displayname) == 0:
+      raise RuntimeError("Empty display name for character")
+    codename = ''
+    if v := character.codename.try_get_value():
+      codename = v.get_string()
+      if not self.check_identifier(codename):
+        raise RuntimeError('Invalid codename specified: "' + codename + '"')
+      if codename in self.global_name_dict:
+        raise RuntimeError('Duplicated codename: "' + codename + '"')
+    else:
+      codename = self.get_unique_global_name(displayname)
+    definenode, charexpr = RenPyDefineNode.create_character(self.context, varname=codename, displayname=displayname)
+    ms.body.push_back(definenode)
+    match character.kind.get().value:
+      case VNCharacterKind.NORMAL, VNCharacterKind.CROWD:
+        pass
+      case VNCharacterKind.NARRATOR:
+        # 如果是 narrator，那我们在这里覆盖掉默认的 narrator 定义
+        codename = 'narrator'
+        if codename in self.global_name_dict:
+          raise RuntimeError('Duplicated narrator definition')
+      case VNCharacterKind.SYSTEM:
+        # 默认用红字体
+        charexpr.who_color.set_operand(0, StringLiteral.get('#800000', self.context))
+        charexpr.what_color.set_operand(0, StringLiteral.get('#600000', self.context))
+    # 暂时不支持其他项
+    self.global_name_dict[codename] = definenode
+    char_dict = collections.OrderedDict()
+    char_dict[displayname] = definenode
+    self.char_dict[character] = char_dict
+
+  def handle_scene(self, scene : VNSceneSymbol):
+    # 目前不需要其他操作
+    pass
+
+  def get_terminator(self, block : Block) -> VNTerminatorInstBase:
+    terminator = block.body.back
+    assert isinstance(terminator, VNTerminatorInstBase)
+    return terminator
+
+  def emit_expr(self, v : Value, helper : _FunctionCodeGenHelper) -> RenPyASMExpr:
+    if isinstance(v, BoolLiteral):
+      if v.value:
+        return RenPyASMExpr.create(self.context, asm='True')
+      else:
+        return RenPyASMExpr.create(self.context, asm='False')
+    raise NotImplementedError("Unhandled expr type " + type(v).__name__)
+
+  def gen_branch(self, terminator : VNBranchInst, helper : _FunctionCodeGenHelper, label : RenPyLabelNode):
+    if terminator.get_num_conditional_branch() == 0:
+      target = terminator.defaultbranch.get()
+      dest_label = helper.block_dict[target]
+      label.body.push_back(RenPyJumpNode.create(self.context, dest_label.codename.get()))
+    else:
+      ifchain = RenPyIfNode.create(self.context)
+      label.body.push_back(ifchain)
+      for i in range(0, terminator.condition_list.get_num_operands()):
+        cond = terminator.condition_list.get_operand(i)
+        target = terminator.target_list.get_operand(i)
+        dest_label = helper.block_dict[target]
+        assert isinstance(cond.valuetype, BoolType)
+        condexpr = self.emit_expr(cond, helper)
+        new_block = ifchain.add_branch(condexpr)
+        new_block.push_back(RenPyJumpNode.create(self.context, dest_label.codename.get()))
+      target = terminator.defaultbranch.get()
+      dest_label = helper.block_dict[target]
+      new_block = ifchain.add_branch(None)
+      new_block.push_back(RenPyJumpNode.create(self.context, dest_label.codename.get()))
+
+  def gen_terminator(self, terminator : VNTerminatorInstBase, helper : _FunctionCodeGenHelper, label : RenPyLabelNode):
+    assert label.body.body.empty
+    if isinstance(terminator, VNBranchInst):
+      self.gen_branch(terminator, helper, label)
+    elif isinstance(terminator, VNReturnInst):
+      label.body.push_back(RenPyReturnNode.create(self.context))
+    elif isinstance(terminator, VNTailCallInst):
+      target_func = terminator.target.get()
+      target_codename = self.func_dict[target_func].codename
+      label.body.push_back(RenPyJumpNode.create(self.context, target_codename))
+    else:
+      raise NotImplementedError("Unimplemented terminator type " + type(terminator).__name__)
+
+  # 在这里初始化指令转换表
+  # 每个生成函数都应该是 def gen_XXX(self, instrs : list[VNInstruction], insert_before : RenPyNode) -> RenPyNode
+  # instrs 是匹配到的 VNInstruction, insertbefore 是应该插入的位置，返回值是生成的第一个指令，给出后续指令的生成位置（插在前面）
+  # 进行匹配时，如果有含多个指令的模板（比如Say+Wait），我们只会在中间的指令所产出的时间没有使用者的情况下才会匹配
+  # （比如如果有 Say --> Show 和 Say --> Wait 并存，那么 Wait 会单独匹配而不会被并入 Say+Wait ，因为有另一个 Show 在使用 Say 的结束时间）
+  # 如果一个指令有多个
+  # 键值都是类型；可以按需要添加 RenPy 辅助生成的类（比如可以定义一个新的 InstructionGroup, 先用一个转换找到特定指令（比如可以共用 With 从句的 Show）并把它们替换为新的类型，然后在这里定义细则）
+  @staticmethod
+  def init_matchtable():
+    _RenPyCodeGenHelper.CODEGEN_MATCH_TREE = {
+      VNWaitInstruction : {
+        VNSayInstructionGroup: _RenPyCodeGenHelper.gen_say_wait,
+        None: _RenPyCodeGenHelper.gen_wait,
+      }
+    }
+
+  def gen_say_wait(self, instrs : list[VNInstruction], insert_before : RenPyNode) -> RenPyNode:
+    raise NotImplementedError()
+
+  def gen_wait(self, instrs : list[VNInstruction], insert_before : RenPyNode) -> RenPyNode:
+    assert len(instrs) == 1
+    result = RenPyASMNode.create(self.context, asm=StringLiteral.get('pause', self.context))
+    result.insert_before(insert_before)
+    return result
+
+  def match_instr_patterns(self, finishtime : Value, blocktime : Value) -> tuple[list[VNInstruction], typing.Callable[[typing.Any, list[VNInstruction], RenPyNode], RenPyNode]]:
+    assert isinstance(finishtime, OpResult) and isinstance(finishtime.valuetype, VNTimeOrderType)
+    cur_match_dict = _RenPyCodeGenHelper.CODEGEN_MATCH_TREE
+    instrs = []
+    while True:
+      end_instr = finishtime.parent
+      assert isinstance(end_instr, VNInstruction)
+      instrs.append(end_instr)
+      match_type = type(end_instr)
+      if match_type not in cur_match_dict:
+        if None not in cur_match_dict:
+          raise RuntimeError('Codegen for instr type not supported yet: ' + match_type.__name__)
+        match_result = cur_match_dict[None]
+      else:
+        match_result = cur_match_dict[match_type]
+      if isinstance(match_result, dict):
+        cur_match_dict = match_result
+        finishtime = end_instr.get_start_time()
+        # 遇到以下三种情况时我们停止匹配：
+        # 1. 已经到块的开头
+        # 2. 前一个指令是上一步的类似等待的指令
+        # 3. 除了当前匹配到的指令外，前一个指令的输出时间有其他使用者（我们不能把这个输出时间抢走）
+        if finishtime is blocktime or self.is_waitlike_instr(finishtime.parent):
+          return (instrs, match_result[None])
+        for u in finishtime.uses:
+          user_instr = u.user.parent
+          if user_instr is not end_instr and user_instr.try_get_parent_group() is not end_instr:
+            # 情况三
+            return (instrs, match_result[None])
+        # 否则我们继续匹配
+        continue
+      return (instrs, match_result)
+
+  def is_waitlike_instr(self, instr : VNInstruction) -> bool:
+    if isinstance(instr, VNWaitInstruction):
+      return True
+    return False
+
+  def codegen_block(self, b : Block, helper : _FunctionCodeGenHelper):
+    # 从末指令开始从后往前，用查表的方式找到对应的函数进行指令生成
+    terminator = self.get_terminator(b)
+    label = helper.block_dict[b]
+    self.gen_terminator(terminator, helper, label)
+    if terminator is b.body.front:
+      return
+
+    cur_srcpos = terminator # Block @ VNModel
+    cur_insertpos = label.body.body.front # RenPyNode @ RenPyLabelNode
+    #pos_dict = {orders[terminator] : cur_insertpos}
+    block_start = b.get_argument('start')
+    # 下面这个是处理该块的主循环
+    visited_instrs = set()
+
+    while True:
+      if cur_srcpos is b.body.front:
+        return
+      cur_srcpos = cur_srcpos.get_prev_node()
+      if isinstance(cur_srcpos, VNInstruction):
+        if cur_srcpos in visited_instrs:
+          continue
+        instrs, gen = self.match_instr_patterns(cur_srcpos.get_finish_time(), block_start)
+        cur_insertpos = gen(self, instrs, cur_insertpos)
+        visited_instrs.update(instrs)
+      else:
+        if isinstance(cur_srcpos, MetadataOp):
+          cloned = cur_srcpos.clone()
+          cloned.insert_before(cur_insertpos)
+          cur_insertpos = cloned
+        else:
+          raise RuntimeError('Unexpected instruction kind: ' + type(cur_srcpos).__name__)
+
+  def handle_function(self, func : VNFunction):
+    # 在这里，函数内的基本块应当已按照拓扑排序顺序排列
+    # 第一步：遍历所有块，生成局部标签
+    #     <TODO> 如果有跳转指令取句柄值传给另一个块的话，给这些句柄值一个唯一的标签
+    # 第二步：在每个标签（块）中进行生成
+    # 第三步：使用模式匹配来还原 if, while 这种控制流命令
+    # 指令生成期间，我们需要跟踪每个（命名）资源的生存区间，如果当前已经有使用者了
+    # （比如某物件的图片在屏幕上出现两次，第二个显示命令处会发现该图片已有一个使用中的句柄）
+    # 则我们需要安排一个不一样的句柄（show 命令中的 as 参数）
+
+    helper = self.func_dict[func]
+
+    # 第一步
+    # 由于某些块已经有名称，我们把所有的块走两遍：
+    # 1. 第一遍把已经有名称的块加进去（所有的局部名冲突是错误），
+    # 2. 第二遍把还没有名称的块放进去（局部名冲突会使得名称重新生成）
+    for b in func.body.blocks:
+      terminator = self.get_terminator(b)
+      if len(terminator.get_passed_handles()) > 0:
+        raise RuntimeError('Terminator passing handles are not supported yet (report to the programmer)')
+      if len(b.name) > 0:
+        helper.reserve_block_name(b)
+
+    for b in func.body.blocks:
+      label = helper.create_block_local_label(b)
+      self.get_mainscript().body.push_back(label)
+      if self.cur_toplevel_insertionpoint is None:
+        self.cur_toplevel_insertionpoint = label
+
+    # 第二步
+    for b in func.body.blocks:
+      self.codegen_block(b, helper)
+
+    # 第三步暂时不做
+
+  def check_identifier(self, idstr : str, is_label : bool = False):
+    if not is_label:
+      return re.match(r'''^[a-zA-Z]+[0-9A-Za-z_]*$''', idstr) is not None
+    return re.match(r'''^([a-zA-Z]+[0-9A-Za-z_]*)?.?[a-zA-Z]+[0-9A-Za-z_]*$''', idstr) is not None
+
+  def generate_varname(self, parentvar : str) -> str:
+    suffix = 1
+    curname = parentvar + '_' + str(suffix)
+    while curname in self.global_name_dict:
+      suffix += 1
+      curname = parentvar + '_' + str(suffix)
+    return curname
+
+  def get_renpy_character(self, vncharacter : VNCharacterSymbol, sayername : str, **kwargs) -> RenPyDefineNode:
+    assert vncharacter in self.char_dict
+    display_dict = self.char_dict[vncharacter]
+    if sayername in display_dict:
+      return display_dict[sayername]
+    # 我们需要为了这个显示名称新建一个 Character
+    # 首先，生成一个 varname
+    canonical = self.char_dict[vncharacter][vncharacter.name]
+    canonicalvarname = canonical.varname.get().get_string()
+    definenode, charexpr = RenPyDefineNode.create_character(self.context, varname=self.generate_varname(canonicalvarname), displayname=sayername)
+    self.insert_at_top(definenode)
+    charexpr.kind.set_operand(0, StringLiteral.get(canonicalvarname, self.context))
+    display_dict[sayername] = definenode
+    self.global_name_dict[definenode.varname.get().get_string()] = definenode
+    return definenode
+
+  def move_to_ns(self, n : VNNamespace):
+    self.cur_namespace = n
+    self.cur_path_prefix = self.get_codegen_path(n)
+    self.cur_mainscript = None
+    self.cur_toplevel_insertionpoint = None
+    self.char_dict.clear()
+    self.func_dict.clear()
+    self.global_name_dict.clear()
+
+  def insert_at_top(self, node : RenPyNode):
+    ms = self.get_mainscript()
+    if self.cur_toplevel_insertionpoint is None:
+      ms.body.push_back(node)
+    else:
+      node.insert_before(self.cur_toplevel_insertionpoint)
+
+  def get_mainscript(self):
+    if self.cur_mainscript is not None:
+      return self.cur_mainscript
+    self.cur_mainscript = RenPyScriptFileOp.create(self.model.context, 'script')
+    return self.cur_mainscript
+
+  def run(self) -> RenPyModel:
+    # 所有在 / 命名空间下的资源都会组织在根目录下，其他命名空间的资源会在 dlc/<命名空间路径> 下
+    # 我们需要按排好序的名称进行生成，这样可以保证子命名空间在父命名空间之后生成
+    assert self.result is None
+    self.result = RenPyModel.create(self.model.context)
+    for k in sorted(self.model.namespace.keys()):
+      n = self.model.namespace.get(k)
+      assert isinstance(n, VNNamespace)
+      self.move_to_ns(n)
+      self.handle_all_devices()
+      self.label_all_functions()
+      self.handle_all_values()
+
+      for a in n.assets:
+        self.handle_asset(a)
+      for c in n.characters:
+        self.handle_character(c)
+      for s in n.scenes:
+        self.handle_scene(s)
+      for f in n.functions:
+        self.handle_function(f)
+    return self.result
+
+def codegen_renpy(m : VNModel) -> RenPyModel:
+  helper = _RenPyCodeGenHelper(m)
+  return helper.run()

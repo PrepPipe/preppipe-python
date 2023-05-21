@@ -105,7 +105,7 @@ class VNDisplayableType(StatelessType):
   # because when reading the inputs we do not attempt to read all assets,
   # the raw input should treat assets as byte arrays (i.e., use _AssetDataReferenceType instead)
 
-  _s_traits : typing.ClassVar[tuple[type]] = (VNDisplayableTrait)
+  _s_traits : typing.ClassVar[tuple[type,...]] = (VNDisplayableTrait,)
 
 @IRObjectJsonTypeName("vn_audio_t")
 @dataclasses.dataclass(init=False, slots=True, frozen=True)
@@ -113,12 +113,12 @@ class VNAudioType(StatelessType):
   # this type is for audios that have at least the "duration" attribute
   # again, not for assets that are just read
 
-  _s_traits : typing.ClassVar[tuple[type]] = (VNAudioTrait)
+  _s_traits : typing.ClassVar[tuple[type,...]] = (VNAudioTrait,)
 
 @IRObjectJsonTypeName("vn_video_t")
 @dataclasses.dataclass(init=False, slots=True, frozen=True)
 class VNVideoType(StatelessType):
-  _s_traits : typing.ClassVar[tuple[type]] = (VNDisplayableTrait, VNAudioTrait)
+  _s_traits : typing.ClassVar[tuple[type,...]] = (VNDisplayableTrait, VNAudioTrait)
 
 @IRObjectJsonTypeName("vn_chardecl_t")
 @dataclasses.dataclass(init=False, slots=True, frozen=True)
@@ -151,12 +151,12 @@ class VNDataFunctionType(ParameterizedType):
     super().construct_init(context=context, parameters=[*returns, None, *args], **kwargs)
 
   def get_return_type_tuple(self) -> tuple[ValueType]:
-    breakloc = self.parameters.indexof(None)
-    return self.parameters[:breakloc]
+    breakloc = self.parameters.index(None)
+    return self.parameters[:breakloc] # type: ignore
 
   def get_argument_type_tuple(self) -> tuple[ValueType]:
-    breakloc = self.parameters.indexof(None)
-    return self.parameters[breakloc+1:]
+    breakloc = self.parameters.index(None)
+    return self.parameters[breakloc+1:] # type: ignore
 
   def __str__(self) -> str:
     return_type_str = '空'
@@ -378,7 +378,7 @@ class VNDeviceSymbol(VNSymbol):
         kind = entry
         child = None
       cur_entry = VNDeviceSymbol.create_standard_device(ns.context, kind, name)
-      ns.add_record(cur_entry)
+      ns.add_device(cur_entry)
       if parent is not None:
         cur_entry.set_parent_device(parent)
       if child is not None:
@@ -430,8 +430,8 @@ class VNVariableStorageModel(enum.Enum):
   CONFIG      = enum.auto() # 设置变量，取决于引擎的具体实现。只能用于由引擎定义的值（版本号，游戏名，成就系统的值，等等）
 
 
-@IRObjectJsonTypeName("vn_var_value_record_op")
-class VNVariableRecord(VNValueSymbol):
+@IRObjectJsonTypeName("vn_var_value_symbol_op")
+class VNVariableSymbol(VNValueSymbol):
   # 所有用户可以写入的值，包括用户定义的值和系统设置等引擎定义的值
   _storage_model_operand : OpOperand
   _initializer_operand : OpOperand
@@ -632,6 +632,7 @@ class VNInstruction(Operation):
   # 所有指令的基类
   _start_time_operand : OpOperand # 1-N个开始时间
   _finish_time_result : OpResult # 1个结束时间
+
   def construct_init(self, *, context : Context, start_time : typing.Iterable[Value] | Value | None = None, name: str = '', loc: Location | None = None, **kwargs) -> None:
     super().construct_init(context=context, name=name, loc=loc, **kwargs)
     if isinstance(start_time, Value):
@@ -649,6 +650,11 @@ class VNInstruction(Operation):
 
   def get_finish_time(self) -> OpResult:
     return self._finish_time_result
+
+  def try_get_parent_group(self) -> VNInstructionGroup | None:
+    if isinstance(self.parent_op, VNInstructionGroup):
+      return self.parent_op
+    return None
 
 @IROperationDataclass
 @IRObjectJsonTypeName("vn_instrgroup_op")
@@ -754,7 +760,12 @@ class VNModifyInstBase(VNInstruction, Value):
 
 @IROperationDataclass
 class VNTerminatorInstBase(VNInstruction):
-  pass
+  # CFG 模块所需信息
+  def get_local_cfg_dest(self) -> tuple[Block]:
+    return tuple()
+  # 本身的用于分析的函数
+  def get_passed_handles(self) -> tuple[Value]:
+    return tuple()
 
 @IROperationDataclass
 class VNCallInst(VNInstruction):
@@ -795,16 +806,32 @@ class VNBranchInst(VNTerminatorInstBase):
     self.condition_list.add_operand(condition)
     self.target_list.add_operand(target)
 
+  def get_num_conditional_branch(self) -> int:
+    return self.target_list.get_num_operands()
+
+  def get_local_cfg_dest(self) -> tuple[Block]:
+    targets = [self.defaultbranch.get()]
+    for t in self.target_list.operanduses():
+      targets.append(t.value)
+    return tuple(targets)
+
+  def get_passed_handles(self) -> tuple[Value]:
+    return tuple([v.value for v in self.handle_list.operanduses()])
+
   @staticmethod
   def create(context : Context, start_time: Value, defaultbranch : Block, name : str = '', loc : Location | None = None):
     return VNBranchInst(init_mode=IRObjectInitMode.CONSTRUCT, context=context, start_time=start_time, defaultbranch=defaultbranch, name=name, loc=loc)
 
+@IROperationDataclass
 @IRObjectJsonTypeName("vn_namespace_op")
 class VNNamespace(Symbol, NamespaceNodeInterface[VNSymbol]):
-  _function_region : SymbolTableRegion
-  _record_region : SymbolTableRegion
-  _asset_region : SymbolTableRegion
-  _namespace_path_tuple : tuple[str]
+  functions : SymbolTableRegion[VNFunction]
+  assets : SymbolTableRegion[VNConstExprAsSymbol]
+  characters : SymbolTableRegion[VNCharacterSymbol]
+  scenes : SymbolTableRegion[VNSceneSymbol]
+  devices : SymbolTableRegion[VNDeviceSymbol]
+  values : SymbolTableRegion[VNValueSymbol]
+  _namespace_path_tuple : tuple[str] = temp_field(default_factory=tuple)
 
   @staticmethod
   def stringize_namespace_path(path : tuple[str]) -> str:
@@ -814,40 +841,36 @@ class VNNamespace(Symbol, NamespaceNodeInterface[VNSymbol]):
   def expand_namespace_str(path : str) -> tuple[str]:
     return tuple(path.split('/')[1:])
 
-  def construct_init(self, *, name: str, loc: Location | None = None, **kwargs) -> None:
-    super().construct_init(name=name, loc=loc, **kwargs)
+  def _custom_postinit_(self):
     # 命名空间应该组成一个树结构，都以'/'开始，以'/'为分隔符
-    assert name.startswith('/')
-    self._namespace_path_tuple = VNNamespace.expand_namespace_str(name)
-    self._function_region = self._add_symbol_table('functions')
-    self._record_region = self._add_symbol_table('records')
-    self._asset_region = self._add_symbol_table('assets')
-
-  def post_init(self) -> None:
-    super().post_init()
+    assert self.name.startswith('/')
     self._namespace_path_tuple = VNNamespace.expand_namespace_str(self.name)
-    self._function_region = self.get_symbol_table('functions')
-    self._record_region = self.get_symbol_table('records')
-    self._asset_region = self.get_symbol_table('assets')
 
   def add_function(self, func : VNFunction) -> VNFunction:
     assert isinstance(func, VNFunction)
-    self._function_region.add(func)
+    self.functions.add(func)
     return func
 
   def get_function(self, name : str) -> VNFunction:
-    return self._function_region.get(name)
+    return self.functions.get(name)
 
-  def add_record(self, record : VNSymbol) -> VNSymbol:
-    assert isinstance(record, VNSymbol)
-    self._record_region.add(record)
-    return record
+  def add_scene(self, scene : VNSceneSymbol) -> VNSceneSymbol:
+    assert isinstance(scene, VNSceneSymbol)
+    self.scenes.add(scene)
+    return scene
 
-  def get_record(self, name : str) -> VNSymbol:
-    return self._record_region.get(name)
+  def add_character(self, character : VNCharacterSymbol) -> VNCharacterSymbol:
+    assert isinstance(character, VNCharacterSymbol)
+    self.characters.add(character)
+    return character
 
-  def get_device_record(self, name : str) -> VNDeviceSymbol:
-    record = self._record_region.get(name)
+  def add_device(self, device : VNDeviceSymbol) -> VNDeviceSymbol:
+    assert isinstance(device, VNSymbol)
+    self.devices.add(device)
+    return device
+
+  def get_device(self, name : str) -> VNDeviceSymbol:
+    record = self.devices.get(name)
     assert isinstance(record, VNDeviceSymbol)
     return record
 
@@ -861,38 +884,28 @@ class VNNamespace(Symbol, NamespaceNodeInterface[VNSymbol]):
     assert isinstance(toplevel, VNModel)
     return toplevel.get_namespace(VNNamespace.stringize_namespace_path(self._namespace_path_tuple[:-1]))
 
-  def lookup_name(self, name: str) -> VNNamespace | VNFunction | VNSymbol | NamespaceNodeInterface.AliasEntry | None:
-    if func := self._function_region.get(name):
-      return func
-    if record := self._record_region.get(name):
-      return record
-    if asset := self._asset_region.get(name):
-      return asset
+  def lookup_name(self, name: str) -> VNNamespace | VNSymbol | NamespaceNodeInterface.AliasEntry | None:
+    for table in (self.functions, self.assets, self.characters, self.scenes, self.devices):
+      if symb := table.get(name):
+        return symb
     return None
 
   @staticmethod
   def create(name : str, loc : Location):
     return VNNamespace(init_mode=IRObjectInitMode.CONSTRUCT, context=loc.context, name=name, loc=loc)
 
+@IROperationDataclass
 @IRObjectJsonTypeName("vn_model_op")
 class VNModel(Operation):
-  _namespace_region : SymbolTableRegion
+  namespace : SymbolTableRegion[VNNamespace]
   # 为了复用符号表的有关代码，我们把命名空间的不同部分用'/'分隔开，和目录一样，全局命名空间也有'/'
   # 根据命名空间查找内容应该使用额外的手段（比如前段可以用 nameresolution 有关的实现）
 
-  def construct_init(self, name: str = '', loc: Location = None, **kwargs) -> None:
-    super().construct_init(name=name, loc=loc, **kwargs)
-    self._add_symbol_table('namespaces')
-
-  def post_init(self) -> None:
-    super().post_init()
-    self._namespace_region = self.get_symbol_table('namespaces')
-
   def get_namespace(self, namespace : str) -> VNNamespace | None:
-    return self._namespace_region.get(namespace)
+    return self.namespace.get(namespace)
 
   def add_namespace(self, namespace : VNNamespace) -> VNNamespace:
-    self._namespace_region.add(namespace)
+    self.namespace.add(namespace)
     return namespace
 
   @staticmethod
