@@ -5,8 +5,16 @@ import pypinyin
 import re
 
 def _fallback_handling(c : str) -> str:
-  if c.isalnum():
-    return c
+  if c.isascii():
+    if c.isalnum():
+      return c
+    result_str = ''
+    for ch in c:
+      if ch.isalnum():
+        result_str += ch
+      else:
+        result_str += '_'
+    return result_str
   return hex(ord(c))
 
 def str2identifier(name : str) -> str:

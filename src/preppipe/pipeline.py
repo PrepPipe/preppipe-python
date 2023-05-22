@@ -282,6 +282,7 @@ class TransformRegistration:
     pipeline : typing.List[TransformBase] = []
     initialized_tys : typing.Set[type] = set()
     for flag, value in ordered_passes:
+      # print('Pipeline: before flag ' + flag + ': cur type = ' + ('None' if current_ir_type is None else current_ir_type.__name__))
       transform_cls = TransformRegistration._flag_to_type_dict[flag]
       info = TransformRegistration._registration_record[transform_cls]
       # 让转换读取相应的命令行参数
@@ -323,7 +324,7 @@ class TransformRegistration:
           if output_decl != Operation and current_ir_type is not None and current_ir_type != Operation and output_decl != current_ir_type:
             raise RuntimeError('Mismatching IR type in pipeline: at pass "' + flag + '": current type: ' + current_ir_type.__name__ + ', input type: ' + input_decl.__name__)
         # 更新当前 IR 类型
-        if current_ir_type is None or current_ir_type == Operation:
+        if current_ir_type is None or current_ir_type == Operation or (output_decl is not Operation and issubclass(output_decl, Operation)):
           current_ir_type = output_decl
       elif isinstance(output_decl, IODecl):
         # 输出非 IR
