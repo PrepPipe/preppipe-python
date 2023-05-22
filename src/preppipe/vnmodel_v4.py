@@ -613,7 +613,11 @@ class VNFunction(VNSymbol):
   def has_body(self) -> bool:
     return not self.body.blocks.empty
 
+  def get_entry_block(self) -> Block:
+    return self.body.entry_block
+
   def get_entry_point(self) -> str | None:
+    # 如果该函数有 EntryPoint 属性，则返回所指的入口名
     return self.get_attr(VNFunction.ATTR_ENTRYPOINT)
 
   def set_as_entry_point(self, entryname : str | None = None):
@@ -686,7 +690,9 @@ class VNSayInstructionGroup(VNInstructionGroup):
   # 发言指令组，用于将单次人物发言的所有有关内容（说话者，说话内容，侧边头像，等等）组合起来的指令组
   # 一个发言指令组对应回溯记录（Backlog）里的一条记录
   # 发言人可以不止一个，语音、文本也可以不止一条，但是后端有可能会不支持
+  # 我们可以给每条发言设置一个 ID，方便之后搞翻译和配音
   sayer : OpOperand[VNCharacterSymbol]
+  sayid : OpOperand[StringLiteral]
 
   def get_single_sayer(self) -> VNCharacterSymbol:
     return self.sayer.get()

@@ -7,6 +7,7 @@ import typing
 
 from .ast import *
 from ..vnmodel_v4 import *
+from ..imageexpr import *
 from ..util import nameconvert
 
 @dataclasses.dataclass
@@ -29,24 +30,41 @@ class _FunctionCodeGenHelper:
       self.numeric_blocks += 1
     return codename
 
+  def sanitize_local_label(self, n : str) -> str:
+    # 如果标签名有
+    codename = nameconvert.str2identifier(n)
+    if not codename.startswith('.'):
+      codename = '.' + codename
+    return codename
+
+  def _create_label(self, block : Block, codename : str) -> RenPyLabelNode:
+    label = RenPyLabelNode.create(block.context, codename)
+    self.local_labels[codename] = label
+    self.block_dict[block] = label
+    return label
+
+  def create_entry_block_label(self, block : Block, codename : str) -> RenPyLabelNode:
+    return self._create_label(block, codename)
+
   def create_block_local_label(self, block : Block) -> RenPyLabelNode:
     # 给新遇到的这个块生成函数内的局部标签
     if len(block.name) == 0:
       # 块没有提供名字，按照数值生成它们
       codename = self.generate_anonymous_local_label()
     else:
-      codename = block.name
+      codename = self.sanitize_local_label(block.name)
       assert codename not in self.local_labels
-    label = RenPyLabelNode.create(block.context, codename)
-    self.local_labels[codename] = label
-    self.block_dict[block] = label
-    return label
+    return self._create_label(block, codename)
 
   #def compute_inst_order(self, block : Block) -> dict[VNInstruction, int]:
     # 给块中的指令赋予一个整数表示他们的顺序（即顺序号）
     # 如果碰到指令组，则指令组内的所有 VNInstruction (去掉后端指令)也要有顺序号
   #  raise NotImplementedError()
 
+@dataclasses.dataclass(eq=True, frozen=True)
+class _RenPyCharacterInfo:
+  sayername : str
+  mode : str = 'adv'
 
 class _RenPyCodeGenHelper:
   model : VNModel
@@ -57,9 +75,12 @@ class _RenPyCodeGenHelper:
   result : RenPyModel
 
   # 所有的全局状态（不论命名空间）
-  char_dict : collections.OrderedDict[VNCharacterSymbol, collections.OrderedDict[str, RenPyDefineNode]]
+  char_dict : collections.OrderedDict[VNCharacterSymbol, collections.OrderedDict[_RenPyCharacterInfo, RenPyDefineNode]]
+  canonical_char_dict : collections.OrderedDict[VNCharacterSymbol, RenPyDefineNode]
   func_dict : collections.OrderedDict[VNFunction, _FunctionCodeGenHelper]
   global_name_dict : collections.OrderedDict # 避免命名冲突的全局名称字典
+  imspec_dict : collections.OrderedDict[Value, tuple[StringLiteral, ...]]
+  numeric_image_index : int
 
   # 辅助信息
   CODEGEN_MATCH_TREE : typing.ClassVar[dict] = {}
@@ -73,7 +94,10 @@ class _RenPyCodeGenHelper:
     self.result = None # type: ignore
     self.char_dict = collections.OrderedDict()
     self.func_dict = collections.OrderedDict()
+    self.canonical_char_dict = collections.OrderedDict()
     self.global_name_dict = collections.OrderedDict()
+    self.imspec_dict = collections.OrderedDict()
+    self.numeric_image_index = 0
 
     if len(_RenPyCodeGenHelper.CODEGEN_MATCH_TREE) == 0:
       _RenPyCodeGenHelper.init_matchtable()
@@ -145,6 +169,7 @@ class _RenPyCodeGenHelper:
       codename = self.get_unique_global_name(displayname)
     definenode, charexpr = RenPyDefineNode.create_character(self.context, varname=codename, displayname=displayname)
     ms.body.push_back(definenode)
+    # charexpr.image.set_operand(0, StringLiteral.get(codename, self.context))
     match character.kind.get().value:
       case VNCharacterKind.NORMAL, VNCharacterKind.CROWD:
         pass
@@ -160,8 +185,10 @@ class _RenPyCodeGenHelper:
     # 暂时不支持其他项
     self.global_name_dict[codename] = definenode
     char_dict = collections.OrderedDict()
-    char_dict[displayname] = definenode
+    std_char_info = _RenPyCharacterInfo(sayername=displayname)
+    char_dict[std_char_info] = definenode
     self.char_dict[character] = char_dict
+    self.canonical_char_dict[character] = definenode
 
   def handle_scene(self, scene : VNSceneSymbol):
     # 目前不需要其他操作
@@ -227,15 +254,128 @@ class _RenPyCodeGenHelper:
       VNWaitInstruction : {
         VNSayInstructionGroup: _RenPyCodeGenHelper.gen_say_wait,
         None: _RenPyCodeGenHelper.gen_wait,
-      }
+      },
+      VNSayInstructionGroup: _RenPyCodeGenHelper.gen_say_nowait,
+      VNSceneSwitchInstructionGroup : _RenPyCodeGenHelper.gen_sceneswitch,
+      VNCreateInst : _RenPyCodeGenHelper.gen_create_put,
+      VNPutInst : _RenPyCodeGenHelper.gen_create_put,
+      VNCallInst : _RenPyCodeGenHelper.gen_call,
     }
 
+  def collect_say_text(self, src : OpOperand) -> list[Value]:
+    result = []
+    for u in src.operanduses():
+      v = u.value
+      if isinstance(v, (StringLiteral, TextFragmentLiteral)):
+        result.append(v)
+        continue
+      if isinstance(v, VNValueSymbol):
+        raise NotImplementedError("Currently not supporting VNValueSymbol codegen")
+      raise NotImplementedError("Unexpected value type for text: " + type(v).__name__)
+    return result
+
+  def _gen_say_impl(self, say : VNSayInstructionGroup, wait : VNWaitInstruction | None, insert_before : RenPyNode) -> RenPyNode:
+    sayer = say.sayer.get()
+    who = self.canonical_char_dict[sayer]
+    what = []
+    mode = 'adv'
+    for op in say.body.body:
+      assert isinstance(op, VNInstruction)
+      if isinstance(op, VNPutInst):
+        # 首先根据设备类型决定
+        # 我们暂不支持侧边头像
+        dev = op.device.get()
+        assert isinstance(dev, VNDeviceSymbol)
+        match dev.get_std_device_kind():
+          case VNStandardDeviceKind.O_SAY_NAME_TEXT:
+            # 我们以后再支持在名称上用变量等内容
+            # 现在就假设只有一个 StringLiteral
+            name_data = self.collect_say_text(op.content)
+            assert len(name_data) == 1
+            sayername = name_data[0]
+            assert isinstance(sayername, StringLiteral)
+            who = self.get_renpy_character(sayer, sayername=sayername.get_string(), mode=mode)
+          case VNStandardDeviceKind.O_SAY_TEXT_TEXT:
+            what = self.collect_say_text(op.content)
+            if parent_dev := dev.get_parent_device():
+              match parent_dev.get_std_device_kind():
+                case VNStandardDeviceKind.N_SCREEN_SAY_ADV:
+                  mode='adv'
+                case VNStandardDeviceKind.N_SCREEN_SAY_NVL:
+                  mode='nvl'
+                case _:
+                  pass
+          # 忽略其他不支持的设备
+          case _:
+            continue
+    result = RenPySayNode.create(self.context, who=who, what=what)
+    if wait is None:
+      result.interact.set_operand(0, BoolLiteral.get(False, self.context))
+    if sayid := say.sayid.try_get_value():
+      result.identifier.set_operand(0, sayid)
+    result.insert_before(insert_before)
+    return result
+
   def gen_say_wait(self, instrs : list[VNInstruction], insert_before : RenPyNode) -> RenPyNode:
-    raise NotImplementedError()
+    assert len(instrs) == 2
+    say = instrs[1]
+    wait = instrs[0]
+    assert isinstance(say, VNSayInstructionGroup)
+    assert isinstance(wait, VNWaitInstruction)
+    return self._gen_say_impl(say, wait, insert_before)
+
+  def gen_say_nowait(self, instrs : list[VNInstruction], insert_before : RenPyNode) -> RenPyNode:
+    assert len(instrs) == 1
+    say = instrs[0]
+    assert isinstance(say, VNSayInstructionGroup)
+    return self._gen_say_impl(say, None, insert_before)
 
   def gen_wait(self, instrs : list[VNInstruction], insert_before : RenPyNode) -> RenPyNode:
     assert len(instrs) == 1
     result = RenPyASMNode.create(self.context, asm=StringLiteral.get('pause', self.context))
+    result.insert_before(insert_before)
+    return result
+
+  def gen_sceneswitch(self, instrs : list[VNInstruction], insert_before : RenPyNode) -> RenPyNode:
+    assert len(instrs) == 1
+    sceneswitch = instrs[0]
+    assert isinstance(sceneswitch, VNSceneSwitchInstructionGroup)
+    imspec = ''
+    # 我们需要做这些：
+    # 1. 找到向背景设备写入的create/put，生成背景的 impsec
+    # 2. 对所有剩下的创建类的指令，对它们单独做生成
+    top_insert_place = None
+    for op in sceneswitch.body.body:
+      assert isinstance(op, VNInstruction)
+      is_handled = False
+      if isinstance(op, VNPlacementInstBase):
+        assert isinstance(op, (VNCreateInst, VNPutInst))
+        dev = op.device.get()
+        if dev.get_std_device_kind() == VNStandardDeviceKind.O_BACKGROUND_DISPLAY:
+          is_handled = True
+          imspec = self.get_impsec(op.content.get(), user_hint='bg')
+      if not is_handled:
+        # 在这里就地生成
+        match_result = self.CODEGEN_MATCH_TREE[type(op)]
+        if isinstance(match_result, dict):
+          match_result = match_result[None]
+        genresult = match_result(self, [op], insert_before)
+        if top_insert_place is None:
+          top_insert_place = genresult
+    result = RenPySceneNode.create(self.context, imspec=imspec)
+    if top_insert_place is None:
+      top_insert_place = insert_before
+    result.insert_before(top_insert_place)
+    return result
+
+  def gen_create_put(self, instrs : list[VNInstruction], insert_before : RenPyNode) -> RenPyNode:
+    # VNCreateInst/VNPutInst
+    raise NotImplementedError()
+
+  def gen_call(self, instrs : list[VNInstruction], insert_before : RenPyNode) -> RenPyNode:
+    callee = instrs[0].target.get()
+    calleelabel = self.func_dict[callee].codename
+    result = RenPyCallNode.create(self.context, label = calleelabel)
     result.insert_before(insert_before)
     return result
 
@@ -320,6 +460,9 @@ class _RenPyCodeGenHelper:
     # （比如某物件的图片在屏幕上出现两次，第二个显示命令处会发现该图片已有一个使用中的句柄）
     # 则我们需要安排一个不一样的句柄（show 命令中的 as 参数）
 
+    if func.body.blocks.size == 0:
+      return
+
     helper = self.func_dict[func]
 
     # 第一步
@@ -333,11 +476,17 @@ class _RenPyCodeGenHelper:
       if len(b.name) > 0:
         helper.reserve_block_name(b)
 
+    entry_block = func.get_entry_block()
+    entry_label = helper.create_entry_block_label(entry_block, helper.codename.get_string())
+    self.get_mainscript().body.push_back(entry_label)
+    if self.cur_toplevel_insertionpoint is None:
+      self.cur_toplevel_insertionpoint = entry_label
+
     for b in func.body.blocks:
+      if b is entry_block:
+        continue
       label = helper.create_block_local_label(b)
       self.get_mainscript().body.push_back(label)
-      if self.cur_toplevel_insertionpoint is None:
-        self.cur_toplevel_insertionpoint = label
 
     # 第二步
     for b in func.body.blocks:
@@ -358,30 +507,65 @@ class _RenPyCodeGenHelper:
       curname = parentvar + '_' + str(suffix)
     return curname
 
-  def get_renpy_character(self, vncharacter : VNCharacterSymbol, sayername : str, **kwargs) -> RenPyDefineNode:
+  def get_renpy_character(self, vncharacter : VNCharacterSymbol, sayername : str, mode : str = 'adv') -> RenPyDefineNode:
+    # 暂不支持 side image
     assert vncharacter in self.char_dict
     display_dict = self.char_dict[vncharacter]
-    if sayername in display_dict:
-      return display_dict[sayername]
+    info = _RenPyCharacterInfo(sayername=sayername, mode=mode)
+    if info in display_dict:
+      return display_dict[info]
     # 我们需要为了这个显示名称新建一个 Character
     # 首先，生成一个 varname
-    canonical = self.char_dict[vncharacter][vncharacter.name]
+    canonical = self.canonical_char_dict[vncharacter]
     canonicalvarname = canonical.varname.get().get_string()
     definenode, charexpr = RenPyDefineNode.create_character(self.context, varname=self.generate_varname(canonicalvarname), displayname=sayername)
     self.insert_at_top(definenode)
     charexpr.kind.set_operand(0, StringLiteral.get(canonicalvarname, self.context))
-    display_dict[sayername] = definenode
+    if mode != 'adv':
+      charexpr.kind.set_operand(0, StringLiteral.get(mode, self.context))
+    display_dict[info] = definenode
     self.global_name_dict[definenode.varname.get().get_string()] = definenode
     return definenode
+
+  def _gen_asmexpr(self, v : Value, user_hint : str = '') -> str:
+    if isinstance(v, PlaceholderImageLiteralExpr):
+      kind = "'bg'" if user_hint == 'bg' else "None"
+      return 'Placeholder(base=' + kind + ', text="' + v.description.get_string() + '")'
+    raise NotImplementedError('Unsupported value type for asmexpr generation: ' + str(type(v)))
+
+  def get_impsec(self, v : Value, user_hint : str = '') -> typing.Iterable[StringLiteral]:
+    if result := self.imspec_dict.get(v, None):
+      return result
+    # 需要创建一个 image 结点
+    # 先定名称
+    if isinstance(v, VNSymbol):
+      codename = self.get_unique_global_name(v.name)
+    else:
+      codename = 'anonimg_' + str(self.numeric_image_index)
+      self.numeric_image_index += 1
+      while codename in self.global_name_dict:
+        codename = 'anonimg_' + str(self.numeric_image_index)
+        self.numeric_image_index += 1
+    # 再取值
+    expr = self._gen_asmexpr(v, user_hint=user_hint)
+
+    resultnode = RenPyImageNode.create(self.context, codename=codename, displayable=expr)
+    self.insert_at_top(resultnode)
+    self.global_name_dict[codename] = resultnode
+    resultimspec = (StringLiteral.get(codename, self.context),)
+    self.imspec_dict[v] = resultimspec
+    return resultimspec
 
   def move_to_ns(self, n : VNNamespace):
     self.cur_namespace = n
     self.cur_path_prefix = self.get_codegen_path(n)
     self.cur_mainscript = None
     self.cur_toplevel_insertionpoint = None
-    self.char_dict.clear()
-    self.func_dict.clear()
-    self.global_name_dict.clear()
+    # 以下状态不应该清空
+    # self.char_dict.clear()
+    # self.func_dict.clear()
+    # self.canonical_char_dict.clear()
+    # self.global_name_dict.clear()
 
   def insert_at_top(self, node : RenPyNode):
     ms = self.get_mainscript()
@@ -394,6 +578,7 @@ class _RenPyCodeGenHelper:
     if self.cur_mainscript is not None:
       return self.cur_mainscript
     self.cur_mainscript = RenPyScriptFileOp.create(self.model.context, 'script')
+    self.result.add_script(self.cur_mainscript)
     return self.cur_mainscript
 
   def run(self) -> RenPyModel:
