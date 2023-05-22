@@ -492,6 +492,14 @@ class _RenPyCodeGenHelper:
     for b in func.body.blocks:
       self.codegen_block(b, helper)
 
+    if entry := func.get_entry_point():
+      if entry != 'main':
+        raise RuntimeError('Unrecognized entry point')
+      if self.func_dict[func].codename.get_string() != 'start':
+        start = RenPyLabelNode.create(self.context, codename='start')
+        self.insert_at_top(start)
+        start.body.push_back(RenPyJumpNode.create(self.context, target=self.func_dict[func].codename))
+
     # 第三步暂时不做
 
   def check_identifier(self, idstr : str, is_label : bool = False):
