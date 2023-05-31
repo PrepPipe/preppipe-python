@@ -139,6 +139,9 @@ class IListIterator(typing.Generic[_IListNodeTypeVar]):
       raise StopIteration
     curnode = self._node
     self._node = curnode.next
+    # 如果结点本身有挂值的话用结点的值
+    if v := curnode.value:
+      return v
     return curnode
 
 # if the list intends to be mutable, element node should inherit from this class

@@ -5,6 +5,7 @@ from .pipeline import *
 from .irbase import *
 from .vnmodel_v4 import *
 from .imageexpr import *
+from .analysis.icfg import *
 
 @FrontendDecl('test-vnmodel-build', input_decl=IODecl(description='<No Input>', nargs=0), output_decl=VNModel)
 class _TestVNModelBuild(TransformBase):
@@ -46,4 +47,6 @@ class _TestVNModelBuild(TransformBase):
     thenib.createCall(dummyfunc, destroyed_handle_list=(bghandle,))
     thenib.createBranch(ifdest)
     ib.createReturn()
+    graph = ICFG.build(model)
+    graph.dump_graphviz_dot()
     return model
