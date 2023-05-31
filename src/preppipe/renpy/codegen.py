@@ -228,16 +228,37 @@ class _RenPyCodeGenHelper:
       new_block = ifchain.add_branch(None)
       new_block.push_back(RenPyJumpNode.create(self.context, dest_label.codename.get()))
 
+  def gen_menu(self, terminator : VNMenuInst, helper : _FunctionCodeGenHelper, label : RenPyLabelNode):
+    menu = RenPyMenuNode.create(self.context)
+    label.body.push_back(menu)
+    num_options = terminator.text_list.get_num_operands()
+    for i in range(0, num_options):
+      text = terminator.text_list.get_operand(i)
+      cond = terminator.condition_list.get_operand(i)
+      target = terminator.target_list.get_operand(i)
+      if isinstance(cond, BoolLiteral) and cond.value:
+        cond = None
+      else:
+        cond = self.emit_expr(cond, helper)
+      dest_label = helper.block_dict[target]
+      item = RenPyMenuItemNode.create(self.context, label = text, condition = cond)
+      menu.items.push_back(item)
+      item.body.push_back(RenPyJumpNode.create(self.context, dest_label.codename.get()))
+
   def gen_terminator(self, terminator : VNTerminatorInstBase, helper : _FunctionCodeGenHelper, label : RenPyLabelNode):
     assert label.body.body.empty
     if isinstance(terminator, VNBranchInst):
       self.gen_branch(terminator, helper, label)
+    elif isinstance(terminator, VNMenuInst):
+      self.gen_menu(terminator, helper, label)
     elif isinstance(terminator, VNReturnInst):
       label.body.push_back(RenPyReturnNode.create(self.context))
     elif isinstance(terminator, VNTailCallInst):
       target_func = terminator.target.get()
       target_codename = self.func_dict[target_func].codename
       label.body.push_back(RenPyJumpNode.create(self.context, target_codename))
+    elif isinstance(terminator, VNEndingInst):
+      label.body.push_back(RenPyCallNode.create(self.context, label='__preppipe_ending__', arguments='ending_name="' + terminator.ending.get() + '"'))
     else:
       raise NotImplementedError("Unimplemented terminator type " + type(terminator).__name__)
 

@@ -355,6 +355,10 @@ class RenPyExportVisitor(RenPyASTVisitor):
       if is_expr_l.value:
         self.dest.write("expression ")
     self.dest.write(v.label.get().get_string())
+    if v.arguments.has_value():
+      self.dest.write('(')
+      self.dest.write(','.join(self.collect_strings(v.arguments)))
+      self.dest.write(')')
 
   def visitRenPyReturnNode(self, v : RenPyReturnNode):
     self.dest.write("return")

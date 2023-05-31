@@ -340,10 +340,11 @@ class RenPyCallNode(RenPyNode):
   # expression : bool, 决定 label 是否是一个表达式
   label : OpOperand[StringLiteral]
   is_expr : OpOperand[BoolLiteral] # label 是否是表达式
+  arguments : OpOperand[StringLiteral]
 
   @staticmethod
-  def create(context : Context, label : StringLiteral | str, is_expr : BoolLiteral | bool | None = None):
-    return RenPyCallNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, label=label, is_expr=is_expr)
+  def create(context : Context, label : StringLiteral | str, is_expr : BoolLiteral | bool | None = None, arguments : typing.Iterable[StringLiteral] | StringLiteral | str | None = None):
+    return RenPyCallNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, label=label, is_expr=is_expr, arguments=arguments)
 
 @irdataop.IROperationDataclass
 class RenPyReturnNode(RenPyNode):

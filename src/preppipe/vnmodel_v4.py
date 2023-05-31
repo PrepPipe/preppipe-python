@@ -766,12 +766,18 @@ class VNModifyInstBase(VNInstruction, Value):
 
 @IROperationDataclass
 class VNTerminatorInstBase(VNInstruction):
+  # 该指令可以结束当前基本块
   # CFG 模块所需信息
   def get_local_cfg_dest(self) -> tuple[Block]:
     return tuple()
   # 本身的用于分析的函数
   def get_passed_handles(self) -> tuple[Value]:
     return tuple()
+
+@IROperationDataclass
+class VNExitInstBase(VNTerminatorInstBase):
+  # 该指令可以结束当前函数
+  pass
 
 @IROperationDataclass
 class VNCallInst(VNInstruction):
@@ -783,18 +789,27 @@ class VNCallInst(VNInstruction):
     return VNCallInst(init_mode=IRObjectInitMode.CONSTRUCT, context=context, start_time=start_time, target=target, destroyed_handle_list=destroyed_handle_list, name=name, loc=loc)
 
 @IROperationDataclass
-class VNReturnInst(VNTerminatorInstBase):
+class VNReturnInst(VNExitInstBase):
   # 返回调用者，当前所有句柄不保留
   @staticmethod
   def create(context : Context, start_time: Value, name : str = '', loc : Location | None = None):
     return VNReturnInst(init_mode=IRObjectInitMode.CONSTRUCT, context=context, start_time=start_time, name=name, loc=loc)
 
 @IROperationDataclass
-class VNTailCallInst(VNTerminatorInstBase, VNCallInst):
+class VNTailCallInst(VNExitInstBase, VNCallInst):
   # 跳转到目标函数，不返回；当前所有句柄不保留
   @staticmethod
   def create(context : Context, start_time: Value, target : VNFunction, destroyed_handle_list : typing.Iterable[Value] | None = None, name : str = '', loc : Location | None = None):
     return VNTailCallInst(init_mode=IRObjectInitMode.CONSTRUCT, context=context, start_time=start_time, target=target, destroyed_handle_list=destroyed_handle_list, name=name, loc=loc)
+
+@IROperationDataclass
+class VNEndingInst(VNExitInstBase):
+  # 结束故事所用的指令，显式地表示到达某个结局
+  ending : OpOperand[StringLiteral] # 结局的名称
+
+  @staticmethod
+  def create(context : Context, start_time: Value, ending: StringLiteral | str , name : str = '', loc : Location | None = None):
+    return VNEndingInst(init_mode=IRObjectInitMode.CONSTRUCT, context=context, start_time=start_time, ending=ending, name=name, loc=loc)
 
 @IROperationDataclass
 class VNBranchInst(VNTerminatorInstBase):
@@ -827,6 +842,41 @@ class VNBranchInst(VNTerminatorInstBase):
   @staticmethod
   def create(context : Context, start_time: Value, defaultbranch : Block, name : str = '', loc : Location | None = None):
     return VNBranchInst(init_mode=IRObjectInitMode.CONSTRUCT, context=context, start_time=start_time, defaultbranch=defaultbranch, name=name, loc=loc)
+
+@IROperationDataclass
+class VNMenuInst(VNTerminatorInstBase):
+  # 想跳出选项时就用该指令
+  # 如果想在选项时有发言(VNSayInstGroup)，那么该指令组后面不应该跟随 VNWaitInst 而是直接跟这个
+  # (即该 VNMenuInst 的起始时间应该取 VNSayInstGroup 的结束时间)
+  # 目前暂不支持在选单文本中使用字符串表达式，每个选项必须是字符串常量
+  text_list : OpOperand[StringLiteral] # 所有的选项文本
+  condition_list : OpOperand[Value] # 所有的让选项出现的条件（各个 if 的条件，应该都是 BoolType）（没有的话用 BoolLiteral 来填）
+  target_list : OpOperand[Block] # 所有的跳转目标（各个 if 从句的目标块）
+  handle_list : OpOperand[Value] # 当前所有的句柄
+
+  def get_local_cfg_dest(self) -> tuple[Block]:
+    return tuple([t.value for t in self.target_list.operanduses()])
+
+  def get_passed_handles(self) -> tuple[Value]:
+    return tuple([v.value for v in self.handle_list.operanduses()])
+
+  def add_option(self, text : StringLiteral | str, target : Block, condition : Value | None = None):
+    assert isinstance(target, Block)
+    if condition is not None:
+      assert isinstance(condition.valuetype, BoolType)
+    else:
+      condition = BoolLiteral.get(True, self.context)
+    if isinstance(text, str):
+      text = StringLiteral.get(text, self.context)
+    else:
+      assert isinstance(text, StringLiteral)
+    self.text_list.add_operand(text)
+    self.condition_list.add_operand(condition)
+    self.target_list.add_operand(target)
+
+  @staticmethod
+  def create(context : Context, start_time: Value, name : str = '', loc : Location | None = None):
+    return VNMenuInst(init_mode=IRObjectInitMode.CONSTRUCT, context=context, start_time=start_time, name=name, loc=loc)
 
 @IROperationDataclass
 @IRObjectJsonTypeName("vn_namespace_op")
