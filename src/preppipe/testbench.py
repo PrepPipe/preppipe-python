@@ -6,6 +6,8 @@ from .irbase import *
 from .vnmodel_v4 import *
 from .imageexpr import *
 from .analysis.icfg import *
+from .analysis.timemodel import *
+from .analysis.assetusage import AssetUsage
 
 @FrontendDecl('test-vnmodel-build', input_decl=IODecl(description='<No Input>', nargs=0), output_decl=VNModel)
 class _TestVNModelBuild(TransformBase):
@@ -49,4 +51,7 @@ class _TestVNModelBuild(TransformBase):
     ib.createReturn()
     graph = ICFG.build(model)
     graph.dump_graphviz_dot()
+    tm = SayCountTimeModel()
+    usage = AssetUsage.build(model, graph, tm)
+    print(str(usage))
     return model
