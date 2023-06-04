@@ -746,7 +746,7 @@ class VNCreateInst(VNPlacementInstBase, Value):
   # 创建指令基本同放置指令，唯一区别是会有一个句柄值
 
   @staticmethod
-  def create(context : Context, start_time: Value, content : Value | None = None, ty : VNHandleType | None = None, device : VNDeviceSymbol | None = None, name: str = '', loc: Location | None = None) -> VNPutInst:
+  def create(context : Context, start_time: Value, content : Value | None = None, ty : VNHandleType | None = None, device : VNDeviceSymbol | None = None, name: str = '', loc: Location | None = None) -> VNCreateInst:
     if ty is not None:
       assert isinstance(ty, VNHandleType)
     elif content is not None:
@@ -757,26 +757,39 @@ class VNCreateInst(VNPlacementInstBase, Value):
     return VNCreateInst(init_mode=IRObjectInitMode.CONSTRUCT, context=context, start_time=start_time, content=content, device=device, ty=ty, name=name, loc=loc)
 
 @IROperationDataclass
-class VNModifyInstBase(VNInstruction, Value):
-  # 所有对某对象的改变的指令基类，包括呈现方式更改（如位置）和内容更改（删除，切换，等等）
+class VNModifyInst(VNInstruction, Value):
+  # 对某对象做任何改变的指令，包括呈现方式更改（如位置）和内容更改（包括切换到另一个内容，不包括删除）
+  # 强调一遍，可以使用该指令改变句柄代表的内容，这样可以指定比如 crossfade 这样涉及前后两个内容的渐变效果，或是使用前一个内容留下的位置等信息
   # 如果我们对场景进行切换，我们也使用基于该指令的子类
   # 更改指令不能更改所在的设备，不能更改内容的类型（比如不能用视频替换文本）
+  # content 和 placeat 不为空，不改变对应项就重复之前的内容
+  handlein : OpOperand
+  content : OpOperand[Value]
+  placeat : SymbolTableRegion
+  transition : OpOperand[Value]
+
+  @staticmethod
+  def create(context : Context, start_time: Value, handlein : Value, content : Value | None = None, name: str = '', loc: Location | None = None) -> VNModifyInst:
+    return VNModifyInst(init_mode=IRObjectInitMode.CONSTRUCT, context=context, start_time=start_time, handlein=handlein, content=content, ty=handlein.valuetype, name=name, loc=loc)
+
+@IROperationDataclass
+class VNRemoveInst(VNInstruction):
+  # 去除某对象句柄所用的指令，只能指定渐变效果
   handlein : OpOperand
   transition : OpOperand[Value]
+
+  @staticmethod
+  def create(context : Context, start_time: Value, handlein : Value, name: str = '', loc: Location | None = None) -> VNRemoveInst:
+    return VNRemoveInst(init_mode=IRObjectInitMode.CONSTRUCT, context=context, start_time=start_time, handlein=handlein, name=name, loc=loc)
 
 @IROperationDataclass
 class VNTerminatorInstBase(VNInstruction):
   # 该指令可以结束当前基本块
-  # CFG 模块所需信息
-  def get_local_cfg_dest(self) -> tuple[Block]:
-    return tuple()
-  # 本身的用于分析的函数
-  def get_passed_handles(self) -> tuple[Value]:
-    return tuple()
+  pass
 
 @IROperationDataclass
 class VNExitInstBase(VNTerminatorInstBase):
-  # 该指令可以结束当前函数
+  # 该指令可以结束当前函数（同时结束当前基本块）
   pass
 
 @IROperationDataclass
@@ -812,55 +825,67 @@ class VNEndingInst(VNExitInstBase):
     return VNEndingInst(init_mode=IRObjectInitMode.CONSTRUCT, context=context, start_time=start_time, ending=ending, name=name, loc=loc)
 
 @IROperationDataclass
-class VNBranchInst(VNTerminatorInstBase):
-  # 所有的函数内跳转（不管有无条件）都用这个
-  # defaultbranch 一定不为空
-  # 若是有条件跳转，condition_list 和 target_list 内的参数应当一样多
-  # handle_list 被用作传递 BlockArgument 的值，它们一起取代 PHI 结点
-  defaultbranch : OpOperand[Block] # 如果没有条件满足，则跳转到该块（else 从句目标）
-  condition_list : OpOperand[Value] # 所有的条件（各个 if 的条件，应该都是 BoolType）（无条件跳转的话可以为空）
-  target_list : OpOperand[Block] # 所有的跳转目标（各个 if 从句的目标块）（无条件跳转的话可以为空）
-  handle_list : OpOperand[Value] # 当前所有的句柄
+class VNLocalTransferInstBase(VNTerminatorInstBase):
+  # 该指令只结束当前基本块；控制流会转移到同函数的另一基本块
+  # 由于我们使用 BlockArgument 来取代句柄的 PHI 结点，当目的基本块不同时，我们需要传递的句柄也可能不同
+  # 所以这里我们统一给每个可能的目的基本块单独保存需传递的句柄
+  # （如果句柄被传递到这，那么后续的代码不能再用原来的句柄值，必须使用目标基本块的 BlockArgument）
+  # target_list 可以包含同一个基本块不止一次（比如不同选项对应同一个结局）
 
-  def add_branch(self, condition : Value, target : Block):
-    assert isinstance(condition.valuetype, BoolType) and isinstance(target, Block)
-    self.condition_list.add_operand(condition)
+  target_list : OpOperand[Block] # 所有的跳转目标
+
+  def _get_blockarg_operand_name(self, index : int) -> str:
+    return 'blockarg_' + str(index)
+
+  def get_blockarg_operandinst(self, index : int) -> OpOperand:
+    return self.get_operand_inst(self._get_blockarg_operand_name(index))
+
+  def _add_branch_impl(self, target : Block) -> OpOperand:
+    index = self.target_list.get_num_operands()
     self.target_list.add_operand(target)
-
-  def get_num_conditional_branch(self) -> int:
-    return self.target_list.get_num_operands()
+    return self._add_operand(self._get_blockarg_operand_name(index))
 
   def get_local_cfg_dest(self) -> tuple[Block]:
-    targets = [self.defaultbranch.get()]
-    for t in self.target_list.operanduses():
-      targets.append(t.value)
-    return tuple(targets)
+    return tuple([v.value for v in self.target_list.operanduses()])
 
-  def get_passed_handles(self) -> tuple[Value]:
-    return tuple([v.value for v in self.handle_list.operanduses()])
+@IROperationDataclass
+class VNBranchInst(VNLocalTransferInstBase):
+  # 所有的函数内跳转（不管有无条件）都用这个
+  # condition_list 一定比 target_list 少一个值，target_list里第一项为无条件跳转的目标点
+  condition_list : OpOperand[Value] # 所有的条件（各个 if 的条件，应该都是 BoolType）（无条件跳转的话可以为空）
+
+  def get_default_branch_target(self) -> Block:
+    return self.target_list.get_operand(0)
+
+  def add_branch(self, condition : Value, target : Block) -> OpOperand:
+    assert isinstance(condition.valuetype, BoolType) and isinstance(target, Block)
+    self.condition_list.add_operand(condition)
+    return super()._add_branch_impl(target)
+
+  def get_num_conditional_branch(self) -> int:
+    return self.condition_list.get_num_operands()
+
+  def get_conditional_branch_tuple(self, index : int) -> tuple[Block, Value]: # conditional branch index --> <Block, condition>
+    target = self.target_list.get_operand(index + 1)
+    cond = self.condition_list.get_operand(index)
+    return (target, cond)
 
   @staticmethod
   def create(context : Context, start_time: Value, defaultbranch : Block, name : str = '', loc : Location | None = None):
-    return VNBranchInst(init_mode=IRObjectInitMode.CONSTRUCT, context=context, start_time=start_time, defaultbranch=defaultbranch, name=name, loc=loc)
+    result = VNBranchInst(init_mode=IRObjectInitMode.CONSTRUCT, context=context, start_time=start_time, name=name, loc=loc)
+    result._add_branch_impl(defaultbranch)
+    return result
 
 @IROperationDataclass
-class VNMenuInst(VNTerminatorInstBase):
+class VNMenuInst(VNLocalTransferInstBase):
   # 想跳出选项时就用该指令
   # 如果想在选项时有发言(VNSayInstGroup)，那么该指令组后面不应该跟随 VNWaitInst 而是直接跟这个
   # (即该 VNMenuInst 的起始时间应该取 VNSayInstGroup 的结束时间)
   # 目前暂不支持在选单文本中使用字符串表达式，每个选项必须是字符串常量
   text_list : OpOperand[StringLiteral] # 所有的选项文本
   condition_list : OpOperand[Value] # 所有的让选项出现的条件（各个 if 的条件，应该都是 BoolType）（没有的话用 BoolLiteral 来填）
-  target_list : OpOperand[Block] # 所有的跳转目标（各个 if 从句的目标块）
-  handle_list : OpOperand[Value] # 当前所有的句柄
 
-  def get_local_cfg_dest(self) -> tuple[Block]:
-    return tuple([t.value for t in self.target_list.operanduses()])
-
-  def get_passed_handles(self) -> tuple[Value]:
-    return tuple([v.value for v in self.handle_list.operanduses()])
-
-  def add_option(self, text : StringLiteral | str, target : Block, condition : Value | None = None):
+  def add_option(self, text : StringLiteral | str, target : Block, condition : Value | None = None) -> OpOperand:
     assert isinstance(target, Block)
     if condition is not None:
       assert isinstance(condition.valuetype, BoolType)
@@ -872,7 +897,7 @@ class VNMenuInst(VNTerminatorInstBase):
       assert isinstance(text, StringLiteral)
     self.text_list.add_operand(text)
     self.condition_list.add_operand(condition)
-    self.target_list.add_operand(target)
+    return self._add_branch_impl(target)
 
   @staticmethod
   def create(context : Context, start_time: Value, name : str = '', loc : Location | None = None):

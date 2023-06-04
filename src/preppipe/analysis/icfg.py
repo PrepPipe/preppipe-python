@@ -268,14 +268,14 @@ class ICFG(graphtrait.GenericGraphBase):
         curpos = blocks[b]
         for op in b.body:
           if isinstance(op, VNTerminatorInstBase):
-            if isinstance(op, VNBranchInst):
+            if isinstance(op, VNLocalTransferInstBase):
+              # 去掉重边
+              visited = set()
               for dest in op.get_local_cfg_dest():
-                destentry = blocks[dest]
-                ICFGEdge(curpos, destentry)
-            elif isinstance(op, VNMenuInst):
-              for dest in op.get_local_cfg_dest():
-                destentry = blocks[dest]
-                ICFGEdge(curpos, destentry)
+                if dest not in visited:
+                  visited.add(dest)
+                  destentry = blocks[dest]
+                  ICFGEdge(curpos, destentry)
             elif isinstance(op, VNExitInstBase):
               exitnode = FunExitICFGNode(op)
               exitnode.add_to_graph(icfg)
@@ -370,3 +370,23 @@ class ICFG(graphtrait.GenericGraphBase):
           ICFGEdge(fromnode, tonode)
     return icfg
 
+  def get_node_weights(self) -> dict[ICFGNode, decimal.Decimal]:
+    # 计算每个 ICFG 结点的权重，权重被定义为正常游玩（全结局，多周目遇重复内容时跳过）下某个 ICFG 结点的期望经历次数
+    # 比如如果一段剧情在整个故事中反复出现，则结点的权重大于1
+    # 又如果主线中有个小分支，完成任一分支即可继续主线，则分支上的结点的权重小于1
+    # 从入口不可达的结点不会出现在该 dict 中
+
+    # 正常的解法应该是这样：
+    # 1. 生成一个 Context-sensitive ICFG ，被调用不止一次的函数的所有 ICFG 结点都在每个调用上下文中复制一遍
+    # 2. 找到 Context-sensitive ICFG 中所有的 articulation point，这些结点是全结局时必须通过的点，权重为1
+    #    于此同时，所有不可达的结点的权重为零
+    # 3. 对每个可达但是不是 articulation point 的结点而言，它们一定在被 >=2 个 articulation point 截住的路径上；
+    #    我们穷举所有从一个 articulation point 到另一个的路径（比如一共 N 条路径），根据经过结点的路径的数量来计算结点的权（比如 N 条路径经过结点 k 次，则权重 k/N）
+    # 4. 把所有在 Context-sensitive ICFG 中的权重映射回原来的 ICFG 结点（就是加起来）
+    # 现在为了图省事，暂时令所有的权值都为1，以后等有时间了再改
+    # https://www.hackerearth.com/practice/algorithms/graphs/articulation-points-and-bridges/tutorial/
+    # https://www.geeksforgeeks.org/articulation-points-or-cut-vertices-in-a-graph/
+    result : dict[ICFGNode, decimal.Decimal] = {}
+    for n in self.get_all_nodes():
+      result[n] = decimal.Decimal(1)
+    return result

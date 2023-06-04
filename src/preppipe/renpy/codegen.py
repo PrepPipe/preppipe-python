@@ -209,21 +209,20 @@ class _RenPyCodeGenHelper:
 
   def gen_branch(self, terminator : VNBranchInst, helper : _FunctionCodeGenHelper, label : RenPyLabelNode):
     if terminator.get_num_conditional_branch() == 0:
-      target = terminator.defaultbranch.get()
+      target = terminator.get_default_branch_target()
       dest_label = helper.block_dict[target]
       label.body.push_back(RenPyJumpNode.create(self.context, dest_label.codename.get()))
     else:
       ifchain = RenPyIfNode.create(self.context)
       label.body.push_back(ifchain)
-      for i in range(0, terminator.condition_list.get_num_operands()):
-        cond = terminator.condition_list.get_operand(i)
-        target = terminator.target_list.get_operand(i)
+      for i in range(0, terminator.get_num_conditional_branch()):
+        target, cond = terminator.get_conditional_branch_tuple(i)
         dest_label = helper.block_dict[target]
         assert isinstance(cond.valuetype, BoolType)
         condexpr = self.emit_expr(cond, helper)
         new_block = ifchain.add_branch(condexpr)
         new_block.push_back(RenPyJumpNode.create(self.context, dest_label.codename.get()))
-      target = terminator.defaultbranch.get()
+      target = terminator.get_default_branch_target()
       dest_label = helper.block_dict[target]
       new_block = ifchain.add_branch(None)
       new_block.push_back(RenPyJumpNode.create(self.context, dest_label.codename.get()))
@@ -492,8 +491,8 @@ class _RenPyCodeGenHelper:
     # 2. 第二遍把还没有名称的块放进去（局部名冲突会使得名称重新生成）
     for b in func.body.blocks:
       terminator = self.get_terminator(b)
-      if len(terminator.get_passed_handles()) > 0:
-        raise RuntimeError('Terminator passing handles are not supported yet (report to the programmer)')
+      #if len(terminator.get_passed_handles()) > 0:
+      #  raise RuntimeError('Terminator passing handles are not supported yet (report to the programmer)')
       if len(b.name) > 0:
         helper.reserve_block_name(b)
 
