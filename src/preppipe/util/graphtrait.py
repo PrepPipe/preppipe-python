@@ -95,8 +95,7 @@ class GenericGraphBase:
   def __init__(self) -> None:
     self._all_nodes = IList(self)
 
-  def get_all_nodes(self) -> typing.Iterable[GenericNodeBase] | None:
-    # 可以不提供，但如果画图时要把不可达的结点也加上的话必须要有
+  def get_all_nodes(self) -> typing.Iterable[GenericNodeBase]:
     return self._all_nodes
 
   def add_node(self, node : GenericNodeBase):

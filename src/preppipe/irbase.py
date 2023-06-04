@@ -821,6 +821,8 @@ class IRJsonExporter:
       BytesAssetData,
       ImageAssetData,
       AudioAssetData,
+      AssetPlaceholderTrait,
+      AssetDeclarationTrait,
     ]
     for ty in base_types:
       self.add_base_type(ty)
@@ -2640,6 +2642,16 @@ class AudioAssetData(AssetData[pydub.AudioSegment, str]):
     else:
       data : pydub.AudioSegment = pydub.AudioSegment.from_file(self._backing_store_path, format = self._format)
       data.export(dest_path, format=fmt)
+
+@IRWrappedStatelessClassJsonName('asset_placeholder_trait')
+class AssetPlaceholderTrait:
+  # 如果某个值表示占位资源，则应继承自该类来告诉其余代码
+  pass
+
+@IRWrappedStatelessClassJsonName('asset_decl_trait')
+class AssetDeclarationTrait:
+  # 如果某个值表示声明的资源（即内容暂缺的外部资源），则应继承自该类来告诉其余代码
+  pass
 
 #class AssetBase(User):
   # base class of assets that other IR components can reference

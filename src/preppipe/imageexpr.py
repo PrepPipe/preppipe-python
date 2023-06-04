@@ -76,7 +76,7 @@ class ColorImageLiteralExpr(BaseImageLiteralExpr):
     return ColorImageLiteralExpr._get_literalexpr_impl((color, size, anchor), context)
 
 @IRObjectJsonTypeName('decl_image_le')
-class DeclaredImageLiteralExpr(BaseImageLiteralExpr):
+class DeclaredImageLiteralExpr(BaseImageLiteralExpr, AssetDeclarationTrait):
   # 该图片代表一个没有定义只有声明的图片
   # 该图片的定义已存在，不能生成定义
   @property
@@ -90,7 +90,7 @@ class DeclaredImageLiteralExpr(BaseImageLiteralExpr):
     return DeclaredImageLiteralExpr._get_literalexpr_impl((decl, size, anchor), context)
 
 @IRObjectJsonTypeName('placeholder_image_le')
-class PlaceholderImageLiteralExpr(BaseImageLiteralExpr):
+class PlaceholderImageLiteralExpr(BaseImageLiteralExpr, AssetPlaceholderTrait):
   # 该图片代表一个没有定义、需要生成的图片
   @property
   def description(self) -> StringLiteral:
