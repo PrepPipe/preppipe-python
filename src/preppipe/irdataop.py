@@ -135,7 +135,7 @@ class _DataOpHelper:
               if v is not None:
                 if converted := convert_value(v):
                   initializer.append(converted)
-            value = inst._add_operand_with_value_list(f.lookup_name, initializer)
+            value = inst._add_operand_with_value(f.lookup_name, initializer)
           else:
             initializer = convert_value(value)
             value = inst._add_operand_with_value(f.lookup_name, initializer)
