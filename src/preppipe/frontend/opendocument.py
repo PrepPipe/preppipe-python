@@ -20,10 +20,12 @@ class _TextStyleInfo:
   # this structure temporarily holds the style info during the parsing
   style : typing.Dict[TextAttribute, typing.Any]
   is_strike_through : bool # if the font has strikethrough (and we will drop it after generation)
+  is_special_block_style : bool # if the text style satisfy requirement for special block
 
   def __init__(self, src = None):
     self.style = {}
     self.is_strike_through = False
+    self.is_special_block_style = False
     if src is not None:
       assert isinstance(src, _TextStyleInfo)
       self.style = src.style.copy()
@@ -42,13 +44,27 @@ class _TextStyleInfo:
       self.style.pop(TextAttribute.Italic, None)
 
   def set_color(self, color: Color):
+    if color.red() == 0 and color.green() == 0 and color.blue() == 0 and color.alpha() == 255:
+      if TextAttribute.TextColor in self.style:
+        del self.style[TextAttribute.TextColor]
+      return
     self.style[TextAttribute.TextColor] = color
 
   def set_background_color(self, color: Color):
+    if color.red() == 0 and color.green() == 0 and color.blue() == 0 and color.alpha() == 255:
+      if TextAttribute.BackgroundColor in self.style:
+        del self.style[TextAttribute.BackgroundColor]
+      return
     self.style[TextAttribute.BackgroundColor] = color
 
   def set_strike_through(self, v : bool):
     self.is_strike_through = v
+
+  def set_is_pecial_block(self, v : bool):
+    self.is_special_block_style = v
+
+  def empty(self) -> bool:
+    return len(self.style) == 0 and not self.is_strike_through and not self.is_special_block_style
 
 class _ListStyleInfo:
   is_numbered : bool # true if the list use numbers instead of bullet points
@@ -145,9 +161,10 @@ class _ODParseContext:
           continue
         # if we have a parent-style-name, we need to modify from the parent style
         parent_style = self._get_element_attribute(child, "parent-style-name")
-        current_style = _TextStyleInfo()
         if len(parent_style) > 0:
           current_style = _TextStyleInfo(self.style_data[parent_style])
+        else:
+          current_style = _TextStyleInfo()
         # we should have child nodes of type text-properties
         # we don't care about paragraph-properties for now
         for property_node in child.childNodes:
@@ -164,6 +181,10 @@ class _ODParseContext:
               elif k[1] == "text-line-through-style":
                 current_style.set_strike_through(property_node.attributes[k] != 'none')
                 # add other attrs here if needed
+          elif property_node.qname[1] == "paragraph-properties":
+            for k in property_node.attributes.keys():
+              if k[1] == "background-color":
+                current_style.set_is_pecial_block(property_node.attributes[k] != '#ffffff')
         self.style_data[name] = current_style
       elif child.qname[1] == "list-style":
         # we found a list style entry
@@ -203,7 +224,7 @@ class _ODParseContext:
   def get_DILocation(self, page : int, row : int, column : int) -> DILocation:
     return self.ctx.get_DILocation(self.difile, page, row, column)
 
-  def create_text_element(self, text:str, style_name:str, loc : DILocation) -> IMElementOp | typing.Tuple[IMElementOp, IMErrorElementOp]:
+  def create_text_element(self, text:str, style_name:str, loc : DILocation) -> IMElementOp | IMSpecialBlockOp | typing.Tuple[IMElementOp, IMErrorElementOp]:
     """Create the text element with the provided text and style name.
     The flags for the text element will be set from the style name
     """
@@ -212,16 +233,23 @@ class _ODParseContext:
     error_op = None
     cstyle = None
     is_strike_through = False
+    is_special_block = False
     if style_name in self.style_data:
       style = self.style_data[style_name]
       if style.is_strike_through:
         is_strike_through = True
-      cstyle = TextStyleLiteral.get(style.style, self.ctx)
+      if style.is_special_block_style:
+        is_special_block = True
+      if not style.empty() and not is_special_block:
+        cstyle = TextStyleLiteral.get(style.style, self.ctx)
     else:
-      cstyle = TextStyleLiteral.get(style.style, self.ctx)
       error_op = IMErrorElementOp.create(name = '', loc = loc, content = content, error_code='odf-bad-style-name', error_msg = StringLiteral.get('Cannot find style name \"' + style_name + '"', self.ctx))
-    content = TextFragmentLiteral.get(self.ctx, content, cstyle)
-    node = IMElementOp.create(name = '', loc = loc, content = content)
+    if cstyle is not None:
+      content = TextFragmentLiteral.get(self.ctx, content, cstyle)
+    if is_special_block:
+      node = IMSpecialBlockOp.create(name = '', loc = loc, content = content)
+    else:
+      node = IMElementOp.create(name = '', loc = loc, content = content)
     if is_strike_through:
       node.set_attr('StrikeThrough', True)
     if error_op is None:
@@ -346,108 +374,178 @@ class _ODParseContext:
     loc = self.get_DILocation(self.cur_page_count, self.cur_row_count, self.cur_column_count)
     return IMErrorElementOp.create(name = str(element.qname), loc = loc, content = StringLiteral.get(str(element), self.ctx), error_code='unsupported-element')
 
-  def odf_parse_paragraph(self, rootnode : odf.element.Element, isInFrame : bool, default_style: str = "") -> Block:
-    def populate_paragraph(paragraph: Block, rootnode : odf.element.Element, default_style: str, isInFrame : bool) -> None:
-      for element in rootnode.childNodes:
-        loc = self.get_DILocation(self.cur_page_count, self.cur_row_count, self.cur_column_count)
-        if element.nodeType == 3:
-          # this is a text node
-          text = str(element)
-          if len(text) > 0:
-            element_node_or_pair = self.create_text_element(text, default_style, loc)
-            if isinstance(element_node_or_pair, tuple):
-              # an IMElementOp and an IMErrorElementOp
-              for e in element_node_or_pair:
-                paragraph.push_back(e)
-            else:
-              assert isinstance(element_node_or_pair, IMElementOp)
-              paragraph.push_back(element_node_or_pair)
-            self.cur_column_count += len(text)
-        elif element.nodeType == 1:
-          if element.qname[1] == "span":
-            # this is a node with attribute
-            style = self.get_style(element)
-            if (style == ""):
-              style = default_style
-            populate_paragraph(paragraph, element, style, isInFrame)
-          elif element.qname[1] == "frame":
-            if len(element.childNodes) == 0:
-              continue
+  def _populate_paragraph_impl(self, paragraph: Block, rootnode : odf.element.Element, default_style: str, isInFrame : bool) -> None:
+    for element in rootnode.childNodes:
+      loc = self.get_DILocation(self.cur_page_count, self.cur_row_count, self.cur_column_count)
+      if element.nodeType == 3:
+        # this is a text node
+        text = str(element)
+        if len(text) > 0:
+          element_node_or_pair = self.create_text_element(text, default_style, loc)
+          if isinstance(element_node_or_pair, tuple):
+            # an IMElementOp and an IMErrorElementOp
+            for e in element_node_or_pair:
+              paragraph.push_back(e)
+          else:
+            assert isinstance(element_node_or_pair, (IMElementOp, IMSpecialBlockOp))
+            paragraph.push_back(element_node_or_pair)
+          self.cur_column_count += len(text)
+      elif element.nodeType == 1:
+        if element.qname[1] == "span":
+          # this is a node with attribute
+          style = self.get_style(element)
+          if (style == ""):
+            style = default_style
+          self._populate_paragraph_impl(paragraph, element, style, isInFrame)
+        elif element.qname[1] == "frame":
+          if len(element.childNodes) == 0:
+            continue
 
-            # inside a frame, we usually only have one single child
-            # however, we may have substitutes that appear after the first child
-            # (e.g., if we have a chart in the doc, we will have (1) the chart object and (2) a replacement image)
-            # the qname is not always good enough for debugging (e.g., the chart is just an "object"), but is better than nothing
-            firstChild = element.childNodes[0]
-            first_child_name = firstChild.qname[1]
+          # inside a frame, we usually only have one single child
+          # however, we may have substitutes that appear after the first child
+          # (e.g., if we have a chart in the doc, we will have (1) the chart object and (2) a replacement image)
+          # the qname is not always good enough for debugging (e.g., the chart is just an "object"), but is better than nothing
+          firstChild = element.childNodes[0]
+          first_child_name = firstChild.qname[1]
 
-            if len(element.childNodes) > 1:
-              remaining_qnames = []
-              for i in range(1, len(element.childNodes)):
-                remaining_qnames.append(element.childNodes[i].qname[1])
-              info_str = "Frame (" + first_child_name +") has more than one child ("+ str(remaining_qnames)+"); only the first is read."
-              MessageHandler.info(info_str, self.filePath, str(loc))
+          if len(element.childNodes) > 1:
+            remaining_qnames = []
+            for i in range(1, len(element.childNodes)):
+              remaining_qnames.append(element.childNodes[i].qname[1])
+            info_str = "Frame (" + first_child_name +") has more than one child ("+ str(remaining_qnames)+"); only the first is read."
+            MessageHandler.info(info_str, self.filePath, str(loc))
 
-            # check whether the frame has the expected anchoring
-            anchor = self._get_element_attribute(element, "anchor-type")
-            if anchor not in self._FRAME_EXPECTED_ANCHORTYPES:
-              warn_str = "Frame (" + first_child_name + ") with unexpected anchor type " + anchor + "found. Please inspect the output on possible mispositions of frame data. (Expecting: "+ str(self._FRAME_EXPECTED_ANCHORTYPES) + ")"
+          # check whether the frame has the expected anchoring
+          anchor = self._get_element_attribute(element, "anchor-type")
+          if anchor not in self._FRAME_EXPECTED_ANCHORTYPES:
+            warn_str = "Frame (" + first_child_name + ") with unexpected anchor type " + anchor + "found. Please inspect the output on possible mispositions of frame data. (Expecting: "+ str(self._FRAME_EXPECTED_ANCHORTYPES) + ")"
+            MessageHandler.warning(warn_str, self.filePath, str(loc))
+
+
+          if firstChild.nodeType == 1 and first_child_name == "image":
+            href = self._get_element_attribute(firstChild, "href")
+            loc = self.get_DILocation(self.cur_page_count, self.cur_row_count, self.cur_column_count)
+            image_element = self.create_image_reference(href, loc)
+            paragraph.push_back(image_element)
+
+          elif firstChild.nodeType == 1 and first_child_name == "plugin" and self._get_element_attribute(firstChild, 'mime-type') == 'application/vnd.sun.star.media':
+            # audio / video
+            href = self._get_element_attribute(firstChild, "href")
+            loc = self.get_DILocation(self.cur_page_count, self.cur_row_count, self.cur_column_count)
+            media_element = self.create_media_reference(href, loc)
+            paragraph.push_back(media_element)
+
+          elif firstChild.nodeType == 1 and first_child_name == "text-box":
+            # we do not support nested textbox. If we are already in frame, we skip this text box
+            loc = self.get_DILocation(self.cur_page_count, self.cur_row_count, self.cur_column_count)
+            if isInFrame:
+              warn_str = "Frame (" + first_child_name +") is inside a framed environment, and is therefore ignored"
               MessageHandler.warning(warn_str, self.filePath, str(loc))
-
-
-            if firstChild.nodeType == 1 and first_child_name == "image":
-              href = self._get_element_attribute(firstChild, "href")
-              loc = self.get_DILocation(self.cur_page_count, self.cur_row_count, self.cur_column_count)
-              image_element = self.create_image_reference(href, loc)
-              paragraph.push_back(image_element)
-
-            elif firstChild.nodeType == 1 and first_child_name == "plugin" and self._get_element_attribute(firstChild, 'mime-type') == 'application/vnd.sun.star.media':
-              # audio / video
-              href = self._get_element_attribute(firstChild, "href")
-              loc = self.get_DILocation(self.cur_page_count, self.cur_row_count, self.cur_column_count)
-              media_element = self.create_media_reference(href, loc)
-              paragraph.push_back(media_element)
-
-            elif firstChild.nodeType == 1 and first_child_name == "text-box":
-              # we do not support nested textbox. If we are already in frame, we skip this text box
-              loc = self.get_DILocation(self.cur_page_count, self.cur_row_count, self.cur_column_count)
-              if isInFrame:
-                warn_str = "Frame (" + first_child_name +") is inside a framed environment, and is therefore ignored"
-                MessageHandler.warning(warn_str, self.filePath, str(loc))
-                paragraph.push_back(IMErrorElementOp.create(name='', loc=loc, content= StringLiteral.get("text-box", self.ctx), error_code='odf-nested-frame', error_msg= StringLiteral.get(warn_str, self.ctx)))
-              else:
-                # let's deal with this text box
-                # the default text style for textbox text is specified on the frame, instead of the text-box element
-                style = self._get_element_attribute(element, "text-style-name")
-                if (style == ""):
-                  style = default_style
-                frame = IMFrameOp.create('', loc)
-                self.odf_parse_frame(frame.body, firstChild, True, style)
-                paragraph.push_back(frame)
+              paragraph.push_back(IMErrorElementOp.create(name='', loc=loc, content= StringLiteral.get("text-box", self.ctx), error_code='odf-nested-frame', error_msg= StringLiteral.get(warn_str, self.ctx)))
             else:
-              paragraph.push_back(self._get_unsupported_element_op(element))
-              # print("Warning: unhandled node type in frame: " + str(element.qname) + ": " + str(element))
-            # end of elements in frame
-          elif element.qname[1] == "soft-page-break":
-            # entering a new page
-            self.cur_page_count += 1
-            self.cur_row_count = 1
-            self.cur_column_count = 1
+              # let's deal with this text box
+              # the default text style for textbox text is specified on the frame, instead of the text-box element
+              style = self._get_element_attribute(element, "text-style-name")
+              if (style == ""):
+                style = default_style
+              frame = IMFrameOp.create('', loc)
+              self.odf_parse_frame(frame.body, firstChild, True, style)
+              paragraph.push_back(frame)
           else:
             paragraph.push_back(self._get_unsupported_element_op(element))
-            # MessageHandler.warning("Warning: unhandled node type in frame: " + str(element.qname) + ": " + str(element), self.filePath, str(loc))
+            # print("Warning: unhandled node type in frame: " + str(element.qname) + ": " + str(element))
+          # end of elements in frame
+        elif element.qname[1] == "soft-page-break":
+          # entering a new page
+          self.odf_encountering_pagebreak()
         else:
-          MessageHandler.warning("Warning: unhandled node type " + str(element.qname) + ": " + str(element), self.filePath, str(loc))
-      # done!
+          paragraph.push_back(self._get_unsupported_element_op(element))
+          # MessageHandler.warning("Warning: unhandled node type in frame: " + str(element.qname) + ": " + str(element), self.filePath, str(loc))
+      else:
+        MessageHandler.warning("Warning: unhandled node type " + str(element.qname) + ": " + str(element), self.filePath, str(loc))
+    # done!
+
+  def odf_parse_paragraph(self, rootnode : odf.element.Element, isInFrame : bool, default_style: str = "") -> Block:
     paragraph = Block.create('', self.ctx)
     default_style_read = self.get_style(rootnode)
     if len(default_style_read) > 0:
       default_style = default_style_read
-    populate_paragraph(paragraph, rootnode, default_style, isInFrame)
+    self._populate_paragraph_impl(paragraph, rootnode, default_style, isInFrame)
     # exiting the current paragraph; reset column
     self.cur_row_count += 1
     self.cur_column_count = 1
     return paragraph
+
+  def odf_encountering_pagebreak(self):
+    self.cur_page_count += 1
+    self.cur_row_count = 1
+    self.cur_column_count = 1
+
+  def odf_parse_tablecell(self, rootnode : odf.element.Element, errlist : list[Operation], default_style: str = "") -> list[Value]:
+    result : list[Value] = []
+    tmpregion = Region()
+    self.odf_parse_frame(tmpregion, rootnode, isInFrame=True, default_style=default_style)
+    # 然后拆开这个区，看看里面有什么
+    pending_text : str = ''
+    pending_text_style : TextStyleLiteral | None = None
+    pending_mds : list[Operation] = []
+    def commit_cur_text():
+      nonlocal result
+      nonlocal pending_text
+      nonlocal pending_text_style
+      if len(pending_text) == 0:
+        return
+      if pending_text_style is None:
+        v = StringLiteral.get(pending_text, self.ctx)
+      else:
+        v = TextFragmentLiteral.get(self.ctx, StringLiteral.get(pending_text, self.ctx), pending_text_style)
+      result.append(v)
+      pending_text = ''
+      pending_text_style = None
+
+    def put_value(v : Value):
+      nonlocal result
+      nonlocal pending_text
+      nonlocal pending_text_style
+      if isinstance(v, StringLiteral):
+        if len(pending_text) == 0:
+          pending_text = v.get_string()
+          pending_text_style = None
+        elif pending_text_style is None:
+          pending_text += v.get_string()
+        else:
+          commit_cur_text()
+          pending_text = v.get_string()
+          pending_text_style = None
+      elif isinstance(v, TextFragmentLiteral):
+        if len(pending_text) == 0:
+          pending_text = v.get_string()
+          pending_text_style = v.style
+        elif pending_text_style is v.style:
+          pending_text += v.get_string()
+        else:
+          commit_cur_text()
+          pending_text = v.get_string()
+          pending_text_style = v.style
+      else:
+        commit_cur_text()
+        result.append(v)
+    for b in tmpregion.blocks:
+      for op in b.body:
+        if isinstance(op, MetadataOp):
+          pending_mds.append(op)
+          continue
+        if isinstance(op, IMElementOp):
+          for u in op.content.operanduses():
+            put_value(u.value)
+          continue
+        MessageHandler.warning("Content nested in table cell ignored: " + str(op), self.filePath)
+    commit_cur_text()
+    for op in pending_mds:
+      op.remove_from_parent()
+      errlist.append(op)
+    tmpregion.drop_all_references()
+    return result
 
   def odf_parse_frame(self, result : Region, rootnode : odf.element.Element, isInFrame : bool, default_style : str = ""):
     # isInFrame is false if this part is inside the flow of the document,
@@ -474,7 +572,8 @@ class _ODParseContext:
           result.push_back(paragraph)
         case 'list':
           # list is in parallel with paragraph in odf
-          listop = IMListOp.create('', self.get_DILocation(self.cur_page_count, self.cur_row_count, self.cur_column_count))
+          listname = self._get_element_attribute(node, 'id')
+          listop = IMListOp.create(listname, self.get_DILocation(self.cur_page_count, self.cur_row_count, self.cur_column_count))
           start_base = 1
           list_style = self._get_element_attribute(node, 'style-name')
           list_error_op = None
@@ -520,6 +619,69 @@ class _ODParseContext:
           if list_error_op is not None:
             container_paragraph.body.push_back(list_error_op)
           result.push_back(container_paragraph)
+        case "table":
+          rowlist : list[list[list[Value]]] = [] # [row][col] -> [list of value]
+          covered_table_cells : dict[tuple[int,int], tuple[int,int]] = {} # covered <row, col> --> src <row, col>
+          tablename = self._get_element_attribute(node, 'name')
+          errlist : list[Operation] = []
+          rowindex = -1
+          colcount = 0
+          # 一定要在处理内容前保存当前位置
+          tableloc = self.get_DILocation(self.cur_page_count, self.cur_row_count, self.cur_column_count)
+          for childnode in node.childNodes:
+            childnodetype = childnode.qname[1]
+            match childnodetype:
+              case 'table-column':
+                pass
+              case "soft-page-break":
+                self.odf_encountering_pagebreak()
+              case 'table-row':
+                cur_row_list : list[list[Value]] = []
+                rowindex += 1
+                colindex = -1
+                for cell in childnode.childNodes:
+                  colindex += 1
+                  match cell.qname[1]:
+                    case 'table-cell':
+                      colspan = 1
+                      rowspan = 1
+                      colspanstr = self._get_element_attribute(cell, 'number-columns-spanned')
+                      if len(colspanstr) > 0:
+                        colspan = int(colspanstr)
+                      rowspanstr = self._get_element_attribute(cell, 'number-rows-spanned')
+                      if len(rowspanstr) > 0:
+                        rowspan = int(rowspanstr)
+                      if colspan > 1 or rowspan > 1:
+                        for col in range(colindex, colindex + colspan):
+                          for row in range(rowindex, rowindex + rowspan):
+                            if col == colindex and row == rowindex:
+                              continue
+                            covered_table_cells[(row, col)] = (rowindex, colindex)
+                      cur_row_list.append(self.odf_parse_tablecell(cell, errlist))
+                    case 'covered-table-cell':
+                      cur_row_list.append([])
+                    case _:
+                      raise RuntimeError("should not happen")
+                if len(cur_row_list) > colcount:
+                  assert colcount == 0
+                  colcount = len(cur_row_list)
+                rowlist.append(cur_row_list)
+          tableop = IMTableOp.create(rowcount = len(rowlist), columncount=colcount, name=tablename, loc=tableloc)
+          for row in range(0, len(rowlist)):
+            for col in range(0, colcount):
+              if (row, col) in covered_table_cells:
+                rrow, rcol = covered_table_cells[(row, col)]
+                vlist = rowlist[rrow][rcol]
+              else:
+                vlist = rowlist[row][col]
+              celloperand = tableop.get_cell_operand(row, col)
+              for v in vlist:
+                celloperand.add_operand(v)
+          container_paragraph = Block.create('', self.ctx)
+          container_paragraph.body.push_back(tableop)
+          for md in errlist:
+            container_paragraph.body.push_back(md)
+          result.push_back(container_paragraph)
         case _:
           # node type not recognized
           loc = self.get_DILocation(self.cur_page_count, self.cur_row_count, self.cur_column_count)
@@ -564,38 +726,46 @@ class _ODParseContext:
             assert type(cur_op) == IMElementOp
             # 加上这条检查，这样万一以后在首次生成 IMElementOp 时沾上属性后，我们可以在这里添加对属性的合并
             assert len(cur_op.attributes) == 0
-            cur_content = cur_op.content.get()
-            assert isinstance(cur_content, TextFragmentLiteral)
-            if cur_style is None:
-              # this is the first time we visit an element
-              cur_text = cur_content.content.value
-              assert len(cur_text) > 0
-              cur_style = cur_content.style
-            elif cur_content.style is cur_style:
-              # we get an fragment with the same style
-              cur_text += cur_content.content.value
-            else:
-              # we get an fragment with a different style
-              # first, end the last fragment
-              new_frag = TextFragmentLiteral.get(self.ctx, StringLiteral.get(cur_text, self.ctx), cur_style)
-              fragment_list.append(new_frag)
-              # now start the new one
-              cur_text = cur_content.content.value
-              assert len(cur_text) > 0
-              cur_style = cur_content.style
+            for u in cur_op.content.operanduses():
+              cur_content = u.value
+              if isinstance(cur_content, TextFragmentLiteral):
+                cur_new_text = cur_content.get_string()
+                cur_new_style = cur_content.style
+              else:
+                assert isinstance(cur_content, StringLiteral)
+                cur_new_text = cur_content.get_string()
+                cur_new_style = None
+
+              if cur_style is None and len(cur_text) == 0:
+                # this is the first time we visit an element
+                cur_text = cur_new_text
+                cur_style = cur_new_style
+              elif (cur_style is None and cur_new_style is None) or (cur_style == cur_new_style):
+                # this is the first time we visit an element
+                cur_text += cur_new_text
+              else:
+                # we get an fragment with a different style
+                newfrag = StringLiteral.get(cur_text, self.ctx)
+                if cur_style is not None:
+                  newfrag = TextFragmentLiteral.get(self.ctx, newfrag, cur_style)
+                fragment_list.append(newfrag)
+                cur_text = cur_new_text
+                cur_style = cur_new_style
             # finished handling current op
             cur_op = cur_op.get_next_node()
           # finished the first iteration
           # end the last fragment
           assert len(cur_text) > 0
-          new_frag = TextFragmentLiteral.get(self.ctx, StringLiteral.get(cur_text, self.ctx), cur_style)
+          newfrag = StringLiteral.get(cur_text, self.ctx)
+          if cur_style is not None:
+            newfrag = TextFragmentLiteral.get(self.ctx, newfrag, cur_style)
           # create the new element
           new_content = None
           if len(fragment_list) == 0:
-            new_content = new_frag
+            new_content = newfrag
           else:
-            fragment_list.append(new_frag)
-            new_content = TextLiteral.get(self.ctx, fragment_list)
+            fragment_list.append(newfrag)
+            new_content = fragment_list
           newop  = IMElementOp.create(content = new_content, name = first_text_op.name, loc = first_text_op.location)
           # now replace the current ops
           newop.insert_before(first_text_op)
@@ -632,7 +802,7 @@ class _ODParseContext:
                   op_to_delete.append(op)
           elif type(op) == IMElementOp:
             content = op.content.get()
-            if isinstance(content, TextFragmentLiteral) and not op.has_attr('StrikeThrough'):
+            if isinstance(content, (StringLiteral, TextFragmentLiteral)) and not op.has_attr('StrikeThrough'):
               # we do found a fragment
               if first_text_op is None:
                 first_text_op = op
@@ -670,6 +840,89 @@ class _ODParseContext:
       # end of the helper function
     walk_region(doc.body)
     # 我们不会删除文档的 body 区，所以此处不检查返回值
+
+  def transform_pass_merge_special_blocks(self, doc : IMDocumentOp):
+    # 把相邻的 IMSpecialBlockOp 合并起来，后续内容合入第一个
+    #raise NotImplementedError("TODO")
+    def walk_region(region : Region) -> bool:
+      # 如果该区内所有的内容都被去除，则返回 True,否则返回 False
+      blocks_to_delete : list[Block] = []
+      special_block_textlist : list[StringLiteral] = []
+      leader_block : Block | None = None
+      leader_op : IMSpecialBlockOp | None = None
+      member_blocks : list[Block] = []
+      def commit_blocks():
+        nonlocal blocks_to_delete
+        nonlocal special_block_textlist
+        nonlocal leader_block
+        nonlocal leader_op
+        nonlocal member_blocks
+        if len(special_block_textlist) > 0:
+          content = StringListLiteral.get(self.ctx, special_block_textlist)
+          leader_op.content.drop_all_uses()
+          leader_op.content.add_operand(content)
+        for b in member_blocks:
+          blocks_to_delete.append(b)
+          ops_to_move = []
+          for op in b.body:
+            if isinstance(op, MetadataOp):
+              ops_to_move.append(op)
+              continue
+            if isinstance(op, IMSpecialBlockOp):
+              continue
+            raise RuntimeError("Unexpected op kind: " + type(op).__name__)
+          for op in ops_to_move:
+            op.remove_from_parent()
+            leader_block.push_back(op)
+        special_block_textlist.clear()
+        leader_block = None
+        leader_op = None
+        member_blocks.clear()
+
+      for b in region.blocks:
+        # 一般而言这个块内应该只有一个 IMSpecialBlockOp, 其他只可能有 MetadataOp
+        # 第一遍只判断是否可以合并，第二遍再合并
+        is_other_elements_found = False
+        cur_leader_op : IMSpecialBlockOp | None = None
+        cur_specialblock_text = []
+        for op in b.body:
+          if isinstance(op, MetadataOp):
+            continue
+          if isinstance(op, IMSpecialBlockOp):
+            for u in op.content.operanduses():
+              cur_specialblock_text.append(u.value)
+            if cur_leader_op is None:
+              cur_leader_op = op
+            continue
+          is_other_elements_found = True
+          break
+        # 开始判断
+        if leader_block is None:
+          # 现在还没有块可以合并
+          if cur_leader_op is not None and not is_other_elements_found:
+            # 遇到一个新块
+            leader_block = b
+            leader_op = cur_leader_op
+            special_block_textlist = cur_specialblock_text
+          else:
+            # 这个块不能合并
+            pass
+        else:
+          # 当前已经有块
+          if cur_leader_op is not None and not is_other_elements_found:
+            # 可以合并
+            special_block_textlist.extend(cur_specialblock_text)
+            member_blocks.append(b)
+          else:
+            # 结束一个块
+            commit_blocks()
+      if len(member_blocks) > 0:
+        commit_blocks()
+      for b in blocks_to_delete:
+        b.erase_from_parent()
+      return False
+
+    walk_region(doc.body)
 
   def transform_pass_reassociate_lists(self, doc : IMDocumentOp):
     # 对所有的 IMListOp 进行重组，以解决以下问题：
@@ -875,6 +1128,7 @@ class _ODParseContext:
     result : IMDocumentOp = IMDocumentOp.create(self.documentname, self.difile)
     self.odf_parse_frame(result.body, self.odfhandle.text, False)
     self.transform_pass_fix_text_elements(result)
+    self.transform_pass_merge_special_blocks(result)
     self.transform_pass_reassociate_lists(result)
     return result
 
