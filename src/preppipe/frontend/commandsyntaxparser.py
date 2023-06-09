@@ -98,6 +98,8 @@ class GeneralCommandOp(Operation):
 
   def construct_init(self, *, name_value : StringLiteral, name_loc : Location, name: str = '', loc: Location = None, **kwargs) -> None:
     # 由于这里的初始化并不会在复制和JSON导入时执行，所以我们在 post_init() 里面要把对象属性全都重新取一遍
+    assert isinstance(name_value, StringLiteral)
+    assert isinstance(name_loc, Location)
     super().construct_init(name=name, loc=loc, **kwargs)
     self._head_region = self._add_symbol_table('head')
     self._positionalarg_region = self._add_region('positional_arg')
@@ -189,7 +191,6 @@ def _visit_block(hostblock : Block, prev_command : GeneralCommandOp, blocks_to_r
         for b in r.blocks:
           prev = _visit_block(b, prev, blocks_to_remove, ctx)
     # 然后看看该项是不是列表、表格、特殊块，并且前面有一个命令
-    # (目前只有列表已经实现，其他的都还没做。。。)
     if prev_command is not None:
       first_child = None
       for child_op in hostblock.body:
@@ -197,7 +198,7 @@ def _visit_block(hostblock : Block, prev_command : GeneralCommandOp, blocks_to_r
           continue
         first_child = child_op
         break
-      if isinstance(first_child, IMListOp):
+      if isinstance(first_child, (IMListOp, IMTableOp, IMSpecialBlockOp)):
         first_child.remove_from_parent()
         prev_command.add_extend_data(first_child)
         if hostblock.body.empty:
@@ -259,6 +260,8 @@ def check_is_command_start(b : Block, ctx: Context) -> typing.Tuple[str, typing.
     for i in range(0, content_operand.get_num_operands()):
       v = content_operand.get(i)
       if isinstance(v, TextFragmentLiteral):
+        command_str += v.get_string()
+      elif isinstance(v, StringLiteral):
         command_str += v.get_string()
       elif isinstance(v, TextLiteral):
         command_str += v.get_string()

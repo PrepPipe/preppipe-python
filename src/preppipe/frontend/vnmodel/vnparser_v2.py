@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import copy
 
+from preppipe.irbase import Location, StringLiteral
+
 from ...irbase import *
 from ..commandsyntaxparser import *
 from ..commandsemantics import *
@@ -23,13 +25,13 @@ class UnrecognizedCommandOp(ErrorOp):
   _positionalarg_block : Block
   _keywordarg_region : SymbolTableRegion
 
-  def __init__(self, src: GeneralCommandOp, **kwargs) -> None:
-    super().__init__(src.name, src.location, 'vnparser-unrecognized-command', None, **kwargs)
+  def construct_init(self, *, src_op : GeneralCommandOp | None = None,  **kwargs) -> None:
+    super().construct_init(error_code='vnparser-unrecognized-command', error_msg=None, **kwargs)
     self._head_region = self._add_symbol_table('head')
     self._positionalarg_region = self._add_region('positional_arg')
     self._keywordarg_region = self._add_symbol_table('keyword_arg')
     self._positionalarg_block = self._positionalarg_region.create_block('')
-    src_head = src.get_symbol_table('head')
+    src_head = src_op.get_symbol_table('head')
     src_name_symbol = src_head.get('name')
     assert isinstance(src_name_symbol, CMDValueSymbol)
     name_symbol = CMDValueSymbol('name', src_name_symbol.location, src_name_symbol.value)
@@ -39,16 +41,23 @@ class UnrecognizedCommandOp(ErrorOp):
       assert isinstance(src_rawarg_symbol, CMDValueSymbol)
       rawarg_symbol = CMDValueSymbol('rawarg', src_rawarg_symbol.location, src_rawarg_symbol.value)
       self._head_region.add(rawarg_symbol)
-    src_positional_arg = src.get_region('positional_arg')
+    src_positional_arg = src_op.get_region('positional_arg')
     assert src_positional_arg.get_num_blocks() == 1
     src_positional_arg_block = src_positional_arg.entry_block
     for op in src_positional_arg_block.body:
       assert isinstance(op, CMDPositionalArgOp)
       self._positionalarg_block.push_back(CMDPositionalArgOp(op.name, op.location, op.value))
-    src_kwarg = src.get_symbol_table('keyword_arg')
+    src_kwarg = src_op.get_symbol_table('keyword_arg')
     for op in src_kwarg:
       assert isinstance(op, CMDValueSymbol)
       self._keywordarg_region.add(CMDValueSymbol(op.name, op.location, op.value))
+
+  def post_init(self) -> None:
+    super().post_init()
+    self._head_region = self.get_symbol_table('head')
+    self._positionalarg_region = self.get_region('positional_arg')
+    self._positionalarg_block = self._positionalarg_region.blocks.front
+    self._keywordarg_region = self.get_symbol_table('keyword_arg')
 
 @dataclasses.dataclass
 class VNParsingStateForSayer:

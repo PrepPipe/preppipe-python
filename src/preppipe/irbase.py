@@ -73,19 +73,23 @@ class IList(typing.Generic[_IListNodeTypeVar, T], llist.dllist):
     return super().last
 
   def insert(self, where : _IListNodeTypeVar, node : _IListNodeTypeVar):
+    assert isinstance(node, IListNode)
     super().insertnodebefore(node, where)
     node.node_inserted(self.parent)
 
   def push_back(self, node : _IListNodeTypeVar):
+    assert isinstance(node, IListNode)
     super().appendnode(node)
     node.node_inserted(self.parent)
 
   def push_front(self, node : _IListNodeTypeVar):
+    assert isinstance(node, IListNode)
     super().insertnodebefore(node, super().first)
     node.node_inserted(self.parent)
 
   def get_index_of(self, node : _IListNodeTypeVar) -> int:
     # -1 if node not found, node index if found
+    assert isinstance(node, IListNode)
     cur_index = 0
     cur_node = self.front
     while cur_node is not None:
@@ -98,6 +102,7 @@ class IList(typing.Generic[_IListNodeTypeVar, T], llist.dllist):
     return -1
 
   def merge_into(self, dest : IList[_IListNodeTypeVar, T]):
+    assert isinstance(dest, IList)
     while self.front is not None:
       v = self.front
       assert isinstance(v, IListNode)
@@ -139,9 +144,17 @@ class IListIterator(typing.Generic[_IListNodeTypeVar]):
       raise StopIteration
     curnode = self._node
     self._node = curnode.next
-    # 如果结点本身有挂值的话用结点的值
-    if v := curnode.value:
-      return v
+    assert isinstance(curnode, IListNode)
+    # 大部分情况下我们使用结点本身作为列表的值
+    # 不过某些场景（比如 util.graphtrait）我们使用额外的 IListNode 来使同一实例出现在多个列表中
+    # 这时我们需要使用结点上挂的 value 来作为实际值
+    # 但是有时我们的 IListNode 的子类也会用 value 属性
+    # 所以我们这里特判，只有以下情况使用 value 值，其余情况用结点本身：
+    # 1. 当前结点不是 IListNode 的子类
+    # 2. 当前结点有 value
+    if type(curnode) in (IListNode, llist.dllistnode):
+      if v := curnode.value:
+        return v
     return curnode
 
 # if the list intends to be mutable, element node should inherit from this class
@@ -163,6 +176,7 @@ class IListNode(typing.Generic[_IListNodeTypeVar], llist.dllistnode):
 
   # pylint: disable=protected-access
   def insert_before(self, ip : IListNode[_IListNodeTypeVar]) -> None:
+    assert isinstance(ip, IListNode)
     owner = self._try_get_owner()
     ipowner = ip._try_get_owner()
     assert ipowner is not None
@@ -1359,11 +1373,13 @@ class User(typing.Generic[_ValueTypeVar]):
     return self._operandlist[index].value
 
   def set_operand(self, index : int, value : _ValueTypeVar) -> None:
+    assert isinstance(value, Value)
     if len(self._operandlist) == index:
       return self.add_operand(value)
     self._operandlist[index].set_value(value)
 
   def add_operand(self, value : _ValueTypeVar) -> None:
+    assert isinstance(value, Value)
     u = Use(self, len(self._operandlist))
     self._operandlist.append(u)
     u.set_value(value)
@@ -1548,17 +1564,14 @@ class Operation(IRObject, IListNode):
     self._operands[name] = o
     return o
 
-  def _add_operand_with_value(self, name : str, value : Value | None) -> OpOperand:
+  def _add_operand_with_value(self, name : str, value : Value | typing.Iterable[Value] | None) -> OpOperand:
     o = self._add_operand(name)
     if value is not None:
-      o.add_operand(value)
-    return o
-
-  def _add_operand_with_value_list(self, name : str, values : typing.Iterable[Value] | None) -> OpOperand:
-    o = self._add_operand(name)
-    if values is not None:
-      for v in values:
-        o.add_operand(v)
+      if isinstance(value, Value):
+        o.add_operand(value)
+      else:
+        for v in value:
+          o.add_operand(v)
     return o
 
   def get_result(self, name : str) -> OpResult:
@@ -1578,6 +1591,7 @@ class Operation(IRObject, IListNode):
     return None
 
   def set_attr(self, name : str, value: typing.Any) -> None:
+    assert isinstance(value, (int, str, bool, decimal.Decimal))
     self._attributes[name] = value
 
   def get_attr(self, name : str) -> int | str | bool | decimal.Decimal | None:
@@ -1750,12 +1764,14 @@ class Symbol(Operation):
     self._name = n
 
   def node_inserted(self, parent : Block):
+    assert isinstance(parent, Block)
     table = parent.parent
     assert isinstance(table, SymbolTableRegion)
     # pylint: disable=protected-access
     table._add_symbol(self)
 
   def node_removed(self, parent : Block):
+    assert isinstance(parent, Block)
     table = parent.parent
     assert isinstance(table, SymbolTableRegion)
     # pylint: disable=protected-access
@@ -1935,6 +1951,7 @@ class Block(Value, IListNode):
     return retval
 
   def push_back(self, op : Operation):
+    assert isinstance(op, Operation)
     if op.parent is not None:
       raise RuntimeError('Cannot add operation with parent')
     self._ops.push_back(op)
@@ -1981,9 +1998,11 @@ class Region(NameDictNode):
     return None
 
   def push_back(self, block : Block) -> None:
+    assert isinstance(block, Block)
     self._blocks.push_back(block)
 
   def push_front(self, block : Block) -> None:
+    assert isinstance(block, Block)
     self._blocks.push_front(block)
 
   @property
@@ -2072,12 +2091,14 @@ class SymbolTableRegion(Region, collections.abc.Sequence, typing.Generic[_Symbol
   def _add_symbol(self, symbol : _SymbolTypeVar):
     # make sure _add_symbol is called BEFORE adding the symbol to list
     # to avoid infinite recursion
+    assert isinstance(symbol, Symbol)
     if len(symbol.name) == 0:
       symbol.name = self._get_anonymous_name()
     assert symbol.name not in self._lookup_dict
     self._lookup_dict[symbol.name] = symbol
 
   def _rename_symbol(self, symbol : _SymbolTypeVar, newname : str):
+    assert isinstance(symbol, Symbol)
     assert newname not in self._lookup_dict
     self._lookup_dict.pop(symbol.name, None)
     self._lookup_dict[newname] = symbol
@@ -2101,6 +2122,7 @@ class SymbolTableRegion(Region, collections.abc.Sequence, typing.Generic[_Symbol
     return self._lookup_dict.get(value.name, None) == value
 
   def add(self, symbol : _SymbolTypeVar):
+    assert isinstance(symbol, Symbol)
     self._block.push_back(symbol)
 
 @IRObjectJsonTypeName('literal_l')
@@ -3412,6 +3434,7 @@ class IRWriter:
   def _walk_value(self, value : Value) -> typing.OrderedDict[str, bytes] | None:
     # write the current value to body. if the content is too big (e.g., a table), a stub is written first and the return value is the full content
     # we must be in a <p> element
+    assert isinstance(value, Value)
     delayed_content : typing.OrderedDict[str, bytes] | None = None
     if isinstance(value, OpResult):
       self._write_body(self.escape(self._get_operation_short_name(value.parent) + '.' + value.name))
@@ -3482,7 +3505,7 @@ class IRWriter:
   def _walk_operation(self, op : Operation, level : int) -> None:
     # [#<id> ClassName]"Name"(operand=...) -> (result)[attr=...]<loc>
     #   <regions>
-
+    assert isinstance(op, Operation)
     isHasBody = op.get_num_regions() > 0
     optail = ''
     # step 1: write the operation header
@@ -3613,6 +3636,7 @@ class IRWriter:
     return None
 
   def _walk_region(self, r : Region, level : int) -> None:
+    assert isinstance(r, Region)
     # for HTML dump, this should be in a <ul> element
     region_title = self.get_id_str(r) + ' ' + type(r).__name__ + ' "' + r.name + '"'
 
@@ -3643,6 +3667,7 @@ class IRWriter:
     return None
 
   def _walk_block(self, b : Block, level : int) -> None:
+    assert isinstance(b, Block)
     # for HTML dump, this should be in a <ul> element
     self._write_body_html('<li>')
     block_end = ''

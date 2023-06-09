@@ -639,9 +639,7 @@ class VNInstruction(Operation):
 
   def construct_init(self, *, context : Context, start_time : typing.Iterable[Value] | Value | None = None, name: str = '', loc: Location | None = None, **kwargs) -> None:
     super().construct_init(context=context, name=name, loc=loc, **kwargs)
-    if isinstance(start_time, Value):
-      start_time = (start_time,)
-    self._start_time_operand = self._add_operand_with_value_list('start', start_time)
+    self._start_time_operand = self._add_operand_with_value('start', start_time)
     self._finish_time_result = self._add_result('finish', VNTimeOrderType.get(context))
 
   def post_init(self) -> None:

@@ -40,14 +40,18 @@ import hashlib
 import enum
 
 from .irbase import *
+from .irdataop import *
 from .commontypes import *
 
 @IRObjectJsonTypeName("im_element_op")
 class IMElementOp(Operation):
   # InputModel 中代表内容的Operation (可能是文本也可能是图案等）。这个类将内容的值与位置信息组合起来。
+  # 如果是文本内容，如果部分文本由特殊格式（比如加粗或是有背景色），content 有可能包含不止一个 Value
+  # 如果是非文本内容，每个这类 IMElementOp 只会包含一个 Value
+  # 如果是特殊段内容应该用下面的 IMSpecialBlockOp 表述
   _content_operand : OpOperand
 
-  def construct_init(self, *, content : Value, name: str = '', loc: Location | None = None, **kwargs) -> None:
+  def construct_init(self, *, content : Value | typing.Iterable[Value], name: str = '', loc: Location | None = None, **kwargs) -> None:
     super().construct_init(name=name, loc=loc, **kwargs)
     self._add_operand_with_value('content', content)
 
@@ -56,7 +60,7 @@ class IMElementOp(Operation):
     self._content_operand = self.get_operand_inst('content')
 
   @staticmethod
-  def create(content : Value, name : str, loc : Location):
+  def create(content : Value | typing.Iterable[Value], name : str, loc : Location):
     return IMElementOp(init_mode=IRObjectInitMode.CONSTRUCT, context=loc.context, content=content, name=name, loc=loc)
 
   @property
@@ -78,7 +82,7 @@ class IMErrorElementOp(ErrorOp):
   #_error_operand : OpOperand
   _content_operand : OpOperand
 
-  def construct_init(self, *, content : Value, error_code: str, error_msg: StringLiteral | None = None, name: str = '', loc: Location | None = None, **kwargs) -> None:
+  def construct_init(self, *, content : Value | typing.Iterable[Value], error_code: str, error_msg: StringLiteral | None = None, name: str = '', loc: Location | None = None, **kwargs) -> None:
     super().construct_init(error_code=error_code, error_msg=error_msg, name=name, loc=loc, **kwargs)
     self._add_operand_with_value('content', content)
 
@@ -87,12 +91,29 @@ class IMErrorElementOp(ErrorOp):
     self._content_operand = self.get_operand_inst('content')
 
   @staticmethod
-  def create(name: str, loc: Location, content : Value, error_code : str, error_msg : StringLiteral | None = None):
+  def create(name: str, loc: Location, content : Value | typing.Iterable[Value], error_code : str, error_msg : StringLiteral | None = None):
     return IMErrorElementOp(init_mode=IRObjectInitMode.CONSTRUCT, context=loc.context, content=content, error_code=error_code, error_msg=error_msg, name=name, loc=loc)
 
   @property
   def content(self):
     return self._content_operand
+
+@IROperationDataclass
+@IRObjectJsonTypeName("im_specialblock_op")
+class IMSpecialBlockOp(Operation):
+  # 特殊块可以用来在文本中内嵌无格式的内容，或是描述其他特殊格式的文本
+  # 一般用于内嵌后端指令
+  content : OpOperand[StringListLiteral]
+
+  # 我们用属性来描述为什么这段文本会被作为特殊块
+  # 以后再做。。
+  #ATTR_SOURCE : typing.ClassVar[str] = 'source'
+  #ATTR_SOURCE_BG_HIGHLIGHT : typing.ClassVar[str] = 'bg_highlight' # 这段文本有段落背景色
+  #ATTR_SOURCE_TITLE : typing.ClassVar[str] = 'title' # 这段文本不是“正文”而是各种标题
+
+  @staticmethod
+  def create(content : Value | typing.Iterable[Value], name : str, loc : Location):
+    return IMSpecialBlockOp(init_mode=IRObjectInitMode.CONSTRUCT, context=loc.context, content=content, name=name, loc=loc)
 
 @IRObjectJsonTypeName("im_frame_op")
 class IMFrameOp(Operation):
@@ -168,6 +189,35 @@ class IMListOp(Operation):
   @staticmethod
   def create(name : str, loc : Location):
     return IMListOp(init_mode=IRObjectInitMode.CONSTRUCT, context=loc.context, name=name, loc=loc)
+
+@IROperationDataclass
+@IRObjectJsonTypeName("im_table_op")
+class IMTableOp(Operation):
+  # 该类代表一个表格（有可能只有一行或一列）
+  # 表格不支持单元格合并，输入时合并的单元格将被差分，每个子单元格将复制原单元格的内容
+  # （即合并的单元格视为子单元格共享相同的一份内容）
+  rowcount : OpOperand[IntLiteral]
+  columncount : OpOperand[IntLiteral]
+
+  def _get_cell_operand_name(self, row : int, col : int) -> str:
+    return 'cell_' + str(row) + '_' + str(col)
+
+  def get_cell_operand(self, row : int, col : int) -> OpOperand:
+    return self.get_operand_inst(self._get_cell_operand_name(row, col))
+
+  def _custom_postinit_(self):
+    rowcnt = self.rowcount.get().value
+    columncnt = self.columncount.get().value
+    assert rowcnt > 0 and columncnt > 0
+    for row in range(0, rowcnt):
+      for col in range(0, columncnt):
+        name = self._get_cell_operand_name(row, col)
+        if name not in self.operands:
+          self._add_operand(name)
+
+  @staticmethod
+  def create(rowcount : int, columncount : int, name : str, loc : Location):
+    return IMTableOp(init_mode=IRObjectInitMode.CONSTRUCT, context=loc.context, rowcount=rowcount, columncount=columncount, name=name, loc=loc)
 
 @IRObjectJsonTypeName("im_document_op")
 class IMDocumentOp(IMFrameOp):
