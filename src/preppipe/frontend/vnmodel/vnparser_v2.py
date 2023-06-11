@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2022 PrepPipe's Contributors
+# SPDX-FileCopyrightText: 2022-2023 PrepPipe's Contributors
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ from ...irbase import *
 from ..commandsyntaxparser import *
 from ..commandsemantics import *
 from ...vnmodel_v4 import *
+from .vncodegen import *
 
 # ------------------------------------------------------------------------------
 # 内容声明命令
@@ -72,6 +73,32 @@ class VNParsingStateForSayer:
     if self.sayer_state is not None:
       result.sayer_state = self.sayer_state.copy()
     return result
+
+@dataclasses.dataclass
+class VNASTParsingState:
+  # 该类描述所有状态信息;所有的引用都不“拥有”所引用的对象
+  # 所有的都是浅层复制
+
+  # （不属于状态信息但是有用）
+  context : Context
+
+  input_top_level_region : Region = None # 应该永不为 None
+  input_current_block : Block = None # 下一个需要读取的块（我们在处理操作项时先把这个转向它的下一项，就像先更新PC再执行指令那样）
+  output_current_file : VNASTFileInfo = None
+  output_current_region : VNASTCodegenRegion = None
+
+  def fork(self) -> VNASTParsingState:
+    return copy.copy(self)
+
+  def get_next_input_block(self) -> Block | None:
+    if self.input_current_block is not None:
+      cur = self.input_current_block
+      self.input_current_block = cur.get_next_node()
+      return cur
+    return None
+
+  def peek_next_block(self) -> Block | None:
+    return self.input_current_block
 
 @dataclasses.dataclass
 class VNParsingState:
@@ -148,47 +175,54 @@ class VNParsingState:
       return cur
     return None
 
-class VNParser(FrontendParserBase[VNParsingState]):
-  _result_op : VNModel
-  _resolver : VNModelNameResolver
+class VNParser(FrontendParserBase[VNASTParsingState]):
+  ast : VNAST
+  ctx : Context
 
   def __init__(self, ctx: Context, command_ns: FrontendCommandNamespace) -> None:
-    super().__init__(ctx, command_ns, VNParsingState)
-    self._result_op = VNModel.create(context=ctx, name = '', loc = ctx.null_location)
-    self._resolver = VNModelNameResolver(self._result_op)
+    super().__init__(ctx, command_ns, VNASTParsingState)
+    self.ast = VNAST()
 
-  @property
-  def resolver(self):
-    return self._resolver
-
-  def initialize_state_for_doc(self, doc : IMDocumentOp) -> VNParsingState:
-    state = VNParsingState(self._result_op.context)
+  def initialize_state_for_doc(self, doc : IMDocumentOp) -> VNASTParsingState:
+    # 跳过空文件
+    if doc.body.blocks.empty:
+      return None
+    state = VNASTParsingState(self.context)
     # 首先将输入状态搞好
     state.input_top_level_region = doc.body
-    if state.input_top_level_region.blocks.empty:
-      return None
     state.input_current_block = doc.body.blocks.front
-    # 输出状态和当前场景状态不用管
-    # TODO 初始化当前设备信息
+    file = VNASTFileInfo(name=doc.name, loc = doc.location)
+    self.ast.files.append(file)
+    state.output_current_file = file
+    state.output_current_region = None
     return state
 
-  def populate_ops_from_block(self, state : VNParsingState, block : Block, oplist : list[Operation]) -> None:
+  def populate_ops_from_block(self, state : VNASTParsingState, block : Block, oplist : list[Operation]) -> None:
     # 把一个块中的所有 op 读取出来
     # 专门建一个函数的原因是方便子类覆盖该函数，这样在我们开始处理该块之前可以搞一些特殊操作（比如添加命令，）
     for op in block.body:
       oplist.append(op)
 
-  def handle_block(self, state : VNParsingState, block : Block):
+  def _emit_text_content(self, state : VNASTParsingState, content : list[TextFragmentLiteral | StringLiteral]):
+    # 我们尝试把文本内容归类为以下三种情况：
+    # 1. 显式指定发言角色的
+    # 2. 所有内容都被引号引起来的，单独一句话
+    # 3. 其他情况，默认所有内容都是发言
+    # 具体实现在 vnsayscan.py 中
+    #
+    pass
+
+  def handle_block(self, state : VNASTParsingState, block : Block):
     if block.body.empty:
       return
     # 我们在编译时跳过所有 MetadataOp 但是保留其与其他内容的相对位置
     # 虽然前端并不支持在文本中夹杂命令，这不妨碍我们在处理文本的过程中执行命令
     # 以后也有可能添加在文本中加入命令的语法
     # TODO 继续完成该函数
-    text_sayer_ref : VNCharacterSymbol = None
-    pending_say_text_contents = []
+    pending_say_text_contents : list[TextFragmentLiteral | StringLiteral] = []
     def try_emit_pending_content():
-      pass
+      self._emit_text_content(state, pending_say_text_contents)
+      pending_say_text_contents.clear()
 
     for op in block.body:
       if isinstance(op, MetadataOp):
@@ -216,28 +250,28 @@ class VNParser(FrontendParserBase[VNParsingState]):
     while block := state.get_next_input_block():
       self.handle_block(state, block)
 
-  def handle_command_unrecognized(self, state: VNParsingState, op: GeneralCommandOp, opname: str) -> None:
+  def handle_command_unrecognized(self, state: VNASTParsingState, op: GeneralCommandOp, opname: str) -> None:
     # 在插入点创建一个 UnrecognizedCommandOp
     # TODO 在这加自动匹配
     newop = UnrecognizedCommandOp(op)
     #newop.insert_before(self._insert_point)
     print('Unrecognized command: ' + str(op))
 
-  def handle_command_invocation(self, state: VNParsingState, commandop: GeneralCommandOp, cmdinfo: FrontendCommandInfo):
+  def handle_command_invocation(self, state: VNASTParsingState, commandop: GeneralCommandOp, cmdinfo: FrontendCommandInfo):
     return super().handle_command_invocation(state, commandop, cmdinfo)
 
-  def handle_command_ambiguous(self, state: VNParsingState,
+  def handle_command_ambiguous(self, state: VNASTParsingState,
                                commandop: GeneralCommandOp, cmdinfo: FrontendCommandInfo,
                                matched_results: typing.List[FrontendParserBase.CommandInvocationInfo],
                                unmatched_results: typing.List[typing.Tuple[callable, typing.Tuple[str, str]]]):
     raise NotImplementedError()
 
-  def handle_command_no_match(self, state: VNParsingState,
+  def handle_command_no_match(self, state: VNASTParsingState,
                               commandop: GeneralCommandOp, cmdinfo: FrontendCommandInfo,
                               unmatched_results: typing.List[typing.Tuple[callable, typing.Tuple[str, str]]]):
     raise NotImplementedError()
 
-  def handle_command_unique_invocation(self, state: VNParsingState,
+  def handle_command_unique_invocation(self, state: VNASTParsingState,
                                        commandop: GeneralCommandOp, cmdinfo: FrontendCommandInfo,
                                        matched_result: FrontendParserBase.CommandInvocationInfo,
                                        unmatched_results: typing.List[typing.Tuple[callable, typing.Tuple[str, str]]]):
@@ -273,6 +307,8 @@ def cmd_variable_decl(parser: VNParser, commandop : GeneralCommandOp, name : str
   '声明角色' : {'name': '姓名'}, # zh_CN
 })
 def cmd_character_decl(parser: VNParser, commandop : GeneralCommandOp, name : str, ext : ListExprOperand):
+  # 声明角色仅用于提供角色的身份
+  # 在前端命令上可以身份+显示方式（比如显示名称，名字颜色等）一并设置，也可以只用该指令设定身份，用后面的“设置角色发言属性”来提供其他信息
   pass
 
 @CommandDecl(vn_command_ns, _imports, 'DeclCharacterSprite', alias={
@@ -295,8 +331,8 @@ def cmd_character_sprite_decl(parser : VNParser, commandop : GeneralCommandOp, c
                        'display_name': '显示名',
                        'display_name_expression': '显示名表达式',
                        'content_color': '内容颜色',
-                       'content_prefix': '内容前缀',
-                       'content_suffix': '内容后缀',
+                       #'content_prefix': '内容前缀',
+                       #'content_suffix': '内容后缀',
                       }, # zh_CN
 })
 def cmd_character_say_attr(parser : VNParser, commandop : GeneralCommandOp, character_name : str, *, state_tags : str = '',
@@ -304,11 +340,15 @@ def cmd_character_say_attr(parser : VNParser, commandop : GeneralCommandOp, char
                            display_name : str = None, # 显示的名字的内容，如果名字不是字面值的话就用 expression, 这项留空
                            display_name_expression : str = None, # 如果名字要从变量中取或者其他方式，这项就是用于求解的表达式
                            content_color : str = None, # 文本的颜色
-                           content_prefix : str = '', # 文本前缀（比如如果要把所有文本都用『』括起来的话，那么这两个符号就是前缀和后缀）
-                           content_suffix : str = '',
+                           #前后缀暂不支持，后端这块要支持起来‘’还得改
+                           #content_prefix : str = '', # 文本前缀（比如如果要把所有文本都用『』括起来的话，那么这两个符号就是前缀和后缀）
+                           #content_suffix : str = '',
                           ):
   # 定义一个角色说话时名称的显示
-  # 如果
+  # 声明的发言信息会在这两种情况下使用：
+  # 1. 剧本中发言者为角色本名，并且满足给定的状态标签时
+  # 2. 剧本中发言者为这里定义的显示名称。
+  # 第二种情况只在显示名称无歧义时可使用（比如没有多个角色同时为"???"），第一种情况一定可以用
   pass
 
 @CommandDecl(vn_command_ns, _imports, 'DeclScene', alias={
@@ -330,6 +370,7 @@ def cmd_scene_background_decl(parser : VNParser, commandop : GeneralCommandOp, s
 def cmd_alias_decl(parser : VNParser, commandop : GeneralCommandOp, alias_name : str, target : CallExprOperand):
   # (仅在解析时用到，不会在IR中)
   # 给目标添加别名（比如在剧本中用‘我’指代某个人）
+  # 别名都是文件内有效，出文件就失效。（实在需要可以复制黏贴）
   pass
 
 # ------------------------------------------------------------------------------
@@ -392,27 +433,55 @@ def cmd_set_function(parser : VNParser, commandop : GeneralCommandOp, name : str
   'CONTINUE': { 'continue', '继续'},
   'LOOP': {'loop', '循环'}
 })
-class ChoiceFinishActionEnum(enum.Enum):
+class _SelectFinishActionEnum(enum.Enum):
   CONTINUE = 0 # 默认继续执行分支后的内容（默认值）
   LOOP = 1 # 循环到选项开始（用于类似Q/A，可以反复选择不同选项。可由跳出命令结束）
 
-@CommandDecl(vn_command_ns, _imports, 'Choice', alias={
+@CommandDecl(vn_command_ns, _imports, 'Select', alias={
   '选项': {'name': '名称', 'finish_action': '结束动作'}
 })
-def cmd_choice(parser : VNParser, commandop : GeneralCommandOp, ext : ListExprOperand, name : str, finish_action : ChoiceFinishActionEnum = ChoiceFinishActionEnum.CONTINUE):
+def cmd_select(parser : VNParser, commandop : GeneralCommandOp, ext : ListExprOperand, name : str, finish_action : _SelectFinishActionEnum = _SelectFinishActionEnum.CONTINUE):
+  pass
+
+@CommandDecl(vn_command_ns, _imports, 'ExitLoop', alias={
+  '跳出循环': {}
+})
+def cmd_exit_loop(parser : VNParser, commandop : GeneralCommandOp):
+  # 用来在带循环的选项命令中跳出循环
+  # 目前没有其他循环结构，只有这里用得到，以后可能会用在其他地方
+  pass
+
+@CommandDecl(vn_command_ns, _imports, 'Choice', alias={
+  '分支': {'condition': '条件'}
+})
+def cmd_branch(parser : VNParser, commandop : GeneralCommandOp, ext : ListExprOperand, condition : str = None):
+  # 有两种方式使用该命令：
+  # 1. 【分支】
+  #       * <条件1>
+  #         - <条件1的分支>
+  #       * <条件2>
+  # ....
+  # 2.  【分支：条件="<条件1>"】
+  #       * <条件1的分支>
   pass
 
 # ------------------------------------------------------------------------------
 # 解析状态相关的命令
 # ------------------------------------------------------------------------------
 
-@CommandDecl(vn_command_ns, _imports, 'DefaultSayer', alias={
-  '默认发言者': {'character_state_expr': '角色与状态表达式'}, # zh_CN
+@CommandDecl(vn_command_ns, _imports, 'LongSpeech', alias={
+  '长发言': {'sayer': '发言者'}, # zh_CN
 })
-def cmd_set_default_sayer(parser : VNParser, commandop : GeneralCommandOp, character_expr : CallExprOperand):
+def cmd_long_speech_mode(parser : VNParser, commandop : GeneralCommandOp, sayer : CallExprOperand):
   pass
 
-
+@CommandDecl(vn_command_ns, _imports, 'InterleaveSayer', alias={
+  '交替发言': {'sayer': '发言者'}, # zh_CN
+})
+def cmd_interleave_mode(parser : VNParser, commandop : GeneralCommandOp, sayer : list[CallExprOperand]):
+  print("交替发言：")
+  for s in sayer:
+    print(str(s))
 
 @MiddleEndDecl('vn', input_decl=IMDocumentOp, output_decl=VNModel)
 class VNParseTransform(TransformBase):
@@ -424,4 +493,6 @@ class VNParseTransform(TransformBase):
   def run(self) -> Operation | typing.List[Operation] | None:
     for doc in self.inputs:
       self._parser.add_document(doc)
-    return VNModel('', self.context.null_location)
+    ast = self._parser.ast
+    model = vncodegen(ast, self._parser.context)
+    return model

@@ -10,6 +10,7 @@ from .pipeline import pipeline_main
 from .frontend import opendocument
 from .frontend import commandsyntaxparser
 from .renpy import passes as renpy_passes
+from .frontend.vnmodel import vnparser_v2
 
 # from .frontend.vnmodel import vnparser_v2
 from . import testbench
