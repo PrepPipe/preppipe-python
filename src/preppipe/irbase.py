@@ -822,7 +822,6 @@ class IRJsonExporter:
       ColorLiteral,
       TextStyleLiteral,
       TextFragmentLiteral,
-      TextLiteral,
       StringListLiteral,
       EnumLiteral,
 
@@ -1583,6 +1582,9 @@ class Operation(IRObject, IListNode):
     if v := self._operands.get(name):
       return v
     raise RuntimeError('Operand not found')
+
+  def try_get_operand_inst(self, name: str) -> OpOperand | None:
+    return self._operands.get(name)
 
   def get_operand(self, name : str) -> Value | None:
     o = self._operands.get(name)
@@ -2863,6 +2865,9 @@ class StringLiteral(Literal):
   def get_string(self) -> str:
     return self.value
 
+  def __str__(self) -> str:
+    return self.value
+
   @staticmethod
   def get(value : str, context : Context) -> StringLiteral:
     return Literal._get_literal_impl(StringLiteral, value, context)
@@ -3011,6 +3016,9 @@ class TextFragmentLiteral(LiteralExpr):
   def get_string(self) -> str:
     return self.content.value
 
+  def __str__(self) -> str:
+    return 'TextFragment[' + str(self.style) + ']"' + self.get_string() + '"'
+
   @staticmethod
   def get(context : Context, string : StringLiteral, styles : TextStyleLiteral) -> TextFragmentLiteral:
     if not isinstance(string, StringLiteral):
@@ -3018,36 +3026,6 @@ class TextFragmentLiteral(LiteralExpr):
     if not isinstance(styles, TextStyleLiteral):
       raise RuntimeError("styles 参数应为对文本样式常量的引用")
     return TextFragmentLiteral._get_literalexpr_impl((string, styles), context)
-
-@IRObjectJsonTypeName('text_le')
-class TextLiteral(LiteralExpr):
-  # 文本常量是一个或多个文本片段常量组成的串
-
-  def construct_init(self, *, context : Context, value_tuple: tuple[TextFragmentLiteral], **kwargs) -> None:
-    TextLiteral._check_value_tuple(value_tuple)
-    ty = TextType.get(context)
-    super().construct_init(ty=ty, value_tuple=value_tuple, **kwargs)
-
-  @staticmethod
-  def get_fixed_value_type():
-    return TextType
-
-  def get_string(self) -> str:
-    result = ''
-    for i in range(0, self.get_num_operands()):
-      v = self.get_operand(i)
-      assert isinstance(v, TextFragmentLiteral)
-      result += v.content.value
-    return result
-
-  @staticmethod
-  def _check_value_tuple(value: tuple[TextFragmentLiteral]) -> None:
-    assert isinstance(value, tuple) and all(isinstance(v, TextFragmentLiteral) for v in value)
-
-  @staticmethod
-  def get(context : Context, value : typing.Iterable[TextFragmentLiteral]) -> TextLiteral:
-    value_tuple = tuple(value)
-    return TextLiteral._get_literalexpr_impl(value_tuple, context)
 
 @IRObjectJsonTypeName('strlist_le')
 class StringListLiteral(LiteralExpr):
@@ -3152,61 +3130,6 @@ def convert_literal(value, ctx : Context | None, type_hint : type | None = None,
       return None if ctx is not None else False
   else:
     return None if ctx is not None else False
-
-# TODO 这个还没有代码用到，先去掉
-#class TextListLiteral(Literal, User):
-#  # 文本列表常量对应文档中列表的一层
-#  def __init__(self, context : Context, value: tuple[TextLiteral | TextListLiteral], **kwargs) -> None:
-#    ty = AggregateTextType.get(context)
-#    super().__init__(ty, value, **kwargs)
-#    for element in value:
-#      self.add_operand(element)
-#
-#  @property
-#  def value(self) -> tuple[TextLiteral | TextListLiteral]:
-#    return super().value
-#
-#  def __len__(self):
-#    return len(self.value)
-#
-#  def __getitem__(self, index : int) -> TextLiteral | TextListLiteral:
-#    return self.value.__getitem__(index)
-#
-#  @staticmethod
-#  def get(context : Context, value : typing.Iterable[TextLiteral | TextListLiteral]) -> TextListLiteral:
-#    value_tuple = tuple(value)
-#    return Literal._get_literal_impl(TextListLiteral, value_tuple, context)
-
-#class TableLiteral(LiteralExpr):
-#  def __init__(self, context : Context, nrows : int, ncols : int, value: tuple[tuple[TextLiteral]], **kwargs) -> None:
-#    ty = AggregateTextType.get(context)
-#    super().__init__(ty = ty, value = (nrows, ncols, value), **kwargs)
-#    for rows in value:
-#      for cell in rows:
-#        self.add_operand(cell)
-
-#  @property
-#  def value(self) -> tuple(int, int, tuple[tuple[TextLiteral]]):
-#    return super().value
-
-#  @property
-#  def rowcount(self) -> int:
-#    return self.value[0]
-
-#  @property
-#  def columncount(self) -> int:
-#    return self.value[1]
-
-#  @property
-#  def cells(self) -> tuple[tuple[TextLiteral]]:
-#    return self.value[2]
-
-#  def get_cell(self, row : int, col : int) -> TextLiteral:
-#    return self.value[2][row][col]
-
-#  @staticmethod
-#  def get(context : Context, nrows : int, ncols : int, value: tuple[tuple[TextLiteral]]) -> TableLiteral:
-#    return context.get_literal_uniquing_dict(TableLiteral).get_or_create((nrows, ncols, value), lambda : TableLiteral(context, nrows, ncols, value))
 
 # ------------------------------------------------------------------------------
 # IR dumping
@@ -3467,19 +3390,6 @@ class IRWriter:
         return delayed_content
       elif isinstance(value, TextStyleLiteral):
         self._write_body(self.escape(self._get_text_style_str(value)))
-        return delayed_content
-      elif isinstance(value, TextLiteral):
-        self._write_body(self.escape('Text{'))
-        for u in value.operanduses():
-          # pylint: disable=assignment-from-none
-          res = self._walk_value(u.value)
-          if res is not None:
-            if delayed_content is None:
-              delayed_content = res
-            else:
-              delayed_content.update(res)
-          self._write_body(',')
-        self._write_body(self.escape('}'))
         return delayed_content
       elif isinstance(value, EnumLiteral):
         ev = value.value

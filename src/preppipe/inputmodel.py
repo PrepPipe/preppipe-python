@@ -103,17 +103,29 @@ class IMErrorElementOp(ErrorOp):
 class IMSpecialBlockOp(Operation):
   # 特殊块可以用来在文本中内嵌无格式的内容，或是描述其他特殊格式的文本
   # 一般用于内嵌后端指令
-  content : OpOperand[StringListLiteral]
+  # 如果有多行， content 中应该有多个 StringLiteral 的值
+  content : OpOperand[StringLiteral]
 
   # 我们用属性来描述为什么这段文本会被作为特殊块
-  # 以后再做。。
-  #ATTR_SOURCE : typing.ClassVar[str] = 'source'
-  #ATTR_SOURCE_BG_HIGHLIGHT : typing.ClassVar[str] = 'bg_highlight' # 这段文本有段落背景色
-  #ATTR_SOURCE_TITLE : typing.ClassVar[str] = 'title' # 这段文本不是“正文”而是各种标题
+  ATTR_REASON : typing.ClassVar[str] = 'reason'
+  ATTR_REASON_BG_HIGHLIGHT : typing.ClassVar[str] = 'bg_highlight' # 这段文本有段落背景色
+  ATTR_REASON_CENTERED : typing.ClassVar[str] = 'centered' # 这段文本不是“正文”而是各种标题
+
+  def is_created_by_background_highlighting(self):
+    return self.get_attr(self.ATTR_REASON) == self.ATTR_REASON_BG_HIGHLIGHT
+
+  def is_created_by_centered_text(self):
+    return self.get_attr(self.ATTR_REASON) == self.ATTR_REASON_CENTERED
 
   @staticmethod
-  def create(content : Value | typing.Iterable[Value], name : str, loc : Location):
-    return IMSpecialBlockOp(init_mode=IRObjectInitMode.CONSTRUCT, context=loc.context, content=content, name=name, loc=loc)
+  def create(content : Value | typing.Iterable[Value], reason : str, name : str, loc : Location):
+    assert reason in [
+      IMSpecialBlockOp.ATTR_REASON_BG_HIGHLIGHT,
+      IMSpecialBlockOp.ATTR_REASON_CENTERED,
+    ]
+    result = IMSpecialBlockOp(init_mode=IRObjectInitMode.CONSTRUCT, context=loc.context, content=content, name=name, loc=loc)
+    result.set_attr(IMSpecialBlockOp.ATTR_REASON, reason)
+    return result
 
 @IRObjectJsonTypeName("im_frame_op")
 class IMFrameOp(Operation):
@@ -288,9 +300,7 @@ def _collect_text_from_paragraph_impl(b : Block) -> tuple[str, list[AssetData]]:
     content_operand : OpOperand = op.content
     for i in range(0, content_operand.get_num_operands()):
       v = content_operand.get(i)
-      if isinstance(v, TextFragmentLiteral):
-        content_str += v.get_string()
-      elif isinstance(v, TextLiteral):
+      if isinstance(v, (StringLiteral, TextFragmentLiteral)):
         content_str += v.get_string()
       elif isinstance(v, AssetData):
         content_str += '\0'

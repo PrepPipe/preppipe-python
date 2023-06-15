@@ -154,6 +154,31 @@ class GeneralCommandOp(Operation):
     assert self._extend_data_block.body.empty
     self._extend_data_block.push_back(data)
 
+  def get_short_str(self) -> str:
+    namesymbol = self._head_region.get('name')
+    result = '[' + namesymbol.value.get_string()
+    if rawarg := self._head_region.get('rawarg'):
+      result += ':' + rawarg.value.get_string()
+      return result + ']'
+    # 没有 rawarg 的话尝试自己组
+    # 这个命令有可能没有参数（或是本来就没有，也可能是因为解析出错）
+    is_arg_found = False
+    for op in self._positionalarg_block.body:
+      if is_arg_found == False:
+        is_arg_found = True
+        result += ': '
+      else:
+        result += ', '
+      result += str(op)
+    for op in self._keywordarg_region:
+      if is_arg_found == False:
+        is_arg_found = True
+        result += ': '
+      else:
+        result += ', '
+      result += op.name + '=' + str(op.value)
+    return result + ']'
+
   @property
   def valueref(self):
     return self._valueref
@@ -262,8 +287,6 @@ def check_is_command_start(b : Block, ctx: Context) -> typing.Tuple[str, typing.
       if isinstance(v, TextFragmentLiteral):
         command_str += v.get_string()
       elif isinstance(v, StringLiteral):
-        command_str += v.get_string()
-      elif isinstance(v, TextLiteral):
         command_str += v.get_string()
       elif isinstance(v, AssetData):
         command_str += '\0'

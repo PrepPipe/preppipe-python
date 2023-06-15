@@ -11,54 +11,16 @@ from ...irbase import *
 from ..commandsyntaxparser import *
 from ..commandsemantics import *
 from ...vnmodel_v4 import *
+from .vnast import *
 from .vncodegen import *
+from .vnsayscan import *
+from ...util.antlr4util import TextStringParsingUtil
 
 # ------------------------------------------------------------------------------
 # 内容声明命令
 # ------------------------------------------------------------------------------
 
 vn_command_ns = FrontendCommandNamespace.create(None, 'vnmodel')
-
-class UnrecognizedCommandOp(ErrorOp):
-  # 基本是从 GeneralCommandOp 那里抄来的
-  _head_region : SymbolTableRegion # name + raw_args
-  _positionalarg_region : Region # single block, list of values
-  _positionalarg_block : Block
-  _keywordarg_region : SymbolTableRegion
-
-  def construct_init(self, *, src_op : GeneralCommandOp | None = None,  **kwargs) -> None:
-    super().construct_init(error_code='vnparser-unrecognized-command', error_msg=None, **kwargs)
-    self._head_region = self._add_symbol_table('head')
-    self._positionalarg_region = self._add_region('positional_arg')
-    self._keywordarg_region = self._add_symbol_table('keyword_arg')
-    self._positionalarg_block = self._positionalarg_region.create_block('')
-    src_head = src_op.get_symbol_table('head')
-    src_name_symbol = src_head.get('name')
-    assert isinstance(src_name_symbol, CMDValueSymbol)
-    name_symbol = CMDValueSymbol('name', src_name_symbol.location, src_name_symbol.value)
-    self._head_region.add(name_symbol)
-    src_rawarg_symbol = src_head.get('rawarg')
-    if src_rawarg_symbol is not None:
-      assert isinstance(src_rawarg_symbol, CMDValueSymbol)
-      rawarg_symbol = CMDValueSymbol('rawarg', src_rawarg_symbol.location, src_rawarg_symbol.value)
-      self._head_region.add(rawarg_symbol)
-    src_positional_arg = src_op.get_region('positional_arg')
-    assert src_positional_arg.get_num_blocks() == 1
-    src_positional_arg_block = src_positional_arg.entry_block
-    for op in src_positional_arg_block.body:
-      assert isinstance(op, CMDPositionalArgOp)
-      self._positionalarg_block.push_back(CMDPositionalArgOp(op.name, op.location, op.value))
-    src_kwarg = src_op.get_symbol_table('keyword_arg')
-    for op in src_kwarg:
-      assert isinstance(op, CMDValueSymbol)
-      self._keywordarg_region.add(CMDValueSymbol(op.name, op.location, op.value))
-
-  def post_init(self) -> None:
-    super().post_init()
-    self._head_region = self.get_symbol_table('head')
-    self._positionalarg_region = self.get_region('positional_arg')
-    self._positionalarg_block = self._positionalarg_region.blocks.front
-    self._keywordarg_region = self.get_symbol_table('keyword_arg')
 
 @dataclasses.dataclass
 class VNParsingStateForSayer:
@@ -99,6 +61,18 @@ class VNASTParsingState:
 
   def peek_next_block(self) -> Block | None:
     return self.input_current_block
+
+  def _emit_impl(self, node : VNASTNodeBase | MetadataOp):
+    if self.output_current_region is not None:
+      self.output_current_region.body.push_back(node)
+      return
+    self.output_current_file.pending_content.push_back(node)
+
+  def emit_node(self, node : VNASTNodeBase):
+    self._emit_impl(node)
+
+  def emit_md(self, md : MetadataOp):
+    self._emit_impl(md)
 
 @dataclasses.dataclass
 class VNParsingState:
@@ -181,7 +155,13 @@ class VNParser(FrontendParserBase[VNASTParsingState]):
 
   def __init__(self, ctx: Context, command_ns: FrontendCommandNamespace) -> None:
     super().__init__(ctx, command_ns, VNASTParsingState)
-    self.ast = VNAST()
+    self.ast = VNAST.create('', ctx)
+
+  @staticmethod
+  def create(ctx: Context, command_ns: FrontendCommandNamespace | None = None):
+    if command_ns is None:
+      command_ns = vn_command_ns
+    return VNParser(ctx, command_ns)
 
   def initialize_state_for_doc(self, doc : IMDocumentOp) -> VNASTParsingState:
     # 跳过空文件
@@ -191,8 +171,8 @@ class VNParser(FrontendParserBase[VNASTParsingState]):
     # 首先将输入状态搞好
     state.input_top_level_region = doc.body
     state.input_current_block = doc.body.blocks.front
-    file = VNASTFileInfo(name=doc.name, loc = doc.location)
-    self.ast.files.append(file)
+    file = VNASTFileInfo.create(name=doc.name, loc = doc.location)
+    self.ast.files.push_back(file)
     state.output_current_file = file
     state.output_current_region = None
     return state
@@ -203,44 +183,175 @@ class VNParser(FrontendParserBase[VNASTParsingState]):
     for op in block.body:
       oplist.append(op)
 
-  def _emit_text_content(self, state : VNASTParsingState, content : list[TextFragmentLiteral | StringLiteral]):
+  def _emit_text_content(self, state : VNASTParsingState, content : list[TextFragmentLiteral | StringLiteral], leading_element : Operation) -> VNASTSayNode | None:
     # 我们尝试把文本内容归类为以下三种情况：
     # 1. 显式指定发言角色的
     # 2. 所有内容都被引号引起来的，单独一句话
     # 3. 其他情况，默认所有内容都是发言
     # 具体实现在 vnsayscan.py 中
-    #
-    pass
+    pu = TextStringParsingUtil.create(content)
+    emit_content = None
+    if scanresult := analyze_say_expr(pu.get_full_str()):
+      # 文本是预期的内容
+      finalcontent : list[TextFragmentLiteral | StringLiteral] = []
+      sayer : str | None = None
+      expr : str | None = None
+      if scanresult.sayer is not None:
+        sayer = scanresult.sayer.text
+      if scanresult.expression is not None:
+        expr = scanresult.expression.text
+      for piece in scanresult.content:
+        finalcontent.extend(pu.extract_str_from_interval(piece.start, piece.end))
+      nodetype = VNASTSayNodeType.TYPE_FULL
+      if sayer is None:
+        nodetype = VNASTSayNodeType.TYPE_QUOTED if scanresult.is_content_quoted else VNASTSayNodeType.TYPE_NARRATE
+      for v in finalcontent:
+        assert isinstance(v, (StringLiteral, TextFragmentLiteral))
+      emit_content = VNASTSayNode.create(context=self.context, nodetype=nodetype, content=finalcontent, expression=expr, sayer=sayer, name=leading_element.name, loc=leading_element.location)
+    else:
+      # 文本不符合预期内容，所有文本就当作没有指定发言者和状态、表情的内容
+      emit_content = VNASTSayNode.create(context=self.context, nodetype=VNASTSayNodeType.TYPE_NARRATE, content=content.copy(), name=leading_element.name, loc=leading_element.location)
+    state.emit_node(emit_content)
+    return emit_content
 
   def handle_block(self, state : VNASTParsingState, block : Block):
+    # 检查一下假设
+    if b := state.peek_next_block():
+      assert block.get_next_node() is b
     if block.body.empty:
       return
     # 我们在编译时跳过所有 MetadataOp 但是保留其与其他内容的相对位置
     # 虽然前端并不支持在文本中夹杂命令，这不妨碍我们在处理文本的过程中执行命令
     # 以后也有可能添加在文本中加入命令的语法
-    # TODO 继续完成该函数
-    pending_say_text_contents : list[TextFragmentLiteral | StringLiteral] = []
-    def try_emit_pending_content():
-      self._emit_text_content(state, pending_say_text_contents)
-      pending_say_text_contents.clear()
 
+    # 除了把所有命令翻译掉、文本段落转换为发言外，我们还需支持以下转换规则：
+    # 1. 特殊块：
+    #     有背景颜色：视为内嵌命令
+    #     居中：视为特殊发言
+    # 2. 单独的图片、声音：视为显示、播放资源
+    # 3. 单独的列表、表格：忽视
+    # 和以下特殊情况：
+    # 1. 发言文本后同段落紧跟音频文件：将音频视为发言的语音而不是独立的音效
+    # 2. 遇到段落内只有一张图片时，如果后面跟了一个特殊块，将特殊块视为该图片的标题，特殊处理
+    pending_say_text_contents : list[TextFragmentLiteral | StringLiteral] = []
+    leading_element : IMElementOp | None = None
+    last_say : VNASTSayNode | None = None
+    def try_emit_pending_content():
+      nonlocal leading_element
+      nonlocal pending_say_text_contents
+      nonlocal last_say
+      if leading_element is None:
+        return
+      last_say = self._emit_text_content(state, pending_say_text_contents, leading_element)
+      pending_say_text_contents.clear()
+      leading_element = None
+
+    ignore_next_op = None
     for op in block.body:
+      if ignore_next_op is not None:
+        if ignore_next_op is op:
+          ignore_next_op = None
+          continue
+        ignore_next_op = None
+
       if isinstance(op, MetadataOp):
         try_emit_pending_content()
-        # TODO 等待 clone() 完成后把这个加上
-        # cloned = op.clone()
-        # state.write_op(cloned)
+        cloned = op.clone()
+        state.emit_md(cloned)
         continue
       if isinstance(op, GeneralCommandOp):
+        last_say = None
+        try_emit_pending_content()
         self.handle_command_op(state, op)
         continue
       if isinstance(op, IMElementOp):
-        pending_say_text_contents.append(op.content.get())
+        # 首先判断这是文本内容还是音频或图片
+        # 文本内容的话可能不止一个值，音频或者图片的话只会有一个值
+        # 所以我们看第一个值就能判断种类
+        firstvalue = op.content.get()
+        if isinstance(firstvalue, (StringLiteral, TextFragmentLiteral)):
+          # 这是文本内容
+          last_say = None
+          for u in op.content.operanduses():
+            pending_say_text_contents.append(u.value)
+          leading_element = op
+        elif isinstance(firstvalue, AudioAssetData):
+          # 内嵌音频
+          try_emit_pending_content()
+          assert op.content.get_num_operands() == 1
+          if last_say is not None:
+            last_say.embed_voice = firstvalue
+          else:
+            result = VNASTAssetReference.create(context=self.context, name=op.name, loc=op.location, kind=VNASTAssetKind.KIND_AUDIO, operation=VNASTAssetIntendedOperation.OP_PUT, asset=firstvalue)
+            state.emit_node(result)
+          last_say = None
+        elif isinstance(firstvalue, ImageAssetData):
+          # 内嵌图片
+          try_emit_pending_content()
+          last_say = None
+          assert op.content.get_num_operands() == 1
+          result = VNASTAssetReference.create(context=self.context, name=op.name, loc=op.location, kind=VNASTAssetKind.KIND_IMAGE, operation=VNASTAssetIntendedOperation.OP_CREATE, asset=firstvalue)
+          state.emit_node(result)
+          # 尝试在这个 IMElementOp 之后找到一个 IMSpecialBlockOp 来作为该图片的描述、标题
+          # 我们假设有两种情况：
+          # 1. 这个 IMElementOp 之后立即跟着 IMSpecialBlockOp （LibreOffice 实测下来是这种情况）
+          # 2. 这段已经没有内容，下一段跟着个 IMSpecialBlockOp （臆想的情况，还没找到可以触发这种情况的源）
+          def set_description_from_special_block(specialblock : IMSpecialBlockOp):
+            nonlocal result
+            # 如果内容不止一行的话我们取第一行
+            firststr = specialblock.content.get_operand(0).get_string()
+            assert isinstance(firststr, str)
+            # 如果第一段有冒号':'或'：'，我们就把这段字符串分两截
+            description : list[str] = []
+            if r := re.match(r"^\s*((?P<T1>[^:：]+)\s*[:：])?\s*(?P<T2>.+)$", firststr):
+              if t1 := r.group('T1'):
+                description.append(t1)
+              if t2 := r.group('T2'):
+                description.append(t2)
+            else:
+              description.append(firststr)
+            for s in description:
+              result.descriptions.add_operand(StringLiteral.get(s, self.context))
+          if op.get_next_node() is None:
+            if nb := state.peek_next_block():
+              is_other_element_found = False
+              specialblock : IMSpecialBlockOp | None = None
+              other_md : list[MetadataOp] = []
+              for op in nb.body:
+                if isinstance(op, IMSpecialBlockOp):
+                  specialblock = op
+                elif isinstance(op, MetadataOp):
+                  other_md.append(op)
+                else:
+                  is_other_element_found = True
+                  break
+              if not is_other_element_found and specialblock is not None:
+                set_description_from_special_block(specialblock)
+                if len(other_md) > 0:
+                  for md in other_md:
+                    state.emit_md(md.clone())
+                # 因为我们已经把下一段的特殊块吃掉了，所以这里必须跳过一个块
+                state.get_next_input_block()
+                return
+          else:
+            nextnode = op.get_next_node()
+            if isinstance(nextnode, IMSpecialBlockOp):
+              set_description_from_special_block(nextnode)
+              ignore_next_op = nextnode
+        else:
+          raise RuntimeError('Unexpected content type in IMElementOp: ' + type(firstvalue).__name__)
+        # IMElementOp 的情况处理完毕
         continue
-      if isinstance(op, IMListOp):
-        # TODO 递归解析所有内容
+      if isinstance(op, IMSpecialBlockOp):
+        raise NotImplementedError('TODO 支持单独的 IMSpecialBlockOp')
+      if isinstance(op, (IMListOp, IMTableOp)):
+        last_say = None
+        try_emit_pending_content()
+        # 以后有可能能够解析，现在直接跳过
         continue
       raise NotImplementedError('Unhandled element type')
+    try_emit_pending_content()
+    return
 
   def add_document(self, doc : IMDocumentOp):
     # 我们在 VNModel 中将该文档中的内容“转录”过去
@@ -250,12 +361,25 @@ class VNParser(FrontendParserBase[VNASTParsingState]):
     while block := state.get_next_input_block():
       self.handle_block(state, block)
 
+  def create_command_match_error(self, commandop: GeneralCommandOp, unmatched_results: list[typing.Tuple[callable, typing.Tuple[str, str]]] | None = None, matched_results: list[FrontendParserBase.CommandInvocationInfo] | None = None) -> ErrorOp:
+    errmsg = 'Cannot find unique match for command: ' + commandop.get_short_str()
+    if matched_results is not None and len(matched_results) > 0:
+      errmsg += '\nmatched candidates: ' + ', '.join([cmdinfo.cb.__name__ for cmdinfo in matched_results])
+    if unmatched_results is not None and len(unmatched_results) > 0:
+      errmsg += '\nunmatched candidates: '
+      ulist = []
+      for targetcb, errtuple in unmatched_results:
+        errcode, msg = errtuple
+        candidatemsg = targetcb.__name__ + ': ' + errcode + ': ' + msg
+        ulist.append(candidatemsg)
+      errmsg += ', '.join(ulist)
+    error_msg_literal = StringLiteral.get(errmsg, self.context)
+    return ErrorOp.create('vnparser-cmd-match-error', self.context, error_msg_literal)
+
   def handle_command_unrecognized(self, state: VNASTParsingState, op: GeneralCommandOp, opname: str) -> None:
     # 在插入点创建一个 UnrecognizedCommandOp
-    # TODO 在这加自动匹配
-    newop = UnrecognizedCommandOp(op)
-    #newop.insert_before(self._insert_point)
-    print('Unrecognized command: ' + str(op))
+    newop = UnrecognizedCommandOp.create(op)
+    state.emit_node(newop)
 
   def handle_command_invocation(self, state: VNASTParsingState, commandop: GeneralCommandOp, cmdinfo: FrontendCommandInfo):
     return super().handle_command_invocation(state, commandop, cmdinfo)
@@ -264,12 +388,14 @@ class VNParser(FrontendParserBase[VNASTParsingState]):
                                commandop: GeneralCommandOp, cmdinfo: FrontendCommandInfo,
                                matched_results: typing.List[FrontendParserBase.CommandInvocationInfo],
                                unmatched_results: typing.List[typing.Tuple[callable, typing.Tuple[str, str]]]):
-    raise NotImplementedError()
+    newop = self.create_command_match_error(commandop, unmatched_results, matched_results)
+    state.emit_md(newop)
 
   def handle_command_no_match(self, state: VNASTParsingState,
                               commandop: GeneralCommandOp, cmdinfo: FrontendCommandInfo,
                               unmatched_results: typing.List[typing.Tuple[callable, typing.Tuple[str, str]]]):
-    raise NotImplementedError()
+    newop = self.create_command_match_error(commandop, unmatched_results)
+    state.emit_md(newop)
 
   def handle_command_unique_invocation(self, state: VNASTParsingState,
                                        commandop: GeneralCommandOp, cmdinfo: FrontendCommandInfo,
@@ -483,16 +609,3 @@ def cmd_interleave_mode(parser : VNParser, commandop : GeneralCommandOp, sayer :
   for s in sayer:
     print(str(s))
 
-@MiddleEndDecl('vn', input_decl=IMDocumentOp, output_decl=VNModel)
-class VNParseTransform(TransformBase):
-  _parser : VNParser
-  def __init__(self, ctx: Context) -> None:
-    super().__init__(ctx)
-    self._parser = VNParser(ctx, vn_command_ns)
-
-  def run(self) -> Operation | typing.List[Operation] | None:
-    for doc in self.inputs:
-      self._parser.add_document(doc)
-    ast = self._parser.ast
-    model = vncodegen(ast, self._parser.context)
-    return model
