@@ -21,11 +21,13 @@ class _TextStyleInfo:
   style : typing.Dict[TextAttribute, typing.Any]
   is_strike_through : bool # if the font has strikethrough (and we will drop it after generation)
   is_special_block_style : bool # if the text style satisfy requirement for special block
+  special_block_reason : str | None
 
   def __init__(self, src = None):
     self.style = {}
     self.is_strike_through = False
     self.is_special_block_style = False
+    self.special_block_reason = None
     if src is not None:
       assert isinstance(src, _TextStyleInfo)
       self.style = src.style.copy()
@@ -60,8 +62,14 @@ class _TextStyleInfo:
   def set_strike_through(self, v : bool):
     self.is_strike_through = v
 
-  def set_is_pecial_block(self, v : bool):
-    self.is_special_block_style = v
+  def set_is_pecial_block(self, v : bool, reason : str | None = None):
+    if v:
+      self.is_special_block_style = True
+      self.special_block_reason = reason
+    else:
+      if self.special_block_reason is not None and self.special_block_reason == reason:
+        self.is_special_block_style = False
+        self.special_block_reason = None
 
   def empty(self) -> bool:
     return len(self.style) == 0 and not self.is_strike_through and not self.is_special_block_style
@@ -183,8 +191,14 @@ class _ODParseContext:
                 # add other attrs here if needed
           elif property_node.qname[1] == "paragraph-properties":
             for k in property_node.attributes.keys():
-              if k[1] == "background-color":
-                current_style.set_is_pecial_block(property_node.attributes[k] != '#ffffff')
+              match k[1]:
+                case "background-color":
+                  current_style.set_is_pecial_block(property_node.attributes[k] != '#ffffff', IMSpecialBlockOp.ATTR_REASON_BG_HIGHLIGHT)
+                case "text-align":
+                  current_style.set_is_pecial_block(property_node.attributes[k] == 'center', IMSpecialBlockOp.ATTR_REASON_CENTERED)
+                case _:
+                  pass
+
         self.style_data[name] = current_style
       elif child.qname[1] == "list-style":
         # we found a list style entry
@@ -233,21 +247,21 @@ class _ODParseContext:
     error_op = None
     cstyle = None
     is_strike_through = False
-    is_special_block = False
+    special_block_reason : str | None = None
     if style_name in self.style_data:
       style = self.style_data[style_name]
       if style.is_strike_through:
         is_strike_through = True
       if style.is_special_block_style:
-        is_special_block = True
-      if not style.empty() and not is_special_block:
+        special_block_reason = style.special_block_reason
+      if not style.empty() and special_block_reason is None:
         cstyle = TextStyleLiteral.get(style.style, self.ctx)
     else:
       error_op = IMErrorElementOp.create(name = '', loc = loc, content = content, error_code='odf-bad-style-name', error_msg = StringLiteral.get('Cannot find style name \"' + style_name + '"', self.ctx))
     if cstyle is not None:
       content = TextFragmentLiteral.get(self.ctx, content, cstyle)
-    if is_special_block:
-      node = IMSpecialBlockOp.create(name = '', loc = loc, content = content)
+    if special_block_reason is not None:
+      node = IMSpecialBlockOp.create(name = '', reason=special_block_reason, loc = loc, content = content)
     else:
       node = IMElementOp.create(name = '', loc = loc, content = content)
     if is_strike_through:
@@ -857,23 +871,27 @@ class _ODParseContext:
         nonlocal leader_block
         nonlocal leader_op
         nonlocal member_blocks
-        if len(special_block_textlist) > 0:
-          content = StringListLiteral.get(self.ctx, special_block_textlist)
-          leader_op.content.drop_all_uses()
-          leader_op.content.add_operand(content)
-        for b in member_blocks:
-          blocks_to_delete.append(b)
-          ops_to_move = []
-          for op in b.body:
-            if isinstance(op, MetadataOp):
-              ops_to_move.append(op)
-              continue
-            if isinstance(op, IMSpecialBlockOp):
-              continue
-            raise RuntimeError("Unexpected op kind: " + type(op).__name__)
-          for op in ops_to_move:
-            op.remove_from_parent()
-            leader_block.push_back(op)
+        if len(member_blocks) > 0:
+          if len(special_block_textlist) > 0:
+            leader_op.content.drop_all_uses()
+            for v in special_block_textlist:
+              leader_op.content.add_operand(v)
+          for b in member_blocks:
+            blocks_to_delete.append(b)
+            ops_to_move = []
+            for op in b.body:
+              if isinstance(op, MetadataOp):
+                ops_to_move.append(op)
+                continue
+              if isinstance(op, IMSpecialBlockOp):
+                continue
+              raise RuntimeError("Unexpected op kind: " + type(op).__name__)
+            for op in ops_to_move:
+              op.remove_from_parent()
+              leader_block.push_back(op)
+        else:
+          # 这种情况下我们应该不需要 StringListLiteral
+          assert len(special_block_textlist) < 2
         special_block_textlist.clear()
         leader_block = None
         leader_op = None

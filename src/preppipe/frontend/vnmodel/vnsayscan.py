@@ -42,6 +42,7 @@ class SayScanResult:
 
   # 如果发言内容带引号的话我们有可能会有不止一段内容，所以这里用个 list
   content : list[SayScanFieldPosition] = dataclasses.field(default_factory=list)
+  is_content_quoted : bool = False
 
   def __str__(self) -> str:
     result = ''
@@ -115,6 +116,7 @@ class SayScanner(SayScanVisitor):
         for c in ctx.QUOTEDSTR():
           curresult = self.handle_quoted_str(c)
           self.result.content.append(curresult)
+          self.result.is_content_quoted = True
       case SayScanParser.NORMALTEXT:
         curresult = self.collect_all_child(ctx)
         self.result.content.append(curresult)
