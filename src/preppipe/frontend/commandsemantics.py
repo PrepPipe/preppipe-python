@@ -714,23 +714,13 @@ def _try_convert_parameter(ty : type | types.UnionType | typing._GenericAlias, v
   # 输出类型除了文本、字符串、整数、浮点数之外，还可能有调用表达式和枚举类型（需要从字符串转过去）
 
   # 首先把非基本类型的字符串解决了
-  if ty in [TextLiteral, TextFragmentLiteral, StringLiteral]:
-    cur_value = value
-    if isinstance(value, StringLiteral):
-      assert ty == TextLiteral or ty == TextFragmentLiteral
-      context = value.get_context()
-      cur_value = TextFragmentLiteral.get(context, value, TextStyleLiteral.get((), context))
-      if ty == TextFragmentLiteral:
-        return cur_value
-    assert ty == TextLiteral
-    context = cur_value.get_context()
-    return TextLiteral.get(context, [cur_value])
+  if ty == TextFragmentLiteral and isinstance(value, StringLiteral):
+    context = value.get_context()
+    return TextFragmentLiteral.get(context, value, TextStyleLiteral.get((), context))
 
   # 其他类型都可以从字符串转换过去，这里先将值转为字符串
   value_str = ''
-  if isinstance(value, TextLiteral):
-    value_str = value.get_string()
-  elif isinstance(value, TextFragmentLiteral):
+  if isinstance(value, TextFragmentLiteral):
     value_str = value.get_string()
   elif isinstance(value, StringLiteral):
     value_str = value.get_string()
