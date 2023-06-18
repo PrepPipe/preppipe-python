@@ -1923,6 +1923,9 @@ class Block(Value, IListNode):
   def body(self) -> IList[Operation, Block]:
     return self._ops
 
+  def take_body(self, src : Block):
+    src._ops.merge_into(self._ops)
+
   def get_next_node(self) -> Block:
     return self.next
 
@@ -3104,7 +3107,7 @@ def convert_literal(value, ctx : Context | None, type_hint : type | None = None,
       return FloatLiteral.get(decimal.Decimal(value), ctx) if ctx is not None else True
     else:
       return None  if ctx is not None else False
-  elif isinstance(value, float):
+  elif isinstance(value, (float, decimal.Decimal)):
     if type_hint is FloatLiteral or type_hint is None:
       return FloatLiteral.get(decimal.Decimal(value), ctx) if ctx is not None else True
     else:
