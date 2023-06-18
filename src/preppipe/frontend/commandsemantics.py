@@ -32,7 +32,7 @@ from .commandsyntaxparser import GeneralCommandOp, CMDValueSymbol, CMDPositional
 # decorator for parse commands
 # reference: https://realpython.com/primer-on-python-decorators/#decorators-with-arguments
 # pylint: disable=invalid-name
-def CommandDecl(ns: FrontendCommandNamespace, imports : dict[str, typing.Any], name : str, alias : typing.Dict[str | typing.Tuple[str], typing.Dict[str, str]] = None):
+def CommandDecl(ns: FrontendCommandNamespace, imports : dict[str, typing.Any], name : str, alias : typing.Dict[str | typing.Tuple[str, ...], typing.Dict[str, str]] = None):
   if alias is None:
     alias = {}
   def decorator_parsecommand(func):
@@ -92,11 +92,20 @@ class ExtendDataExprBase:
   # 所以我们现在把它们放在参数本身，这样如果命令真的用到了这些结果，我们再把它们报告出去
   # 设置 kw_only=True 以使 warnings 不影响子类的初始化
   warnings : list[tuple[str, str]] | None = None
+  original_op : Operation | None = None # 原来的 IMListOp, IMSpecialBlockOp, 或者 IMTableOp
 
 # 延伸的列表项（只能出现一次）
 @dataclasses.dataclass
 class ListExprOperand(ExtendDataExprBase):
   data : typing.OrderedDict[str, typing.Any] | list[str]
+
+@dataclasses.dataclass
+class SpecialBlockOperand(ExtendDataExprBase):
+  pass
+
+@dataclasses.dataclass
+class TableExprOperand(ExtendDataExprBase):
+  pass
 
 @dataclasses.dataclass
 class FrontendCommandInfo:
@@ -326,7 +335,13 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
       data = self._populate_listexpr(op, warnings)
       if len(warnings) == 0:
         warnings = None
-      return ListExprOperand(data, warnings=warnings)
+      return ListExprOperand(data, warnings=warnings, original_op=op)
+
+    if isinstance(op, IMSpecialBlockOp):
+      return SpecialBlockOperand(original_op=op)
+
+    if isinstance(op, IMTableOp):
+      return TableExprOperand(original_op=op)
 
     # 其他的类型暂不支持
     raise NotImplementedError('Extend data type not supported: ' + str(type(op)))

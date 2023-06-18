@@ -74,81 +74,6 @@ class VNASTParsingState:
   def emit_md(self, md : MetadataOp):
     self._emit_impl(md)
 
-@dataclasses.dataclass
-class VNParsingState:
-  # 该类描述所有状态信息;所有的引用都不“拥有”所引用的对象
-  # 部分不会在处理输入时改变的内容不会在这出现（比如当前的命名空间，当前命名空间的人物声明，等等）
-  # 如果要添加成员，请记得更新 copy() 函数，以免出现复制出错
-
-  # （不属于状态信息但是有用）
-  context : Context
-
-  # 输入输出位置
-  # 所有的都是浅层复制
-  # 读取时，我们以块（段落）为单位进行读取；输出是以操作项为单位
-  input_top_level_region : Region = None # 应该永不为 None
-  input_current_block : Block = None # 下一个需要读取的块（我们在处理操作项时先把这个转向它的下一项，就像先更新PC再执行指令那样）
-  output_current_region : Region = None # 如果这是 None，那我们还没有开始构建 VNFunction 而只是在一个 stub 里填内容，否则这应该是 VNFunction 的内容区
-  output_current_block : Block = None # 如果这是 None, 那我们还没有进入任何函数部分，有需要加内容就填一个 stub
-  output_current_insertion_point : Operation = None # 新输出项的位置，如果是 None 则加到 output_current_block 结尾，不然的话就加在该操作项之前
-
-  # 当前场景信息
-  # state_sayer_states 和 state_scene_states 需要深层复制
-  state_default_sayer : VNCharacterSymbol = None # 默认发言者; None 为旁白
-  state_current_scene : VNSceneSymbol = None # 当前场景
-  state_sayer_states : collections.OrderedDict[VNCharacterSymbol, VNParsingStateForSayer] = None # 每个发言者当前的状态
-  state_scene_states : list[str] = None # 场景的状态标签
-
-  # 当前设备
-  # 所有的都是浅层复制
-  state_current_device_say_name : VNDeviceSymbol = None
-  state_current_device_say_text : VNDeviceSymbol = None
-  state_current_device_say_sideimage : VNDeviceSymbol = None
-
-  def __deepcopy__(self, memo):
-    # deep copy of VNParserState would cause handles like VNCharacterRecord being copied as well
-    # we only use shallow copy for VNParserState
-    raise RuntimeError('VNParserState should not be deep-copied')
-
-  def __copy__(self) -> VNParsingState:
-    # 先把浅层复制的解决了
-    result = dataclasses.replace(self)
-    # 然后所有需要深层复制的再更新
-    if self.state_scene_states is not None:
-      result.state_scene_states = self.state_scene_states.copy()
-    if self.state_sayer_states is not None:
-      result.state_sayer_states = collections.OrderedDict()
-      for sayer, state in self.state_sayer_states.items():
-        result.state_sayer_states[sayer] = copy.copy(state)
-    return result
-
-  def fork(self) -> VNParsingState:
-    return copy.copy(self)
-
-  def write_op(self, op : Operation | typing.Iterable[Operation]):
-    if self.output_current_block is None:
-      assert self.output_current_region is None and self.output_current_insertion_point is None
-      self.output_current_block = Block('', self.context)
-    if isinstance(op, Operation):
-      if self.output_current_insertion_point is None:
-        self.output_current_block.push_back(op)
-      else:
-        if self.output_current_insertion_point is None:
-          for cur in op:
-            assert isinstance(cur, Operation)
-            self.output_current_block.push_back(cur)
-        else:
-          for cur in op:
-            assert isinstance(cur, Operation)
-            cur.insert_before(self.output_current_insertion_point)
-
-  def get_next_input_block(self) -> Block | None:
-    if self.input_current_block is not None:
-      cur = self.input_current_block
-      self.input_current_block = cur.get_next_node()
-      return cur
-    return None
-
 class VNParser(FrontendParserBase[VNASTParsingState]):
   ast : VNAST
   ctx : Context
@@ -213,6 +138,63 @@ class VNParser(FrontendParserBase[VNASTParsingState]):
       emit_content = VNASTSayNode.create(context=self.context, nodetype=VNASTSayNodeType.TYPE_NARRATE, content=content.copy(), name=leading_element.name, loc=leading_element.location)
     state.emit_node(emit_content)
     return emit_content
+
+  def emit_asm_node(self, state : VNASTParsingState, backingop : Operation, code : list[StringLiteral], backend : StringLiteral | None = None):
+    body = StringListLiteral.get(self.context, value=code)
+    result = VNASTASMNode.create(self.context, body=body, backend=backend, name=backingop.name, loc=backingop.location)
+    state.emit_node(result)
+
+  def get_literal_from_call_arg(self, arg : typing.Any, type_hint : type | None = None) -> Literal | None:
+    if v := convert_literal(arg, self.context, type_hint=type_hint):
+      assert isinstance(v, Literal)
+      return v
+    return None
+
+  def emit_transition_node(self, state : VNASTParsingState, backingop : Operation, transition : CallExprOperand | None) -> VNASTTransitionNode:
+    if transition is None:
+      result = VNASTTransitionNode.create(context=self.context, transition_name=None, name=backingop.name, loc=backingop.location)
+      state.emit_node(result)
+      return result
+    assert isinstance(transition, CallExprOperand)
+    result = VNASTTransitionNode.create(context=self.context, transition_name=transition.name, name=backingop.name, loc=backingop.location)
+    for a in transition.args:
+      if l := self.get_literal_from_call_arg(a):
+        result.add_arg(l)
+      else:
+        msg = transition.name + ': "' + str(a) + '"'
+        err = ErrorOp.create(error_code='vnparser-unexpected-argument-in-transition', context=self.context, error_msg=StringLiteral.get(msg, self.context), name='', loc=backingop.location)
+        state.emit_md(err)
+    for k, v in transition.kwargs.items():
+      if l := self.get_literal_from_call_arg(v):
+        name = StringLiteral.get(k, state.context)
+        result.add_kwarg(name, l)
+      else:
+        msg = transition.name + ' arg "' + k +'": "' + str(v) + '"'
+        err = ErrorOp.create(error_code='vnparser-unexpected-argument-in-transition', context=self.context, error_msg=StringLiteral.get(msg, self.context), name='', loc=backingop.location)
+        state.emit_md(err)
+    state.emit_node(result)
+    return result
+
+  def emit_pending_assetref(self, state : VNASTParsingState, backingop : Operation, ref : CallExprOperand) -> VNASTPendingAssetReference:
+    refname = StringLiteral.get(ref.name, state.context)
+    args : list[Literal] = []
+    kwargs : dict[str, Literal] = {}
+    for a in ref.args:
+      if l := self.get_literal_from_call_arg(a):
+        args.append(l)
+      else:
+        msg = ref.name + ': "' + str(a) + '"'
+        err = ErrorOp.create(error_code='vnparser-unexpected-argument-in-assetref', context=self.context, error_msg=StringLiteral.get(msg, self.context), name='', loc=backingop.location)
+        state.emit_md(err)
+    for k, v in ref.kwargs.items():
+      if l := self.get_literal_from_call_arg(v):
+        kwargs[k] = l
+      else:
+        msg = ref.name + ' arg "' + k +'": "' + str(v) + '"'
+        err = ErrorOp.create(error_code='vnparser-unexpected-argument-in-assetref', context=self.context, error_msg=StringLiteral.get(msg, self.context), name='', loc=backingop.location)
+        state.emit_md(err)
+    return VNASTPendingAssetReference.get(value=refname, args=args, kwargs=kwargs, context=state.context)
+
 
   def handle_block(self, state : VNASTParsingState, block : Block):
     # 检查一下假设
@@ -480,7 +462,7 @@ def cmd_character_say_attr(parser : VNParser, commandop : GeneralCommandOp, char
 @CommandDecl(vn_command_ns, _imports, 'DeclScene', alias={
   '声明场景' : {'name': '名称'}, # zh_CN
 })
-def cmd_scene_decl(parser : VNParser, commandop : GeneralCommandOp, name : str, ext : ListExprOperand):
+def cmd_scene_decl(parser : VNParser, commandop : GeneralCommandOp, name : str, ext : ListExprOperand | None = None):
   pass
 
 @CommandDecl(vn_command_ns, _imports, 'DeclSceneBackground', alias={
@@ -493,7 +475,7 @@ def cmd_scene_background_decl(parser : VNParser, commandop : GeneralCommandOp, s
 @CommandDecl(vn_command_ns, _imports, 'DeclAlias', alias={
   '声明别名' : {'alias_name': '别名名称', 'target':'目标'}, # zh_CN
 })
-def cmd_alias_decl(parser : VNParser, commandop : GeneralCommandOp, alias_name : str, target : CallExprOperand):
+def cmd_alias_decl(parser : VNParser, commandop : GeneralCommandOp, alias_name : str, target : str):
   # (仅在解析时用到，不会在IR中)
   # 给目标添加别名（比如在剧本中用‘我’指代某个人）
   # 别名都是文件内有效，出文件就失效。（实在需要可以复制黏贴）
@@ -502,47 +484,143 @@ def cmd_alias_decl(parser : VNParser, commandop : GeneralCommandOp, alias_name :
 # ------------------------------------------------------------------------------
 # 内容操作命令
 # ------------------------------------------------------------------------------
+
+@CommandDecl(vn_command_ns, _imports, 'ASM', alias={
+  '内嵌汇编': {'content': '内容', 'backend': '后端'}
+})
+def cmd_asm_1(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, content : str, backend : str = None):
+  # 单行内嵌后端命令
+  if isinstance(backend, str):
+    backend_l = StringLiteral.get(backend, state.context)
+  else:
+    assert isinstance(backend, StringLiteral)
+    backend_l = backend
+  parser.emit_asm_node(state, commandop, code=[StringLiteral.get(content, state.context)], backend=backend_l)
+
+@CommandDecl(vn_command_ns, _imports, 'ASM', alias={
+  '内嵌汇编': {'backend': '后端'}
+})
+def cmd_asm_2(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, ext : SpecialBlockOperand, backend : str = None):
+  # 使用特殊块的后端命令
+  code = []
+  block : IMSpecialBlockOp = ext.original_op
+  assert isinstance(block, IMSpecialBlockOp)
+  for u in block.content.operanduses():
+    code.append(u.value)
+  if isinstance(backend, str):
+    backend_l = StringLiteral.get(backend, state.context)
+  else:
+    assert isinstance(backend, StringLiteral)
+    backend_l = backend
+  parser.emit_asm_node(state, commandop, code=code, backend=backend_l)
+
 @CommandDecl(vn_command_ns, _imports, 'CharacterEnter', alias={
   '角色入场': {'characters': '角色', 'transition': '转场'}
 })
-def cmd_character_entry(parser : VNParser, commandop : GeneralCommandOp, characters : list[CallExprOperand], transition : CallExprOperand = None):
-  pass
+def cmd_character_entry(parser : VNParser, state: VNASTParsingState, commandop : GeneralCommandOp, characters : list[CallExprOperand], transition : CallExprOperand = None):
+  transition = parser.emit_transition_node(state, commandop, transition)
+  for chexpr in characters:
+    charname = chexpr.name
+    states = []
+    for a in chexpr.args:
+      if isinstance(a, str):
+        states.append(StringLiteral.get(a, state.context))
+      elif isinstance(a, StringLiteral):
+        states.append(a)
+      else:
+        err = ErrorOp.create(error_code='vnparser-unexpected-argument', context=state.context, error_msg=StringLiteral.get('CharacterEnter ' + charname + ': argument "' + str(a) + '" ignored', state.context))
+        state.emit_md(err)
+    node = VNASTCharacterEntryNode.create(state.context, character=charname, states=states, name=commandop.name, loc=commandop.location)
+    transition.push_back(node)
 
-def cmd_wait_finish(parser : VNParser, commandop : GeneralCommandOp):
-  pass
+#def cmd_wait_finish(parser : VNParser, commandop : GeneralCommandOp):
+#  pass
 
 @CommandDecl(vn_command_ns, _imports, 'CharacterExit', alias={
   '角色退场': {'characters': '角色', 'transition': '转场'}
 })
-def cmd_character_exit(parser : VNParser, commandop : GeneralCommandOp, characters : list[CallExprOperand], transition : CallExprOperand = None):
-  pass
+def cmd_character_exit(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, characters : list[CallExprOperand], transition : CallExprOperand = None):
+  # 如果退场时角色带有状态，我们先把角色的状态切换成目标状态，然后再创建一个 Transition 结点存放真正的退场
+  characters_list : list[StringLiteral] = []
+  for ch in characters:
+    if len(ch.args) > 0 or len(ch.kwargs) > 0:
+      cmd_switch_character_state(parser, state, commandop, ch)
+    characters_list.append(StringLiteral.get(ch.name, state.context))
+  transition = parser.emit_transition_node(state, commandop, transition)
+  for chname in characters_list:
+    node = VNASTCharacterExitNode.create(state.context, chname, name='', loc=commandop.location)
+    transition.push_back(node)
 
 @CommandDecl(vn_command_ns, _imports, 'SpecialEffect', alias={
   '特效': {'effect': '特效'}
 })
-def cmd_special_effect(parser : VNParser, commandop : GeneralCommandOp, effect : CallExprOperand):
-  pass
+def cmd_special_effect(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, effect : CallExprOperand):
+  ref = parser.emit_pending_assetref(state, commandop, effect)
+  result = VNASTAssetReference.create(context=state.context, kind=VNASTAssetKind.KIND_EFFECT, operation=VNASTAssetIntendedOperation.OP_PUT, asset=ref, name=commandop.name, loc=commandop.location)
+  state.emit_node(result)
+
+def _helper_collect_character_expr(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, expr : CallExprOperand) -> list[StringLiteral]:
+  # 将描述角色状态的 CallExprOperand 转化为字符串数组
+  deststate = []
+  for arg in expr.args:
+    if l := parser.get_literal_from_call_arg(arg, StringLiteral):
+      deststate.append(l)
+    else:
+      msg = expr.name + ': "' + str(arg) + '"'
+      err = ErrorOp.create(error_code='vnparser-unexpected-argument-in-character-expr', context=state.context, error_msg=StringLiteral.get(msg, state.context), name='', loc=commandop.location)
+      state.emit_md(err)
+  # 目前我们不支持提取 kwargs
+  for k, v in expr.kwargs.items():
+    msg = expr.name + ': "' + k + '"=' + str(v)
+    err = ErrorOp.create(error_code='vnparser-unexpected-argument-in-character-expr', context=state.context, error_msg=StringLiteral.get(msg, state.context), name='', loc=commandop.location)
+    state.emit_md(err)
+  return deststate
+
+def _helper_collect_scene_expr(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, expr : CallExprOperand) -> list[StringLiteral]:
+  # 将描述场景状态的 CallExprOperand 转化为字符串数组
+  # 这个和角色的一样，所以直接引用了
+  return _helper_collect_character_expr(parser, state, commandop, expr)
 
 @CommandDecl(vn_command_ns, _imports, 'SwitchCharacterState', alias={
   '切换角色状态': {'state_expr': '状态表达式'}
 })
-def cmd_switch_character_state(parser : VNParser, commandop : GeneralCommandOp, state_expr : list[str] | CallExprOperand):
+def cmd_switch_character_state(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, state_expr : list[str] | CallExprOperand):
   # 如果是个调用表达式，则角色名是调用的名称
   # 如果是一串标签字符串，则更改默认发言者的状态
   # 优先匹配一串字符串
-  pass
+  # 一般来说切换角色状态都是立即发生的，不会有渐变的动画
+  # 如果有立绘姿势、服装改变的话也是，顶多是下场+上场，所以这里我们不需要转场效果
+  character = None
+  if isinstance(state_expr, list):
+    deststate = []
+    for v in state_expr:
+      assert isinstance(v, str)
+      deststate.append(StringLiteral.get(v, state.context))
+  elif isinstance(state_expr, CallExprOperand):
+    character = state_expr.name
+    deststate = _helper_collect_character_expr(parser, state, commandop, state_expr)
+  else:
+    raise RuntimeError("Should not happen")
+  result = VNASTCharacterStateChangeNode.create(context=state.context, character=character, deststate=deststate, name=commandop.name, loc=commandop.location)
+  state.emit_node(result)
 
 @CommandDecl(vn_command_ns, _imports, 'SwitchScene', alias={
-  '切换场景': {'scene': '场景'}
+  '切换场景': {'scene': '场景', 'transition': '转场'}
 })
-def cmd_switch_scene(parser : VNParser, commandop : GeneralCommandOp, scene: CallExprOperand):
-  pass
+def cmd_switch_scene(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, scene: CallExprOperand, transition : CallExprOperand = None):
+  transition = parser.emit_transition_node(state, commandop, transition)
+  scenestates = _helper_collect_scene_expr(parser, state, commandop, scene)
+  node = VNASTSceneSwitchNode.create(context=state.context, destscene=scene.name, states=scenestates)
+  transition.push_back(node)
 
 @CommandDecl(vn_command_ns, _imports, 'HideImage', alias={
   '收起图片': {'image_name': '图片名', 'transition': '转场'}
 })
-def cmd_hide_image(parser : VNParser, commandop : GeneralCommandOp, image_name : str, transition : CallExprOperand = None):
-  pass
+def cmd_hide_image(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, image_name : str, transition : CallExprOperand = None):
+  transition = parser.emit_transition_node(state, commandop, transition)
+  ref = VNASTPendingAssetReference.get(value=image_name, args=None, kwargs=None, context=state.context)
+  node = VNASTAssetReference.create(context=state.context, kind=VNASTAssetKind.KIND_IMAGE, operation=VNASTAssetIntendedOperation.OP_REMOVE, asset=ref, name=commandop.name, loc=commandop.location)
+  transition.push_back(node)
 
 
 # ------------------------------------------------------------------------------
@@ -552,8 +630,13 @@ def cmd_hide_image(parser : VNParser, commandop : GeneralCommandOp, image_name :
   ('Function', 'Section') : {}, # en
   ('函数', '章节') : {'name': '名称'}, # zh_CN
 })
-def cmd_set_function(parser : VNParser, commandop : GeneralCommandOp, name : str):
-  pass
+def cmd_set_function(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str):
+  func = VNASTFunction.create(context=state.context, name=name, loc=commandop.location)
+  state.output_current_file.functions.push_back(func)
+  if state.output_current_region is None:
+    if len(state.output_current_file.pending_content.body) > 0:
+      func.prebody_md.take_body(state.output_current_file.pending_content)
+  state.output_current_region = func
 
 @FrontendParamEnum(alias={
   'CONTINUE': { 'continue', '继续'},
@@ -598,14 +681,31 @@ def cmd_branch(parser : VNParser, commandop : GeneralCommandOp, ext : ListExprOp
 @CommandDecl(vn_command_ns, _imports, 'LongSpeech', alias={
   '长发言': {'sayer': '发言者'}, # zh_CN
 })
-def cmd_long_speech_mode(parser : VNParser, commandop : GeneralCommandOp, sayer : CallExprOperand):
-  pass
+def cmd_long_speech_mode(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, sayer : CallExprOperand = None):
+  sayerlist : list[StringLiteral] = []
+  if sayer is not None:
+    name = StringLiteral.get(sayer.name, state.context)
+    sayerlist.append(name)
+  node = VNASTSayModeChangeNode.create(context=state.context, target_mode=VNASTSayMode.MODE_LONG_SPEECH, specified_sayers=sayerlist)
+  state.emit_node(node)
 
 @CommandDecl(vn_command_ns, _imports, 'InterleaveSayer', alias={
   '交替发言': {'sayer': '发言者'}, # zh_CN
 })
-def cmd_interleave_mode(parser : VNParser, commandop : GeneralCommandOp, sayer : list[CallExprOperand]):
-  print("交替发言：")
+def cmd_interleave_mode(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, sayer : list[CallExprOperand]):
+  # 目前忽略额外状态，只记录名称
+  # 如果提供了额外的角色状态，我们其实也可以先加一个角色状态切换
+  sayerlist : list[StringLiteral] = []
   for s in sayer:
-    print(str(s))
+    name = StringLiteral.get(s.name, state.context)
+    sayerlist.append(name)
+  node = VNASTSayModeChangeNode.create(context=state.context, target_mode=VNASTSayMode.MODE_INTERLEAVED, specified_sayers=sayerlist)
+  state.emit_node(node)
+
+@CommandDecl(vn_command_ns, _imports, 'DefaultSayMode', alias={
+  '默认发言模式': {}, # zh_CN
+})
+def cmd_default_say_mode(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp):
+  node = VNASTSayModeChangeNode.create(context=state.context, target_mode=VNASTSayMode.MODE_DEFAULT)
+  state.emit_node(node)
 

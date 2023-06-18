@@ -5,6 +5,8 @@ import dataclasses
 import enum
 import typing
 
+from preppipe.irbase import IRJsonExporter, IRJsonImporter
+
 from ...irbase import *
 from ...irdataop import *
 from ..commandsyntaxparser import *
@@ -67,24 +69,94 @@ class VNASTSayNode(VNASTNodeBase):
 # ----------------------------------------------------------
 
 @IRWrappedStatelessClassJsonName("vnast_say_mode_e")
-class VNSayMode(enum.Enum):
+class VNASTSayMode(enum.Enum):
   MODE_DEFAULT = 0
   MODE_LONG_SPEECH = enum.auto()
   MODE_INTERLEAVED = enum.auto()
 
 @IROperationDataclass
-class VNSayModeChangeNode(VNASTNodeBase):
-  target_mode : OpOperand[EnumLiteral[VNSayMode]]
+class VNASTSayModeChangeNode(VNASTNodeBase):
+  target_mode : OpOperand[EnumLiteral[VNASTSayMode]]
   specified_sayers : OpOperand[StringLiteral]
+
+  # 默认模式不给定说话者
+  # 长发言模式如果不给定说话者，则取最后一个说话的人；如果有歧义（比如这在一个基本块的开始，之前最后发言的角色不是同一人）则报错
+  # 交替发言模式应有至少两个给定的说话者
 
   def get_short_str(self, indent : int = 0) -> str:
     return 'SayModeChange ' + self.target_mode.get().value.name[5:] + ' ' + ','.join([u.value.get_string() for u in self.specified_sayers.operanduses()])
 
-class VNASTPendingAssetReference(Literal):
+  @staticmethod
+  def create(context : Context, target_mode : VNASTSayMode, specified_sayers : typing.Iterable[StringLiteral] | None = None):
+    return VNASTSayModeChangeNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, target_mode=target_mode, specified_sayers=specified_sayers)
+
+class VNASTPendingAssetReference(LiteralExpr):
   # 该值仅作为值接在 VNAssetReference 中，不作为单独的结点
+  # 为了保存 *args 和 **kwargs, 我们使用如下规则：
+  # 1. 第一个参数 (self.get_value_tuple()[0]) 是名称
+  # 2. 之后的每两个参数分别代表一个参数：
+  #       <None, V> 表示一个值为 V 的按位参数
+  #       <Name, V> 表示一个名为 name, 值为 V 的关键字参数
+  # 不过大多数时候应该只有一个字符串参数(StringLiteral)
+
+  def construct_init(self, *, context : Context, value_tuple: tuple[StringLiteral, ...], **kwargs) -> None:
+    ty = VoidType.get(context)
+    return super().construct_init(ty=ty, value_tuple=value_tuple, **kwargs)
 
   def get_short_str(self, indent : int = 0) -> str:
-    return 'PendingAssetRef "' + self.value + '"'
+    args : list[Literal] = []
+    kwargs : dict[str, Literal] = {}
+    result = 'PendingAssetRef "' + self.populate_argdicts(args, kwargs) + '"'
+    if len(args) > 0 or len(kwargs) > 0:
+      argstrlist = []
+      for v in args:
+        argstrlist.append(str(v))
+      for k, v in kwargs.items():
+        argstr = k + '=' + str(v)
+        argstrlist.append(argstr)
+      result += '(' + ', '.join(argstrlist) + ')'
+    return result
+
+  def populate_argdicts(self, args : list[Literal], kwargs : dict[str, Literal]) -> str:
+    # 把该结点的args/argnames 转换为 *args, **kwargs 的样式
+    # 返回值是转场的名称
+    vt = self.get_value_tuple()
+    numoperands = len(vt)
+    for i in range(1, numoperands, 2):
+      name = vt[i]
+      v = vt[i+1]
+      if name is None:
+        args.append(v)
+      else:
+        assert isinstance(name, StringLiteral)
+        namestr = name.get_string()
+        kwargs[namestr] = v
+    aname = vt[0]
+    assert isinstance(aname, StringLiteral)
+    return aname.get_string()
+
+  def __str__(self) -> str:
+    return self.get_short_str()
+
+  @staticmethod
+  def prepare_value_tuple(value : StringLiteral | str, args : list[Literal] | None, kwargs : dict[str, Literal] | None, context : Context) -> tuple[Literal, ...]:
+    if isinstance(value, str):
+      value = StringLiteral.get(value, context)
+    valuelist : list = [value]
+    if args is not None:
+      for a in args:
+        valuelist.append(None)
+        valuelist.append(a)
+    if kwargs is not None:
+      for k, v in kwargs.items():
+        valuelist.append(StringLiteral.get(k, context))
+        valuelist.append(v)
+    return tuple(valuelist)
+
+  @staticmethod
+  def get(value : StringLiteral | str, args : list[Literal] | None, kwargs : dict[str, Literal] | None, context : Context):
+    return VNASTPendingAssetReference._get_literalexpr_impl(VNASTPendingAssetReference.prepare_value_tuple(value, args, kwargs, context), context)
+
 
 @IRWrappedStatelessClassJsonName("vnast_asset_intendop_e")
 class VNASTAssetIntendedOperation(enum.Enum):
@@ -131,10 +203,17 @@ class VNASTASMNode(VNASTNodeBase):
     result = "ASM"
     if backend := self.backend.try_get_value():
       result += '<' + backend.get_string() + '>'
-    for u in self.body.operanduses():
+    for u in self.body.get().operanduses():
       s : str = u.value.get_string()
       result += '\n' + '  '*(indent+1) + s
     return result
+
+  def create(context : Context, body : StringListLiteral, backend : StringLiteral | None, name : str = '', loc : Location | None = None):
+    if body:
+      assert isinstance(body, StringListLiteral)
+    if backend:
+      assert isinstance(backend, StringLiteral)
+    return VNASTASMNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, body=body, backend=backend, name=name, loc=loc)
 
 @IROperationDataclass
 class VNASTNamespaceSwitchableValueSymbol(Symbol):
@@ -163,24 +242,67 @@ class VNASTNamespaceSwitchableValueSymbol(Symbol):
 @IROperationDataclass
 class VNASTSceneSwitchNode(VNASTNodeBase):
   destscene : OpOperand[StringLiteral]
+  states : OpOperand[StringLiteral] # 场景状态
 
   def get_short_str(self, indent : int = 0) -> str:
-    return 'SceneSwitch ' + self.destscene.get().get_string()
+    result = 'SceneSwitch '
+    if destscene := self.destscene.try_get_value():
+      result += destscene.get_string()
+    else:
+      result += '<Current>'
+    if self.states.get_num_operands() > 0:
+      statelist = []
+      for u in self.states.operanduses():
+        statelist.append(u.value.get_string())
+      result += '(' + ', '.join(statelist) + ')'
+    return result
+
+  def create(context : Context, destscene : StringLiteral | str | None, states : typing.Iterable[StringLiteral] | None):
+    return VNASTSceneSwitchNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, destscene=destscene, states=states)
 
 @IROperationDataclass
 class VNASTCharacterEntryNode(VNASTNodeBase):
-  character : OpOperand[StringLiteral]
+  character : OpOperand[StringLiteral] # 角色名称
+  states : OpOperand[StringLiteral] # 角色入场时的状态（如果有的话）
 
   def get_short_str(self, indent : int = 0) -> str:
-    return 'CharacterEntry ' + self.character.get().get_string()
+    result = 'CharacterEntry ' + self.character.get().get_string()
+    if self.states.get_num_operands() > 0:
+      result += ' (' + ', '.join([u.value for u in self.states.operanduses()]) + ')'
+    return result
+
+  @staticmethod
+  def create(context : Context, character : StringLiteral | str, states : typing.Iterable[StringLiteral] | None = None, name : str = '', loc : Location | None = None):
+    return VNASTCharacterEntryNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, character=character, states=states, name=name, loc=loc)
 
 @IROperationDataclass
 class VNASTCharacterStateChangeNode(VNASTNodeBase):
-  character : OpOperand[StringLiteral]
+  character : OpOperand[StringLiteral] # 如果需要根据环境求解的话可能没有值
   deststate : OpOperand[StringLiteral] # 可能不止一个值
 
   def get_short_str(self, indent : int = 0) -> str:
-    return 'StateChange ' + self.character.get().get_string() + ': ' + ','.join([u.value.get_string() for u in self.deststate.operanduses()])
+    result = 'StateChange '
+    if ch := self.character.try_get_value():
+      result += ch.get_string()
+    else:
+      result += '<default>'
+    result += ': [' + ','.join([u.value.get_string() for u in self.deststate.operanduses()]) + ']'
+    return result
+
+  @staticmethod
+  def create(context : Context, character : StringLiteral | str | None = None, deststate : typing.Iterable[StringLiteral] | None = None, name : str = '', loc : Location | None = None):
+    return VNASTCharacterStateChangeNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, character=character, deststate=deststate)
+
+@IROperationDataclass
+class VNASTCharacterExitNode(VNASTNodeBase):
+  character : OpOperand[StringLiteral] # 角色名称
+
+  def get_short_str(self, indent : int = 0) -> str:
+    return 'CharacterExit ' + self.character.get().get_string()
+
+  @staticmethod
+  def create(context : Context, character : StringLiteral | str, name : str = '', loc : Location | None = None):
+    return VNASTCharacterExitNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, character=character, name=name, loc=loc)
 
 @IROperationDataclass
 class VNASTCodegenRegion(VNASTNodeBase):
@@ -199,6 +321,9 @@ class VNASTCodegenRegion(VNASTNodeBase):
   def get_short_str(self, indent : int = 0) -> str:
     return "Codegen Region: " + self.get_short_str_for_codeblock(self.body, indent)
 
+  def push_back(self, node : VNASTNodeBase | MetadataOp):
+    self.body.push_back(node)
+
 @IROperationDataclass
 class VNASTFunction(VNASTCodegenRegion):
   # 代表一个函数
@@ -208,10 +333,84 @@ class VNASTFunction(VNASTCodegenRegion):
 
   def get_short_str(self, indent : int = 0) -> str:
     result = 'Function "' + self.name + '"'
-    if len(self.prebody_md) > 0:
+    if len(self.prebody_md.body) > 0:
       result += '\n' + '  '*indent + 'prebody: ' + self.get_short_str_for_codeblock(self.prebody_md)
     result += '\n' + '  '*indent + 'body: ' + self.get_short_str_for_codeblock(self.body)
     return result
+
+  @staticmethod
+  def create(context : Context, name : str, loc : Location):
+    return VNASTFunction(init_mode=IRObjectInitMode.CONSTRUCT, context=context, name=name, loc=loc)
+
+@IROperationDataclass
+class VNASTTransitionNode(VNASTCodegenRegion):
+  # 转场结点，用来包裹所有需要转场效果的事件（角色入场、退场，场景切换等）
+  # 对于这些需要转场效果的事件的类，即使某些实例没有转场效果、立即发生，我们也用这个结点
+  # 一些从来不会需要转场效果的事件（如角色状态切换）则不需要这个结点
+  # 如果有多个子节点，则所有子节点的转场将同时进行
+  # 由于转场效果的解析会在生成 VNAST 之后才会发生，创建该节点时我们需要尽可能地保留原来的参数
+  # 为了同时保留 args 和 kwargs，如果转场表达式有 a 个 arg 和 k 个 kwarg, 那么：
+  # 1. transition_args 有 (a+k) 项，前 a 项是 args 的值，后 k 项是 kwargs 的值
+  # 2. transition_argnames 有 k 项，第 i 项对应第 i 个 kwargs 的值（即 transition_args 中第 a+i 项）
+
+  transition_name : OpOperand[StringLiteral] # 转场效果的名称（如果有的话）
+  transition_args : OpOperand[Literal] # 转场效果的所有参数
+  transition_argnames : OpOperand[StringLiteral] # 如果对应的转场效果参数提供了名称（即它是 kwarg 之一），这里我们放对应的名称
+
+  def get_short_str(self, indent : int = 0) -> str:
+    result = 'Transition '
+    if transition := self.transition_name.try_get_value():
+      result += '"' + transition.get_string() + '"'
+      if self.transition_args.get_num_operands() > 0:
+        k = self.transition_argnames.get_num_operands()
+        s = self.transition_args.get_num_operands()
+        a = s-k
+        argstrlist = []
+        for i in range(0, a):
+          arg = self.transition_args.get_operand(i)
+          argstrlist.append(str(arg))
+        for i in range(0, k):
+          arg = self.transition_args.get_operand(i+a)
+          argname = self.transition_argnames.get_operand(i)
+          argstr = argname.get_string() + '=' + str(arg)
+          argstrlist.append(argstr)
+        result += '(' + ', '.join(argstrlist) + ')'
+    else:
+      result += '<None>'
+    result += ' : ' + VNASTCodegenRegion.get_short_str_for_codeblock(self.body, indent+1)
+    return result
+
+  def populate_argdicts(self, args : list[Literal], kwargs : dict[str, Literal]) -> str:
+    # 把该结点的args/argnames 转换为 *args, **kwargs 的样式
+    # 返回值是转场的名称
+    s = self.transition_args.get_num_operands()
+    k = self.transition_argnames.get_num_operands()
+    a = s-k
+    for i in range(0, a):
+      arg = self.transition_args.get_operand(i)
+      args.append(arg)
+    for i in range(0, k):
+      arg = self.transition_args.get_operand(i+a)
+      argname = self.transition_argnames.get_operand(i)
+      kwargs[argname.get_string()] = arg
+    if v := self.transition_name.try_get_value():
+      return v.get_string()
+    return ''
+
+  def add_arg(self, arg : Literal):
+    assert isinstance(arg, Literal)
+    assert self.transition_argnames.get_num_operands() == 0
+    self.transition_args.add_operand(arg)
+
+  def add_kwarg(self, name : StringLiteral, value : Literal):
+    assert isinstance(name, StringLiteral)
+    assert isinstance(value, Literal)
+    self.transition_args.add_operand(value)
+    self.transition_argnames.add_operand(name)
+
+  @staticmethod
+  def create(context : Context, transition_name : StringLiteral | str | None = None, name : str = '', loc : Location | None = None):
+    return VNASTTransitionNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, transition_name=transition_name, name=name, loc=loc)
 
 @IROperationDataclass
 class VNASTConditionalExecutionNode(VNASTNodeBase):
