@@ -631,11 +631,24 @@ def cmd_hide_image(parser : VNParser, state : VNASTParsingState, commandop : Gen
   ('函数', '章节') : {'name': '名称'}, # zh_CN
 })
 def cmd_set_function(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str):
+  # 如果我们在(1)该文件还没有函数或(2)现在正在一个函数体中时，我们创建一个新函数，从那里开始构建
+  # 如果此时我们在一个函数的某个控制流分支里(比如选单的某个分支内)，我们除了上述操作外还得在当前位置添加一个调用
   func = VNASTFunction.create(context=state.context, name=name, loc=commandop.location)
   state.output_current_file.functions.push_back(func)
   if state.output_current_region is None:
+    # 当前没有函数
+    # 我们尝试把此命令之前的内容给转移进该函数
     if len(state.output_current_file.pending_content.body) > 0:
       func.prebody_md.take_body(state.output_current_file.pending_content)
+  elif isinstance(state.output_current_region, VNASTFunction):
+    # 我们现在正在一个函数的主体内
+    # 什么都不做
+    pass
+  else:
+    # 我们在一个分支里
+    # 添加一个对该函数的调用
+    callnode = VNASTCallNode.create(context=state.context, callee=name)
+    state.emit_node(callnode)
   state.output_current_region = func
 
 @FrontendParamEnum(alias={
@@ -649,16 +662,94 @@ class _SelectFinishActionEnum(enum.Enum):
 @CommandDecl(vn_command_ns, _imports, 'Select', alias={
   '选项': {'name': '名称', 'finish_action': '结束动作'}
 })
-def cmd_select(parser : VNParser, commandop : GeneralCommandOp, ext : ListExprOperand, name : str, finish_action : _SelectFinishActionEnum = _SelectFinishActionEnum.CONTINUE):
-  pass
+def cmd_select(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, ext : ListExprOperand, name : str, finish_action : _SelectFinishActionEnum = _SelectFinishActionEnum.CONTINUE):
+  # 该命令应该这样使用：
+  # 【选项 名称=。。。】
+  #     * <选项1文本>
+  #       - <选项1段落1>
+  #       - <选项1段落2>
+  #       ...
+  #     * <选项2文本>
+  #       - <选项2段落1>
+  #       - <选项2段落2>
+  #       ...
+  # 原来的 IMListOp 应该像是这样：
+  # [IMListOp root]
+  #    R: '1'
+  #       B: '': [IMElementOp <选项1文本>]
+  #       B: '': [IMListOp]
+  #                 R: '1'
+  #                   B: '': [IMElementOp <选项1段落1>]
+  #                 R: '2'
+  #                   B: '': [IMElementOp <选项1段落2>]
+  #                 ...
+  #    R: '2'
+  #       B: '': [IMElementOp <选项2文本>]
+  #       B: '': [IMListOp]
+  #                 R: '1'
+  #                   B: '': [IMElementOp <选项2段落1>]
+  #                 R: '2'
+  #                   B: '': [IMElementOp <选项2段落2>]
+  #                 ...
+  def extract_option_title_str(frontblock : Block, result : list[Value]) -> Location | None:
+    # result 由调用的代码提供
+    firstloc : Location | None = None
+    for op in frontblock.body:
+      if isinstance(op, IMElementOp):
+        firstloc = op.location
+        for u in op.content.operanduses():
+          value = u.value
+          if isinstance(value, (StringLiteral, TextFragmentLiteral)):
+            result.append(value)
+    return firstloc
+
+  node = VNASTMenuNode.create(context=state.context, name=name, loc=commandop.location)
+  state.emit_node(node)
+  match finish_action:
+    case _SelectFinishActionEnum.CONTINUE:
+      pass
+    case _SelectFinishActionEnum.LOOP:
+      node.set_attr(VNASTMenuNode.ATTR_FINISH_ACTION, VNASTMenuNode.ATTR_FINISH_ACTION_LOOP)
+    case _:
+      raise RuntimeError('should not happen')
+  listop : IMListOp = ext.original_op
+  assert isinstance(listop, IMListOp)
+  num_options = listop.get_num_regions()
+  for i in range(0, num_options):
+    regionname = str(i+1)
+    r = listop.get_region(regionname)
+    # 第一个块包含选项的文本内容
+    front = r.blocks.front
+    optiontitle = []
+    loc = extract_option_title_str(front, optiontitle)
+    codegen = node.add_option(optiontitle, loc)
+    # 如果有第二个块的话，这个块应当包含另一个 IMListOp, 该选项选择之后的内容都在这个 IMListOp 里
+    if bodyblock := front.get_next_node():
+      childlist : IMListOp | None = None
+      for op in bodyblock.body:
+        if isinstance(op, IMListOp):
+          childlist = op
+          break
+      if childlist is not None:
+        childstate = dataclasses.replace(state, output_current_region=codegen)
+        num_blocks = childlist.get_num_regions()
+        for i in range(0, num_blocks):
+          r = childlist.get_region(str(i+1))
+          childstate.input_top_level_region = r
+          childstate.input_current_block = r.blocks.front
+          while block := childstate.get_next_input_block():
+            parser.handle_block(childstate, block)
+
+  # 结束
 
 @CommandDecl(vn_command_ns, _imports, 'ExitLoop', alias={
   '跳出循环': {}
 })
-def cmd_exit_loop(parser : VNParser, commandop : GeneralCommandOp):
+def cmd_exit_loop(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp):
   # 用来在带循环的选项命令中跳出循环
   # 目前没有其他循环结构，只有这里用得到，以后可能会用在其他地方
-  pass
+  node = VNASTBreakNode.create(state.context, name=commandop.name, loc=commandop.location)
+  state.emit_node(node)
 
 @CommandDecl(vn_command_ns, _imports, 'Choice', alias={
   '分支': {'condition': '条件'}
@@ -708,4 +799,83 @@ def cmd_interleave_mode(parser : VNParser, state : VNASTParsingState, commandop 
 def cmd_default_say_mode(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp):
   node = VNASTSayModeChangeNode.create(context=state.context, target_mode=VNASTSayMode.MODE_DEFAULT)
   state.emit_node(node)
+
+# ------------------------------------------------------------------------------
+# 其他命令
+# ------------------------------------------------------------------------------
+
+def _helper_collect_arguments(ctx : Context, operand : OpOperand) -> list[Value]:
+  result : list[Value] = []
+  # 如果有字符串内容，我们把它们并成 StringLiteral
+  # 其他内容均保留
+  prev_str = ''
+  for u in operand.operanduses():
+    v = u.value
+    if isinstance(v, (StringLiteral, TextFragmentLiteral)):
+      s = v.get_string()
+      prev_str += s
+    else:
+      if len(prev_str) > 0:
+        result.append(StringLiteral.get(prev_str, ctx))
+        prev_str = ''
+      result.append(v)
+  if len(prev_str) > 0:
+    result.append(StringLiteral.get(prev_str, ctx))
+  return result
+
+@CommandDecl(vn_command_ns, _imports, 'ExpandTable', alias={
+  '表格展开': {'cmdname' : '命令名'}, # zh_CN
+})
+def cmd_expand_table(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, cmdname : str, table : TableExprOperand):
+  # 表格第一行是参数名
+  # 如果第一列没有参数名，这列代表按位参数(positional argument)
+  # 从第二行起，如果某一格是空白，则代表没有该参数
+  tableop : IMTableOp = table.original_op
+  assert isinstance(tableop, IMTableOp)
+  rowcnt = tableop.rowcount.get().value
+  colcnt = tableop.columncount.get().value
+  if rowcnt < 2 or colcnt == 0:
+    return # 忽略没有内容的表格
+  has_positional_arg : bool = False
+  kwarg_names : list[str] = []
+  # 先读第一行，把命令参数信息读进来
+  for col in range(0, colcnt):
+    celloperand : OpOperand = tableop.get_cell_operand(0, col)
+    curstr = ''
+    for u in celloperand.operanduses():
+      curstr += u.value.get_string()
+    if len(curstr) == 0:
+      # 这代表一个按位参数，只能是第一列
+      if col == 0:
+        has_positional_arg = True
+      else:
+        msg = 'column ' + str(col+1)
+        err = ErrorOp.create(error_code='vnparser-tableexpand-invalid-positionalarg', context=state.context, error_msg=StringLiteral.get(msg, state.context), loc=commandop.location)
+        state.emit_md(err)
+        return
+    else:
+      kwarg_names.append(curstr)
+  # 然后读接下来的内容
+  cmdnamel = StringLiteral.get(cmdname, state.context)
+  for row in range(1, rowcnt):
+    cmd = GeneralCommandOp.create(name='ExpandTable_' + str(row), loc=commandop.location, name_value=cmdnamel, name_loc=commandop.location)
+    kwargindex = 0
+    for col in range(0, colcnt):
+      operand : OpOperand = tableop.get_cell_operand(row, col)
+      values = _helper_collect_arguments(state.context, operand)
+      if col == 0 and has_positional_arg:
+        for v in values:
+          cmd.add_positional_arg(v, commandop.location)
+      else:
+        argname = kwarg_names[kwargindex]
+        kwargindex += 1
+        # 如果没有值则直接忽视
+        if len(values) > 0:
+          if len(values) > 1:
+            # 如果有多个值，只有第一个值保留，其他的都扔掉
+            msg = 'row ' + str(row+1) + ', col ' + str(col+1) + ', discarded: ' + ', '.join(['"' + str(v) + '"' for v in values[1:]])
+            err = ErrorOp.create(error_code='vnparser-tableexpand-excessive-args', context=state.context, error_msg=StringLiteral.get(msg, state.context), loc=commandop.location)
+            state.emit_md(err)
+          cmd.add_keyword_arg(argname, values[0], commandop.location, commandop.location)
+    parser.handle_command_op(state=state, op=cmd)
 

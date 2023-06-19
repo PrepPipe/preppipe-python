@@ -1584,6 +1584,8 @@ class Operation(IRObject, IListNode):
     raise RuntimeError('Operand not found')
 
   def try_get_operand_inst(self, name: str) -> OpOperand | None:
+    if name not in self._operands:
+      return None
     return self._operands.get(name)
 
   def get_operand(self, name : str) -> Value | None:
