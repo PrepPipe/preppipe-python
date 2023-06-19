@@ -324,6 +324,10 @@ class VNASTCodegenRegion(VNASTNodeBase):
   def push_back(self, node : VNASTNodeBase | MetadataOp):
     self.body.push_back(node)
 
+  @staticmethod
+  def create(context : Context, name : str = '', loc : Location | None = None):
+    return VNASTCodegenRegion(init_mode=IRObjectInitMode.CONSTRUCT, context=context, name=name, loc=loc)
+
 @IROperationDataclass
 class VNASTFunction(VNASTCodegenRegion):
   # 代表一个函数
@@ -451,6 +455,20 @@ class VNASTMenuNode(VNASTNodeBase):
       operandindex += 1
     return result
 
+  def add_option(self, text : typing.Iterable[Value], loc : Location | None = None) -> VNASTCodegenRegion:
+    index=0
+    while self.try_get_operand_inst(str(index)) is not None:
+      index += 1
+    name = str(index)
+    self._add_operand_with_value(name, text)
+    r = VNASTCodegenRegion.create(self.context, name=name, loc=loc)
+    self.body.push_back(r)
+    return r
+
+  @staticmethod
+  def create(context : Context, name : str = '', loc : Location | None = None):
+    return VNASTMenuNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, name=name, loc=loc)
+
 @IROperationDataclass
 class VNASTBreakNode(VNASTNodeBase):
   # 用来跳出循环，现在只有选单会有循环
@@ -458,15 +476,54 @@ class VNASTBreakNode(VNASTNodeBase):
   def get_short_str(self, indent : int = 0) -> str:
     return 'Break'
 
+  @staticmethod
+  def create(context : Context, name : str = '', loc : Location | None = None):
+    return VNASTBreakNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, name=name, loc=loc)
+
 @IROperationDataclass
 class VNASTLabelNode(VNASTNodeBase):
   # 用来提供基于标签的跳转
   labelname : OpOperand[StringLiteral]
 
+  def get_short_str(self, indent : int = 0) -> str:
+    return '[Label "' + self.labelname.get().get_string() + '"]'
+
+  @staticmethod
+  def create(context : Context, labelname : StringLiteral | str):
+    return VNASTJumpNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, labelname=labelname)
+
 @IROperationDataclass
 class VNASTJumpNode(VNASTNodeBase):
   # 跳转到指定标签，不能到另一个函数
   target_label : OpOperand[StringLiteral]
+
+  def get_short_str(self, indent : int = 0) -> str:
+    return 'Jump "' + self.target_label.get().get_string() + '"'
+
+  @staticmethod
+  def create(context : Context, target : StringLiteral | str):
+    return VNASTJumpNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, target_label=target)
+
+@IROperationDataclass
+class VNASTCallNode(VNASTNodeBase):
+  callee : OpOperand[StringLiteral]
+
+  ATTR_TAILCALL : typing.ClassVar[str] = 'tailcall'
+
+  def is_tail_call(self) -> bool:
+    return self.get_attr(self.ATTR_TAILCALL) is True
+
+  def get_short_str(self, indent : int = 0) -> str:
+    result = 'TailCall' if self.is_tail_call() else 'Call'
+    result += ' "' + self.callee.get().get_string() + '"'
+    return result
+
+  @staticmethod
+  def create(context : Context, callee : StringLiteral | str, is_tail_call : bool = False):
+    result = VNASTCallNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, callee=callee)
+    if is_tail_call:
+      result.set_attr(VNASTCallNode.ATTR_TAILCALL, True)
+    return result
 
 @IRWrappedStatelessClassJsonName("vnast_say_device_kind_e")
 class VNASTSayDeviceKind(enum.Enum):
