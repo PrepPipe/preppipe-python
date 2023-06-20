@@ -3,7 +3,7 @@
 
 import sys
 
-from .inputmodel import Context, IMSettings, IMParseCache
+from .inputmodel import Context
 from .frontend.opendocument import parse_odf
 from .frontend.commandsyntaxparser import perform_command_parse_transform
 
@@ -12,10 +12,8 @@ def _testmain():
     print("please specify the input file!")
     sys.exit(1)
   ctx = Context()
-  settings = IMSettings()
-  cache = IMParseCache(ctx)
   filepath = sys.argv[1]
-  doc = parse_odf(ctx, settings, cache, filepath)
+  doc = parse_odf(ctx, filepath)
   perform_command_parse_transform(doc)
   doc.view()
 

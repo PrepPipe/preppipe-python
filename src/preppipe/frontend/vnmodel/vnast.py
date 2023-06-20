@@ -195,6 +195,16 @@ class VNASTAssetReference(VNASTNodeBase):
     return VNASTAssetReference(init_mode=IRObjectInitMode.CONSTRUCT, context=context, kind=kind, operation=operation, asset=asset, name=name, loc=loc)
 
 @IROperationDataclass
+class VNASTAssetDeclSymbol(Symbol):
+  # 我们使用声明的名称来作为这个 VNASTAssetDeclSymbol 的名称
+  kind : OpOperand[EnumLiteral[VNASTAssetKind]]
+  asset : OpOperand # 实际的值
+
+  @staticmethod
+  def create(context : Context, kind : VNASTAssetKind, asset : Value, name : str, loc : Location):
+    return VNASTAssetDeclSymbol(init_mode=IRObjectInitMode.CONSTRUCT, context=context, kind=kind, asset=asset, name=name, loc=loc)
+
+@IROperationDataclass
 class VNASTASMNode(VNASTNodeBase):
   backend : OpOperand[StringLiteral]
   body : OpOperand[StringListLiteral] # 即使是单行也是 StringListLiteral
@@ -548,7 +558,7 @@ class VNASTCharacterSymbol(Symbol):
   aliases : OpOperand[StringLiteral]
   namespace : OpOperand[StringLiteral]
   sayinfo : SymbolTableRegion[VNASTCharacterSayInfoSymbol] # 所有发言表现的信息
-  sprites : SymbolTableRegion[VNASTNamespaceSwitchableValueSymbol]
+  sprites : SymbolTableRegion[VNASTNamespaceSwitchableValueSymbol] # 名称是所有状态字符串用逗号','串起来的结果
 
 @IROperationDataclass
 class VNASTSceneSymbol(Symbol):
@@ -559,6 +569,7 @@ class VNASTSceneSymbol(Symbol):
 class VNASTFileInfo(VNASTNodeBase):
   namespace : OpOperand[StringLiteral] # 无参数表示没有提供（取默认情况），'/'才是根命名空间
   functions : Block # 全是 VNASTFunction
+  assetdecls : SymbolTableRegion[VNASTAssetDeclSymbol] # 可以按名查找的资源声明
   pending_content : Block # VNASTNodeBase | MetadataOp
   # 现在我们把别名直接存储到被起别名的对象上
 
