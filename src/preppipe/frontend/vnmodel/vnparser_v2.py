@@ -11,9 +11,11 @@ from ...irbase import *
 from ..commandsyntaxparser import *
 from ..commandsemantics import *
 from ...vnmodel_v4 import *
+from ...imageexpr import *
 from .vnast import *
 from .vncodegen import *
 from .vnsayscan import *
+from . import vnutil
 from ...util.antlr4util import TextStringParsingUtil
 
 # ------------------------------------------------------------------------------
@@ -73,6 +75,10 @@ class VNASTParsingState:
 
   def emit_md(self, md : MetadataOp):
     self._emit_impl(md)
+
+  def emit_error(self, code : str, msg : str, loc : Location | None = None):
+    err = ErrorOp.create(error_code=code, context=self.context, error_msg=StringLiteral.get(msg, self.context), loc=loc)
+    self._emit_impl(err)
 
 class VNParser(FrontendParserBase[VNASTParsingState]):
   ast : VNAST
@@ -161,17 +167,13 @@ class VNParser(FrontendParserBase[VNASTParsingState]):
       if l := self.get_literal_from_call_arg(a):
         result.add_arg(l)
       else:
-        msg = transition.name + ': "' + str(a) + '"'
-        err = ErrorOp.create(error_code='vnparser-unexpected-argument-in-transition', context=self.context, error_msg=StringLiteral.get(msg, self.context), name='', loc=backingop.location)
-        state.emit_md(err)
+        state.emit_error('vnparser-unexpected-argument-in-transition', transition.name + ': "' + str(a) + '"', loc=backingop.location)
     for k, v in transition.kwargs.items():
       if l := self.get_literal_from_call_arg(v):
         name = StringLiteral.get(k, state.context)
         result.add_kwarg(name, l)
       else:
-        msg = transition.name + ' arg "' + k +'": "' + str(v) + '"'
-        err = ErrorOp.create(error_code='vnparser-unexpected-argument-in-transition', context=self.context, error_msg=StringLiteral.get(msg, self.context), name='', loc=backingop.location)
-        state.emit_md(err)
+        state.emit_error('vnparser-unexpected-argument-in-transition', transition.name + ' arg "' + k +'": "' + str(v) + '"', loc=backingop.location)
     state.emit_node(result)
     return result
 
@@ -183,18 +185,13 @@ class VNParser(FrontendParserBase[VNASTParsingState]):
       if l := self.get_literal_from_call_arg(a):
         args.append(l)
       else:
-        msg = ref.name + ': "' + str(a) + '"'
-        err = ErrorOp.create(error_code='vnparser-unexpected-argument-in-assetref', context=self.context, error_msg=StringLiteral.get(msg, self.context), name='', loc=backingop.location)
-        state.emit_md(err)
+        state.emit_error('vnparser-unexpected-argument-in-assetref', ref.name + ': "' + str(a) + '"', loc=backingop.location)
     for k, v in ref.kwargs.items():
       if l := self.get_literal_from_call_arg(v):
         kwargs[k] = l
       else:
-        msg = ref.name + ' arg "' + k +'": "' + str(v) + '"'
-        err = ErrorOp.create(error_code='vnparser-unexpected-argument-in-assetref', context=self.context, error_msg=StringLiteral.get(msg, self.context), name='', loc=backingop.location)
-        state.emit_md(err)
+        state.emit_error('vnparser-unexpected-argument-in-assetref', ref.name + ' arg "' + k +'": "' + str(v) + '"', loc=backingop.location)
     return VNASTPendingAssetReference.get(value=refname, args=args, kwargs=kwargs, context=state.context)
-
 
   def handle_block(self, state : VNASTParsingState, block : Block):
     # 检查一下假设
@@ -401,8 +398,16 @@ _imports = globals()
 @CommandDecl(vn_command_ns, _imports, 'DeclImage', alias={
   '声明图片': {'name': '名称', 'path': '路径'}, # zh_CN
 })
-def cmd_image_decl(parser : VNParser, commandop : GeneralCommandOp, name : str, path : str):
-  pass
+def cmd_image_decl(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str, path : str):
+  if img := vnutil.emit_image_expr(state.context, path):
+    if existing := state.output_current_file.assetdecls.get(name):
+      state.emit_error('vnparse-nameclash-imagedecl', 'Image "' + name + '" already exist: ' + str(existing.asset.get()), loc=commandop.location)
+    else:
+      symb = VNASTAssetDeclSymbol.create(state.context, kind=VNASTAssetKind.KIND_IMAGE, asset=img, name=name, loc=commandop.location)
+      state.output_current_file.assetdecls.add(symb)
+    return
+  # 找不到图片，同样生成一个错误
+  state.emit_error('vnparse-image-notfound', path, loc=commandop.location)
 
 @CommandDecl(vn_command_ns, _imports, 'DeclVariable', alias={
   '声明变量' : {'name': '名称', 'type': '类型', 'initializer': '初始值'},
@@ -528,8 +533,7 @@ def cmd_character_entry(parser : VNParser, state: VNASTParsingState, commandop :
       elif isinstance(a, StringLiteral):
         states.append(a)
       else:
-        err = ErrorOp.create(error_code='vnparser-unexpected-argument', context=state.context, error_msg=StringLiteral.get('CharacterEnter ' + charname + ': argument "' + str(a) + '" ignored', state.context))
-        state.emit_md(err)
+        state.emit_error('vnparser-unexpected-argument', 'CharacterEnter ' + charname + ': argument "' + str(a) + '" ignored', loc=commandop.location)
     node = VNASTCharacterEntryNode.create(state.context, character=charname, states=states, name=commandop.name, loc=commandop.location)
     transition.push_back(node)
 
@@ -566,14 +570,10 @@ def _helper_collect_character_expr(parser : VNParser, state : VNASTParsingState,
     if l := parser.get_literal_from_call_arg(arg, StringLiteral):
       deststate.append(l)
     else:
-      msg = expr.name + ': "' + str(arg) + '"'
-      err = ErrorOp.create(error_code='vnparser-unexpected-argument-in-character-expr', context=state.context, error_msg=StringLiteral.get(msg, state.context), name='', loc=commandop.location)
-      state.emit_md(err)
+      state.emit_error('vnparser-unexpected-argument-in-character-expr', expr.name + ': "' + str(arg) + '"', loc=commandop.location)
   # 目前我们不支持提取 kwargs
   for k, v in expr.kwargs.items():
-    msg = expr.name + ': "' + k + '"=' + str(v)
-    err = ErrorOp.create(error_code='vnparser-unexpected-argument-in-character-expr', context=state.context, error_msg=StringLiteral.get(msg, state.context), name='', loc=commandop.location)
-    state.emit_md(err)
+    state.emit_error('vnparser-unexpected-argument-in-character-expr', expr.name + ': "' + k + '"=' + str(v), loc=commandop.location)
   return deststate
 
 def _helper_collect_scene_expr(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, expr : CallExprOperand) -> list[StringLiteral]:
@@ -849,9 +849,7 @@ def cmd_expand_table(parser : VNParser, state : VNASTParsingState, commandop : G
       if col == 0:
         has_positional_arg = True
       else:
-        msg = 'column ' + str(col+1)
-        err = ErrorOp.create(error_code='vnparser-tableexpand-invalid-positionalarg', context=state.context, error_msg=StringLiteral.get(msg, state.context), loc=commandop.location)
-        state.emit_md(err)
+        state.emit_error('vnparser-tableexpand-invalid-positionalarg', 'column ' + str(col+1), loc=commandop.location)
         return
     else:
       kwarg_names.append(curstr)
@@ -874,8 +872,7 @@ def cmd_expand_table(parser : VNParser, state : VNASTParsingState, commandop : G
           if len(values) > 1:
             # 如果有多个值，只有第一个值保留，其他的都扔掉
             msg = 'row ' + str(row+1) + ', col ' + str(col+1) + ', discarded: ' + ', '.join(['"' + str(v) + '"' for v in values[1:]])
-            err = ErrorOp.create(error_code='vnparser-tableexpand-excessive-args', context=state.context, error_msg=StringLiteral.get(msg, state.context), loc=commandop.location)
-            state.emit_md(err)
+            state.emit_error('vnparser-tableexpand-excessive-args', msg, loc=commandop.location)
           cmd.add_keyword_arg(argname, values[0], commandop.location, commandop.location)
     parser.handle_command_op(state=state, op=cmd)
 

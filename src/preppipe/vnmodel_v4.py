@@ -492,6 +492,19 @@ class VNSceneSymbol(VNSymbol):
   def create(context : Context, name : str, codename : StringLiteral | str | None = None, loc : Location | None = None):
     return VNSceneSymbol(init_mode=IRObjectInitMode.CONSTRUCT, context=context, codename=codename, name=name, loc=loc)
 
+@IROperationDataclass
+@IRObjectJsonTypeName("vn_alias_symbol_op")
+class VNAliasSymbol(VNSymbol):
+  target_name : OpOperand[StringLiteral]
+  target_namespace : OpOperand[StringLiteral]
+
+  def get_entry_dataclass(self) -> NamespaceNodeInterface.AliasEntry:
+    return NamespaceNodeInterface.AliasEntry(ns_path=VNNamespace.expand_namespace_str(self.target_namespace.get().get_string()), name=self.target_name.get().get_string())
+
+  @staticmethod
+  def create(context : Context, name : str, target_name : StringLiteral | str, target_namespace : StringLiteral | str, loc : Location | None = None):
+    return VNAliasSymbol(init_mode=IRObjectInitMode.CONSTRUCT, context=context, target_name=target_name, target_namespace=target_namespace, name=name, loc=loc)
+
 # ------------------------------------------------------------------------------
 # (对于显示内容、非音频的)转场效果
 # ------------------------------------------------------------------------------
@@ -910,6 +923,7 @@ class VNNamespace(Symbol, NamespaceNodeInterface[VNSymbol]):
   scenes : SymbolTableRegion[VNSceneSymbol]
   devices : SymbolTableRegion[VNDeviceSymbol]
   values : SymbolTableRegion[VNValueSymbol]
+  aliases : SymbolTableRegion[VNAliasSymbol]
   _namespace_path_tuple : tuple[str] = temp_field(default_factory=tuple)
 
   @staticmethod
@@ -948,6 +962,16 @@ class VNNamespace(Symbol, NamespaceNodeInterface[VNSymbol]):
     self.devices.add(device)
     return device
 
+  def add_asset(self, asset : VNConstExprAsSymbol) -> VNConstExprAsSymbol:
+    assert isinstance(asset, VNConstExprAsSymbol)
+    self.assets.add(asset)
+    return asset
+
+  def add_alias(self, alias : VNAliasSymbol) -> VNAliasSymbol:
+    assert isinstance(alias, VNAliasSymbol)
+    self.aliases.add(alias)
+    return alias
+
   def get_device(self, name : str) -> VNDeviceSymbol:
     record = self.devices.get(name)
     assert isinstance(record, VNDeviceSymbol)
@@ -964,6 +988,8 @@ class VNNamespace(Symbol, NamespaceNodeInterface[VNSymbol]):
     return toplevel.get_namespace(VNNamespace.stringize_namespace_path(self._namespace_path_tuple[:-1]))
 
   def lookup_name(self, name: str) -> VNNamespace | VNSymbol | NamespaceNodeInterface.AliasEntry | None:
+    if alias := self.aliases.get(name):
+      return alias.get_entry_dataclass()
     for table in (self.functions, self.assets, self.characters, self.scenes, self.devices):
       if symb := table.get(name):
         return symb
