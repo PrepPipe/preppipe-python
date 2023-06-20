@@ -28,6 +28,7 @@ import llist
 
 from .commontypes import TextAttribute, Color
 from ._version import __version__
+from .util.audit import *
 
 # ------------------------------------------------------------------------------
 # ADT needed for IR
@@ -2273,8 +2274,9 @@ class Context:
   _null_location : Location # a dummy location value with only a reference to the context
   _difile_dict : collections.OrderedDict[str, DIFile] # from filepath string to the DIFile object
   _diloc_dict : collections.OrderedDict[DIFile, collections.OrderedDict[tuple[int, int, int], DILocation]] # <file> -> <page, row, column> -> DILocation
+  _file_auditor : FileAccessAuditor
 
-  def __init__(self) -> None:
+  def __init__(self, file_auditor : FileAccessAuditor | None = None) -> None:
     self._stateless_type_dict = collections.OrderedDict()
     self._parameterized_type_dict = collections.OrderedDict()
     self._asset_data_list = IList(self)
@@ -2285,6 +2287,7 @@ class Context:
     self._null_location = Location(init_mode=IRObjectInitMode.CONSTRUCT, context=self)
     self._difile_dict = collections.OrderedDict()
     self._diloc_dict = collections.OrderedDict()
+    self._file_auditor = file_auditor if file_auditor is not None else FileAccessAuditor()
     mimetypes.init()
 
   def get_stateless_type(self, ty : type) -> typing.Any:
@@ -2328,6 +2331,9 @@ class Context:
     result = ConstExprUniquingDict(ty)
     self._constexpr_dict[ty] = result
     return result
+
+  def get_file_auditor(self) -> FileAccessAuditor:
+    return self._file_auditor
 
   def create_name_for_asset(self, underdir : str, preferred_path : str, data : bytes) -> str:
     # 我们把所有素材文件都放一个目录下
@@ -2374,6 +2380,7 @@ class Context:
     return asset
 
   def get_or_create_unknown_asset_data_external(self, ext_path : str) -> AssetData | None:
+    assert self._file_auditor.check_is_path_accessible(ext_path)
     mimety, encoding = mimetypes.guess_type(ext_path)
     if mimety is None:
       return None
@@ -2389,12 +2396,14 @@ class Context:
     return self._create_asset_data_embedded(ImageAssetData, full_embed_path, data, img_format)
 
   def get_or_create_image_asset_data_external(self, ext_path : str, img_format : str | None = None) -> ImageAssetData:
+    assert self._file_auditor.check_is_path_accessible(ext_path)
     return self._get_or_create_asset_data_external(ImageAssetData, ext_path, img_format)
 
   def create_audio_asset_data_embedded(self, full_embed_path : str, data : bytes, audio_format : str | None = None) -> AudioAssetData:
     return self._create_asset_data_embedded(AudioAssetData, full_embed_path, data, audio_format)
 
   def get_or_create_audio_asset_data_external(self, ext_path : str, audio_format : str | None = None) -> AudioAssetData:
+    assert self._file_auditor.check_is_path_accessible(ext_path)
     return self._get_or_create_asset_data_external(AudioAssetData, ext_path, audio_format)
 
   @property

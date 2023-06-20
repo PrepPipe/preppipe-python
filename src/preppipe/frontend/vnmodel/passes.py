@@ -6,7 +6,7 @@ from preppipe.irbase import Operation, typing
 from .vnast import *
 from ...pipeline import *
 from ...irbase import *
-from .vncodegen import vncodegen
+from .vncodegen import VNCodeGen
 from .vnparser_v2 import VNParser
 from ...vnmodel_v4 import VNModel
 
@@ -29,5 +29,5 @@ class VNCodeGenTransform(TransformBase):
   def run(self) -> Operation | list[Operation] | None:
     assert len(self.inputs) == 1
     ast = self.inputs[0]
-    model = vncodegen(ast)
+    model = VNCodeGen.run(ast)
     return model

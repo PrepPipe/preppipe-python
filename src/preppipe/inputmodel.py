@@ -259,31 +259,6 @@ class InputModelV2(Operation):
   def create(name : str, loc : Location):
     return InputModelV2(init_mode=IRObjectInitMode.CONSTRUCT, context=loc.context, name=name, loc=loc)
 
-class IMSettings:
-  # 该类用于存储所有在读取阶段有关的设置，读取完毕后可扔
-
-  # 审计相关的部分
-  # 如果运行该程序的系统不属于输入文件的作者，我们用这类审计手段来限制可访问的文件的范围
-  _accessible_directories_whitelist : list[str] # 绝对路径,按搜索顺序排列
-
-  def add_search_path(self, v : str):
-    if os.path.isdir(v):
-      self._accessible_directories_whitelist.append(os.path.abspath(v))
-
-  def check_is_path_accessible(self, abspath : str) -> bool:
-    # 检查 abspath 是否为目录白名单中之一
-    # TODO 现在还是暂时不做这个
-    return True
-
-  def search(self, querypath : str, basepath : str, filecheckCB : typing.Callable) -> typing.Any:
-    # querypath 是申请访问的文件名（来自文档内容，不可信），可能含后缀也可能不含，可能是绝对路径也可能是相对路径
-    # basepath 是访问发起的文件路径，绝对路径
-    # filecheckCB 是回调函数，接受一个绝对路径，若文件不符合要求则返回 None ，如果符合则返回任意非 None 的值，作为该 search() 的返回值
-    raise NotImplementedError()
-
-  def __init__(self) -> None:
-    self._accessible_directories_whitelist = []
-
 def _collect_text_from_paragraph_impl(b : Block) -> tuple[str, list[AssetData]]:
   content_str = ''
   asset_list : typing.List[AssetData] = []

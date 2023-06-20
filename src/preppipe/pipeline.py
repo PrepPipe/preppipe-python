@@ -2,10 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
-from .irbase import *
-from ._version import __version__
 import argparse
 import sys
+
+from .irbase import *
+from .util.audit import *
+from ._version import __version__
 
 # 这里提供一个类似 clang cc1 的界面，我们在这里支持详细的命令行设定
 # driver 以后就提供一个更简单易用的界面
@@ -484,6 +486,7 @@ def pipeline_main(args : typing.List[str] = None):
     is_action_performed = True
 
   ctx = Context()
+  ctx.get_file_auditor().add_permissible_path(os.getcwd())
   pipeline = TransformRegistration.build_pipeline(result_args, ctx)
   current_ir_ops = []
   step_count = 0

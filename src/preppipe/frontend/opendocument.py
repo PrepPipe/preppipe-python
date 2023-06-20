@@ -101,7 +101,6 @@ class _ODParseContext:
   _FRAME_EXPECTED_ANCHORTYPES : typing.List[str] = ["as-char", "char", "paragraph"]
 
   ctx : Context
-  settings : IMSettings
   filePath : str
   odfhandle: odf.opendocument.OpenDocument
   ziphandle : zipfile.ZipFile
@@ -127,11 +126,11 @@ class _ODParseContext:
 
   # ------------------------------------------------------------------
 
-  def __init__(self, ctx : Context, settings : IMSettings, filePath : str) -> None:
+  def __init__(self, ctx : Context, filePath : str) -> None:
     filePath = os.path.realpath(filePath, strict=True)
     self.ctx = ctx
-    self.settings = settings
     self.filePath = filePath
+    self.ctx.get_file_auditor().add_permissible_path(os.path.dirname(filePath))
     self.odfhandle = odf.opendocument.load(filePath)
     self.ziphandle = zipfile.ZipFile(filePath, mode = "r")
     self.difile = ctx.get_DIFile(filePath)
@@ -320,7 +319,7 @@ class _ODParseContext:
         # entry = self.parent.get_image_asset_entry_from_inlinedata(data, mediatype, self.filePath, href)
     else:
       # the image is a link to outside file
-      if self.settings.check_is_path_accessible(href_full_path):
+      if self.ctx.get_file_auditor().check_is_path_accessible(href_full_path):
         value = self.ctx.get_or_create_image_asset_data_external(href_full_path)
 
     if not isinstance(value, ImageAssetData):
@@ -368,7 +367,7 @@ class _ODParseContext:
         return IMErrorElementOp.create(name = '', loc = loc, content = textstr, error_code='odf-bad-media-ref', error_msg = msgstr)
     else:
       # the href is a link to outside file
-      if self.settings.check_is_path_accessible(href_full_path):
+      if self.ctx.get_file_auditor().check_is_path_accessible(href_full_path):
         value = self.ctx.get_or_create_unknown_asset_data_external(href_full_path)
 
     if value is None:
@@ -1150,9 +1149,8 @@ class _ODParseContext:
     self.transform_pass_reassociate_lists(result)
     return result
 
-def parse_odf(ctx : Context, settings : IMSettings, filePath : str):
-  # ctx : Context, settings : IMSettings, cache : IMParseCache, filePath : str
-  pc = _ODParseContext(ctx = ctx, settings = settings, filePath = filePath)
+def parse_odf(ctx : Context, filePath : str):
+  pc = _ODParseContext(ctx = ctx, filePath = filePath)
   result = pc.parse_odf()
   pc.cleanup()
   return result
@@ -1160,19 +1158,17 @@ def parse_odf(ctx : Context, settings : IMSettings, filePath : str):
 @FrontendDecl('odf', input_decl=IODecl('OpenDocument files', match_suffix=('.odf',), nargs='+'), output_decl=IMDocumentOp)
 class ReadOpenDocument(TransformBase):
   _ctx : Context
-  _settings : IMSettings
 
   def __init__(self, _ctx: Context) -> None:
     super().__init__(_ctx)
     self._ctx = _ctx
-    self._settings = IMSettings()
 
   def run(self) -> IMDocumentOp | typing.List[IMDocumentOp]:
     if len(self.inputs) == 1:
-      return parse_odf(self._ctx, self._settings, self.inputs[0])
+      return parse_odf(self._ctx, self.inputs[0])
     results = []
     for f in self.inputs:
-      results.append(parse_odf(self._ctx, self._settings, f))
+      results.append(parse_odf(self._ctx, f))
     return results
 
 def _main():
@@ -1180,9 +1176,8 @@ def _main():
     print("please specify the input file!")
     sys.exit(1)
   ctx = Context()
-  settings = IMSettings()
   filePath = sys.argv[1]
-  doc = parse_odf(ctx, settings, filePath)
+  doc = parse_odf(ctx, filePath)
   doc.view()
 
 if __name__ == "__main__":
