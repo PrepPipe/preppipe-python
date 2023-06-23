@@ -15,7 +15,8 @@ from ...imageexpr import *
 from .vnast import *
 from .vncodegen import *
 from .vnsayscan import *
-from . import vnutil
+from .vnutil import *
+
 from ...util.antlr4util import TextStringParsingUtil
 
 # ------------------------------------------------------------------------------
@@ -46,6 +47,7 @@ class VNASTParsingState:
   # （不属于状态信息但是有用）
   context : Context
 
+  input_file_path : str # 正在解析哪个文件的内容，用来辅助文件查找
   input_top_level_region : Region = None # 应该永不为 None
   input_current_block : Block = None # 下一个需要读取的块（我们在处理操作项时先把这个转向它的下一项，就像先更新PC再执行指令那样）
   output_current_file : VNASTFileInfo = None
@@ -83,22 +85,26 @@ class VNASTParsingState:
 class VNParser(FrontendParserBase[VNASTParsingState]):
   ast : VNAST
   ctx : Context
+  resolution : tuple[int, int]
 
-  def __init__(self, ctx: Context, command_ns: FrontendCommandNamespace) -> None:
+  def __init__(self, ctx: Context, command_ns: FrontendCommandNamespace, screen_resolution : tuple[int, int], name : str = '') -> None:
     super().__init__(ctx, command_ns, VNASTParsingState)
-    self.ast = VNAST.create('', ctx)
+    self.ast = VNAST.create(name=name, screen_resolution=IntTupleLiteral.get(screen_resolution, ctx), context=ctx)
+    self.resolution = screen_resolution
 
   @staticmethod
-  def create(ctx: Context, command_ns: FrontendCommandNamespace | None = None):
+  def create(ctx: Context, command_ns: FrontendCommandNamespace | None = None, screen_resolution : tuple[int, int] | None = None, name : str = ''):
     if command_ns is None:
       command_ns = vn_command_ns
-    return VNParser(ctx, command_ns)
+    if screen_resolution is None:
+      screen_resolution = (1920, 1080)
+    return VNParser(ctx, command_ns, screen_resolution)
 
-  def initialize_state_for_doc(self, doc : IMDocumentOp) -> VNASTParsingState:
+  def initialize_state_for_doc(self, doc : IMDocumentOp) -> VNASTParsingState | None:
     # 跳过空文件
     if doc.body.blocks.empty:
       return None
-    state = VNASTParsingState(self.context)
+    state = VNASTParsingState(self.context, doc.location.get_file_path())
     # 首先将输入状态搞好
     state.input_top_level_region = doc.body
     state.input_current_block = doc.body.blocks.front
@@ -337,6 +343,10 @@ class VNParser(FrontendParserBase[VNASTParsingState]):
     # 跳过所有空文件
     if (state := self.initialize_state_for_doc(doc)) is None:
       return
+    # 如果 IR 没有赋予名称，就用遇到的第一个文档的名字
+    if len(doc.name) > 0:
+      if len(self.ast.name) == 0:
+        self.ast.name = doc.name
     while block := state.get_next_input_block():
       self.handle_block(state, block)
 
@@ -398,36 +408,145 @@ _imports = globals()
 @CommandDecl(vn_command_ns, _imports, 'DeclImage', alias={
   '声明图片': {'name': '名称', 'path': '路径'}, # zh_CN
 })
-def cmd_image_decl(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str, path : str):
-  if img := vnutil.emit_image_expr(state.context, path):
-    if existing := state.output_current_file.assetdecls.get(name):
-      state.emit_error('vnparse-nameclash-imagedecl', 'Image "' + name + '" already exist: ' + str(existing.asset.get()), loc=commandop.location)
-    else:
-      symb = VNASTAssetDeclSymbol.create(state.context, kind=VNASTAssetKind.KIND_IMAGE, asset=img, name=name, loc=commandop.location)
-      state.output_current_file.assetdecls.add(symb)
+def cmd_image_decl_path(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str, path : str):
+  img = emit_image_expr_from_path(context=state.context, pathexpr=path, basepath=state.input_file_path)
+  if img is None:
+    # 找不到图片，生成一个错误
+    state.emit_error('vnparse-image-notfound', path, loc=commandop.location)
     return
-  # 找不到图片，同样生成一个错误
-  state.emit_error('vnparse-image-notfound', path, loc=commandop.location)
+  if existing := state.output_current_file.assetdecls.get(name):
+    state.emit_error('vnparse-nameclash-imagedecl', 'Image "' + name + '" already exist: ' + str(existing.asset.get()), loc=commandop.location)
+  else:
+    symb = VNASTAssetDeclSymbol.create(state.context, kind=VNASTAssetKind.KIND_IMAGE, asset=img, name=name, loc=commandop.location)
+    state.output_current_file.assetdecls.add(symb)
+  return
+
+
+@CommandDecl(vn_command_ns, _imports, 'DeclImage', alias={
+  '声明图片': {'name': '名称', 'source': '来源'}, # zh_CN
+})
+def cmd_image_decl_src(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str, source : CallExprOperand):
+  wlist : list[tuple[str, str]] = []
+  img = emit_image_expr_from_callexpr(context=state.context, call=source, placeholderdest=ImageExprPlaceholderDest.DEST_UNKNOWN, warnings=wlist, screen_resolution=parser.resolution)
+  if img is None:
+    state.emit_error('vnparse-imageexpr-invalid', str(source), loc=commandop.location)
+    return
+  if existing := state.output_current_file.assetdecls.get(name):
+    state.emit_error('vnparse-nameclash-imagedecl', 'Image "' + name + '" already exist: ' + str(existing.asset.get()), loc=commandop.location)
+  else:
+    symb = VNASTAssetDeclSymbol.create(state.context, kind=VNASTAssetKind.KIND_IMAGE, asset=img, name=name, loc=commandop.location)
+    state.output_current_file.assetdecls.add(symb)
+  return
 
 @CommandDecl(vn_command_ns, _imports, 'DeclVariable', alias={
   '声明变量' : {'name': '名称', 'type': '类型', 'initializer': '初始值'},
 })
 # pylint: disable=redefined-builtin
-def cmd_variable_decl(parser: VNParser, commandop : GeneralCommandOp, name : str, type : str, initializer : str):
-  pass
+def cmd_variable_decl(parser: VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str, type : str, initializer : str):
+  if existing := state.output_current_file.variables.get(name):
+    state.emit_error('vnparse-nameclash-variabledecl', 'Variable "' + name + '" already exist: type=' + existing.vtype.get().get_string() + ' initializer=' + existing.initializer.get().get_string(), commandop.location)
+    return
+  symb = VNASTVariableDeclSymbol.create(context=state.context, vtype=type, initializer=initializer, name=name, loc=commandop.location)
+  state.output_current_file.variables.add(symb)
 
 @CommandDecl(vn_command_ns, _imports, 'DeclCharacter', alias={
   '声明角色' : {'name': '姓名'}, # zh_CN
 })
-def cmd_character_decl(parser: VNParser, commandop : GeneralCommandOp, name : str, ext : ListExprOperand):
+def cmd_character_decl(parser: VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str, ext : ListExprOperand):
   # 声明角色仅用于提供角色的身份
   # 在前端命令上可以身份+显示方式（比如显示名称，名字颜色等）一并设置，也可以只用该指令设定身份，用后面的“设置角色发言属性”来提供其他信息
-  pass
+  if existing := state.output_current_file.characters.get(name):
+    state.emit_error('vnparse-nameclash-characterdecl', 'Character "' + name + '" already exist', loc=commandop.location)
+    return
+  ch = VNASTCharacterSymbol.create(context=state.context, name=name, loc=commandop.location)
+  state.output_current_file.characters.add(ch)
+  if ext is not None:
+    if isinstance(ext.data, collections.OrderedDict):
+      # 有具体的发言信息
+      defaultsay = VNASTCharacterSayInfoSymbol.create(state.context, name, commandop.location)
+      ch.sayinfo.add(defaultsay)
+      for k, v in ext.data.items():
+        if k in ('Sprite', '立绘'):
+          # 这里开始是指定场景背景的信息
+          _helper_parse_image_exprtree(parser, state, v, ch.sprites, ImageExprPlaceholderDest.DEST_CHARACTER_SPRITE, commandop.location)
+          continue
+        if k in ('SideImage', '头像'):
+          _helper_parse_image_exprtree(parser, state, v, ch.sideimages, ImageExprPlaceholderDest.DEST_CHARACTER_SIDEIMAGE, commandop.location)
+          continue
+        if k in ('Say', '发言'):
+          _helper_parse_character_sayinfo(state=state, v=v, say=defaultsay, loc=commandop.location)
+          continue
+        if k in ('SayAlternativeName', '发言别名'):
+          _helper_parse_character_alternativesay(state=state, v=v, sayinfo=ch.sayinfo, defaultsay=defaultsay, loc=commandop.location)
+          continue
+        # 到这就说明当前的键值没有匹配到认识的
+        state.emit_error('vnparse-characterdecl-invalid-expr', 'Unexpected key "' + k + '"', loc=commandop.location)
+    else:
+      # ext.data 无效，记一下错误
+      state.emit_error('vnparse-characterdecl-invalid-expr', 'Unexpected attached list format', loc=commandop.location)
 
-@CommandDecl(vn_command_ns, _imports, 'DeclCharacterSprite', alias={
-  '声明角色立绘' : {'character_state_expr': '角色与状态表达式', 'image': '图片'}, # zh_CN
-})
-def cmd_character_sprite_decl(parser : VNParser, commandop : GeneralCommandOp, character_state_expr : CallExprOperand | str, image : str):
+def _helper_merge_textstyle(context : Context, srcoperand : OpOperand[TextStyleLiteral], attr : TextAttribute, v : typing.Any) -> TextStyleLiteral:
+  srcdict = {}
+  if src := srcoperand.try_get_value():
+    for t in src.value:
+      srcdict[t[0]] = t[1]
+  srcdict[attr] = v
+  return TextStyleLiteral.get(TextStyleLiteral.get_style_tuple(srcdict), context)
+
+def _helper_parse_color(state : VNASTParsingState, v : str, loc : Location, contextstr : str = '') -> Color | None:
+  try:
+    color = Color.get(v)
+    return color
+  except AttributeError:
+    msg = 'Invalid color string: "' + v + '"'
+    if len(contextstr) > 0:
+      msg = contextstr + ': ' + msg
+    state.emit_error(code='vnparse-invalid-colorstr', msg=msg, loc=loc)
+  return None
+
+def _helper_parse_character_alternativesay(state : VNASTParsingState, v : typing.Any, sayinfo : SymbolTableRegion[VNASTCharacterSayInfoSymbol], defaultsay : VNASTCharacterSayInfoSymbol | None, loc : Location):
+  if isinstance(v, list):
+    for altname in v:
+      if existing := sayinfo.get(altname):
+        continue
+      altnode = VNASTCharacterSayInfoSymbol.create(context=state.context, name=altname, loc=loc)
+      if defaultsay is not None:
+        altnode.copy_from(defaultsay)
+      sayinfo.add(altnode)
+  elif isinstance(v, collections.OrderedDict):
+    for altname, alttree in v.items():
+      if existing := sayinfo.get(altname):
+        continue
+      altnode = VNASTCharacterSayInfoSymbol.create(context=state.context, name=altname, loc=loc)
+      if defaultsay is not None:
+        altnode.copy_from(defaultsay)
+      sayinfo.add(altnode)
+      _helper_parse_character_sayinfo(state=state, v=alttree, say=altnode, loc=loc)
+  else:
+    raise RuntimeError("Should not happen")
+
+def _helper_parse_character_sayinfo(state : VNASTParsingState, v : typing.Any, say : VNASTCharacterSayInfoSymbol, loc : Location):
+  if isinstance(v, collections.OrderedDict):
+    for attr, value in v.items():
+      if attr in ('NameColor', '名字颜色'):
+        if c := _helper_parse_color(state, value, loc):
+          newstyle = _helper_merge_textstyle(state.context, say.namestyle, TextAttribute.TextColor, c)
+          say.namestyle.set_operand(0, newstyle)
+        continue
+      if attr in ('ContentColor', '内容颜色'):
+        if c := _helper_parse_color(state, value, loc):
+          newstyle = _helper_merge_textstyle(state.context, say.saytextstyle, TextAttribute.TextColor, c)
+          say.saytextstyle.set_operand(0, newstyle)
+      state.emit_error('vnparse-characterdecl-invalid-expr', 'Say subtree: Unexpected attribute "' + attr + '"', loc=loc)
+  else:
+    # 发言应该是一个字典；这里报错
+    state.emit_error('vnparse-characterdecl-invalid-expr', 'Unexpected data format for Say attribute (should be a dictionary)', loc=loc)
+
+# 这个命令暂时不做
+#@CommandDecl(vn_co mmand_ns, _imports, 'DeclCharacterSprite', alias={
+#  '声明角色立绘' : {'character_state_expr': '角色与状态表达式', 'image': '图片'}, # zh_CN
+#})
+#def cmd_character_sprite_decl(parser : VNParser, commandop : GeneralCommandOp, character_state_expr : CallExprOperand | str, image : str):
   # 定义一个角色的外观状态（一般是立绘差分，比如站姿、衣着、等），使得角色变换状态时能够切换立绘
   # 这必须是一个独立于角色声明的操作，因为更多角色外观等可以通过DLC等形式进行补足，所以它们可能处于不同的命名空间中
   # 在实际的内容中，一个角色的状态标签会有很多（包含衣着、站姿、表情等），
@@ -436,55 +555,114 @@ def cmd_character_sprite_decl(parser : VNParser, commandop : GeneralCommandOp, c
   # 虽然我们基本上只用一个“状态标签”参数来进行匹配，但对人物而言，我们要求最后一个标签代表表情，
   # 这样文中可以用<人名><表情><内容>的方式来表达说明，并且表情标签所替代的标签没有歧义
   # （我们也可以支持表情标签的层级，永远从最右侧替换）
-  pass
+#  pass
 
-@CommandDecl(vn_command_ns, _imports, 'SetCharacterSayAttr', alias={
-  '设置角色发言属性' : {'character_name': '角色姓名', 'state_tags': '状态标签',
-                       'name_color': '名字颜色',
-                       'display_name': '显示名',
-                       'display_name_expression': '显示名表达式',
-                       'content_color': '内容颜色',
-                       #'content_prefix': '内容前缀',
-                       #'content_suffix': '内容后缀',
-                      }, # zh_CN
+@CommandDecl(vn_command_ns, _imports, 'SetTemporarySayAttr', alias={
+  '设置临时发言属性' : {'display_name': '显示名', 'actual_character': '实际角色',}, # zh_CN
 })
-def cmd_character_say_attr(parser : VNParser, commandop : GeneralCommandOp, character_name : str, *, state_tags : str = '',
-                           name_color : str = None, # 名字的颜色，None 保留默认值
-                           display_name : str = None, # 显示的名字的内容，如果名字不是字面值的话就用 expression, 这项留空
-                           display_name_expression : str = None, # 如果名字要从变量中取或者其他方式，这项就是用于求解的表达式
-                           content_color : str = None, # 文本的颜色
-                           #前后缀暂不支持，后端这块要支持起来‘’还得改
-                           #content_prefix : str = '', # 文本前缀（比如如果要把所有文本都用『』括起来的话，那么这两个符号就是前缀和后缀）
-                           #content_suffix : str = '',
-                          ):
-  # 定义一个角色说话时名称的显示
-  # 声明的发言信息会在这两种情况下使用：
-  # 1. 剧本中发言者为角色本名，并且满足给定的状态标签时
-  # 2. 剧本中发言者为这里定义的显示名称。
-  # 第二种情况只在显示名称无歧义时可使用（比如没有多个角色同时为"???"），第一种情况一定可以用
-  pass
+def cmd_temp_say_attr(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, *, display_name : str, actual_character : str, ext : ListExprOperand | None = None):
+  # 定义一个角色说话时名称、发言内容的显示方式
+  # 一般情况下在声明角色时就可以定义所有内容，不过我们偶尔要让同一个人的显示名或是其他属性变化一下
+  # (比如刚出场时名字显示为 "???")
+  # 在这种时候我们就要用此命令来让该角色可以用不同的名字显示发言
+  # 注意，这里的发言属性会生效直到函数结束或者文件结束，取决于该结点在不在函数体里面
+  # 如果有多个角色共用相同的特殊显示名，则需要在标注角色状态信息时把实际角色填上才能避免重名，比如: ???(苏语涵):你好！
+  # 后置列表和声明角色时“发言”分支下的处理是一样的
+  parent = VNASTCharacterTempSayAttrNode.create(context=state.context, character=actual_character, name=commandop.name, loc=commandop.location)
+  state.emit_node(parent)
+  info = VNASTCharacterSayInfoSymbol.create(state.context, name=display_name, loc=commandop.location)
+  parent.sayinfo.add(info)
+  if ext is not None:
+    _helper_parse_character_sayinfo(state, ext.data, info, commandop.location)
 
 @CommandDecl(vn_command_ns, _imports, 'DeclScene', alias={
   '声明场景' : {'name': '名称'}, # zh_CN
 })
-def cmd_scene_decl(parser : VNParser, commandop : GeneralCommandOp, name : str, ext : ListExprOperand | None = None):
-  pass
+def cmd_scene_decl(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str, ext : ListExprOperand | None = None):
+  if existing := state.output_current_file.scenes.get(name):
+    state.emit_error('vnparse-nameclash-scenedecl', 'Scene "' + name + '" already exist', loc=commandop.location)
+    return
+  scene = VNASTSceneSymbol.create(context=state.context, name=name, loc=commandop.location)
+  state.output_current_file.scenes.add(scene)
+  if ext is not None:
+    if isinstance(ext.data, collections.OrderedDict):
+      for k, v in ext.data.items():
+        if k in ('Background', '背景'):
+          # 这里开始是指定场景背景的信息
+          _helper_parse_image_exprtree(parser, state, v, scene.backgrounds, ImageExprPlaceholderDest.DEST_SCENE_BACKGROUND, commandop.location)
+          continue
+        # 到这就说明当前的键值没有匹配到认识的
+        state.emit_error('vnparse-scenedecl-invalid-expr', 'Unexpected key "' + k + '"', loc=commandop.location)
+    else:
+      # ext.data 无效，记一下错误
+      state.emit_error('vnparse-scenedecl-invalid-expr', 'Unexpected attached list format', loc=commandop.location)
 
-@CommandDecl(vn_command_ns, _imports, 'DeclSceneBackground', alias={
-  '声明场景背景' : {'scene': '场景', 'state_tags' : '状态标签', 'background_image' : '背景图片'}, # zh_CN
-})
-def cmd_scene_background_decl(parser : VNParser, commandop : GeneralCommandOp, scene : str, state_tags : str, background_image : str):
+
+
+def _helper_parse_image_exprtree(parser : VNParser, state : VNASTParsingState, v : collections.OrderedDict[str, typing.Any] | str, statetree : SymbolTableRegion[VNASTNamespaceSwitchableValueSymbol], placeholderdest : ImageExprPlaceholderDest, loc : Location):
+  # 如果是一个词典，那么是个和角色立绘差不多的树状结构，每个子节点根一个图案表达式
+  # 如果是一个值，那么只有一个图片
+  # 首先把一个值的情况解决了
+  warnings : list[tuple[str,str]] = []
+  nstuple = None
+  if ns :=state.output_current_file.namespace.try_get_value():
+    nsstr = ns.get_string()
+    nstuple = VNNamespace.expand_namespace_str(nsstr)
+  nsstr = VNNamespace.stringize_namespace_path(nstuple) if nstuple is not None else '/'
+  def submit_expr(statestr : str, expr : Value):
+    nonlocal statetree
+    node = statetree.get(statestr)
+    if node is None:
+      node = VNASTNamespaceSwitchableValueSymbol.create(state.context, name=statestr, defaultvalue=expr, loc=loc)
+      statetree.add(node)
+    node.set_value(nsstr, expr)
+
+  if isinstance(v, str):
+    if expr := emit_image_expr_from_str(context=state.context, s=v, basepath=state.input_file_path, placeholderdest=placeholderdest, warnings=warnings, screen_resolution=parser.resolution):
+      submit_expr('', expr)
+    else:
+      state.emit_error(code='vnparse-invalid-imageexpr', msg=v, loc=loc)
+  elif isinstance(v, collections.OrderedDict):
+    state_stack = []
+    def walk_dict(d : collections.OrderedDict):
+      for k, v in d.items():
+        if isinstance(v, str):
+          if expr := emit_image_expr_from_str(context=state.context, s=v, basepath=state.input_file_path, placeholderdest=placeholderdest, warnings=warnings, screen_resolution=parser.resolution):
+            tmpstatelist = [*state_stack, k]
+            submit_expr(','.join(tmpstatelist), expr)
+          else:
+            state.emit_error(code='vnparse-invalid-imageexpr', msg=v, loc=loc)
+        elif isinstance(v, collections.OrderedDict):
+          state_stack.append(k)
+          walk_dict(v)
+          state_stack.pop(k)
+        else:
+          state.emit_error(code='vnparse-invalid-imageexpr', msg=str(v), loc=loc)
+    walk_dict(v)
+  else:
+    state.emit_error(code='vnparse-invalid-imageexpr', msg=str(v), loc=loc)
+
+  for t in warnings:
+    code, msg = t
+    state.emit_error(code=code, msg=msg, loc=loc)
+
+# 相同的功能可以在声明场景中完成，暂时不做
+#@CommandDecl(vn_command_ns, _imports, 'DeclSceneBackground', alias={
+#  '声明场景背景' : {'scene': '场景', 'state_tags' : '状态标签', 'background_image' : '背景图片'}, # zh_CN
+#})
+#def cmd_scene_background_decl(parser : VNParser, commandop : GeneralCommandOp, scene : str, state_tags : str, background_image : str):
   # 给场景定义一个可显示状态，使得“切换场景”可以更改背景
-  pass
+#  pass
 
 @CommandDecl(vn_command_ns, _imports, 'DeclAlias', alias={
   '声明别名' : {'alias_name': '别名名称', 'target':'目标'}, # zh_CN
 })
-def cmd_alias_decl(parser : VNParser, commandop : GeneralCommandOp, alias_name : str, target : str):
+def cmd_alias_decl(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, alias_name : str, target : str):
   # (仅在解析时用到，不会在IR中)
   # 给目标添加别名（比如在剧本中用‘我’指代某个人）
   # 别名都是文件内有效，出文件就失效。（实在需要可以复制黏贴）
-  pass
+  node = VNASTTempAliasNode.create(context=state.context, alias=alias_name, target=target, name=commandop.name, loc=commandop.location)
+  state.emit_node(node)
 
 # ------------------------------------------------------------------------------
 # 内容操作命令

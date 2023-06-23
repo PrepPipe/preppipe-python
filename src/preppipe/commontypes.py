@@ -46,6 +46,20 @@ class Color:
     "white": (255,  255,  255,  255),
     "black": (0,    0,    0,    255)
   }
+  PredefinedColorLanguageMap : typing.ClassVar[list[tuple[str, tuple[str, ...]]]] = [
+    ("transparent", ("透明",)),
+    ("red",         ("红色",)),
+    ("green",       ("绿色",)),
+    ("blue",        ("蓝色",)),
+    ("white",       ("白色",)),
+    ("black",       ("黑色",)),
+  ]
+  PredefinedColorAliasDict : typing.ClassVar[dict[str,str]] = {}
+  for t in PredefinedColorLanguageMap:
+    cname, aliastuple = t
+    assert cname in PredefinedColorMap
+    for alias in aliastuple:
+      PredefinedColorAliasDict[alias] = cname
 
   def red(self) -> int:
     return self.r
@@ -122,6 +136,13 @@ class Color:
           raise AttributeError("Not a color: " + src)
       elif src in Color.PredefinedColorMap:
         t = Color.PredefinedColorMap[src]
+        r = t[0]
+        g = t[1]
+        b = t[2]
+        a = t[3]
+      elif src in Color.PredefinedColorAliasDict:
+        cname = Color.PredefinedColorAliasDict[src]
+        t = Color.PredefinedColorMap[cname]
         r = t[0]
         g = t[1]
         b = t[2]

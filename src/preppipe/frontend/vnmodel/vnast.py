@@ -241,6 +241,15 @@ class VNASTNamespaceSwitchableValueSymbol(Symbol):
         return operand.get()
     return self.defaultvalue.get()
 
+  def set_value(self, ns : str, v : Value):
+    if ns != '/':
+      if operand := self.try_get_operand_inst(ns):
+        operand.set_operand(0, v)
+      else:
+        self._add_operand_with_value(ns, v)
+    else:
+      self.defaultvalue.set_operand(0, v)
+
   def get_short_str(self, indent : int = 0) -> str:
     result = 'NSSwitchable ' + str(self.defaultvalue.get())
     for ns, operand in self.operands.items():
@@ -248,6 +257,10 @@ class VNASTNamespaceSwitchableValueSymbol(Symbol):
         continue
       result += '\n' + '  '*(indent+1) + '"' + ns + '": ' + str(operand.get())
     return result
+
+  @staticmethod
+  def create(context : Context, name : str, defaultvalue : Value, loc : Location | None = None):
+    return VNASTNamespaceSwitchableValueSymbol(init_mode=IRObjectInitMode.CONSTRUCT, context=context, defaultvalue=defaultvalue, name=name, loc=loc)
 
 @IROperationDataclass
 class VNASTSceneSwitchNode(VNASTNodeBase):
@@ -549,27 +562,94 @@ class VNASTCharacterSayInfoSymbol(Symbol):
   # 使用继承的 name 作为显示的名称
   displayname_expr : OpOperand[StringLiteral] # 如果是表达式的话用这里的值
   aliases : OpOperand[StringLiteral]
-  state_tags : OpOperand[StringLiteral] # 当使用这里的状态标签时适用该记录里的信息；很可能不止一个值
   namestyle : OpOperand[TextStyleLiteral] # 大概只会用 TextColor 不过还是预留其他的
   saytextstyle : OpOperand[TextStyleLiteral]
+
+  def copy_from(self, src):
+    assert isinstance(src, VNASTCharacterSayInfoSymbol)
+    # 照抄除了显示名和别名外的其他内容
+    if src is self:
+      return
+
+    if v := src.namestyle.try_get_value():
+      self.namestyle.set_operand(0, v)
+    else:
+      self.namestyle.drop_all_uses()
+
+    if v := src.saytextstyle.try_get_value():
+      self.saytextstyle.set_operand(0, v)
+    else:
+      self.saytextstyle.drop_all_uses()
+
+  @staticmethod
+  def create(context : Context, name : str, loc : Location | None = None):
+    return VNASTCharacterSayInfoSymbol(init_mode=IRObjectInitMode.CONSTRUCT, context=context, name=name, loc=loc)
 
 @IROperationDataclass
 class VNASTCharacterSymbol(Symbol):
   aliases : OpOperand[StringLiteral]
-  namespace : OpOperand[StringLiteral]
   sayinfo : SymbolTableRegion[VNASTCharacterSayInfoSymbol] # 所有发言表现的信息
   sprites : SymbolTableRegion[VNASTNamespaceSwitchableValueSymbol] # 名称是所有状态字符串用逗号','串起来的结果
+  sideimages : SymbolTableRegion[VNASTNamespaceSwitchableValueSymbol]
+
+  @staticmethod
+  def create(context : Context, name : str, loc : Location | None = None):
+    return VNASTCharacterSymbol(init_mode=IRObjectInitMode.CONSTRUCT, context=context, name=name, loc=loc)
+
+class VNASTVariableDeclSymbol(Symbol):
+  # 变量的名字取自 Symbol 的名字
+  vtype : OpOperand[StringLiteral]
+  initializer : OpOperand[StringLiteral]
+
+  @staticmethod
+  def create(context : Context, vtype : StringLiteral | str, initializer : StringLiteral | str, name : str, loc : Location | None = None):
+    return VNASTVariableDeclSymbol(init_mode=IRObjectInitMode.CONSTRUCT, context=context, vtype=vtype, initializer=initializer, name=name, loc=loc)
+
+@IROperationDataclass
+class VNASTCharacterTempSayAttrNode(VNASTNodeBase):
+  # 我们用这个结点来表示，接下来的内容里，
+  # 某个角色的显示名称或发言显示方式可以变成该结点指定的样式
+  # 如果该结点在函数内，则效果持续到函数结束
+  # 如果该结点在函数外，则效果持续到文件结束
+  # 如果多个角色同时拥有相同的显示名（比如多个角色都用 ??? 表示），
+  # 则需要在状态表达式的第一项中包含角色的真实名字
+  # 注意，这里包含的发言属性并没有从角色声明处获得默认值，因为这结点可能不在声明角色的文件里
+  # 所以后面处理时需要复制默认值再进行覆盖
+  character : OpOperand[StringLiteral] # 角色的真实名字
+  sayinfo : SymbolTableRegion[VNASTCharacterSayInfoSymbol] # 大概只会有一个结点
+
+  @staticmethod
+  def create(context : Context, character : StringLiteral | str, name : str = '', loc : Location | None = None):
+    return VNASTCharacterTempSayAttrNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, character=character, name=name, loc=loc)
+
+@IROperationDataclass
+class VNASTTempAliasNode(VNASTNodeBase):
+  # 我们用这个结点表示接下来我们可以使用 alias 中的名字指代 target
+  # 该命令本身不影响任何演出因素（包括角色发言属性等），只是作为简化录入的辅助
+  alias : OpOperand[StringLiteral]
+  target : OpOperand[StringLiteral]
+
+  @staticmethod
+  def create(context : Context, alias : StringLiteral | str, target : StringLiteral | str,  name : str = '', loc : Location | None = None):
+    return VNASTTempAliasNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, alias=alias, target=target, name=name, loc=loc)
 
 @IROperationDataclass
 class VNASTSceneSymbol(Symbol):
   aliases : OpOperand[StringLiteral]
-  namespace : OpOperand[StringLiteral]
+  backgrounds : SymbolTableRegion[VNASTNamespaceSwitchableValueSymbol] # 名称是所有状态字符串用逗号','串起来的结果
+
+  @staticmethod
+  def create(context : Context, name : str, loc : Location | None = None):
+    return VNASTSceneSymbol(init_mode=IRObjectInitMode.CONSTRUCT, context=context, name=name, loc=loc)
 
 @IROperationDataclass
 class VNASTFileInfo(VNASTNodeBase):
   namespace : OpOperand[StringLiteral] # 无参数表示没有提供（取默认情况），'/'才是根命名空间
   functions : Block # 全是 VNASTFunction
   assetdecls : SymbolTableRegion[VNASTAssetDeclSymbol] # 可以按名查找的资源声明
+  characters : SymbolTableRegion[VNASTCharacterSymbol] # 在该文件中正式声明的角色
+  variables : SymbolTableRegion[VNASTVariableDeclSymbol] # 在该文件中声明的变量
+  scenes : SymbolTableRegion[VNASTSceneSymbol]
   pending_content : Block # VNASTNodeBase | MetadataOp
   # 现在我们把别名直接存储到被起别名的对象上
 
@@ -577,6 +657,14 @@ class VNASTFileInfo(VNASTNodeBase):
     result = 'File "' + self.name + '"'
     if ns := self.namespace.try_get_value():
       result += ' NS: ' + ns.get_string()
+    if len(self.characters) > 0:
+      result += '\n' + '  '*indent + 'Characters: ' + str(len(self.characters))
+      for ch in self.characters:
+        result += '\n' + '  '*(indent+1) + VNASTNodeBase.get_target_str(ch, indent+1)
+    if len(self.scenes) > 0:
+      result += '\n' + '  '*indent + 'Scenes: ' + str(len(self.scenes))
+      for scene in self.scenes:
+        result += '\n' + '  '*(indent+1) + VNASTNodeBase.get_target_str(scene, indent+1)
     if len(self.pending_content.body) > 0:
       result += '\n' + '  '*indent + 'PendingContent:' + VNASTCodegenRegion.get_short_str_for_codeblock(self.pending_content, indent+1)
     for func in self.functions.body:
@@ -589,23 +677,19 @@ class VNASTFileInfo(VNASTNodeBase):
 
 @IROperationDataclass
 class VNAST(Operation):
+  screen_resolution : OpOperand[IntTupleLiteral]
   files : Block # VNASTFileInfo
-  characters : SymbolTableRegion[VNASTCharacterSymbol]
-  scenes : SymbolTableRegion[VNASTSceneSymbol]
 
   def get_short_str(self, indent : int = 0) -> str:
-    result = 'VNAST'
-    result += '\n' + '  '*indent + 'Characters: ' + str(len(self.characters))
-    for ch in self.characters:
-      result += '\n' + '  '*(indent+1) + VNASTNodeBase.get_target_str(ch, indent+1)
-    result += '\n' + '  '*indent + 'Files: ' + str(len(self.files.body))
+    width, height = self.screen_resolution.get().value
+    result = 'VNAST [' + str(width) + 'x' + str(height) + '] "' + self.name + '": ' + str(len(self.files.body)) + ' File(s)'
     for f in self.files.body:
       result += '\n' + '  '*(indent+1) + VNASTNodeBase.get_target_str(f, indent+1)
     return result
 
   @staticmethod
-  def create(name : str, context : Context):
-    return VNAST(init_mode=IRObjectInitMode.CONSTRUCT, context=context, name=name)
+  def create(name : str, screen_resolution : IntTupleLiteral, context : Context):
+    return VNAST(init_mode=IRObjectInitMode.CONSTRUCT, context=context, name=name, screen_resolution=screen_resolution)
 
 class UnrecognizedCommandOp(ErrorOp):
   # 基本是从 GeneralCommandOp 那里抄来的
@@ -639,7 +723,7 @@ class UnrecognizedCommandOp(ErrorOp):
     src_kwarg = src_op.get_symbol_table('keyword_arg')
     for op in src_kwarg:
       assert isinstance(op, CMDValueSymbol)
-      self._keywordarg_region.add(CMDValueSymbol(op.name, op.location, op.value))
+      self._keywordarg_region.add(CMDValueSymbol.create(name=op.name, loc=op.location, value=op.value))
 
   def post_init(self) -> None:
     super().post_init()

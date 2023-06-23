@@ -201,6 +201,30 @@ def perform_command_parse_transform(op : Operation):
         b.erase_from_parent()
       blocks_to_remove.clear()
 
+def try_parse_value_expr(body : str, loc : Location) -> GeneralCommandOp | str | None:
+  # 尝试将一段内容解析为调用表达式或引用的字符串
+  # 内容不合预期就返回 None
+  istream = antlr4.InputStream(body)
+  error_listener = _CommandParseErrorListener()
+  lexer = CommandParseLexer(istream)
+  lexer.addErrorListener(error_listener)
+  lexer.addErrorListener(ConsoleErrorListener())
+  tstream = antlr4.CommonTokenStream(lexer)
+  parser = CommandParseParser(tstream)
+  parser.addErrorListener(error_listener)
+  parser.addErrorListener(ConsoleErrorListener())
+  tree = parser.value()
+  if error_listener.error_occurred:
+    return None
+  cmd_visitor = _CommandParseVisitorImpl(body, 0, {}, loc)
+  vref, outloc = cmd_visitor.visitValue(tree)
+  if isinstance(vref, OpResult):
+    cmd = vref.parent
+    assert isinstance(cmd, GeneralCommandOp)
+    return cmd
+  assert isinstance(vref, StringLiteral)
+  return vref.get_string()
+
 def _visit_block(hostblock : Block, prev_command : GeneralCommandOp, blocks_to_remove : list[Block], ctx : Context):
   # 如果该块的开头是以'['或'【'开始的文本或其他数据,则将所有内容重整为单个字符串（所有非字符内容，像图片、声音素材等，都会转化为'\0'来做特判）
   # 否则遍历每个操作项，递归遍历每个块
@@ -275,7 +299,7 @@ def check_is_command_start(b : Block, ctx: Context) -> typing.Tuple[str, typing.
       # 碰到了一项非内容的
       # 如果我们已经找到了开始标记，就在开始标记前添加一个错误记录
       if first_op is not None:
-        error_op = IMErrorElementOp(name='', loc = first_op.location, content=StringLiteral.get(command_str, ctx), error_code='cmd-noncontent-entry-in-command')
+        error_op = ErrorOp.create(error_code='cmd-noncontent-entry-in-command', context=ctx, error_msg=StringLiteral.get(command_str, ctx), name='', loc = first_op.location)
         error_op.insert_before(first_op)
       continue
     # 找到了一项内容
@@ -425,6 +449,9 @@ class _CommandParseErrorListener(_CommandCreationErrorListenerBase):
   pass
 
 class _CommandParseVisitorImpl(CommandParseVisitor):
+  # 有两个使用场景：
+  # 1. 在命令扫描后把完整的命令解析出来
+  # 2. 在后续编译中需要把字符串理解为表达式时，会需要解析 "value", 有可能是调用表达式或带引号的字符串等
   startloc : Location
   fulltext : str # we need this to accurately collect the string; whitespaces are excluded in ctx.getText()
   global_offset : int
@@ -551,10 +578,13 @@ class _CommandParseVisitorImpl(CommandParseVisitor):
       raise RuntimeError('Invalid value')
 
   def visitCallexpr(self, ctx: CommandParseParser.CallexprContext) -> tuple[Value, Location]:
+    # 如果我们只是解析值的的话（不是解析一个完整的命令），
+    # self.command_op_stack 有可能是空的
     name_value, name_loc = self.visitName(ctx.name())
     newop = GeneralCommandOp.create('', name_loc, name_value, name_loc)
-    current_command = self.command_op_stack[-1]
-    current_command.add_nested_call(newop)
+    if len(self.command_op_stack) > 0:
+      current_command = self.command_op_stack[-1]
+      current_command.add_nested_call(newop)
     self.command_op_stack.append(newop)
     self.visitArguments(ctx.arguments())
     self.command_op_stack.pop(-1)
@@ -609,7 +639,7 @@ def _visit_command_block_impl(b : Block, ctx : Context, command_str : str, asset
   infolist = _split_text_as_commands(command_str)
   if isinstance(infolist, _CommandParseErrorRecord):
     errorloc = get_loc_at_offset(infolist.column)
-    errop = ErrorOp('', errorloc, error_code='cmd-scan-error', error_msg=StringLiteral.get(infolist.msg, ctx))
+    errop = ErrorOp.create(error_code='cmd-scan-error', context=ctx, error_msg=StringLiteral.get(infolist.msg, ctx), name='', loc=errorloc)
     errop.insert_before(insert_before_op)
     return
 
@@ -646,7 +676,7 @@ def _visit_command_block_impl(b : Block, ctx : Context, command_str : str, asset
     if error_listener.error_occurred:
       record = error_listener.get_error_record()
       errorloc = get_loc_at_offset(record.column)
-      errop = ErrorOp('', errorloc, error_code='cmd-parse-error', error_msg=StringLiteral.get(record.msg, ctx))
+      errop = ErrorOp.create(error_code='cmd-parse-error', context=ctx, error_msg=StringLiteral.get(record.msg, ctx), name='', loc=errorloc)
       errop.insert_before(insert_before_op)
       continue
     cmd_visitor = _CommandParseVisitorImpl(command_str, body_range_start, asset_map_dict, loc)

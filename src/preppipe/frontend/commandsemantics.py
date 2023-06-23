@@ -310,13 +310,14 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
     # 没有回调函数满足条件时发生
     pass
 
-  def _convert_value(self, value : Value) -> Value | CallExprOperand:
+  @classmethod
+  def convert_value(cls, value : Value) -> Value | CallExprOperand:
     assert isinstance(value, Value)
     if isinstance(value.valuetype, CommandCallReferenceType):
       assert isinstance(value, OpResult)
       callop = value.parent
       assert isinstance(callop, GeneralCommandOp)
-      return self.parse_commandop_as_callexpr(callop)
+      return cls.parse_commandop_as_callexpr(callop)
     return value
 
   def _extract_extend_data(self, commandop : GeneralCommandOp) -> ExtendDataExprBase | None:
@@ -432,7 +433,8 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
       return [k for k in data.keys()]
     return data
 
-  def parse_commandop_as_callexpr(self, commandop : GeneralCommandOp) -> CallExprOperand:
+  @classmethod
+  def parse_commandop_as_callexpr(cls, commandop : GeneralCommandOp) -> CallExprOperand:
     # 在命令内的调用表达式
     # 可以再内嵌调用表达式，但是不会有追加的列表、特殊块等参数
     call_name_symbol : CMDValueSymbol = commandop.get_symbol_table('head').get('name')
@@ -444,7 +446,7 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
     posarg_block = commandop.get_region('positional_arg').entry_block
     for op in posarg_block.body:
       assert isinstance(op, CMDPositionalArgOp)
-      opvalue = self._convert_value(op.value)
+      opvalue = cls.convert_value(op.value)
       positional_args.append(opvalue)
 
     kwargs = collections.OrderedDict()
@@ -452,7 +454,7 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
     for op in kwargs_region:
       assert isinstance(op, CMDValueSymbol)
       name = op.name
-      value = self._convert_value(op.value)
+      value = cls.convert_value(op.value)
       # 内嵌的调用表达式没有参数别名
       # if name in cmdinfo.parameter_alias_dict:
       #   name = cmdinfo.parameter_alias_dict[name]
@@ -484,14 +486,14 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
     posarg_block = commandop.get_region('positional_arg').entry_block
     for op in posarg_block.body:
       assert isinstance(op, CMDPositionalArgOp)
-      opvalue = self._convert_value(op.value)
+      opvalue = self.convert_value(op.value)
       positional_args.append(opvalue)
     kwargs_region = commandop.get_symbol_table('keyword_arg')
     kwargs = collections.OrderedDict()
     for op in kwargs_region:
       assert isinstance(op, CMDValueSymbol)
       name = op.name
-      value = self._convert_value(op.value)
+      value = self.convert_value(op.value)
       if name in cmdinfo.parameter_alias_dict:
         name = cmdinfo.parameter_alias_dict[name]
       kwargs[name] = value
