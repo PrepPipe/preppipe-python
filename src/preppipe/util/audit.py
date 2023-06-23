@@ -34,14 +34,16 @@ class FileAccessAuditor:
 
   def search(self, querypath : str, basepath : str, filecheckCB : typing.Callable) -> typing.Any:
     # querypath 是申请访问的文件名（来自文档内容，不可信），可能含后缀也可能不含，可能是绝对路径也可能是相对路径
-    # basepath 是访问发起的文件路径，绝对路径
+    # basepath 是访问发起的文件路径，绝对路径(有可能是空字符串)
     # filecheckCB 是回调函数，接受一个绝对路径，若文件不符合要求则返回 None ，如果符合则返回任意非 None 的值，作为该 search() 的返回值
     if os.path.isabs(querypath):
       # 如果是绝对路径的话理应包含后缀名，就不考虑没有后缀名的情况了
       if not self.check_is_path_accessible(querypath):
         return None
       return filecheckCB(querypath)
-    searchpaths = [os.path.dirname(basepath)]
+    searchpaths = []
+    if len(basepath) > 0:
+      searchpaths.append(os.path.dirname(basepath))
     searchpaths.extend(self._global_searchroots)
     for base in searchpaths:
       candidate = os.path.join(base, querypath)

@@ -967,6 +967,9 @@ class Location(Metadata):
   def __str__(self) -> str:
     return "NullLocation"
 
+  def get_file_path(self) -> str:
+    return ''
+
   @staticmethod
   def getNullLocation(ctx: Context):
     return ctx.null_location
@@ -2737,6 +2740,9 @@ class DIFile(Location):
   def __str__(self) -> str:
     return self.filepath
 
+  def get_file_path(self):
+    return self.filepath
+
 @IRObjectJsonTypeName('dilocation_dl')
 @IRObjectMetadataTrait
 @dataclasses.dataclass(init=False, slots=True, frozen=True)
@@ -2757,6 +2763,9 @@ class DILocation(Location):
     object.__setattr__(self, 'page', page)
     object.__setattr__(self, 'row', row)
     object.__setattr__(self, 'column', column)
+
+  def get_file_path(self):
+    return self.file.get_file_path()
 
   def __str__(self) -> str:
     return str(self.file) + '#P' + str(self.page) + ':' + str(self.row) + ':' + str(self.column)
