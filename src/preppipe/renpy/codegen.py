@@ -557,7 +557,13 @@ class _RenPyCodeGenHelper:
 
   def _gen_asmexpr(self, v : Value, user_hint : str = '') -> str:
     if isinstance(v, PlaceholderImageLiteralExpr):
-      kind = "'bg'" if user_hint == 'bg' else "None"
+      match v.dest:
+        case ImageExprPlaceholderDest.DEST_SCENE_BACKGROUND:
+          kind = "'bg'"
+        case ImageExprPlaceholderDest.DEST_CHARACTER_SPRITE, ImageExprPlaceholderDest.DEST_CHARACTER_SIDEIMAGE:
+          kind = "'girl'"
+        case _:
+          kind = "None"
       return 'Placeholder(base=' + kind + ', text="' + v.description.get_string() + '")'
     raise NotImplementedError('Unsupported value type for asmexpr generation: ' + str(type(v)))
 

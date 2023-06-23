@@ -30,7 +30,7 @@ class _TestVNModelBuild(TransformBase):
     b = func.create_block('Entry')
     ib = VNInstructionBuilder(self.context.null_location, b)
     _, sceneswitch_builder = ib.createSceneSwitchInstructionGroup(scene1)
-    bgcontent = PlaceholderImageLiteralExpr.get(self.context, desc=StringLiteral.get('Dummy BG', self.context), size=IntTupleLiteral.get((1920,1080), self.context), anchor=FloatTupleLiteral.get((decimal.Decimal(0.0), decimal.Decimal(0.0)), self.context))
+    bgcontent = PlaceholderImageLiteralExpr.get(self.context, dest=ImageExprPlaceholderDest.DEST_SCENE_BACKGROUND, desc=StringLiteral.get('Dummy BG', self.context), size=IntTupleLiteral.get((1920,1080), self.context))
     bghandle = sceneswitch_builder.createCreate(content=bgcontent, device=dev_bg)
     # dev_say_name = ns.get_device_record(VNStandardDeviceKind.O_SAY_NAME_TEXT_DNAME.value + '_adv')
     dev_say_text = ns.get_device(VNStandardDeviceKind.O_SAY_TEXT_TEXT_DNAME.value + '_adv')

@@ -473,6 +473,7 @@ def pipeline_main(args : typing.List[str] = None):
     print('preppipe ' + __version__)
   # 第一步：读取
   parser = argparse.ArgumentParser(prog='preppipe_pipeline', description='Direct commandline interface for preppipe')
+  parser.add_argument('--searchpath', nargs='*')
 
   TransformRegistration.setup_argparser(parser)
   result_args = parser.parse_args(args)
@@ -486,7 +487,12 @@ def pipeline_main(args : typing.List[str] = None):
     is_action_performed = True
 
   ctx = Context()
-  ctx.get_file_auditor().add_permissible_path(os.getcwd())
+  for path in result_args.searchpath:
+    ctx.get_file_auditor().add_permissible_path(path)
+    ctx.get_file_auditor().add_global_searchpath(path)
+  if result_args.verbose:
+    ctx.get_file_auditor().dump()
+
   pipeline = TransformRegistration.build_pipeline(result_args, ctx)
   current_ir_ops = []
   step_count = 0
