@@ -63,7 +63,7 @@ def emit_image_expr_from_path(context : Context, pathexpr : str, basepath : str)
   if t := context.get_file_auditor().search(querypath=pathexpr, basepath=basepath, filecheckCB=_try_open_image):
     path, fmt = t
     asset = context.get_or_create_image_asset_data_external(path, fmt)
-    data = asset.data
+    data = asset.load()
     assert data is not None
     return ImageAssetLiteralExpr.get(context, image=asset, size=IntTupleLiteral.get(data.size, context))
   return None

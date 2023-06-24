@@ -394,7 +394,7 @@ class VNParser(FrontendParserBase[VNASTParsingState]):
     target_args = matched_result.args
     target_kwargs = matched_result.kwargs
     target_warnings = matched_result.warnings
-    print('Command ' + cmdinfo.cname + ': target_cb=' + str(target_cb) + ', args=' + str(target_args) + ', kwargs=' + str(target_kwargs) + ', warnings=' + str(target_warnings))
+    # print('Command ' + cmdinfo.cname + ': target_cb=' + str(target_cb) + ', args=' + str(target_args) + ', kwargs=' + str(target_kwargs) + ', warnings=' + str(target_warnings))
     target_cb(*target_args, **target_kwargs)
     return
 
@@ -537,6 +537,7 @@ def _helper_parse_character_sayinfo(state : VNASTParsingState, v : typing.Any, s
         if c := _helper_parse_color(state, value, loc):
           newstyle = _helper_merge_textstyle(state.context, say.saytextstyle, TextAttribute.TextColor, c)
           say.saytextstyle.set_operand(0, newstyle)
+        continue
       state.emit_error('vnparse-characterdecl-invalid-expr', 'Say subtree: Unexpected attribute "' + attr + '"', loc=loc)
   else:
     # 发言应该是一个字典；这里报错

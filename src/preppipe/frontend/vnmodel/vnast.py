@@ -200,6 +200,9 @@ class VNASTAssetDeclSymbol(Symbol):
   kind : OpOperand[EnumLiteral[VNASTAssetKind]]
   asset : OpOperand # 实际的值
 
+  def get_short_str(self, indent : int = 0) -> str:
+    return 'AssetDecl ' + self.kind.get().value.name + str(self.asset.get())
+
   @staticmethod
   def create(context : Context, kind : VNASTAssetKind, asset : Value, name : str, loc : Location):
     return VNASTAssetDeclSymbol(init_mode=IRObjectInitMode.CONSTRUCT, context=context, kind=kind, asset=asset, name=name, loc=loc)
@@ -657,14 +660,19 @@ class VNASTFileInfo(VNASTNodeBase):
     result = 'File "' + self.name + '"'
     if ns := self.namespace.try_get_value():
       result += ' NS: ' + ns.get_string()
-    if len(self.characters) > 0:
-      result += '\n' + '  '*indent + 'Characters: ' + str(len(self.characters))
-      for ch in self.characters:
-        result += '\n' + '  '*(indent+1) + VNASTNodeBase.get_target_str(ch, indent+1)
-    if len(self.scenes) > 0:
-      result += '\n' + '  '*indent + 'Scenes: ' + str(len(self.scenes))
-      for scene in self.scenes:
-        result += '\n' + '  '*(indent+1) + VNASTNodeBase.get_target_str(scene, indent+1)
+
+    def dump_table(r : SymbolTableRegion, header : str):
+      nonlocal result
+      if len(r) > 0:
+        result += '\n' + '  '*indent + header + ': ' + str(len(r))
+        for symb in r:
+          result += '\n' + '  '*(indent+1) + VNASTNodeBase.get_target_str(symb, indent+1)
+
+    dump_table(self.characters, 'Characters')
+    dump_table(self.scenes, 'Scenes')
+    dump_table(self.assetdecls, 'AssetDecls')
+    dump_table(self.variables, 'Variables')
+
     if len(self.pending_content.body) > 0:
       result += '\n' + '  '*indent + 'PendingContent:' + VNASTCodegenRegion.get_short_str_for_codeblock(self.pending_content, indent+1)
     for func in self.functions.body:
