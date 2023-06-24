@@ -54,12 +54,20 @@ class ImageAssetLiteralExpr(BaseImageLiteralExpr):
     BaseImageLiteralExpr._validate_size(size)
     return ImageAssetLiteralExpr._get_literalexpr_impl((size, image), context)
 
+  def __str__(self) -> str:
+    width, height = self.size.value
+    return '[' + str(width) + '*' + str(height) + ']' + str(self.image)
+
 @IRObjectJsonTypeName('color_image_le')
 class ColorImageLiteralExpr(BaseImageLiteralExpr):
   # 该图片是个纯色图片
   @property
   def color(self) -> ColorLiteral:
     return self.get_value_tuple()[1] # type: ignore
+
+  def __str__(self) -> str:
+    width, height = self.size.value
+    return self.color.value.get_string() + '[' + str(width) + '*' + str(height) + ']'
 
   @staticmethod
   def get(context : Context, color : ColorLiteral, size : IntTupleLiteral) -> ColorImageLiteralExpr:
@@ -74,6 +82,10 @@ class DeclaredImageLiteralExpr(BaseImageLiteralExpr, AssetDeclarationTrait):
   @property
   def declaration(self) -> StringLiteral:
     return self.get_value_tuple()[1] # type: ignore
+
+  def __str__(self) -> str:
+    width, height = self.size.value
+    return '[' + str(width) + '*' + str(height) + '] ' + self.declaration.get_string()
 
   @staticmethod
   def get(context : Context, decl : StringLiteral, size : IntTupleLiteral) -> DeclaredImageLiteralExpr:
@@ -100,6 +112,10 @@ class PlaceholderImageLiteralExpr(BaseImageLiteralExpr, AssetPlaceholderTrait):
   @property
   def dest(self) -> ImageExprPlaceholderDest:
     return self.get_value_tuple()[1].value
+
+  def __str__(self) -> str:
+    width, height = self.size.value
+    return '[' + str(width) + '*' + str(height) + '] Placeholder ' + self.dest.name + (' ' + self.description.get_string() if len(self.description.get_string()) > 0 else '')
 
   @staticmethod
   def get(context : Context, dest : ImageExprPlaceholderDest, desc : StringLiteral, size : IntTupleLiteral) -> PlaceholderImageLiteralExpr:

@@ -64,7 +64,7 @@ class FileAccessAuditor:
         if root == basename and len(ext) > 0:
           candidatepath = os.path.join(parent, file)
           if result := filecheckCB(candidatepath):
-            return candidatepath
+            return result
     return None
 
   def dump(self):
