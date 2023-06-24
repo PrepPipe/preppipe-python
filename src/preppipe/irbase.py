@@ -2103,8 +2103,8 @@ class SymbolTableRegion(Region, collections.abc.Sequence, typing.Generic[_Symbol
     # make sure _add_symbol is called BEFORE adding the symbol to list
     # to avoid infinite recursion
     assert isinstance(symbol, Symbol)
-    if len(symbol.name) == 0:
-      symbol.name = self._get_anonymous_name()
+    #if len(symbol.name) == 0:
+    #  symbol.name = self._get_anonymous_name()
     assert symbol.name not in self._lookup_dict
     self._lookup_dict[symbol.name] = symbol
 
@@ -2502,6 +2502,16 @@ class AssetData(Value, IListNode, typing.Generic[_DataTV, _FmtTV]):
   @property
   def location(self) -> DIFile | None:
     return self._loc
+
+  def __str__(self) -> str:
+    result = self.__class__.__name__ + ' '
+    if self._format is not None:
+      result += str(self._format) + ' '
+    if len(self._backing_store_path) > 0:
+      result += 'store: ' + self._backing_store_path
+    elif self._loc is not None:
+      result += 'location: ' + str(self._loc)
+    return result
 
   def load(self) -> _DataTV:
     # load the asset data to memory
@@ -2993,13 +3003,13 @@ _LiteralExprTV = typing.TypeVar('_LiteralExprTV', bound = 'LiteralExpr')
 class LiteralExpr(Literal, User):
   # 字面值表达式是只引用其他字面值的表达式
   # 所有字面值表达式都只由：(1)表达式类型，(2)参数 这两项决定
-  def construct_init(self, *, ty: ValueType, value_tuple: tuple[Literal, ...], **kwargs) -> None:
+  def construct_init(self, *, ty: ValueType, value_tuple: tuple[Literal | AssetData, ...], **kwargs) -> None:
     super().construct_init(ty=ty, value=value_tuple, **kwargs)
     for v in value_tuple:
-      assert isinstance(v, Literal)
+      assert isinstance(v, (Literal, AssetData))
       self.add_operand(v)
 
-  def get_value_tuple(self) -> tuple[Literal, ...]:
+  def get_value_tuple(self) -> tuple[Literal | AssetData, ...]:
     return self.value
 
   @classmethod
