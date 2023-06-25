@@ -693,7 +693,10 @@ class VNBackendInstructionGroup(VNInstructionGroup):
   # 后端指令组，用于放置一些后端独有的指令
   # 执行顺序、时间参数等均由后端决定
   # 其中的指令不一定是（或者说大概率不是）VNInstruction 的子类
-  pass
+
+  @staticmethod
+  def create(context : Context, start_time : Value | None = None, name: str = '', loc: Location | None = None):
+    return VNBackendInstructionGroup(init_mode=IRObjectInitMode.CONSTRUCT, context=context, start_time=start_time, name=name, loc=loc)
 
 @IROperationDataclass
 @IRObjectJsonTypeName("vn_say_instrgroup_op")
@@ -709,7 +712,7 @@ class VNSayInstructionGroup(VNInstructionGroup):
     return self.sayer.get()
 
   @staticmethod
-  def create(context : Context, start_time : Value, sayer : VNCharacterSymbol, name: str = '', loc: Location | None = None):
+  def create(context : Context, start_time : Value, sayer : typing.Iterable[VNCharacterSymbol] | VNCharacterSymbol | None, name: str = '', loc: Location | None = None):
     return VNSayInstructionGroup(init_mode=IRObjectInitMode.CONSTRUCT, context=context, start_time=start_time, sayer=sayer, name=name, loc=loc)
 
 @IROperationDataclass
@@ -749,7 +752,7 @@ class VNPutInst(VNPlacementInstBase):
   # 如需要播放音频，放置指令将在设备上当前播放的内容结束后播放
 
   @staticmethod
-  def create(context : Context, start_time: Value, content : Value | None = None, device : VNDeviceSymbol | None = None, name: str = '', loc: Location | None = None) -> VNPutInst:
+  def create(context : Context, start_time: Value, content : typing.Iterable[Value] | Value | None = None, device : VNDeviceSymbol | None = None, name: str = '', loc: Location | None = None) -> VNPutInst:
     return VNPutInst(init_mode=IRObjectInitMode.CONSTRUCT, context=context, start_time=start_time, content=content, device=device, name=name, loc=loc)
 
 @IROperationDataclass
@@ -1118,7 +1121,7 @@ class VNInstructionBuilder:
       if last_inst := self.get_last_vninst_before_pos(self._block.body.back):
         self._time = last_inst.get_finish_time()
 
-  def createSayInstructionGroup(self, sayer : VNCharacterSymbol, name : str = '', loc : Location | None = None, update_time : bool = True) -> tuple[VNSayInstructionGroup, VNInstructionBuilder]:
+  def createSayInstructionGroup(self, sayer : typing.Iterable[VNCharacterSymbol] | VNCharacterSymbol | None, name : str = '', loc : Location | None = None, update_time : bool = True) -> tuple[VNSayInstructionGroup, VNInstructionBuilder]:
     group = VNSayInstructionGroup.create(self._loc.context, self._time, sayer=sayer, name=name, loc=loc)
     builder = VNInstructionBuilder(group.location, group.body, time=self._time, time_writeback=group.group_finish_time)
     self.place_instr(update_time, group)
