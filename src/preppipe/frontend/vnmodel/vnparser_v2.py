@@ -347,8 +347,34 @@ class VNParser(FrontendParserBase[VNASTParsingState]):
     if len(doc.name) > 0:
       if len(self.ast.name) == 0:
         self.ast.name = doc.name
+    # 开始解析
     while block := state.get_next_input_block():
       self.handle_block(state, block)
+    # 以下操作需要对每个文件进行
+    # 目前我们在这里只做默认函数创建
+    self.run_create_default_function(state.output_current_file)
+
+  def run_create_default_function(self, file : VNASTFileInfo):
+    # 如果该文件满足以下条件:
+    # 1. 该文件没有定义任何函数
+    # 2. 该文件内存在只在函数内有意义的结点
+    #     （比如发言，选单，等等命令）
+    # 则我们创建一个与文件同名的函数，把所有的内容都放在这个函数里
+    if len(file.functions.body) > 0:
+      return
+    is_functionlocal_node_found = False
+    for op in file.pending_content.body:
+      if isinstance(op, VNASTNodeBase):
+        if type(op).TRAIT_FUNCTION_CONTEXT_ONLY:
+          is_functionlocal_node_found = True
+          break
+    if not is_functionlocal_node_found:
+      return
+    # 确定执行这个转换
+    func = VNASTFunction.create(context=self.context, name=file.name, loc=file.location)
+    file.functions.push_back(func)
+    func.body.take_body(file.pending_content)
+    # 结束
 
   def create_command_match_error(self, commandop: GeneralCommandOp, unmatched_results: list[typing.Tuple[callable, typing.Tuple[str, str]]] | None = None, matched_results: list[FrontendParserBase.CommandInvocationInfo] | None = None) -> ErrorOp:
     errmsg = 'Cannot find unique match for command: ' + commandop.get_short_str()
@@ -672,7 +698,7 @@ def cmd_alias_decl(parser : VNParser, state : VNASTParsingState, commandop : Gen
 @CommandDecl(vn_command_ns, _imports, 'ASM', alias={
   '内嵌汇编': {'content': '内容', 'backend': '后端'}
 })
-def cmd_asm_1(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, content : str, backend : str = None):
+def cmd_asm_1(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, content : str, backend : str):
   # 单行内嵌后端命令
   if isinstance(backend, str):
     backend_l = StringLiteral.get(backend, state.context)
@@ -684,7 +710,7 @@ def cmd_asm_1(parser : VNParser, state : VNASTParsingState, commandop : GeneralC
 @CommandDecl(vn_command_ns, _imports, 'ASM', alias={
   '内嵌汇编': {'backend': '后端'}
 })
-def cmd_asm_2(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, ext : SpecialBlockOperand, backend : str = None):
+def cmd_asm_2(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, ext : SpecialBlockOperand, backend : str):
   # 使用特殊块的后端命令
   code = []
   block : IMSpecialBlockOp = ext.original_op

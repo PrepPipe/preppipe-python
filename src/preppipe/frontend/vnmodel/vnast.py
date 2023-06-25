@@ -14,9 +14,14 @@ from ...vnmodel_v4 import *
 
 @IROperationDataclass
 class VNASTNodeBase(Operation):
+  # 该结点是否只能出现在函数内
+  TRAIT_FUNCTION_CONTEXT_ONLY : typing.ClassVar[bool] = True
 
   def get_short_str(self, indent : int = 0) -> str:
     return str(self)
+
+  def accept(self, visitor):
+    return getattr(visitor, 'visit' + type(self).__name__)(self)
 
   @staticmethod
   def get_target_str(node : Operation, indent : int = 0) -> str:
@@ -78,6 +83,9 @@ class VNASTSayMode(enum.Enum):
 class VNASTSayModeChangeNode(VNASTNodeBase):
   target_mode : OpOperand[EnumLiteral[VNASTSayMode]]
   specified_sayers : OpOperand[StringLiteral]
+
+  # 该结点可以放在函数外
+  TRAIT_FUNCTION_CONTEXT_ONLY : typing.ClassVar[bool] = False
 
   # 默认模式不给定说话者
   # 长发言模式如果不给定说话者，则取最后一个说话的人；如果有歧义（比如这在一个基本块的开始，之前最后发言的角色不是同一人）则报错
@@ -211,6 +219,9 @@ class VNASTAssetDeclSymbol(Symbol):
 class VNASTASMNode(VNASTNodeBase):
   backend : OpOperand[StringLiteral]
   body : OpOperand[StringListLiteral] # 即使是单行也是 StringListLiteral
+
+  # 该结点可以放在函数外
+  TRAIT_FUNCTION_CONTEXT_ONLY : typing.ClassVar[bool] = False
 
   def get_short_str(self, indent : int = 0) -> str:
     result = "ASM"
@@ -560,10 +571,13 @@ class VNASTSayDeviceKind(enum.Enum):
 class VNASTChangeDefaultDeviceNode(VNASTNodeBase):
   destmode : OpOperand[EnumLiteral[VNASTSayDeviceKind]]
 
+  # 该结点可以放在函数外
+  TRAIT_FUNCTION_CONTEXT_ONLY : typing.ClassVar[bool] = False
+
 @IROperationDataclass
 class VNASTCharacterSayInfoSymbol(Symbol):
   # 使用继承的 name 作为显示的名称
-  displayname_expr : OpOperand[StringLiteral] # 如果是表达式的话用这里的值
+  displayname_expr : OpOperand[StringLiteral] # 如果是表达式的话用这里的值（暂不支持）
   aliases : OpOperand[StringLiteral]
   namestyle : OpOperand[TextStyleLiteral] # 大概只会用 TextColor 不过还是预留其他的
   saytextstyle : OpOperand[TextStyleLiteral]
@@ -621,6 +635,9 @@ class VNASTCharacterTempSayAttrNode(VNASTNodeBase):
   character : OpOperand[StringLiteral] # 角色的真实名字
   sayinfo : SymbolTableRegion[VNASTCharacterSayInfoSymbol] # 大概只会有一个结点
 
+  # 该结点可以放在函数外
+  TRAIT_FUNCTION_CONTEXT_ONLY : typing.ClassVar[bool] = False
+
   @staticmethod
   def create(context : Context, character : StringLiteral | str, name : str = '', loc : Location | None = None):
     return VNASTCharacterTempSayAttrNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, character=character, name=name, loc=loc)
@@ -631,6 +648,9 @@ class VNASTTempAliasNode(VNASTNodeBase):
   # 该命令本身不影响任何演出因素（包括角色发言属性等），只是作为简化录入的辅助
   alias : OpOperand[StringLiteral]
   target : OpOperand[StringLiteral]
+
+  # 该结点可以放在函数外
+  TRAIT_FUNCTION_CONTEXT_ONLY : typing.ClassVar[bool] = False
 
   @staticmethod
   def create(context : Context, alias : StringLiteral | str, target : StringLiteral | str,  name : str = '', loc : Location | None = None):
@@ -678,6 +698,9 @@ class VNASTFileInfo(VNASTNodeBase):
     for func in self.functions.body:
       result += '\n' + '  '*indent + self.get_target_str(func, indent)
     return result
+
+  def get_namespace_tuple(self):
+    return VNNamespace.expand_namespace_str(self.namespace.get().get_string())
 
   @staticmethod
   def create(name : str, loc : Location, namespace : StringLiteral | str | None = None):
@@ -743,3 +766,49 @@ class UnrecognizedCommandOp(ErrorOp):
   @staticmethod
   def create(src_op : GeneralCommandOp):
     return UnrecognizedCommandOp(init_mode=IRObjectInitMode.CONSTRUCT, context=src_op.context, src_op=src_op)
+
+class VNASTVisitor:
+  def visit(self, node : VNASTNodeBase):
+    return node.accept(self)
+
+  def visit_default_handler(self, node : VNASTNodeBase):
+    raise NotImplementedError()
+
+  def visitVNASTASMNode(self, node : VNASTASMNode):
+    return self.visit_default_handler(node)
+  def visitVNASTSayModeChangeNode(self, node : VNASTSayModeChangeNode):
+    return self.visit_default_handler(node)
+  def visitVNASTSayNode(self, node : VNASTSayNode):
+    return self.visit_default_handler(node)
+  def visitVNASTAssetReference(self, node : VNASTAssetReference):
+    return self.visit_default_handler(node)
+  def visitVNASTSceneSwitchNode(self, node : VNASTSceneSwitchNode):
+    return self.visit_default_handler(node)
+  def visitVNASTCharacterEntryNode(self, node : VNASTCharacterEntryNode):
+    return self.visit_default_handler(node)
+  def visitVNASTCharacterStateChangeNode(self, node : VNASTCharacterStateChangeNode):
+    return self.visit_default_handler(node)
+  def visitVNASTCharacterExitNode(self, node : VNASTCharacterExitNode):
+    return self.visit_default_handler(node)
+  def visitVNASTCodegenRegion(self, node : VNASTCodegenRegion):
+    return self.visit_default_handler(node)
+  def visitVNASTConditionalExecutionNode(self, node : VNASTConditionalExecutionNode):
+    return self.visit_default_handler(node)
+  def visitVNASTMenuNode(self, node : VNASTMenuNode):
+    return self.visit_default_handler(node)
+  def visitVNASTBreakNode(self, node : VNASTBreakNode):
+    return self.visit_default_handler(node)
+  def visitVNASTLabelNode(self, node : VNASTLabelNode):
+    return self.visit_default_handler(node)
+  def visitVNASTJumpNode(self, node : VNASTJumpNode):
+    return self.visit_default_handler(node)
+  def visitVNASTCallNode(self, node : VNASTCallNode):
+    return self.visit_default_handler(node)
+  def visitVNASTChangeDefaultDeviceNode(self, node : VNASTChangeDefaultDeviceNode):
+    return self.visit_default_handler(node)
+  def visitVNASTCharacterTempSayAttrNode(self, node : VNASTCharacterTempSayAttrNode):
+    return self.visit_default_handler(node)
+  def visitVNASTTempAliasNode(self, node : VNASTTempAliasNode):
+    return self.visit_default_handler(node)
+  def visitVNASTFileInfo(self, node : VNASTFileInfo):
+    return self.visit_default_handler(node)
