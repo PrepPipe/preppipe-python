@@ -93,6 +93,10 @@ class VNHandleType(SingleElementParameterizedType):
   def _get_typecheck(cls, element_type : ValueType) -> None:
     assert not isinstance(element_type, VNHandleType)
 
+  @classmethod
+  def get(cls, element_type : ValueType) -> VNHandleType:
+    return super().get(element_type=element_type) # type: ignore
+
 @IRObjectJsonTypeName("vn_displayable_t")
 @dataclasses.dataclass(init=False, slots=True, frozen=True)
 class VNDisplayableType(StatelessType):
