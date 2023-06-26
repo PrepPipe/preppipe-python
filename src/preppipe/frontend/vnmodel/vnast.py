@@ -702,6 +702,9 @@ class VNASTFileInfo(VNASTNodeBase):
   def get_namespace_tuple(self):
     return VNNamespace.expand_namespace_str(self.namespace.get().get_string())
 
+  def get_namespace_str(self):
+    return self.namespace.get().get_string()
+
   @staticmethod
   def create(name : str, loc : Location, namespace : StringLiteral | str | None = None):
     return VNASTFileInfo(init_mode=IRObjectInitMode.CONSTRUCT, context=loc.context, name=name, loc=loc, namespace=namespace)
