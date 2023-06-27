@@ -813,5 +813,9 @@ class VNASTVisitor:
     return self.visit_default_handler(node)
   def visitVNASTTempAliasNode(self, node : VNASTTempAliasNode):
     return self.visit_default_handler(node)
+  def visitVNASTTransitionNode(self, node : VNASTTransitionNode):
+    return self.visit_default_handler(node)
+  def visitVNASTFunction(self, node : VNASTFunction):
+    return self.visit_default_handler(node)
   def visitVNASTFileInfo(self, node : VNASTFileInfo):
     return self.visit_default_handler(node)

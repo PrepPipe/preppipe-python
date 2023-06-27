@@ -85,12 +85,24 @@ class _PartialStateMatcher:
       l.sort(key=lambda t : len(t), reverse=True)
 
   def find_match(self, existing_states : list[str], attached_states : list[str]) -> tuple[str] | None:
+    issuccess, resultlist = self._find_match_impl(existing_states, attached_states)
+    if issuccess:
+      return tuple(resultlist)
+    return None
+
+  def find_match_besteffort(self, existing_states : list[str], attached_states : list[str]) -> tuple[bool, tuple[str,...]]:
+    is_full_match, result = self._find_match_impl(existing_states, attached_states)
+    return (is_full_match, tuple(result))
+
+  def _find_match_impl(self, existing_states : list[str], attached_states : list[str]) -> tuple[bool, list[str]]:
+    # 元组第一项是 attached_states 中的状态匹配是否全部成功，全部成功是 True, 中途有失败、结果是折中的就返回 False
+    # 元组第二项是当前匹配的最好的状态
     pinned_length = -1
     cur_state = existing_states.copy()
     for newsubstate in attached_states:
       if newsubstate not in self._parent_tree:
         # 这是个没见过的状态，有可能是字打错了或是其他原因
-        return None
+        return (False, cur_state)
       parent_list = self._parent_tree[newsubstate]
       is_prefix_found = False
       for candidate in parent_list:
@@ -103,7 +115,7 @@ class _PartialStateMatcher:
           break
       if not is_prefix_found:
         # 找不到合适的前缀
-        return None
+        return (False, cur_state)
       # 重新检查 pinned_length 之后的所有项，如果前置条件已经不匹配了就去掉
       oldstates = cur_state[pinned_length:]
       cur_state = cur_state[:pinned_length]
@@ -119,7 +131,7 @@ class _PartialStateMatcher:
       if cur_state_tuple in self._default_child_dict:
         substates = self._default_child_dict[cur_state_tuple]
         cur_state.append(*substates)
-    return tuple(cur_state)
+    return (True, cur_state)
 
 def _test_main_statematcher():
   matcher = _PartialStateMatcher()
@@ -257,6 +269,8 @@ class VNCodeGen:
   _char_say_parent_map : dict[VNASTCharacterSayInfoSymbol, tuple[VNASTCharacterSymbol, VNCharacterSymbol]] # 记录所有发言信息对应的角色记录
   _char_parent_map : dict[VNCharacterSymbol, VNASTCharacterSymbol]
   _char_state_matcher : dict[VNCharacterSymbol, _PartialStateMatcher]
+  _scene_parent_map : dict[VNSceneSymbol, VNASTSceneSymbol]
+  _scene_state_matcher : dict[VNSceneSymbol, _PartialStateMatcher]
   _global_asm_block : Block # 全局范围的ASM结点放这里；应该都是 VNBackendInstructionGroup 加 ASM 子节点
   _global_parsecontext : ParseContext
   _global_say_index : int
@@ -340,15 +354,14 @@ class VNCodeGen:
       assert isinstance(curpc, VNCodeGen.ParseContext)
     # 然后解析角色名
     character = self.resolver.unqualified_lookup(name, from_namespace, None)
-    if character is None:
+    if character is None or not isinstance(character, VNCharacterSymbol):
       return None
-    assert isinstance(character, VNCharacterSymbol)
     return (name, character)
 
-  def resolve_character_sayinfo(self, character : VNCharacterSymbol, sayname : str, parsecontext : ParseContext) -> VNASTCharacterSayInfoSymbol:
+  def resolve_character_sayinfo(self, character : VNCharacterSymbol, sayname : str, parsecontext : ParseContext) -> VNASTCharacterSayInfoSymbol | None:
     # 根据实际发言名和发言者身份，找到发言所用的外观信息
-    #temp_say_dict : dict[VNCharacterSymbol, dict[str, VNASTCharacterSayInfoSymbol]]
     # 如果没有提供发言名（比如是从默认发言者中来的），就从发言者身份中取
+    # 该函数找不到后加的、没有声明的角色的发言信息
     if len(sayname) == 0:
       sayname = character.name
 
@@ -363,11 +376,30 @@ class VNCodeGen:
       assert isinstance(curpc, VNCodeGen.ParseContext)
 
     # 如果环境中没有指定，就到上层去找
-    astchar = self._char_parent_map[character]
-    if info := astchar.sayinfo.get(sayname):
-      return info
-    # 不应该发生，但实在不行可以用这样
-    return astchar.sayinfo.get(astchar.name)
+    if character in self._char_parent_map:
+      astchar = self._char_parent_map[character]
+      if info := astchar.sayinfo.get(sayname):
+        return info
+      # 不应该发生，但实在不行可以用这样
+      return astchar.sayinfo.get(astchar.name)
+
+    # 如果角色是新加的、没声明的，我们会找不到原来的发言格式
+    return None
+
+  def resolve_scene(self, name : str, from_namespace : tuple[str, ...], parsecontext : ParseContext) -> VNSceneSymbol | None:
+    # 首先检查名称是不是别名，是的话更新一下名称
+    curpc = parsecontext
+    while curpc is not None:
+      if name in curpc.alias_dict:
+        name = curpc.alias_dict[name]
+        break
+      curpc = curpc.parent
+      assert isinstance(curpc, VNCodeGen.ParseContext)
+    # 然后解析角色名
+    scene = self.resolver.unqualified_lookup(name, from_namespace, None)
+    if scene is None or not isinstance(scene, VNSceneSymbol):
+      return None
+    return scene
 
   def get_or_create_ns(self, namespace : tuple[str, ...]) -> VNNamespace:
     if node := self.resolver.get_namespace_node(namespace):
@@ -443,6 +475,9 @@ class VNCodeGen:
     return node
 
   def create_unknown_sayer(self, sayname : str, from_namespace : tuple[str,...]) -> VNCharacterSymbol:
+    raise NotImplementedError()
+
+  def create_unknown_scene(self, scenename : str, from_namespace : tuple[str,...]) -> VNSceneSymbol:
     raise NotImplementedError()
 
   @dataclasses.dataclass
@@ -557,15 +592,32 @@ class VNCodeGen:
     # 我们也跟踪记录没有立绘的角色的状态
     @dataclasses.dataclass
     class CharacterState:
+      # 对于每个（在场的和不在场的）角色，如果该角色有状态信息，我们用该结构体来记录
       index : int
       sayname : str
       identity : VNCharacterSymbol
       state : tuple[str,...]
       sprite_handle : Value | None = None
 
+    @dataclasses.dataclass
+    class AssetState:
+      # 对于每个在台上的资源（包括背景音乐、音效、图片等），我们用这个结构体来保存信息
+      dev : VNDeviceSymbol
+      search_names : list[str]
+      data : Value # AssetData | AssetDecl | AssetPlaceholder
+      output_handle : Value | None = None
+
+    # SceneContext 下的角色信息
     character_dict : dict[tuple[str, VNCharacterSymbol], int] = dataclasses.field(default_factory=dict) # (发言名, 身份) --> 状态索引
     character_states : dict[int, CharacterState] = dataclasses.field(default_factory=dict) # 状态索引 --> 状态
     character_sayname_inuse : dict[VNCharacterSymbol, list[str]] = dataclasses.field(default_factory=dict) # 身份 --> 发言名列表; 为了在改变发言名时找到现在记录里用的是什么发言名
+
+    # SceneContext 下的场上使用的资源信息
+    # 虽然我们需要按照多种信息对资源进行搜索，但由于场上的资源一般不是很多，我们就使用一个数组，循环查找就应该够了
+    asset_info : list[AssetState] = dataclasses.field(default_factory=list)
+    scene_bg : AssetState | None = None # 场景背景的信息。不参与普通的使用中资源的查找，所以放在外面
+    scene_symb : VNSceneSymbol | None = None # 当前场景
+    scene_states : tuple[str,...] | None = None
 
     def update_character_sayname(self, ch : VNCharacterSymbol, oldname : str, newname : str):
       saynamelist = self.character_sayname_inuse[ch]
@@ -595,6 +647,25 @@ class VNCodeGen:
         return self.character_states[self.character_dict[searchtuple]]
       return None
 
+    def search_asset_inuse(self, *, dev : VNDeviceSymbol | None = None, searchname : str | None = None, data : Value | None = None) -> list[AssetState]:
+      result : list[VNCodeGen.SceneContext.AssetState] = []
+      for candidate in self.asset_info:
+        if dev is not None and candidate.dev != dev:
+          continue
+        if data is not None and candidate.data != data:
+          continue
+        if searchname is not None:
+          is_searchname_found = False
+          for name in candidate.search_names:
+            if searchname in name:
+              is_searchname_found = True
+              break
+          if not is_searchname_found:
+            continue
+        # 到这就说明所有检查都通过了
+        result.append(candidate)
+      return result
+
     @staticmethod
     def forkfrom(parent):
       assert isinstance(parent, VNCodeGen.SceneContext)
@@ -607,6 +678,10 @@ class VNCodeGen:
     destfunction : VNFunction
     destblock : Block
     starttime : Value
+    # 如果现在正在解析 VNASTTransitionNode 下的内容的话，这里应该是解析好的转场效果
+    is_in_transition : bool = False
+    parent_transition : Value | None = None
+    transition_child_finishtimes : list[Value] = dataclasses.field(default_factory=list)
 
     # 除了 entry 之外所有的块都在里面
     # entry 块不接受按名查找
@@ -672,6 +747,8 @@ class VNCodeGen:
       raise RuntimeError("Should not happen")
     def visitVNASTFileInfo(self, node : VNASTFileInfo):
       raise RuntimeError("Should not happen")
+    def visitVNASTFunction(self, node : VNASTFunction):
+      raise RuntimeError("Should not happen")
 
     # 辅助函数
     def emit_wait(self, loc : Location):
@@ -680,9 +757,36 @@ class VNCodeGen:
       self.destblock.push_back(node)
 
     def get_character_sprite(self, character : VNCharacterSymbol, state : tuple[str,...]) -> Value | None:
-      srccharacter = self.codegen._char_parent_map[character]
-      sprite = srccharacter.sprites.get(','.join(state))
-      return sprite
+      if character in self.codegen._char_parent_map:
+        srccharacter = self.codegen._char_parent_map[character]
+        sprite = srccharacter.sprites.get(','.join(state))
+        return sprite
+      return None
+
+    def get_character_sideimage(self, character : VNCharacterSymbol, state : tuple[str,...] | None) -> Value | None:
+      # state 如果有的话就是一个经过了状态匹配的完整状态
+      # 由于我们认为立绘的状态是所有可能的状态的集合，而侧边头像状态是立绘状态的子集，
+      # 我们这里会在找不到选项时尝试把状态串缩短来找到最佳的匹配项
+      if character in self.codegen._char_parent_map:
+        srcsayer = self.codegen._char_parent_map[character]
+        if len(srcsayer.sideimages) > 0:
+          if state is None:
+            state = ()
+          statestr = ','.join(state)
+          while True:
+            if sideimage := srcsayer.sideimages.get(statestr):
+              return sideimage.get_value(self.file.get_namespace_str())
+            if len(state) == 0:
+              break
+            state = state[:-1]
+      return None
+
+    def get_scene_background(self, scene : VNSceneSymbol, state : tuple[str, ...]) -> Value | None:
+      if scene in self.codegen._scene_parent_map:
+        srcscene = self.codegen._scene_parent_map[scene]
+        background = srcscene.backgrounds.get(','.join(state))
+        return background
+      return None
 
     def handleCharacterStateChange(self, sayname : str, character : VNCharacterSymbol, statelist : list[str], loc : Location | None = None) -> tuple[str,...]:
       # 改变角色当前的状态，主要任务是当角色在场上时，改变角色的立绘
@@ -691,30 +795,36 @@ class VNCodeGen:
       # 返回一个最终状态的字符串元组
       # (该函数也用于在角色上场前确定上场时的状态)
       charstate = self.scenecontext.get_or_create_character_state(sayname=sayname, character=character, codegen=self.codegen)
+
+      # 如果角色没有声明的话，我们无法检查状态是否有效，所以这种情况下直接使用空状态
+      if character not in self.codegen._char_state_matcher:
+        charstate.state = ()
+        return ()
+
       curstate = list(charstate.state)
       matcher = self.codegen._char_state_matcher[character]
-      if matchresult := matcher.find_match(curstate, statelist):
-        if matchresult == charstate.state:
-          # 状态不变的话什么也不做
-          return charstate.state
-        # 到这就是确实有状态改变
-        # 首先，如果当前角色在场上，我们需要改变其立绘
-        if charstate.sprite_handle:
-          sprite = self.get_character_sprite(character, matchresult)
-          # 如果在场上有立绘，那么这里我们应该能够找到立绘
-          assert sprite is not None
-          handleout = VNModifyInst.create(context=self.context, start_time=self.starttime, handlein=charstate.sprite_handle, content=sprite, loc=loc)
-          self.starttime=handleout.get_finish_time()
-          charstate.sprite_handle = handleout
-          self.destblock.push_back(handleout)
-        # 其次，改变记录中的状态
-        charstate.state = matchresult
-        return matchresult
-      else:
-        # 状态没有改变，生成一个警告
+      is_full_match, matchresult = matcher.find_match_besteffort(curstate, statelist)
+      if not is_full_match:
         self.codegen.emit_error(code='vncodegen-character-state-error', msg='Cannot apply state change ' + str(statelist) + ' to original state ' + str(charstate.state), loc=loc, dest=self.destblock)
-        # 返回现在的状态
+
+      if matchresult == charstate.state:
+        # 状态不变的话什么也不做
         return charstate.state
+      # 到这就是确实有状态改变
+      # 首先，如果当前角色在场上，我们需要改变其立绘
+      # 改变状态的动作一般都没有渐变，直接切换
+      if charstate.sprite_handle:
+        sprite = self.get_character_sprite(character, matchresult)
+        # 如果在场上有立绘，那么这里我们应该能够找到立绘
+        assert sprite is not None
+        handleout = VNModifyInst.create(context=self.context, start_time=self.starttime, handlein=charstate.sprite_handle, content=sprite, loc=loc)
+        if not self.is_in_transition:
+          self.starttime=handleout.get_finish_time()
+        charstate.sprite_handle = handleout
+        self.destblock.push_back(handleout)
+      # 其次，改变记录中的状态
+      charstate.state = matchresult
+      return matchresult
 
     # 开始处理只在函数体内有意义的结点
     def visitVNASTSayNode(self, node : VNASTSayNode):
@@ -766,30 +876,17 @@ class VNCodeGen:
         saynode.body.push_back(vnode)
       # 其次，如果有侧边头像，就把侧边头像也加上
       # 我们从角色状态中取头像信息
-      if character is not None:
-        srcsayer = self.codegen._char_parent_map[character]
-        if len(srcsayer.sideimages) > 0:
-          if sayerstatetuple is None:
-            sayerstatetuple = ()
-          statestr = ','.join(sayerstatetuple)
-          img = None
-          while True:
-            if sideimage := srcsayer.sideimages.get(statestr):
-              img = sideimage.get_value(self.file.get_namespace_str())
-              break
-            if len(sayerstatetuple) == 0:
-              break
-            sayerstatetuple = sayerstatetuple[:-1]
-          if img is not None:
-            inode = VNPutInst.create(context=self.context, start_time=self.starttime, content=img, device=self.parsecontext.dev_say_sideimage, loc=node.location)
-            saynode.body.push_back(inode)
+      if character is not None and character in self.codegen._char_parent_map:
+        if img := self.get_character_sideimage(character, sayerstatetuple):
+          inode = VNPutInst.create(context=self.context, start_time=self.starttime, content=img, device=self.parsecontext.dev_say_sideimage, loc=node.location)
+          saynode.body.push_back(inode)
       # 然后把发言者名字和内容放上去
       namestyle = None
       textstyle = None
       if character is not None:
-        info = self.codegen.resolve_character_sayinfo(character=character, sayname=sayname, parsecontext=self.parsecontext)
-        namestyle = info.namestyle.try_get_value()
-        textstyle = info.saytextstyle.try_get_value()
+        if info := self.codegen.resolve_character_sayinfo(character=character, sayname=sayname, parsecontext=self.parsecontext):
+          namestyle = info.namestyle.try_get_value()
+          textstyle = info.saytextstyle.try_get_value()
       if len(sayname) > 0:
         namevalue = StringLiteral.get(sayname, self.context)
         if namestyle is not None:
@@ -823,6 +920,14 @@ class VNCodeGen:
         # 生成一个错误
         self.codegen.emit_error(code='vncodegen-character-notfound', msg=sayname, loc=node.location, dest=self.warningdest)
 
+    def handle_transition_and_finishtime(self, node : VNCreateInst | VNPutInst | VNModifyInst | VNRemoveInst):
+      if not self.is_in_transition:
+        self.starttime = node.get_finish_time()
+      else:
+        if self.parent_transition is not None:
+          node.transition.set_operand(0, self.parent_transition)
+        self.transition_child_finishtimes.append(node.get_finish_time())
+
     def visitVNASTCharacterEntryNode(self, node : VNASTCharacterEntryNode):
       sayname = node.character.get().get_string()
       t = self.codegen.resolve_character(name=sayname, from_namespace=self.file.get_namespace_tuple(), parsecontext=self.parsecontext)
@@ -840,7 +945,7 @@ class VNCodeGen:
       if sprite := self.get_character_sprite(ch, finalstate):
         assert isinstance(sprite.valuetype, ImageType)
         cnode = VNCreateInst.create(context=self.context, start_time=self.starttime, content=sprite, ty=VNHandleType.get(sprite.valuetype), device=self.parsecontext.dev_foreground, loc=node.location)
-        self.starttime = cnode.get_finish_time()
+        self.handle_transition_and_finishtime(cnode)
         info.sprite_handle = cnode
         self.destblock.push_back(cnode)
       # 完成
@@ -857,15 +962,177 @@ class VNCodeGen:
       if info := self.scenecontext.try_get_character_state(sayname, ch):
         if info.sprite_handle:
           rm = VNRemoveInst.create(self.context, start_time=self.starttime, handlein=info.sprite_handle, loc=node.location)
-          self.starttime = rm.get_finish_time()
+          self.handle_transition_and_finishtime(rm)
           self.destblock.push_back(rm)
           info.sprite_handle = None
 
 
     def visitVNASTAssetReference(self, node : VNASTAssetReference):
+      kind = node.kind.get().value
+      operation = node.operation.get().value
+      assetexpr = node.asset.get()
+
+      # 目前而言，除了以下情况外：
+      # 1. 引用特效：有一个完整的 VNASTPendingAssetReference, 可能会带参数
+      # 2. 收起图片：有个只有名字的 VNASTPendingAssetReference, 不带参数
+      # 其余情况下 node.asset 应该都是 AssetData
+      # self.scenecontext.search_asset_inuse()
+      assetdata = None
+      assetexpr_name = None
+      assetexpr_args = []
+      assetexpr_kwargs = {}
+      if isinstance(assetexpr, AssetData):
+        assetdata = assetexpr
+      elif isinstance(assetexpr, VNASTPendingAssetReference):
+        assetexpr_name = assetexpr.populate_argdicts(assetexpr_args, assetexpr_kwargs)
+      else:
+        raise RuntimeError('Unexpected asset expression type: ' + type(assetexpr).__name__)
+      description = [u.value.get_string() for u in node.descriptions.operanduses()]
+      match kind:
+        case VNASTAssetKind.KIND_IMAGE:
+          match operation:
+            case VNASTAssetIntendedOperation.OP_CREATE:
+              assert isinstance(assetdata, ImageAssetData)
+              cnode = VNCreateInst.create(context=self.context, start_time=self.starttime, content=assetdata, ty=VNHandleType.get(assetdata.valuetype), device=self.parsecontext.dev_foreground, name=node.name, loc=node.location)
+              self.destblock.push_back(cnode)
+              self.handle_transition_and_finishtime(cnode)
+              info = VNCodeGen.SceneContext.AssetState(dev=self.parsecontext.dev_foreground, search_names=description, data=assetdata, output_handle=cnode)
+              self.scenecontext.asset_info.append(info)
+            case VNASTAssetIntendedOperation.OP_REMOVE:
+              infolist = self.scenecontext.search_asset_inuse(dev=self.parsecontext.dev_foreground, searchname=assetexpr_name, data=assetdata)
+              if len(infolist) == 0:
+                self.codegen.emit_error(code='vncodegen-active-asset-not-found', msg='Cannot remove asset because it is not found in use:' + (assetexpr_name if assetexpr_name is not None and len(assetexpr_name) > 0 else str(assetdata)), loc=node.location, dest=self.destblock)
+              else:
+                # 应该只有一个资源
+                # 把所有符合条件的都撤下来
+                for info in infolist:
+                  assert info.output_handle is not None
+                  rnode = VNRemoveInst.create(context=self.context, start_time=self.starttime, handlein=info.output_handle, name=node.name, loc=node.location)
+                  self.handle_transition_and_finishtime(rnode)
+                  self.destblock.push_back(rnode)
+                  self.scenecontext.asset_info.remove(info)
+            case VNASTAssetIntendedOperation.OP_PUT:
+              # 当前不应该出现这种情况
+              raise NotImplementedError()
+        case VNASTAssetKind.KIND_AUDIO:
+          match operation:
+            case VNASTAssetIntendedOperation.OP_PUT:
+              assert isinstance(assetdata, AudioAssetData)
+              pnode = VNPutInst.create(context=self.context, start_time=self.starttime, content=assetdata, device=self.parsecontext.dev_soundeffect, name=node.name, loc=node.location)
+              # 这种情况下我们一般不更新开始时间，这个也不应该有渐变
+              self.destblock.push_back(pnode)
+            case _:
+              # 当前不应该出现这种情况
+              raise NotImplementedError()
+          return
+        case VNASTAssetKind.KIND_EFFECT:
+          self.codegen.emit_error(code='vncodegen-not-implemented', msg='Video playing not supported yet', loc=node.location, dest=self.destblock)
+          return
+        case VNASTAssetKind.KIND_VIDEO:
+          self.codegen.emit_error(code='vncodegen-not-implemented', msg='Video playing not supported yet', loc=node.location, dest=self.destblock)
+          return
+
       return self.visit_default_handler(node)
+
+    def visitVNASTTransitionNode(self, node : VNASTTransitionNode):
+      transition_args = []
+      transition_kwargs = {}
+      transition_name = node.populate_argdicts(transition_args, transition_kwargs)
+      # TODO 查找转场效果
+      transition = None
+      assert not self.is_in_transition
+      self.parent_transition = transition
+      self.is_in_transition = True
+      for child in node.body.body:
+        if isinstance(child, MetadataOp):
+          self.destblock.push_back(child.clone())
+        elif isinstance(child, VNASTNodeBase):
+          self.visit(child)
+      self.is_in_transition = False
+      self.parent_transition = None
+      # TODO 应该在这里加一个等待，如果有多个操作用相同的转场，我们应该先等它们全部结束再继续
+      if len(self.transition_child_finishtimes) > 0:
+        self.starttime = self.transition_child_finishtimes[-1]
+      self.transition_child_finishtimes.clear()
+
     def visitVNASTSceneSwitchNode(self, node : VNASTSceneSwitchNode):
-      return self.visit_default_handler(node)
+      #scene_bg : AssetState | None = None # 场景背景的信息。不参与普通的使用中资源的查找，所以放在外面
+      #scene_symb : VNSceneSymbol | None = None # 当前场景
+      #scene_states : tuple[str,...] | None = None
+      destscene = node.destscene.get().get_string()
+      states = [u.value.get_string() for u in node.states.operanduses()]
+      # 不管场景解析成功与否，我们都会做场景切换
+      # 这里先做好准备工作
+      scene = self.codegen.resolve_scene(name=destscene, from_namespace=self.file.get_namespace_tuple(), parsecontext=self.parsecontext)
+      statetuple = ()
+      scene_background = None
+      if scene is None:
+        self.codegen.emit_error(code='vncodegen-scene-notfound', msg=destscene, loc=node.location, dest=self.destblock)
+        scene = self.codegen.create_unknown_scene(scenename=destscene, from_namespace=self.file.get_namespace_tuple())
+      else:
+        # 尝试匹配场景的状态
+        if scene in self.codegen._scene_state_matcher:
+          matcher = self.codegen._scene_state_matcher[scene]
+          is_full_match, matchresult = matcher.find_match_besteffort(list(matcher.get_default_state()), states)
+          if not is_full_match:
+            self.codegen.emit_error(code='vncodegen-scene-state-nomatch', msg='Cannot match scene '+destscene + ' with state ' + str(states), loc=node.location, dest=self.destblock)
+          scene_background = self.get_scene_background(scene, matchresult)
+          statetuple = matchresult
+
+      switchnode = VNSceneSwitchInstructionGroup.create(context=self.context, start_time=self.starttime, dest_scene=scene, name=node.name, loc=node.location)
+      rmtimes = []
+      # 首先把当前场景下的所有东西先下了
+      for info in self.scenecontext.asset_info:
+        assert info.output_handle is not None
+        rm = VNRemoveInst.create(context=self.context, start_time=self.starttime, handlein=info.output_handle, loc=node.location)
+        if self.is_in_transition and self.parent_transition is not None:
+          rm.transition.set_operand(0, self.parent_transition)
+        switchnode.body.push_back(rm)
+        rmtimes.append(rm.get_finish_time())
+      self.scenecontext.asset_info.clear()
+      # 再把当前场景下所有上场的角色给下了
+      for characterinfo in self.scenecontext.character_states.values():
+        if characterinfo.sprite_handle:
+          rm = VNRemoveInst.create(context=self.context, start_time=self.starttime, handlein=characterinfo.sprite_handle, loc=node.location)
+          if self.is_in_transition and self.parent_transition is not None:
+            rm.transition.set_operand(0, self.parent_transition)
+          switchnode.body.push_back(rm)
+          rmtimes.append(rm.get_finish_time())
+          characterinfo.sprite_handle = None
+      # 再把之前的场景的背景下了，换新的背景
+      # 如果之前没背景、现在有背景，我们用 create
+      # 如果之前有、现在没，我们用 remove
+      # 如果都没有，什么也不干
+      # 如果都有且背景不同，根据使用的转场效果决定，要么用 modify, 要么 create+remove
+      # TODO 目前还不支持转场效果，所以所有转场都是 create + remove
+      if self.scenecontext.scene_bg and self.scenecontext.scene_bg.output_handle:
+        # 现在已有背景
+        rm = VNRemoveInst.create(context=self.context, start_time=self.starttime, handlein=self.scenecontext.scene_bg.output_handle, loc=node.location)
+        if self.is_in_transition and self.parent_transition is not None:
+          rm.transition.set_operand(0, self.parent_transition)
+        switchnode.body.push_back(rm)
+        rmtimes.append(rm.get_finish_time())
+        self.scenecontext.scene_bg.output_handle = None
+
+      self.scenecontext.scene_states = statetuple
+      self.scenecontext.scene_symb = scene
+      self.scenecontext.scene_bg = None
+      best_finish_time = rmtimes[-1] if len(rmtimes) > 0 else self.starttime
+      if scene_background is not None:
+        cnode = VNCreateInst.create(context=self.context, start_time=best_finish_time, content=scene_background, ty=VNHandleType.get(scene_background.valuetype), device=self.parsecontext.dev_background, loc=node.location)
+        if self.is_in_transition and self.parent_transition is not None:
+          cnode.transition.set_operand(0, self.parent_transition)
+        self.scenecontext.scene_bg = VNCodeGen.SceneContext.AssetState(dev=self.parsecontext.dev_background, search_names=[], data=scene_background, output_handle=cnode)
+        best_finish_time = cnode.get_finish_time()
+        switchnode.body.push_back(cnode)
+
+      # 如果这次转场什么都没干就不添加结点了
+      if len(switchnode.body) > 0:
+        self.destblock.push_back(switchnode)
+        switchnode.group_finish_time.set_operand(0, best_finish_time)
+        self.starttime = switchnode.get_finish_time()
+      # 结束
+
     def visitVNASTConditionalExecutionNode(self, node : VNASTConditionalExecutionNode):
       return self.visit_default_handler(node)
     def visitVNASTMenuNode(self, node : VNASTMenuNode):
@@ -878,10 +1145,6 @@ class VNCodeGen:
       return self.visit_default_handler(node)
     def visitVNASTCallNode(self, node : VNASTCallNode):
       return self.visit_default_handler(node)
-
-
-
-
 
   def run_codegen_for_block(self, srcfile : VNASTFileInfo, functioncontext : ParseContext, destfunction : VNFunction, baseparsecontext : VNCodeGen.ParseContext, basescenecontext : VNCodeGen.SceneContext, srcregion : VNASTCodegenRegion, dest : Block, deststarttime : Value, convergeblock : Block | None):
     # 如果
