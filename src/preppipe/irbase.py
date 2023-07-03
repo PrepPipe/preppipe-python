@@ -1967,6 +1967,12 @@ class Block(Value, IListNode):
       raise RuntimeError('Cannot add operation with parent')
     self._ops.push_back(op)
 
+  def push_front(self, op : Operation):
+    assert isinstance(op, Operation)
+    if op.parent is not None:
+      raise RuntimeError('Cannot add operation with parent')
+    self._ops.push_front(op)
+
   def view(self) -> None:
     # for debugging
     writer = IRWriter(self.context, True, None, None)
