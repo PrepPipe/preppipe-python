@@ -95,7 +95,7 @@ class VNHandleType(SingleElementParameterizedType):
 
   @classmethod
   def get(cls, element_type : ValueType) -> VNHandleType:
-    return super().get(element_type=element_type) # type: ignore
+    return super(VNHandleType, cls).get(element_type=element_type) # type: ignore
 
 @IRObjectJsonTypeName("vn_displayable_t")
 @dataclasses.dataclass(init=False, slots=True, frozen=True)
@@ -827,6 +827,14 @@ class VNReturnInst(VNExitInstBase):
     return VNReturnInst(init_mode=IRObjectInitMode.CONSTRUCT, context=context, start_time=start_time, name=name, loc=loc)
 
 @IROperationDataclass
+class VNUnreachableInst(VNExitInstBase):
+  # 该指令不该被执行
+  # 目前如果有跳转到一个没被定义的标签的话，该标签会包含一条该指令
+  @staticmethod
+  def create(context : Context, start_time: Value, name : str = '', loc : Location | None = None):
+    return VNUnreachableInst(init_mode=IRObjectInitMode.CONSTRUCT, context=context, start_time=start_time, name=name, loc=loc)
+
+@IROperationDataclass
 class VNTailCallInst(VNExitInstBase, VNCallInst):
   # 跳转到目标函数，不返回；当前所有句柄不保留
   @staticmethod
@@ -939,7 +947,8 @@ class VNNamespace(Symbol, NamespaceNodeInterface[VNSymbol]):
 
   @staticmethod
   def expand_namespace_str(path : str) -> tuple[str]:
-    return tuple(path.split('/')[1:])
+    assert len(path) > 0 and path[0] == '/'
+    return tuple([v for v in path.split('/') if len(v) > 0])
 
   def _custom_postinit_(self):
     # 命名空间应该组成一个树结构，都以'/'开始，以'/'为分隔符

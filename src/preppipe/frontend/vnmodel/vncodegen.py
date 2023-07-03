@@ -222,8 +222,11 @@ class VNCodeGen:
       self.say_mode = newmode
       self.say_mode_specified_sayers = specified_sayers
       self.interleaved_mode_last_sayer = None
+      # 如果发言模式改变，之后如果有取默认角色的情况，我们使用模式中指定的角色
+      if len(specified_sayers) > 0:
+        self.last_sayer = specified_sayers[0]
 
-    def get_last_sayer(self) -> tuple[str, VNCharacterSymbol] | None:
+    def get_last_sayer_for_default_target(self) -> tuple[str, VNCharacterSymbol] | None:
       return self.last_sayer
 
     def update_last_sayer(self, sayname : str, ch : VNCharacterSymbol):
@@ -257,12 +260,21 @@ class VNCodeGen:
           return self.say_mode_specified_sayers[0]
       raise NotImplementedError()
 
+    def resolve_alias(self, name : str) -> str:
+      curpc = self
+      while curpc is not None:
+        assert isinstance(curpc, VNCodeGen.ParseContext)
+        if name in curpc.alias_dict:
+          return curpc.alias_dict[name]
+        curpc = curpc.parent
+      return name
+
   ast : VNAST
   result : VNModel
   resolver : VNModelNameResolver
   _default_ns : tuple[str, ...]
   _func_map : dict[str, dict[tuple[str, ...], VNFunction]] # [名称] -> [命名空间] -> 函数体；现在仅用来在创建函数体时去重
-  _all_functions : dict[VNFunction, VNASTFunction]
+  _all_functions : dict[VNASTFunction, VNFunction]
   _func_prebody_map : dict[VNFunction, Block]
   _func_postbody_map : dict[VNFunction, Block]
   #_char_sprite_map : dict[VNCharacterSymbol, dict[str, VNASTNamespaceSwitchableValueSymbol]]
@@ -286,6 +298,11 @@ class VNCodeGen:
     self._func_prebody_map = {}
     self._func_postbody_map = {}
     #self._char_sprite_map = {}
+    self._char_say_parent_map = {}
+    self._char_parent_map = {}
+    self._char_state_matcher = {}
+    self._scene_parent_map = {}
+    self._scene_state_matcher = {}
     self._global_asm_block = Block.create('global', self.ast.context)
     self._global_parsecontext = VNCodeGen.ParseContext(parent=None)
     self._global_say_index = 0
@@ -340,23 +357,23 @@ class VNCodeGen:
       return func
     return None
 
-  def resolve_character(self, name : str, from_namespace : tuple[str, ...], parsecontext : ParseContext) -> tuple[str, VNCharacterSymbol] | None:
+  def resolve_character(self, sayname : str, from_namespace : tuple[str, ...], parsecontext : ParseContext) -> VNCharacterSymbol | None:
     # 尝试解析对角色名称的引用
-    # 返回（1）实际发言名（考虑过别名之后的结果），（2）发言者身份
+    # 返回（1）实际发言名，（2）发言者身份
 
     # 首先检查名称是不是别名，是的话更新一下名称
-    curpc = parsecontext
-    while curpc is not None:
-      if name in curpc.alias_dict:
-        name = curpc.alias_dict[name]
-        break
-      curpc = curpc.parent
-      assert isinstance(curpc, VNCodeGen.ParseContext)
+    #curpc = parsecontext
+    #while curpc is not None:
+    #  assert isinstance(curpc, VNCodeGen.ParseContext)
+    #  if name in curpc.alias_dict:
+    #    name = curpc.alias_dict[name]
+    #    break
+    #  curpc = curpc.parent
     # 然后解析角色名
-    character = self.resolver.unqualified_lookup(name, from_namespace, None)
+    character = self.resolver.unqualified_lookup(sayname, from_namespace, None)
     if character is None or not isinstance(character, VNCharacterSymbol):
       return None
-    return (name, character)
+    return character
 
   def resolve_character_sayinfo(self, character : VNCharacterSymbol, sayname : str, parsecontext : ParseContext) -> VNASTCharacterSayInfoSymbol | None:
     # 根据实际发言名和发言者身份，找到发言所用的外观信息
@@ -368,12 +385,12 @@ class VNCodeGen:
     # 如果当前环境指定了这个角色应该用什么发言信息，就用指定的值
     curpc = parsecontext
     while curpc is not None:
+      assert isinstance(curpc, VNCodeGen.ParseContext)
       if character in curpc.temp_say_dict:
         saydict = curpc.temp_say_dict[character]
         if sayname in saydict:
           return saydict[sayname]
       curpc = curpc.parent
-      assert isinstance(curpc, VNCodeGen.ParseContext)
 
     # 如果环境中没有指定，就到上层去找
     if character in self._char_parent_map:
@@ -390,11 +407,11 @@ class VNCodeGen:
     # 首先检查名称是不是别名，是的话更新一下名称
     curpc = parsecontext
     while curpc is not None:
+      assert isinstance(curpc, VNCodeGen.ParseContext)
       if name in curpc.alias_dict:
         name = curpc.alias_dict[name]
         break
       curpc = curpc.parent
-      assert isinstance(curpc, VNCodeGen.ParseContext)
     # 然后解析角色名
     scene = self.resolver.unqualified_lookup(name, from_namespace, None)
     if scene is None or not isinstance(scene, VNSceneSymbol):
@@ -425,6 +442,11 @@ class VNCodeGen:
     self._func_postbody_map[func] = b
     return b
 
+  def get_file_nstuple(self, file : VNASTFileInfo) -> tuple[str,...]:
+    if ns := file.namespace.try_get_value():
+      return VNNamespace.expand_namespace_str(ns.get_string())
+    return self._default_ns
+
   def collect_functions(self):
     # 找到所有的函数，创建对应的命名空间，并把函数加到记录中
     # 做这步的目的是为了提前创建好所有 VNFunction, 这样其他函数可以直接生成对其的调用
@@ -452,8 +474,15 @@ class VNCodeGen:
           continue
         function = VNFunction.create(self.context, func.name, func.location)
         nsnode.add_function(function)
-        self._all_functions[function] = func
+        self._all_functions[func] = function
         funcdict[namespace] = func
+
+  def run_codegen(self):
+    for file in self.ast.files.body:
+      filecontext = VNCodeGen.ParseContext.forkfrom(self._global_parsecontext)
+      for func in file.functions.body:
+        assert isinstance(func, VNASTFunction)
+        self.generate_function_body(file, filecontext, func, self._all_functions[func])
 
   def emit_error(self, code : str, msg : str, loc : Location | None, dest : Block):
     err = ErrorOp.create(error_code=code, context=self.context, error_msg=StringLiteral.get(msg, self.context), loc=loc)
@@ -475,15 +504,21 @@ class VNCodeGen:
     return node
 
   def create_unknown_sayer(self, sayname : str, from_namespace : tuple[str,...]) -> VNCharacterSymbol:
-    raise NotImplementedError()
+    ch = VNCharacterSymbol.create(context=self.context, kind=VNCharacterKind.NORMAL, name=sayname, codename=sayname)
+    ns = self.get_or_create_ns(from_namespace)
+    ns.add_character(ch)
+    return ch
 
   def create_unknown_scene(self, scenename : str, from_namespace : tuple[str,...]) -> VNSceneSymbol:
-    raise NotImplementedError()
+    scene = VNSceneSymbol.create(context=self.context, name=scenename, codename=scenename)
+    ns = self.get_or_create_ns(from_namespace)
+    ns.add_scene(scene)
+    return scene
 
   @dataclasses.dataclass
   class _NonlocalCodegenHelper(VNASTVisitor):
     codegen : VNCodeGen
-    file : VNASTFileInfo
+    namespace_tuple : tuple[str, ...]
     parsecontext : VNCodeGen.ParseContext
     warningdest : Block
 
@@ -498,27 +533,29 @@ class VNCodeGen:
 
     def visitVNASTCharacterTempSayAttrNode(self, node: VNASTCharacterTempSayAttrNode):
       character = node.character.get().get_string()
-      t = self.codegen.resolve_character(name=character, from_namespace=self.file.get_namespace_tuple(), parsecontext=self.parsecontext)
-      if t is None:
+      sayname = self.parsecontext.resolve_alias(character)
+      ch = self.codegen.resolve_character(sayname=sayname, from_namespace=self.namespace_tuple, parsecontext=self.parsecontext)
+      if ch is None:
         # 在这里我们只报错并忽略就行了
         self.codegen.emit_error(code='vncodegen-character-nameresolution-failed', msg=character, loc=node.location, dest=self.warningdest)
       else:
-        cname, ch = t
         self.parsecontext.handle_temp_say_attr(node, ch)
       return True
 
     def visitVNASTSayModeChangeNode(self, node: VNASTSayModeChangeNode):
       target_mode : VNASTSayMode = node.target_mode.get().value
       specified_sayers : list[tuple[str, VNCharacterSymbol]] = []
-      ns = self.file.get_namespace_tuple()
+      ns = self.namespace_tuple
       for u in node.specified_sayers.operanduses():
         sayerstr = u.value.get_string()
         assert isinstance(sayerstr, str)
-        t = self.codegen.resolve_character(name=sayerstr, from_namespace=ns, parsecontext=self.parsecontext)
-        if t is None:
+        sayname = self.parsecontext.resolve_alias(sayerstr)
+        ch = self.codegen.resolve_character(sayname=sayname, from_namespace=ns, parsecontext=self.parsecontext)
+        if ch is None:
           # 在这里我们除了报错之外还需要生成一个默认的发言者，这样不至于令后续所有发言者错位
           self.codegen.emit_error(code='vncodegen-character-nameresolution-failed', msg=sayerstr, loc=node.location, dest=self.warningdest)
-          t = (sayerstr, self.codegen.create_unknown_sayer(sayerstr, ns))
+          ch = self.codegen.create_unknown_sayer(sayname, ns)
+        t = (sayname, ch)
         specified_sayers.append(t)
       # 检查指定的发言者数量，如果不对的话作出调整
       is_check_passed = True
@@ -530,7 +567,7 @@ class VNCodeGen:
           if len(specified_sayers) > 1:
             raise RuntimeError("Should not happen")
           if len(specified_sayers) == 0:
-            if prev_sayer := self.parsecontext.get_last_sayer():
+            if prev_sayer := self.parsecontext.get_last_sayer_for_default_target():
               specified_sayers.append(prev_sayer)
             else:
               self.codegen.emit_error(code='vncodegen-saymode-insufficient-sayer', msg='Long speech mode without specified sayer', loc=node.location, dest=self.warningdest)
@@ -553,7 +590,7 @@ class VNCodeGen:
     # 有部分结点既可以在文件域出现也可以在函数域出现，并且对它们的处理也是一样的
     # 我们就用这一个函数来同时处理这两种情况
     # 如果结点可以处理就返回 True，结点没有处理（不是所列举的情况）就返回 False
-    helper = VNCodeGen._NonlocalCodegenHelper(codegen=self, file=file, parsecontext=parsecontext, warningdest=warningdest)
+    helper = VNCodeGen._NonlocalCodegenHelper(codegen=self, namespace_tuple=self.get_file_nstuple(file), parsecontext=parsecontext, warningdest=warningdest)
     return helper.visit(op)
 
   def handle_filelocal_node(self, file : VNASTFileInfo, parsecontext : ParseContext, op : VNASTNodeBase, warningdest : Block):
@@ -599,6 +636,9 @@ class VNCodeGen:
       state : tuple[str,...]
       sprite_handle : Value | None = None
 
+      def copy(self):
+        return VNCodeGen.SceneContext.CharacterState(index=self.index, sayname=self.sayname, identity=self.identity, state=self.state, sprite_handle=self.sprite_handle)
+
     @dataclasses.dataclass
     class AssetState:
       # 对于每个在台上的资源（包括背景音乐、音效、图片等），我们用这个结构体来保存信息
@@ -606,6 +646,9 @@ class VNCodeGen:
       search_names : list[str]
       data : Value # AssetData | AssetDecl | AssetPlaceholder
       output_handle : Value | None = None
+
+      def copy(self):
+        return VNCodeGen.SceneContext.AssetState(dev=self.dev, search_names=self.search_names.copy(), data=self.data, output_handle=self.output_handle)
 
     # SceneContext 下的角色信息
     character_dict : dict[tuple[str, VNCharacterSymbol], int] = dataclasses.field(default_factory=dict) # (发言名, 身份) --> 状态索引
@@ -635,7 +678,10 @@ class VNCodeGen:
         return self.character_states[self.character_dict[searchtuple]]
       index = codegen._global_character_index
       codegen._global_character_index += 1
-      statetuple = codegen._char_state_matcher[character].get_default_state()
+      if character in codegen._char_state_matcher:
+        statetuple = codegen._char_state_matcher[character].get_default_state()
+      else:
+        statetuple = ()
       newstate = VNCodeGen.SceneContext.CharacterState(index=index, sayname=sayname, identity=character, state=statetuple, sprite_handle=None)
       self.character_states[index] = newstate
       self.character_dict[searchtuple] = index
@@ -666,69 +712,182 @@ class VNCodeGen:
         result.append(candidate)
       return result
 
+    def get_handle_list_upon_call(self) -> list[Value]:
+      # 当处理调用时，我们认为所有的句柄都会被清理掉
+      # 在这里把所有的这些句柄都加到该列表里
+      result : list[Value] = []
+      for state in self.character_states.values():
+        if state.sprite_handle:
+          result.append(state.sprite_handle)
+      for info in self.asset_info:
+        if info.output_handle:
+          result.append(info.output_handle)
+      if self.scene_bg is not None and self.scene_bg.output_handle is not None:
+        result.append(self.scene_bg.output_handle)
+      return result
+
+    def mark_after_call(self):
+      # 当有还会返回的函数调用时会被调用
+      # 理论上是应该把当前的所有句柄都清理掉
+      # 现在先不做，试试看有没有这个需要
+      pass
+
     @staticmethod
     def forkfrom(parent):
       assert isinstance(parent, VNCodeGen.SceneContext)
-      return VNCodeGen.SceneContext()
+      character_states = {}
+      for index, state in parent.character_states.items():
+        character_states[index] = state.copy()
+      character_sayname_inuse = {}
+      for symb, names in parent.character_sayname_inuse.items():
+        character_sayname_inuse[symb] = names.copy()
+      asset_info = [info.copy() for info in parent.asset_info]
+      scene_bg = parent.scene_bg.copy() if  parent.scene_bg is not None else None
+      return VNCodeGen.SceneContext(character_dict=parent.character_dict.copy(),character_states=character_states, character_sayname_inuse=character_sayname_inuse, asset_info=asset_info, scene_bg=scene_bg, scene_symb=parent.scene_symb, scene_states=parent.scene_states)
 
   @dataclasses.dataclass
-  class _FuntionCodegenHelper(_NonlocalCodegenHelper):
-    parsecontext : VNCodeGen.ParseContext
-    scenecontext : VNCodeGen.SceneContext
-    destfunction : VNFunction
-    destblock : Block
-    starttime : Value
-    # 如果现在正在解析 VNASTTransitionNode 下的内容的话，这里应该是解析好的转场效果
-    is_in_transition : bool = False
-    parent_transition : Value | None = None
-    transition_child_finishtimes : list[Value] = dataclasses.field(default_factory=list)
-
+  class FunctionCodegenContext:
     # 除了 entry 之外所有的块都在里面
     # entry 块不接受按名查找
-    _block_dict : dict[str, Block] = dataclasses.field(default_factory=dict)
-
-    @property
-    def context(self):
-      return self.codegen.context
+    destfunction : VNFunction
+    block_dict : dict[str, Block] = dataclasses.field(default_factory=dict)
+    states_dict : dict[Block, VNCodeGen.SceneContext] = dataclasses.field(default_factory=dict)
+    anonymous_ctrlflow_entity_indexing_dict : dict[type, int] = dataclasses.field(default_factory=dict) # <像 VNASTMenuNode 这样的 type> --> index
+    anon_block_index : int = 0
 
     def get_or_create_basic_block(self, labelname : str) -> Block:
+      assert labelname != 'entry'
       # 获取一个以 labelname 命名的基本块
       # 如果基本块已存在就直接使用存在的基本块
       # 如果不存在就先创建
       # 我们既使用该函数来解析对标签的引用，又用该函数来创建新的内部基本块
       # 这样对标签的引用就可以直接转化为对基本块的引用，不必再转
       # 如果基本块只被引用、没有被初始化，则我们在最后会给它们填错误处理的代码
-      if labelname in self._block_dict:
-        return self._block_dict[labelname]
+      if labelname in self.block_dict:
+        return self.block_dict[labelname]
       block = self.destfunction.create_block(name=labelname)
-      self._block_dict[labelname] = block
+      self.block_dict[labelname] = block
       return block
+
+    def register_new_block(self, helper : VNCodeGen._FunctionCodegenHelper, destblock : Block):
+      assert destblock not in self.states_dict
+      self.states_dict[destblock] = helper.scenecontext
+
+    def try_get_destblock_entrystate(self, destblock : Block) -> VNCodeGen.SceneContext | None:
+      return self.states_dict.get(destblock)
+
+    def create_anon_block(self, labelname : str | None = None) -> Block:
+      # 获取一个其名字不参与按名搜索的块，即可以随意调整名称
+      # 如果这个标签名已经被用掉了，我们在后面加数字后缀，直到名字可用
+      if labelname is None:
+        labelname = 'anon_block_' + str(self.anon_block_index)
+        self.anon_block_index += 1
+      if labelname not in self.block_dict:
+        block = self.destfunction.create_block(name=labelname)
+        self.block_dict[labelname] = block
+        return block
+      basename = labelname + '_'
+      loopindex = 0
+      cur_name = basename + str(loopindex)
+      while cur_name in self.block_dict:
+        loopindex += 1
+        cur_name = basename + str(loopindex)
+      block = self.destfunction.create_block(name=cur_name)
+      self.block_dict[cur_name] = block
+      return block
+
+    def get_anonymous_ctrlflow_entity_index(self, cls : type) -> int:
+      if cls in self.anonymous_ctrlflow_entity_indexing_dict:
+        cur = self.anonymous_ctrlflow_entity_indexing_dict[cls]
+        self.anonymous_ctrlflow_entity_indexing_dict[cls] += 1
+        return cur
+      self.anonymous_ctrlflow_entity_indexing_dict[cls] = 1
+      return 0
+
+  @dataclasses.dataclass
+  class _FunctionCodegenHelper(_NonlocalCodegenHelper):
+    parsecontext : VNCodeGen.ParseContext
+    scenecontext : VNCodeGen.SceneContext
+    functioncontext : VNCodeGen.FunctionCodegenContext
+    srcregion : VNASTCodegenRegion
+    destblock : Block
+    starttime : Value
+    convergeblock : Block # 如果在函数内，这是 None; 如果这是在某个控制流结构下，这是输入块自然结束时的跳转目标
+    loopexitblock : Block | None = None # 如果在循环内的话，这是最内侧循环的出口块
+    # 如果现在正在解析 VNASTTransitionNode 下的内容的话，这里应该是解析好的转场效果
+    is_in_transition : bool = False
+    parent_transition : Value | None = None
+    transition_child_finishtimes : list[Value] = dataclasses.field(default_factory=list)
+
+    # 当前是否已经有终指令
+    cur_terminator : VNTerminatorInstBase | None = None
+
+    @property
+    def context(self):
+      return self.codegen.context
+
+    @property
+    def destfunction(self):
+      return self.functioncontext.destfunction
 
     def visit_default_handler(self, node : VNASTNodeBase):
       raise NotImplementedError()
 
-    def visitVNASTASMNode(self, node: VNASTASMNode):
+    def check_blocklocal_cond(self, node : VNASTNodeBase) -> bool:
+      # 检查该指令是否在正常的、未结束的块中
+      # 是的话返回 False, 不在正常情况下时生成错误并返回 True
+      if self.cur_terminator is None:
+        return False
+      err = ErrorOp.create(error_code='vncodegen-unhandled-node-in-terminated-block', context=self.context, error_msg=StringLiteral.get(node.get_short_str(0), self.context), loc=node.location)
+      err.insert_before(self.cur_terminator)
+      return True
+
+    def check_block_or_function_local_cond(self, node : VNASTNodeBase) -> bool:
+      # 检查该指令是否在未结束的块或是函数体中
+      if self.cur_terminator is None:
+        return False
+      if self.convergeblock is None:
+        return False
+      err = ErrorOp.create(error_code='vncodegen-unhandled-node-in-terminated-block', context=self.context, error_msg=StringLiteral.get(node.get_short_str(0), self.context), loc=node.location)
+      err.insert_before(self.cur_terminator)
+      return True
+
+    def visitVNASTASMNode(self, node: VNASTASMNode) -> VNTerminatorInstBase | None:
+      if self.check_blocklocal_cond(node):
+        return None
       if result := self.codegen.emit_asm(node):
         self.destblock.push_back(result)
+      return None
 
     # 这些可以直接继承父类的处理
-    def visitVNASTTempAliasNode(self, node : VNASTTempAliasNode):
-      return super().visitVNASTTempAliasNode(node)
-    def visitVNASTSayModeChangeNode(self, node : VNASTSayModeChangeNode):
-      return super().visitVNASTSayModeChangeNode(node)
-    def visitVNASTChangeDefaultDeviceNode(self, node : VNASTChangeDefaultDeviceNode):
-      return super().visitVNASTChangeDefaultDeviceNode(node)
+    def visitVNASTTempAliasNode(self, node : VNASTTempAliasNode) -> VNTerminatorInstBase | None:
+      if self.check_block_or_function_local_cond(node):
+        return None
+      super().visitVNASTTempAliasNode(node)
+      return None
+    def visitVNASTSayModeChangeNode(self, node : VNASTSayModeChangeNode) -> VNTerminatorInstBase | None:
+      if self.check_block_or_function_local_cond(node):
+        return None
+      super().visitVNASTSayModeChangeNode(node)
+      return None
+    def visitVNASTChangeDefaultDeviceNode(self, node : VNASTChangeDefaultDeviceNode) -> VNTerminatorInstBase | None:
+      if self.check_block_or_function_local_cond(node):
+        return None
+      super().visitVNASTChangeDefaultDeviceNode(node)
+      return None
 
     # 需要小改动的
-    def visitVNASTCharacterTempSayAttrNode(self, node : VNASTCharacterTempSayAttrNode):
+    def visitVNASTCharacterTempSayAttrNode(self, node : VNASTCharacterTempSayAttrNode) -> VNTerminatorInstBase | None:
+      if self.check_block_or_function_local_cond(node):
+        return None
       character = node.character.get().get_string()
-      t = self.codegen.resolve_character(name=character, from_namespace=self.file.get_namespace_tuple(), parsecontext=self.parsecontext)
-      if t is None:
+      sayname = self.parsecontext.resolve_alias(character)
+      ch = self.codegen.resolve_character(sayname=sayname, from_namespace=self.namespace_tuple, parsecontext=self.parsecontext)
+      if ch is None:
         # 在这里我们只报错并忽略就行了
         self.codegen.emit_error(code='vncodegen-character-nameresolution-failed', msg=character, loc=node.location, dest=self.warningdest)
-        return
+        return None
 
-      cname, ch = t
       self.parsecontext.handle_temp_say_attr(node, ch)
       # 除了加到解析状态外，我们还得检查当前场景有没有该角色的状态，有的话把查找信息给改了
       # 现在我们只支持对单个角色
@@ -741,13 +900,14 @@ class VNCodeGen:
           if newname != oldname:
             # 开始更新信息
             self.scenecontext.update_character_sayname(ch, oldname, newname)
+      return None
 
     # 这些应该不会出现
-    def visitVNASTCodegenRegion(self, node : VNASTCodegenRegion):
+    def visitVNASTCodegenRegion(self, node : VNASTCodegenRegion) -> VNTerminatorInstBase | None:
       raise RuntimeError("Should not happen")
-    def visitVNASTFileInfo(self, node : VNASTFileInfo):
+    def visitVNASTFileInfo(self, node : VNASTFileInfo) -> VNTerminatorInstBase | None:
       raise RuntimeError("Should not happen")
-    def visitVNASTFunction(self, node : VNASTFunction):
+    def visitVNASTFunction(self, node : VNASTFunction) -> VNTerminatorInstBase | None:
       raise RuntimeError("Should not happen")
 
     # 辅助函数
@@ -755,6 +915,116 @@ class VNCodeGen:
       node = VNWaitInstruction.create(context=self.context, start_time=self.starttime, name='', loc=loc)
       self.starttime = node.get_finish_time()
       self.destblock.push_back(node)
+
+    def emit_jump_to_new_block(self, target : Block, loc : Location | None) -> VNBranchInst:
+      node = VNBranchInst.create(context=self.context, start_time=self.starttime, defaultbranch=target, loc=loc)
+      self.destblock.push_back(node)
+      return node
+
+    def emit_jump_to_block_mayexisting(self, target : Block, loc : Location | None) -> VNBranchInst:
+      if prevstate := self.functioncontext.try_get_destblock_entrystate(target):
+        # 检查所有资源
+        # 如果有资源在之前进入该块时有的，现在没有了，那么报错
+        # 如果有资源在之前进入该块时没有，现在多的，那么就把它去掉
+        def find_root_creation(op : Value) -> VNCreateInst:
+          # 根据一个句柄，找到创建该句柄的创建指令
+          # 虽然句柄有可能直接就是 VNCreateInst, 但也可能是经过 VNModifyInst 的，所以这里需要查找
+          assert isinstance(op.valuetype, VNHandleType)
+          while not isinstance(op, VNCreateInst):
+            if isinstance(op, VNModifyInst):
+              op = op.handlein.get()
+            else:
+              raise RuntimeError('Should not happen')
+          assert isinstance(op, VNCreateInst)
+          return op
+        character_sprites : dict[VNCharacterSymbol, dict[VNCreateInst, Value]] = {}
+        asset_usages : dict[VNDeviceSymbol, dict[Value, dict[VNCreateInst, Value]]] = {}
+        def add_to_valuedict(handle : Value, creation : VNCreateInst, key : typing.Any, d : dict[typing.Any, dict[VNCreateInst, Value]]):
+          if key not in d:
+            d[key] = {creation : handle}
+            return
+          cur_dict = d[key]
+          assert creation not in cur_dict
+          cur_dict[creation] = handle
+        # 首先总结当前状态
+        # 角色状态
+        for charstate in self.scenecontext.character_states.values():
+          if sprite_handle := charstate.sprite_handle:
+            creation = find_root_creation(sprite_handle)
+            add_to_valuedict(sprite_handle, creation, charstate.identity, character_sprites)
+        # 资源状态
+        for assetstate in self.scenecontext.asset_info:
+          if assetstate.dev in asset_usages:
+            value_dict = asset_usages[assetstate.dev]
+          else:
+            value_dict = {}
+            asset_usages[assetstate.dev] = value_dict
+          assert assetstate.output_handle is not None
+          creation = find_root_creation(assetstate.output_handle)
+          add_to_valuedict(assetstate.output_handle, creation, assetstate.data, value_dict)
+        # 开始检查目标块进入时的状态
+        # 每碰到一个上场的角色、资源，我们尝试从记录中找到并删除
+        # 如果没有找到，那么就生成一个错误
+        # （暂时不生成致命错误，只报一下错）
+        # 这样所有的都找完后，剩下的就是只有该块进入时才有的内容，我们把这些内容都撤下去
+        checked_creations : set[VNCreateInst] = set()
+        for charstate in prevstate.character_states.values():
+          if sprite_handle := charstate.sprite_handle:
+            is_found = False
+            creation = find_root_creation(sprite_handle)
+            if creation in checked_creations:
+              is_found = True
+            elif charstate.identity in character_sprites:
+              cur_dict = character_sprites[charstate.identity]
+              if creation in cur_dict:
+                is_found = True
+                del cur_dict[creation]
+                checked_creations.add(creation)
+            if not is_found:
+              self.codegen.emit_error(code='vncodegen-joinpath-character-missing', msg='Character "' + charstate.sayname + '" shown from the main path but is not in joined path', loc=loc, dest=self.destblock)
+        for assetstate in prevstate.asset_info:
+          if handle := assetstate.output_handle:
+            creation = find_root_creation(handle)
+            if creation in checked_creations:
+              continue
+            is_found = False
+            if assetstate.dev in asset_usages:
+              cur_dict = asset_usages[assetstate.dev]
+              if assetstate.data in cur_dict:
+                value_dict = cur_dict[assetstate.data]
+                if creation in value_dict:
+                  is_found = True
+                  del value_dict[creation]
+                  checked_creations.add(creation)
+            if not is_found:
+              self.codegen.emit_error(code='vncodegen-joinpath-assetref-missing', msg='Asset ' + str(assetstate.data) + ' shown from the main path but is not in joined path', loc=loc, dest=self.destblock)
+        # 这样所有的都找完后，剩下的就是只有该块进入时才有的内容，我们把这些内容都撤下去
+        rmindex = 0
+        rmfinishtimes = []
+        def remove_handle(handle : Value):
+          nonlocal rmindex
+          rm = VNRemoveInst.create(context=self.context, start_time=self.starttime, handlein=handle, name='pathjoin_remove_'+str(rmindex))
+          rmindex += 1
+          self.destblock.push_back(rm)
+          rmfinishtimes.append(rm.get_finish_time())
+
+        for ch, d in character_sprites.items():
+          for creation, handle in d.items():
+            remove_handle(handle)
+        for dev, d1 in asset_usages.items():
+          for asset, d2 in d1.items():
+            for creation, handle in d2.items():
+              remove_handle(handle)
+
+        # 最好能加一个同步，不过现在算了
+        if len(rmfinishtimes) > 0:
+          self.starttime = rmfinishtimes[-1]
+        # 完成
+      else:
+        self.functioncontext.register_new_block(self, target)
+      node = VNBranchInst.create(context=self.context, start_time=self.starttime, defaultbranch=target, loc=loc)
+      self.destblock.push_back(node)
+      return node
 
     def get_character_sprite(self, character : VNCharacterSymbol, state : tuple[str,...]) -> Value | None:
       if character in self.codegen._char_parent_map:
@@ -775,7 +1045,7 @@ class VNCodeGen:
           statestr = ','.join(state)
           while True:
             if sideimage := srcsayer.sideimages.get(statestr):
-              return sideimage.get_value(self.file.get_namespace_str())
+              return sideimage.get_value(VNNamespace.stringize_namespace_path(self.namespace_tuple))
             if len(state) == 0:
               break
             state = state[:-1]
@@ -827,18 +1097,21 @@ class VNCodeGen:
       return matchresult
 
     # 开始处理只在函数体内有意义的结点
-    def visitVNASTSayNode(self, node : VNASTSayNode):
+    def visitVNASTSayNode(self, node : VNASTSayNode) -> VNTerminatorInstBase | None:
+      if self.check_blocklocal_cond(node):
+        return None
       # 首先找到这句话是谁说的
       # 如果发言有附属的状态改变，则把状态改变先处理了
       # 最后再生成发言结点
       if sayer := node.sayer.try_get_value():
-        sayname = sayer.get_string()
-        sayertuple = self.codegen.resolve_character(name=sayname, from_namespace=self.file.get_namespace_tuple(), parsecontext=self.parsecontext)
-        if sayertuple is None:
+        rawname = sayer.get_string()
+        sayname = self.parsecontext.resolve_alias(rawname)
+        ch = self.codegen.resolve_character(sayname=sayname, from_namespace=self.namespace_tuple, parsecontext=self.parsecontext)
+        if ch is None:
           # 如果没找到发言者，我们在当前命名空间创建一个新的发言者
           self.codegen.emit_error(code='vncodegen-sayer-implicit-decl', msg=sayname, loc=node.location, dest=self.warningdest)
-          ch = self.codegen.create_unknown_sayer(sayname, self.file.get_namespace_tuple())
-          sayertuple = (sayname, ch)
+          ch = self.codegen.create_unknown_sayer(sayname, self.namespace_tuple)
+        sayertuple = (sayname, ch)
       else:
         match node.nodetype.get().value:
           case VNASTSayNodeType.TYPE_FULL:
@@ -867,6 +1140,7 @@ class VNCodeGen:
       sayname = ''
       if sayertuple is not None:
         sayname, character = sayertuple
+        self.parsecontext.update_last_sayer(sayname, character)
       sayid = self.codegen._global_say_index
       self.codegen._global_say_index += 1
       saynode = VNSayInstructionGroup.create(context=self.context, start_time=self.starttime, sayer=character, name=str(sayid), loc=node.location)
@@ -909,16 +1183,28 @@ class VNCodeGen:
       self.destblock.push_back(saynode)
       self.emit_wait(node.location)
       # 结束
+      return None
 
-    def visitVNASTCharacterStateChangeNode(self, node : VNASTCharacterStateChangeNode):
-      sayname = node.character.get().get_string()
+    def visitVNASTCharacterStateChangeNode(self, node : VNASTCharacterStateChangeNode) -> VNTerminatorInstBase | None:
+      if self.check_block_or_function_local_cond(node):
+        return None
       statelist : list[str] = [u.value.get_string() for u in node.deststate.operanduses()]
-      if sayertuple:= self.codegen.resolve_character(name=sayname, from_namespace=self.file.get_namespace_tuple(), parsecontext=self.parsecontext):
-        cname, ch = sayertuple
-        self.handleCharacterStateChange(sayname, ch, statelist, node.location)
+      if rawnamel := node.character.try_get_value():
+        rawname = rawnamel.get_string()
+        sayname = self.parsecontext.resolve_alias(rawname)
+        if ch := self.codegen.resolve_character(sayname=sayname, from_namespace=self.namespace_tuple, parsecontext=self.parsecontext):
+          self.handleCharacterStateChange(sayname, ch, statelist, node.location)
+        else:
+          # 生成一个错误
+          self.codegen.emit_error(code='vncodegen-character-notfound', msg=sayname, loc=node.location, dest=self.warningdest)
       else:
-        # 生成一个错误
-        self.codegen.emit_error(code='vncodegen-character-notfound', msg=sayname, loc=node.location, dest=self.warningdest)
+        # 没有显式提供谁的状态应该改变
+        if t := self.parsecontext.get_last_sayer_for_default_target():
+          sayname, ch = t
+          self.handleCharacterStateChange(sayname, ch, statelist, node.location)
+        else:
+          self.codegen.emit_error(code='vncodegen-character-notfound', msg='No default sayer found', loc=node.location, dest=self.warningdest)
+      return None
 
     def handle_transition_and_finishtime(self, node : VNCreateInst | VNPutInst | VNModifyInst | VNRemoveInst):
       if not self.is_in_transition:
@@ -928,16 +1214,18 @@ class VNCodeGen:
           node.transition.set_operand(0, self.parent_transition)
         self.transition_child_finishtimes.append(node.get_finish_time())
 
-    def visitVNASTCharacterEntryNode(self, node : VNASTCharacterEntryNode):
-      sayname = node.character.get().get_string()
-      t = self.codegen.resolve_character(name=sayname, from_namespace=self.file.get_namespace_tuple(), parsecontext=self.parsecontext)
-      if t is None:
+    def visitVNASTCharacterEntryNode(self, node : VNASTCharacterEntryNode) -> VNTerminatorInstBase | None:
+      if self.check_blocklocal_cond(node):
+        return None
+      rawname = node.character.get().get_string()
+      sayname = self.parsecontext.resolve_alias(rawname)
+      ch = self.codegen.resolve_character(sayname=sayname, from_namespace=self.namespace_tuple, parsecontext=self.parsecontext)
+      if ch is None:
         # 生成错误然后结束
         self.codegen.emit_error(code='vncodegen-character-notfound', msg=sayname, loc=node.location, dest=self.warningdest)
-        return
+        return None
       # 角色存在的话先设置角色状态
       states = [u.value.get_string() for u in node.states.operanduses()]
-      cname, ch = t
       finalstate = self.handleCharacterStateChange(sayname=sayname, character=ch, statelist=states, loc=node.location)
       # 然后如果有立绘的话，让角色立绘上场
       info = self.scenecontext.try_get_character_state(sayname, ch)
@@ -949,25 +1237,31 @@ class VNCodeGen:
         info.sprite_handle = cnode
         self.destblock.push_back(cnode)
       # 完成
+      return None
 
-    def visitVNASTCharacterExitNode(self, node : VNASTCharacterExitNode):
-      sayname = node.character.get().get_string()
-      t = self.codegen.resolve_character(name=sayname, from_namespace=self.file.get_namespace_tuple(), parsecontext=self.parsecontext)
-      if t is None:
+    def visitVNASTCharacterExitNode(self, node : VNASTCharacterExitNode) -> VNTerminatorInstBase | None:
+      if self.check_blocklocal_cond(node):
+        return None
+      rawname = node.character.get().get_string()
+      sayname = self.parsecontext.resolve_alias(rawname)
+      ch = self.codegen.resolve_character(sayname=sayname, from_namespace=self.namespace_tuple, parsecontext=self.parsecontext)
+      if ch is None:
         # 生成错误然后结束
-        self.codegen.emit_error(code='vncodegen-character-notfound', msg=sayname, loc=node.location, dest=self.warningdest)
-        return
+        self.codegen.emit_error(code='vncodegen-character-notfound', msg=rawname, loc=node.location, dest=self.warningdest)
+        return None
       # 如果有角色的话就看看角色是否有在台上的立绘，有的话就撤下
-      cname, ch = t
       if info := self.scenecontext.try_get_character_state(sayname, ch):
         if info.sprite_handle:
           rm = VNRemoveInst.create(self.context, start_time=self.starttime, handlein=info.sprite_handle, loc=node.location)
           self.handle_transition_and_finishtime(rm)
           self.destblock.push_back(rm)
           info.sprite_handle = None
+      return None
 
 
-    def visitVNASTAssetReference(self, node : VNASTAssetReference):
+    def visitVNASTAssetReference(self, node : VNASTAssetReference) -> VNTerminatorInstBase | None:
+      if self.check_blocklocal_cond(node):
+        return None
       kind = node.kind.get().value
       operation = node.operation.get().value
       assetexpr = node.asset.get()
@@ -1014,6 +1308,7 @@ class VNCodeGen:
             case VNASTAssetIntendedOperation.OP_PUT:
               # 当前不应该出现这种情况
               raise NotImplementedError()
+          return None
         case VNASTAssetKind.KIND_AUDIO:
           match operation:
             case VNASTAssetIntendedOperation.OP_PUT:
@@ -1024,17 +1319,19 @@ class VNCodeGen:
             case _:
               # 当前不应该出现这种情况
               raise NotImplementedError()
-          return
+          return None
         case VNASTAssetKind.KIND_EFFECT:
           self.codegen.emit_error(code='vncodegen-not-implemented', msg='Video playing not supported yet', loc=node.location, dest=self.destblock)
-          return
+          return None
         case VNASTAssetKind.KIND_VIDEO:
           self.codegen.emit_error(code='vncodegen-not-implemented', msg='Video playing not supported yet', loc=node.location, dest=self.destblock)
-          return
+          return None
 
-      return self.visit_default_handler(node)
+      raise RuntimeError('Should not happen')
 
-    def visitVNASTTransitionNode(self, node : VNASTTransitionNode):
+    def visitVNASTTransitionNode(self, node : VNASTTransitionNode) -> VNTerminatorInstBase | None:
+      if self.check_blocklocal_cond(node):
+        return None
       transition_args = []
       transition_kwargs = {}
       transition_name = node.populate_argdicts(transition_args, transition_kwargs)
@@ -1054,8 +1351,11 @@ class VNCodeGen:
       if len(self.transition_child_finishtimes) > 0:
         self.starttime = self.transition_child_finishtimes[-1]
       self.transition_child_finishtimes.clear()
+      return None
 
-    def visitVNASTSceneSwitchNode(self, node : VNASTSceneSwitchNode):
+    def visitVNASTSceneSwitchNode(self, node : VNASTSceneSwitchNode) -> VNTerminatorInstBase | None:
+      if self.check_blocklocal_cond(node):
+        return None
       #scene_bg : AssetState | None = None # 场景背景的信息。不参与普通的使用中资源的查找，所以放在外面
       #scene_symb : VNSceneSymbol | None = None # 当前场景
       #scene_states : tuple[str,...] | None = None
@@ -1063,12 +1363,12 @@ class VNCodeGen:
       states = [u.value.get_string() for u in node.states.operanduses()]
       # 不管场景解析成功与否，我们都会做场景切换
       # 这里先做好准备工作
-      scene = self.codegen.resolve_scene(name=destscene, from_namespace=self.file.get_namespace_tuple(), parsecontext=self.parsecontext)
+      scene = self.codegen.resolve_scene(name=destscene, from_namespace=self.namespace_tuple, parsecontext=self.parsecontext)
       statetuple = ()
       scene_background = None
       if scene is None:
         self.codegen.emit_error(code='vncodegen-scene-notfound', msg=destscene, loc=node.location, dest=self.destblock)
-        scene = self.codegen.create_unknown_scene(scenename=destscene, from_namespace=self.file.get_namespace_tuple())
+        scene = self.codegen.create_unknown_scene(scenename=destscene, from_namespace=self.namespace_tuple)
       else:
         # 尝试匹配场景的状态
         if scene in self.codegen._scene_state_matcher:
@@ -1127,45 +1427,187 @@ class VNCodeGen:
         switchnode.body.push_back(cnode)
 
       # 如果这次转场什么都没干就不添加结点了
-      if len(switchnode.body) > 0:
+      if len(switchnode.body.body) > 0:
         self.destblock.push_back(switchnode)
         switchnode.group_finish_time.set_operand(0, best_finish_time)
         self.starttime = switchnode.get_finish_time()
       # 结束
+      return None
 
-    def visitVNASTConditionalExecutionNode(self, node : VNASTConditionalExecutionNode):
-      return self.visit_default_handler(node)
-    def visitVNASTMenuNode(self, node : VNASTMenuNode):
-      return self.visit_default_handler(node)
-    def visitVNASTBreakNode(self, node : VNASTBreakNode):
-      return self.visit_default_handler(node)
-    def visitVNASTLabelNode(self, node : VNASTLabelNode):
-      return self.visit_default_handler(node)
-    def visitVNASTJumpNode(self, node : VNASTJumpNode):
-      return self.visit_default_handler(node)
-    def visitVNASTCallNode(self, node : VNASTCallNode):
+    def visitVNASTConditionalExecutionNode(self, node : VNASTConditionalExecutionNode) -> VNTerminatorInstBase | None:
+      if self.check_blocklocal_cond(node):
+        return None
+      # 暂时不做
+      raise NotImplementedError()
       return self.visit_default_handler(node)
 
-  def run_codegen_for_block(self, srcfile : VNASTFileInfo, functioncontext : ParseContext, destfunction : VNFunction, baseparsecontext : VNCodeGen.ParseContext, basescenecontext : VNCodeGen.SceneContext, srcregion : VNASTCodegenRegion, dest : Block, deststarttime : Value, convergeblock : Block | None):
-    # 如果
-    parsecontext = VNCodeGen.ParseContext.forkfrom(baseparsecontext)
-    scenecontext = VNCodeGen.SceneContext.forkfrom(basescenecontext)
-    assert isinstance(deststarttime, VNTimeOrderType)
-    helper = VNCodeGen._FuntionCodegenHelper(codegen=self, file=srcfile, parsecontext=parsecontext, warningdest=dest, destblock=dest, scenecontext=scenecontext, destfunction=destfunction, starttime=deststarttime)
-    for op in srcregion.body.body:
-      if isinstance(op, VNASTNodeBase):
-        helper.visit(op)
-      elif isinstance(op, MetadataOp):
-        dest.push_back(op.clone())
-        continue
+    def visitVNASTMenuNode(self, node : VNASTMenuNode) -> VNTerminatorInstBase | None:
+      if self.check_blocklocal_cond(node):
+        return None
+      namebase = node.name
+      if len(namebase) == 0:
+        namebase = 'anon_menu_' + str(self.functioncontext.get_anonymous_ctrlflow_entity_index(VNASTMenuNode))
+      # 首先，如果我们需要循环的话，我们必须给该选单一个单独的块
+      headerblock : Block | None = None
+      if node.get_attr(VNASTMenuNode.ATTR_FINISH_ACTION) == VNASTMenuNode.ATTR_FINISH_ACTION_LOOP:
+        headerblock = self.functioncontext.create_anon_block(namebase + '_header')
+        self.emit_jump_to_new_block(headerblock, node.location)
+        self.move_to_new_block(headerblock)
+      # 在当前块中创建选单结点
+      menu = VNMenuInst.create(context=self.context, start_time=self.starttime, name=namebase, loc=node.location)
+      self.destblock.push_back(menu)
+      # 然后创建个出口块
+      exitblock = self.functioncontext.create_anon_block(namebase + '_exit')
+      self.move_to_new_block(exitblock)
+      # 最后再读取各个分支的内容，递归
+      option_index = 0
+      cond = BoolLiteral.get(True, self.context)
+      convergeblock = headerblock if headerblock is not None else exitblock
+      for op in node.body.body:
+        assert isinstance(op, VNASTCodegenRegion)
+        operand = node.get_operand_inst(str(option_index))
+        optionblock = self.functioncontext.create_anon_block(namebase + '_b' + str(option_index))
+        self.functioncontext.register_new_block(self, optionblock)
+        # 目前仅支持纯字符串字面值
+        if operand.get_num_operands() == 1:
+          optionstr = operand.get()
+          if not isinstance(optionstr, StringLiteral):
+            assert isinstance(optionstr, TextFragmentLiteral)
+            optionstr = optionstr.content
+        else:
+          cumulative_str = ''
+          for u in operand.operanduses():
+            v = u.value
+            if isinstance(v, (StringLiteral, TextFragmentLiteral)):
+              cumulative_str += v.get_string()
+            else:
+              cumulative_str += str(v)
+          optionstr = StringLiteral.get(cumulative_str, self.context)
+        menu.add_option(optionstr, optionblock, cond)
+        self.run_codegen_for_region_helper(op, optionblock, convergeblock, exitblock)
+        option_index += 1
+      # 结束
+      return None
+
+    def run_codegen_for_region_helper(self, region : VNASTCodegenRegion, dest : Block, convergeblock : Block, loopexitblock : Block | None = None):
+      # 如果我们要递归生成内部区域的内容，就用这个
+      if loopexitblock is None:
+        loopexitblock = self.loopexitblock
+      VNCodeGen._FunctionCodegenHelper.run_codegen_for_region(
+        codegen=self.codegen,
+        namespace_tuple=self.namespace_tuple,
+        functioncontext=self.functioncontext,
+        baseparsecontext=self.parsecontext,
+        basescenecontext=self.scenecontext,
+        srcregion=region, dest=dest, deststarttime=dest.get_argument('start'),
+        convergeblock=convergeblock, loopexitblock=loopexitblock)
+
+    def visitVNASTBreakNode(self, node : VNASTBreakNode) -> VNTerminatorInstBase | None:
+      if self.check_blocklocal_cond(node):
+        return None
+      if self.loopexitblock is not None:
+        return self.emit_jump_to_block_mayexisting(self.loopexitblock, node.location)
       else:
-        # 既不是 VNASTNodeBase 又不是 MetadataOp
-        raise NotImplementedError()
+        self.codegen.emit_error(code='vncodegen-break-without-loop', msg='Break statement outside any loop', loc=node.location, dest=self.destblock)
+      return None
 
-    # 现在所有的内容都处理完了，开始收尾
-    # 如果目标块有给定的状态，那么将当前场景状态与目标状态比对，场景不一样的话换场景，场景一样的话比较角色
-    # 如果没有目标块，则这是函数本体结束，清除场上所有内容并生成一个返回指令
-    raise NotImplementedError()
+    def visitVNASTLabelNode(self, node : VNASTLabelNode) -> VNTerminatorInstBase | None:
+      if self.check_block_or_function_local_cond(node):
+        return None
+      labelname = node.labelname.get().get_string()
+      destblock = self.functioncontext.get_or_create_basic_block(labelname)
+      if self.cur_terminator is None:
+        # 如果还没有终止当前基本块的话我们加一个跳转指令
+        self.emit_jump_to_block_mayexisting(destblock, node.location)
+        self.set_destblock(destblock)
+      else:
+        self.move_to_new_block(destblock)
+
+    def visitVNASTJumpNode(self, node : VNASTJumpNode) -> VNTerminatorInstBase | None:
+      if self.check_blocklocal_cond(node):
+        return None
+      targetlabel = node.target_label.get().get_string()
+      destblock = self.functioncontext.get_or_create_basic_block(targetlabel)
+      return self.emit_jump_to_block_mayexisting(destblock, node.location)
+
+    def visitVNASTCallNode(self, node : VNASTCallNode) -> VNTerminatorInstBase | None:
+      if self.check_blocklocal_cond(node):
+        return None
+
+      # 尝试找到调用对象
+      callee = node.callee.get().get_string()
+      func = self.codegen.resolve_function(callee, self.namespace_tuple)
+      if func is None:
+        self.codegen.emit_error(code='vncodegen-callee-notfound', msg=callee, loc=node.location, dest=self.destblock)
+        return None
+
+      # 开始输出
+      handle_list = self.scenecontext.get_handle_list_upon_call()
+      if node.is_tail_call():
+        call = VNTailCallInst.create(context=self.context, start_time=self.starttime, target=func, destroyed_handle_list=handle_list, name=node.name, loc=node.location)
+        self.destblock.push_back(call)
+        return call
+      else:
+        call = VNCallInst.create(context=self.context, start_time=self.starttime, target=func, destroyed_handle_list=handle_list, name=node.name, loc=node.location)
+        self.destblock.push_back(call)
+        self.scenecontext.mark_after_call()
+        return None
+
+    def move_to_new_block(self, destblock : Block):
+      # 当我们处理一个控制流结构（比如选单等），可以继续用当前的场景、解析状态时，
+      # 我们使用该函数来过渡到新块
+      # 原来的输出块结束后，应该先调用该函数，使新块的初始状态被确认下来，再递归处理控制流结构中的内容
+      # 调用这个函数时所选的目标块必须是新建的、没有注册过状态的
+      self.functioncontext.register_new_block(self, destblock)
+      self.set_destblock(destblock)
+
+    def set_destblock(self, destblock : Block):
+      self.cur_terminator = None
+      self.destblock = destblock
+      self.starttime = destblock.get_argument('start')
+      assert isinstance(self.starttime.valuetype, VNTimeOrderType)
+
+    def run_default_terminate(self):
+      # 当输入块已经没有指令后，该函数会被调用
+      # 该块中没有默认的结束目标
+      # 如果 convergeblock 有提供的话，我们生成一个对该块的跳转
+      # 如果 convergeblock 没有的话，我们生成一个返回指令
+      if self.convergeblock is not None:
+        self.emit_jump_to_block_mayexisting(self.convergeblock, None)
+      else:
+        ret = VNReturnInst.create(context=self.context, start_time=self.starttime)
+        self.destblock.push_back(ret)
+
+    def codegen_mainloop(self):
+      assert self.cur_terminator is None
+      for op in self.srcregion.body.body:
+        if isinstance(op, VNASTNodeBase):
+          #is_originally_inblock = False
+          #if self.cur_terminator is None:
+          #  is_originally_inblock = True
+          self.cur_terminator = self.visit(op)
+          #if self.cur_terminator is not None and is_originally_inblock:
+          #  pass
+        elif isinstance(op, MetadataOp):
+          cloned = op.clone()
+          if self.cur_terminator is None:
+            self.destblock.push_back(cloned)
+          else:
+            cloned.insert_before(self.cur_terminator)
+          continue
+        else:
+          # 既不是 VNASTNodeBase 又不是 MetadataOp
+          raise NotImplementedError()
+      if self.cur_terminator is None:
+        self.run_default_terminate()
+
+    @staticmethod
+    def run_codegen_for_region(codegen : VNCodeGen, namespace_tuple : tuple[str,...], functioncontext : VNCodeGen.FunctionCodegenContext, baseparsecontext : VNCodeGen.ParseContext, basescenecontext : VNCodeGen.SceneContext | None, srcregion : VNASTCodegenRegion, dest : Block, deststarttime : Value, convergeblock : Block | None = None, loopexitblock : Block | None = None):
+      parsecontext = VNCodeGen.ParseContext.forkfrom(baseparsecontext)
+      scenecontext = VNCodeGen.SceneContext.forkfrom(basescenecontext) if basescenecontext is not None else VNCodeGen.SceneContext()
+      assert isinstance(deststarttime.valuetype, VNTimeOrderType)
+      helper = VNCodeGen._FunctionCodegenHelper(codegen=codegen, namespace_tuple=namespace_tuple, parsecontext=parsecontext, srcregion=srcregion, warningdest=dest, destblock=dest, convergeblock=convergeblock, loopexitblock=loopexitblock, scenecontext=scenecontext, functioncontext=functioncontext, starttime=deststarttime)
+      helper.codegen_mainloop()
 
   def generate_function_body(self, srcfile : VNASTFileInfo, filecontext : ParseContext, src : VNASTFunction, dest : VNFunction):
     # 首先处理在函数体外的内容
@@ -1178,28 +1620,33 @@ class VNCodeGen:
           assert isinstance(op, VNASTNodeBase)
           self.handle_filelocal_node(file=srcfile, parsecontext=filecontext, op=op, warningdest=prebody)
     # 然后处理函数体
-    functioncontext = VNCodeGen.ParseContext.forkfrom(filecontext)
-
-
-
-    # 在解析子 VNASTCodegenRegion 时，我们会复制(fork)解析状态和情景状态
-    #
-
-
-
-    # 需要在控制流保持的信息：
-    #  当前场景（有句柄）
-    #  当前角色、角色状态，（字符串的状态以及角色立绘句柄）
-    #  循环入口
-    raise NotImplementedError()
+    entry = dest.create_block('Entry')
+    starttime = entry.get_argument('start')
+    functioncontext = VNCodeGen.FunctionCodegenContext(destfunction=dest)
+    VNCodeGen._FunctionCodegenHelper.run_codegen_for_region(codegen=self, namespace_tuple=self.get_file_nstuple(srcfile), functioncontext=functioncontext, baseparsecontext=filecontext, basescenecontext=None, srcregion=src, dest=entry, deststarttime=starttime)
+    # 最后检查所有创建的基本块，看看有没有基本块没有被用上
+    # （有的话大概是跳转的时候目标点名字错了）
+    # 所有没内容的基本块都塞上错误信息
+    dangling_blocks : list[Block] = []
+    for block in functioncontext.block_dict.values():
+      if block.use_empty():
+        dangling_blocks.append(block)
+        # self.emit_error(code='vncodegen-dangling-block', msg='Block has no user', loc=None, dest=block)
+      if block.body.empty:
+        unreachable = VNUnreachableInst.create(context=self.context, start_time=block.get_argument('start'), name='empty')
+        block.push_back(unreachable)
+    for block in dangling_blocks:
+      err = ErrorOp.create(error_code='vncodegen-dangling-block', context=self.context, error_msg=StringLiteral.get(block.name, self.context))
+      entry.push_front(err)
 
   def populate_assets(self):
     # 把角色、场景等信息写到输出里
-    raise NotImplementedError()
+    pass
 
   def run_pipeline(self):
     self.populate_assets()
     self.collect_functions()
+    self.run_codegen()
 
   @staticmethod
   def run(ast : VNAST) -> VNModel:
