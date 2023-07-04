@@ -41,9 +41,16 @@ class VNASTSayNode(VNASTNodeBase):
   # 代表一个发言内容
   nodetype : OpOperand[EnumLiteral[VNASTSayNodeType]]
   content : OpOperand # StringLiteral | TextFragmentLiteral
-  expression : OpOperand[StringLiteral] # 发言者状态、表情
+  expression : OpOperand[StringLiteral] # 发言者状态、表情；可能不止一个字符串
   sayer : OpOperand[StringLiteral] # 发言者
   embed_voice : OpOperand[AudioAssetData] # 如果有嵌语音的话放这里
+
+  # 在一些特殊情况下，我们可能会错误理解文本内容
+  # 比如在长发言模式下：
+  #     今天我们在此向大家介绍新项目：语涵编译器。
+  # 有可能被理解为一个叫“今天我们在此向大家介绍新项目”的角色说了“语涵编译器”这样一句话
+  # 这时会需要读取原始内容
+  raw_content : OpOperand # StringLiteral | TextFragmentLiteral
 
   def get_short_str(self, indent : int = 0) -> str:
     result = 'Say ' + self.nodetype.get().value.name[5:]
@@ -51,17 +58,18 @@ class VNASTSayNode(VNASTNodeBase):
     if sayer := self.sayer.try_get_value():
       result += ' ' + sayer.get_string()
       has_sayer_or_expr = True
-    if expr := self.expression.try_get_value():
-      result += ' (' + expr.get_string() + ')'
+    if self.expression.get_num_operands() > 0:
+      result += ' (' + ','.join([u.value.get_string() for u in self.expression.operanduses()]) + ')'
       has_sayer_or_expr = True
+
     if has_sayer_or_expr:
       result += ':'
     result += ' ' + ''.join([str(u.value) for u in self.content.operanduses()])
     return result
 
   @staticmethod
-  def create(context : Context, nodetype : VNASTSayNodeType, content : typing.Iterable[Value], expression : str | None = None, sayer : str | None = None, name : str = '', loc : Location | None = None):
-    return VNASTSayNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, name=name, loc=loc, nodetype=nodetype, content=content, expression=expression, sayer=sayer)
+  def create(context : Context, nodetype : VNASTSayNodeType, content : typing.Iterable[Value], expression : typing.Iterable[StringLiteral] | StringLiteral | str | None = None, raw_content : typing.Iterable[Value] | None = None, sayer : str | None = None, name : str = '', loc : Location | None = None):
+    return VNASTSayNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, name=name, loc=loc, nodetype=nodetype, content=content, expression=expression, raw_content=raw_content, sayer=sayer)
 
 # ----------------------------------------------------------
 # 该模式下发言者  |  <内容>  |  “<内容>”    |  角色：“<内容>”

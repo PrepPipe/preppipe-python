@@ -38,7 +38,7 @@ class SayScanFieldPosition:
 @dataclasses.dataclass
 class SayScanResult:
   sayer : SayScanFieldPosition | None = None
-  expression : SayScanFieldPosition | None = None
+  expression : list[SayScanFieldPosition] | None = None
 
   # 如果发言内容带引号的话我们有可能会有不止一段内容，所以这里用个 list
   content : list[SayScanFieldPosition] = dataclasses.field(default_factory=list)
@@ -49,7 +49,7 @@ class SayScanResult:
     if self.sayer is not None:
       result += str(self.sayer)
     if self.expression is not None:
-      result += '(' + str(self.expression) + ')'
+      result += '(' + ','.join([str(v) for v in self.expression]) + ')'
     if len(result) > 0:
       result += ': '
     for c in self.content:
@@ -105,7 +105,10 @@ class SayScanner(SayScanVisitor):
 
   def visitStatusexpr(self, ctx:SayScanParser.StatusexprContext):
     if node := ctx.NORMALTEXT():
-      self.result.expression = self.handle_normal_str(node)
+      if isinstance(node, list):
+        self.result.expression = [self.handle_normal_str(v) for v in node]
+      else:
+        self.result.expression = [self.handle_normal_str(node)]
 
   def visitContentexpr(self, ctx:SayScanParser.ContentexprContext):
     # 如果第一个终结符是 QUOTEDSTR, 那么我们只处理所有 QUOTEDSTR

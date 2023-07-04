@@ -1100,11 +1100,27 @@ class VNCodeGen:
     def visitVNASTSayNode(self, node : VNASTSayNode) -> VNTerminatorInstBase | None:
       if self.check_blocklocal_cond(node):
         return None
+
+      # 特殊情况处理：如果长发言模式下遇到了有给出发言者或是发言状态的结点，我们很有可能是把发言内容误作了发言者或发言状态
+      # 比如：
+      #     今天我们来介绍一个新的项目：语涵编译器
+      # 不是由一个叫“今天我们来介绍一个新的项目”说的一句“语涵编译器”
+      # 这种时候我们要把原始内容当作发言内容
+      raw_sayer = node.sayer.try_get_value()
+      statelist : list[str] = [u.value.get_string() for u in node.expression.operanduses()]
+      content_operand = node.content
+      if self.parsecontext.say_mode == VNASTSayMode.MODE_LONG_SPEECH:
+        if raw_sayer is not None or len(statelist) > 0:
+          raw_sayer = None
+          statelist = []
+          content_operand = node.raw_content
+
+      # 开始正常处理
       # 首先找到这句话是谁说的
       # 如果发言有附属的状态改变，则把状态改变先处理了
       # 最后再生成发言结点
-      if sayer := node.sayer.try_get_value():
-        rawname = sayer.get_string()
+      if raw_sayer is not None:
+        rawname = raw_sayer.get_string()
         sayname = self.parsecontext.resolve_alias(rawname)
         ch = self.codegen.resolve_character(sayname=sayname, from_namespace=self.namespace_tuple, parsecontext=self.parsecontext)
         if ch is None:
@@ -1113,21 +1129,24 @@ class VNCodeGen:
           ch = self.codegen.create_unknown_sayer(sayname, self.namespace_tuple)
         sayertuple = (sayname, ch)
       else:
-        match node.nodetype.get().value:
-          case VNASTSayNodeType.TYPE_FULL:
-            raise RuntimeError("Should not happen")
-          case VNASTSayNodeType.TYPE_QUOTED:
-            sayertuple = self.parsecontext.get_quotedsay_sayer()
-          case VNASTSayNodeType.TYPE_NARRATE:
-            sayertuple = self.parsecontext.get_narration_sayer()
-          case _:
-            raise NotImplementedError("TODO")
+        if self.parsecontext.say_mode == VNASTSayMode.MODE_LONG_SPEECH:
+          # 长发言模式下只有一种情况
+          sayertuple = self.parsecontext.get_narration_sayer()
+        else:
+          match node.nodetype.get().value:
+            case VNASTSayNodeType.TYPE_FULL:
+              raise RuntimeError("Should not happen")
+            case VNASTSayNodeType.TYPE_QUOTED:
+              sayertuple = self.parsecontext.get_quotedsay_sayer()
+            case VNASTSayNodeType.TYPE_NARRATE:
+              sayertuple = self.parsecontext.get_narration_sayer()
+            case _:
+              raise NotImplementedError("TODO")
       # 至此，发言者身份应该已经确定；旁白的话 sayertuple 是 None, 其他情况下 sayertuple 都应该是 (sayname, character)
       # 如果涉及状态改变，则先处理这个
       sayerstatetuple = None
-      if node.expression.get_num_operands() > 0:
+      if len(statelist) > 0:
         if sayertuple is not None:
-          statelist : list[str] = [u.value.get_string() for u in node.expression.operanduses()]
           sayname, ch = sayertuple
           sayerstatetuple = self.handleCharacterStateChange(sayname=sayname, character=ch, statelist=statelist, loc=node.location)
         else:
@@ -1168,10 +1187,10 @@ class VNCodeGen:
         nnode = VNPutInst.create(context=self.context, start_time=self.starttime, content=namevalue, device=self.parsecontext.dev_say_name,loc=node.location)
         saynode.body.push_back(nnode)
       if textstyle is None:
-        textvalue = [u.value for u in node.content.operanduses()]
+        textvalue = [u.value for u in content_operand.operanduses()]
       else:
         textvalue = []
-        for u in node.content.operanduses():
+        for u in content_operand.operanduses():
           v = u.value
           if isinstance(v, StringLiteral):
             v = TextFragmentLiteral.get(self.context, v, textstyle)
