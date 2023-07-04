@@ -11,6 +11,7 @@ from .frontend import opendocument
 from .frontend import commandsyntaxparser
 from .renpy import passes as renpy_passes
 from .frontend.vnmodel import passes as vnparser_passes
+from .transform import passes as vnmodel_passes
 from . import testbench
 
 if __name__ == "__main__":
