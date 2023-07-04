@@ -132,11 +132,11 @@ class VNParser(FrontendParserBase[VNASTParsingState]):
       # 文本是预期的内容
       finalcontent : list[TextFragmentLiteral | StringLiteral] = []
       sayer : str | None = None
-      expr : str | None = None
+      expr : list[StringLiteral] | None = None
       if scanresult.sayer is not None:
         sayer = scanresult.sayer.text
       if scanresult.expression is not None:
-        expr = scanresult.expression.text
+        expr = [StringLiteral.get(v.text, self.context) for v in scanresult.expression]
       for piece in scanresult.content:
         finalcontent.extend(pu.extract_str_from_interval(piece.start, piece.end))
       nodetype = VNASTSayNodeType.TYPE_FULL
@@ -144,10 +144,10 @@ class VNParser(FrontendParserBase[VNASTParsingState]):
         nodetype = VNASTSayNodeType.TYPE_QUOTED if scanresult.is_content_quoted else VNASTSayNodeType.TYPE_NARRATE
       for v in finalcontent:
         assert isinstance(v, (StringLiteral, TextFragmentLiteral))
-      emit_content = VNASTSayNode.create(context=self.context, nodetype=nodetype, content=finalcontent, expression=expr, sayer=sayer, name=leading_element.name, loc=leading_element.location)
+      emit_content = VNASTSayNode.create(context=self.context, nodetype=nodetype, content=finalcontent, expression=expr, sayer=sayer, raw_content=content, name=leading_element.name, loc=leading_element.location)
     else:
       # 文本不符合预期内容，所有文本就当作没有指定发言者和状态、表情的内容
-      emit_content = VNASTSayNode.create(context=self.context, nodetype=VNASTSayNodeType.TYPE_NARRATE, content=content.copy(), name=leading_element.name, loc=leading_element.location)
+      emit_content = VNASTSayNode.create(context=self.context, nodetype=VNASTSayNodeType.TYPE_NARRATE, content=content, raw_content=content, name=leading_element.name, loc=leading_element.location)
     state.emit_node(emit_content)
     return emit_content
 
