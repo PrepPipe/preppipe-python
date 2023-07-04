@@ -504,13 +504,13 @@ class VNCodeGen:
     return node
 
   def create_unknown_sayer(self, sayname : str, from_namespace : tuple[str,...]) -> VNCharacterSymbol:
-    ch = VNCharacterSymbol.create(context=self.context, kind=VNCharacterKind.NORMAL, name=sayname, codename=sayname)
+    ch = VNCharacterSymbol.create(context=self.context, kind=VNCharacterKind.NORMAL, name=sayname)
     ns = self.get_or_create_ns(from_namespace)
     ns.add_character(ch)
     return ch
 
   def create_unknown_scene(self, scenename : str, from_namespace : tuple[str,...]) -> VNSceneSymbol:
-    scene = VNSceneSymbol.create(context=self.context, name=scenename, codename=scenename)
+    scene = VNSceneSymbol.create(context=self.context, name=scenename)
     ns = self.get_or_create_ns(from_namespace)
     ns.add_scene(scene)
     return scene
