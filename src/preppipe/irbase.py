@@ -2689,7 +2689,8 @@ class AudioAssetData(AssetData[pydub.AudioSegment, str]):
 
   def export(self, dest_path: str) -> None:
     _basepath, ext = os.path.splitext(dest_path)
-    fmt = ext.lower()
+    assert ext[0] == '.'
+    fmt = ext[1:].lower()
     assert fmt in self._SUPPORTED_FORMATS
     if self._data is not None:
       self._data.export(dest_path, format=fmt)

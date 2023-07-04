@@ -526,4 +526,13 @@ def export_renpy(m : RenPyModel, out_path : str, template_dir : str = '') -> Non
       exporter = RenPyExportVisitor(f, indent_width=4)
       exporter.start_visit(script)
 
+  # step 3: write all assets
+  for file in m.assets():
+    assetdata = file.get_asset_value()
+    assert isinstance(assetdata, AssetData)
+    filepath = os.path.join(out_path, file.name)
+    parentdir = os.path.dirname(filepath)
+    os.makedirs(parentdir, exist_ok=True)
+    assetdata.export(filepath)
+
   # done for now
