@@ -385,7 +385,8 @@ class _ODParseContext:
 
   def _get_unsupported_element_op(self, element : odf.element.Element) -> IMErrorElementOp:
     loc = self.get_DILocation(self.cur_page_count, self.cur_row_count, self.cur_column_count)
-    return IMErrorElementOp.create(name = str(element.qname), loc = loc, content = StringLiteral.get(str(element), self.ctx), error_code='unsupported-element')
+    elementname = str(element.qname)
+    return IMErrorElementOp.create(name = elementname, loc = loc, content = StringLiteral.get(str(element), self.ctx), error_code='unsupported-element', error_msg=StringLiteral.get(elementname, self.ctx))
 
   def _populate_paragraph_impl(self, paragraph: Block, rootnode : odf.element.Element, default_style: str, isInFrame : bool) -> None:
     for element in rootnode.childNodes:

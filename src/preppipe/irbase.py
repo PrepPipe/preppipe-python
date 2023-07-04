@@ -2631,7 +2631,7 @@ class ImageAssetData(AssetData[PIL.Image.Image, str]):
     # otherwise, we open the source file and save it in the destination
     _srcname, srcext = os.path.splitext(self.backing_store_path)
     _destname, destext = os.path.splitext(dest_path)
-    if srcext == destext:
+    if srcext.lower() == destext.lower():
       shutil.copy2(self.backing_store_path, dest_path, follow_symlinks=False)
     else:
       image = PIL.Image.open(self.backing_store_path)

@@ -80,6 +80,8 @@ class _RenPyCodeGenHelper:
   func_dict : collections.OrderedDict[VNFunction, _FunctionCodeGenHelper]
   global_name_dict : collections.OrderedDict # 避免命名冲突的全局名称字典
   imspec_dict : collections.OrderedDict[Value, tuple[StringLiteral, ...]]
+  audiospec_dict : collections.OrderedDict[Value, StringLiteral]
+  anon_asset_index_dict : collections.OrderedDict[str, int] # parent dir -> anon index
   numeric_image_index : int
 
   # 辅助信息
@@ -97,6 +99,8 @@ class _RenPyCodeGenHelper:
     self.canonical_char_dict = collections.OrderedDict()
     self.global_name_dict = collections.OrderedDict()
     self.imspec_dict = collections.OrderedDict()
+    self.audiospec_dict = collections.OrderedDict()
+    self.anon_asset_index_dict = collections.OrderedDict()
     self.numeric_image_index = 0
 
     if len(_RenPyCodeGenHelper.CODEGEN_MATCH_TREE) == 0:
@@ -171,7 +175,7 @@ class _RenPyCodeGenHelper:
     ms.body.push_back(definenode)
     # charexpr.image.set_operand(0, StringLiteral.get(codename, self.context))
     match character.kind.get().value:
-      case VNCharacterKind.NORMAL, VNCharacterKind.CROWD:
+      case VNCharacterKind.NORMAL | VNCharacterKind.CROWD:
         pass
       case VNCharacterKind.NARRATOR:
         # 如果是 narrator，那我们在这里覆盖掉默认的 narrator 定义
@@ -279,6 +283,7 @@ class _RenPyCodeGenHelper:
       VNSceneSwitchInstructionGroup : _RenPyCodeGenHelper.gen_sceneswitch,
       VNCreateInst : _RenPyCodeGenHelper.gen_create_put,
       VNPutInst : _RenPyCodeGenHelper.gen_create_put,
+      VNRemoveInst : _RenPyCodeGenHelper.gen_remove,
       VNCallInst : _RenPyCodeGenHelper.gen_call,
     }
 
@@ -295,10 +300,11 @@ class _RenPyCodeGenHelper:
     return result
 
   def _gen_say_impl(self, say : VNSayInstructionGroup, wait : VNWaitInstruction | None, insert_before : RenPyNode) -> RenPyNode:
-    sayer = say.sayer.get()
-    who = self.canonical_char_dict[sayer]
+    sayer = say.sayer.try_get_value()
+    who = None if sayer is None else self.canonical_char_dict[sayer]
     what = []
     mode = 'adv'
+    embed_voice = None
     for op in say.body.body:
       assert isinstance(op, VNInstruction)
       if isinstance(op, VNPutInst):
@@ -310,6 +316,8 @@ class _RenPyCodeGenHelper:
           case VNStandardDeviceKind.O_SAY_NAME_TEXT:
             # 我们以后再支持在名称上用变量等内容
             # 现在就假设只有一个 StringLiteral
+            # 暂时不支持给旁白加发言名
+            assert sayer is not None
             name_data = self.collect_say_text(op.content)
             assert len(name_data) == 1
             sayername = name_data[0]
@@ -325,6 +333,8 @@ class _RenPyCodeGenHelper:
                   mode='nvl'
                 case _:
                   pass
+          case VNStandardDeviceKind.O_VOICE_AUDIO:
+            embed_voice = op.content.get()
           # 忽略其他不支持的设备
           case _:
             continue
@@ -334,6 +344,9 @@ class _RenPyCodeGenHelper:
     if sayid := say.sayid.try_get_value():
       result.identifier.set_operand(0, sayid)
     result.insert_before(insert_before)
+    if embed_voice is not None:
+      voicenode = RenPyVoiceNode.create(self.context, self.get_audiospec(embed_voice, VNStandardDeviceKind.O_VOICE_AUDIO))
+      voicenode.insert_before(result)
     return result
 
   def gen_say_wait(self, instrs : list[VNInstruction], insert_before : RenPyNode) -> RenPyNode:
@@ -373,7 +386,7 @@ class _RenPyCodeGenHelper:
         dev = op.device.get()
         if dev.get_std_device_kind() == VNStandardDeviceKind.O_BACKGROUND_DISPLAY:
           is_handled = True
-          imspec = self.get_impsec(op.content.get(), user_hint='bg')
+          imspec = self.get_impsec(op.content.get(), user_hint=VNStandardDeviceKind.O_BACKGROUND_DISPLAY)
       if not is_handled:
         # 在这里就地生成
         match_result = self.CODEGEN_MATCH_TREE[type(op)]
@@ -390,7 +403,83 @@ class _RenPyCodeGenHelper:
 
   def gen_create_put(self, instrs : list[VNInstruction], insert_before : RenPyNode) -> RenPyNode:
     # VNCreateInst/VNPutInst
-    raise NotImplementedError()
+    assert len(instrs) == 1
+    instr = instrs[0]
+    assert isinstance(instr, VNPlacementInstBase)
+    content = instr.content.get()
+    device : VNDeviceSymbol = instr.device.get()
+    # placeat : SymbolTableRegion
+    transition = instr.transition.try_get_value()
+    devkind = device.get_std_device_kind()
+    if devkind is None:
+      # 暂不支持
+      return insert_before
+    match devkind:
+      case VNStandardDeviceKind.O_FOREGROUND_DISPLAY:
+        # 放置在前景，用 show
+        imspec = self.get_impsec(content, user_hint=devkind)
+        show = RenPyShowNode.create(context=self.context, imspec=imspec)
+        show.insert_before(insert_before)
+        return show
+      case VNStandardDeviceKind.O_SE_AUDIO:
+        # 音效，用 play
+        audiospec = self.get_audiospec(content, devkind)
+        play = RenPyPlayNode.create(context=self.context, channel=RenPyPlayNode.CHANNEL_SOUND, audiospec=audiospec)
+        play.insert_before(insert_before)
+        return play
+      case VNStandardDeviceKind.O_BGM_AUDIO:
+        # 背景音乐，用 play
+        audiospec = self.get_audiospec(content, devkind)
+        play = RenPyPlayNode.create(context=self.context, channel=RenPyPlayNode.CHANNEL_MUSIC, audiospec=audiospec)
+        play.insert_before(insert_before)
+        return play
+      case VNStandardDeviceKind.O_SAY_NAME_TEXT | VNStandardDeviceKind.O_SAY_TEXT_TEXT | VNStandardDeviceKind.O_BACKGROUND_DISPLAY | VNStandardDeviceKind.O_VOICE_AUDIO:
+        # 这些都应该在特定的指令组中特殊处理，不应该在这里处理
+        raise RuntimeError('Should not happen')
+      case _:
+        # 暂不支持
+        return insert_before
+
+  def gen_remove(self, instrs : list[VNInstruction], insert_before : RenPyNode) -> RenPyNode:
+    # VNRemoveInst
+    assert len(instrs) == 1
+    instr = instrs[0]
+    assert isinstance(instr, VNRemoveInst)
+    handlein : VNCreateInst | VNModifyInst | BlockArgument = instr.handlein.get()
+    if isinstance(handlein, BlockArgument):
+      raise RuntimeError('Handles from block arguments not supported yet')
+    transition = instr.transition.try_get_value()
+    if isinstance(handlein, VNCreateInst):
+      removevalue = handlein.content.get()
+    elif isinstance(handlein, VNModifyInst):
+      removevalue = handlein.content.get()
+    else:
+      raise RuntimeError('Should not happen')
+    rootdev = None
+    curhandle = handlein
+    while not isinstance(curhandle, VNCreateInst):
+      assert isinstance(curhandle, VNModifyInst)
+      curhandle = curhandle.handlein.get()
+    rootdev = curhandle.device.get()
+    if kind := rootdev.get_std_device_kind():
+      match kind:
+        case VNStandardDeviceKind.O_BACKGROUND_DISPLAY | VNStandardDeviceKind.O_FOREGROUND_DISPLAY:
+          imspec = self.get_impsec(removevalue, kind)
+          hide = RenPyHideNode.create(context=self.context, imspec=imspec)
+          hide.insert_before(insert_before)
+          return hide
+        case VNStandardDeviceKind.O_BGM_AUDIO:
+          stop = RenPyStopNode.create(context=self.context,channel=RenPyPlayNode.CHANNEL_MUSIC)
+          stop.insert_before(insert_before)
+          return stop
+        case VNStandardDeviceKind.O_SE_AUDIO:
+          stop = RenPyStopNode.create(context=self.context,channel=RenPyPlayNode.CHANNEL_SOUND)
+          stop.insert_before(insert_before)
+          return stop
+        case _:
+          pass
+    # 如果不是标准设备的话暂不支持，直接忽略
+    return insert_before
 
   def gen_call(self, instrs : list[VNInstruction], insert_before : RenPyNode) -> RenPyNode:
     callee = instrs[0].target.get()
@@ -555,19 +644,94 @@ class _RenPyCodeGenHelper:
     self.global_name_dict[definenode.varname.get().get_string()] = definenode
     return definenode
 
-  def _gen_asmexpr(self, v : Value, user_hint : str = '') -> str:
+  def get_asset_export_path(self, v : AssetData, parentdir : str, export_format_ext : str | None) -> str:
+    # 给指定的资源生成一个在 parentdir 下的导出路径
+    # 如果 export_format_ext 提供的话，应该是一个小写的后缀名，不带 '.'
+    # 这里我们也要处理去重等情况
+    NAME_ANON = 'anon'
+    basename = NAME_ANON
+    baseext = str(v.format)
+    if len(baseext) == 0:
+      baseext = 'bin'
+    if loc := v.location:
+      fileloc = loc.get_file_path()
+      assert len(fileloc) > 0
+      basepath, oldext = os.path.splitext(fileloc)
+      basename = os.path.basename(basepath)
+      assert oldext[0] == '.'
+      baseext = oldext[1:]
+    if export_format_ext is not None:
+      baseext = export_format_ext
+    # 找到一个没被用上的名字
+    cur_path = parentdir + '/' + basename + '.' + baseext
+    if existing := self.result.get_asset(cur_path):
+      # 如果内容一样就直接报错（不应该尝试生成导出路径）
+      # 不然的话加后缀直到不重名
+      if existing.get_asset_value() is v:
+        raise RuntimeError('Should not happen')
+      suffix = 0
+      if basename == NAME_ANON and parentdir in self.anon_asset_index_dict:
+        suffix = self.anon_asset_index_dict[parentdir]
+      cur_path = parentdir + '/' + basename + '_' + str(suffix) + '.' + baseext
+      while existing := self.result.get_asset(cur_path):
+        if existing.get_asset_value() is v:
+          raise RuntimeError('Should not happen')
+        suffix += 1
+        cur_path = parentdir + '/' + basename + '_' + str(suffix) + '.' + baseext
+      if basename == NAME_ANON:
+        self.anon_asset_index_dict[parentdir] = suffix + 1
+    return cur_path
+
+  def _gen_asmexpr(self, v : Value, user_hint : VNStandardDeviceKind | None = None) -> str:
+    if isinstance(v, AssetData):
+      rootdir = ''
+      match user_hint:
+        case VNStandardDeviceKind.O_VOICE_AUDIO:
+          rootdir = 'audio/voice'
+        case VNStandardDeviceKind.O_SE_AUDIO:
+          rootdir = 'audio/se'
+        case VNStandardDeviceKind.O_BGM_AUDIO:
+          rootdir = 'audio/bgm'
+        case VNStandardDeviceKind.O_FOREGROUND_DISPLAY | VNStandardDeviceKind.O_BACKGROUND_DISPLAY:
+          rootdir = 'images'
+        case _:
+          rootdir = 'misc'
+
+      # 看看是否需要转换格式，需要的话把值和后缀都改了
+      export_format = None
+      if isinstance(v, ImageAssetData):
+        cur_format = v.format
+        if cur_format is None:
+          # 现在应该没有这种情况
+          raise RuntimeError('Should not happen')
+        if cur_format not in ['webp', 'png', 'jpeg', 'jpg']:
+          # 创建一个 png 格式的新资源
+          export_format = 'png'
+      elif isinstance(v, AudioAssetData):
+        cur_format = v.format
+        if cur_format is None:
+          # 现在应该没有这种情况
+          raise RuntimeError('Should not happen')
+        if cur_format not in ['ogg', 'mp3', 'wav']:
+          export_format = 'ogg'
+      else:
+        raise RuntimeError('Unknown asset type')
+      path = self.get_asset_export_path(v, rootdir, export_format)
+      file = RenPyFileAssetOp.create(context=self.context, assetref=v, export_format=export_format, path=path)
+      self.result.add_asset(file)
+      return '"' + path + '"'
     if isinstance(v, PlaceholderImageLiteralExpr):
       match v.dest:
         case ImageExprPlaceholderDest.DEST_SCENE_BACKGROUND:
           kind = "'bg'"
-        case ImageExprPlaceholderDest.DEST_CHARACTER_SPRITE, ImageExprPlaceholderDest.DEST_CHARACTER_SIDEIMAGE:
+        case ImageExprPlaceholderDest.DEST_CHARACTER_SPRITE | ImageExprPlaceholderDest.DEST_CHARACTER_SIDEIMAGE:
           kind = "'girl'"
         case _:
           kind = "None"
       return 'Placeholder(base=' + kind + ', text="' + v.description.get_string() + '")'
     raise NotImplementedError('Unsupported value type for asmexpr generation: ' + str(type(v)))
 
-  def get_impsec(self, v : Value, user_hint : str = '') -> typing.Iterable[StringLiteral]:
+  def get_impsec(self, v : Value, user_hint : VNStandardDeviceKind | None = None) -> typing.Iterable[StringLiteral]:
     if result := self.imspec_dict.get(v, None):
       return result
     # 需要创建一个 image 结点
@@ -589,6 +753,14 @@ class _RenPyCodeGenHelper:
     resultimspec = (StringLiteral.get(codename, self.context),)
     self.imspec_dict[v] = resultimspec
     return resultimspec
+
+  def get_audiospec(self, v : Value, src_dev : VNStandardDeviceKind | None) -> StringLiteral:
+    if result := self.audiospec_dict.get(v, None):
+      return result
+    expr = self._gen_asmexpr(v, user_hint=src_dev)
+    expr = StringLiteral.get(expr, self.context)
+    self.audiospec_dict[v] = expr
+    return expr
 
   def move_to_ns(self, n : VNNamespace):
     self.cur_namespace = n

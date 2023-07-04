@@ -346,6 +346,24 @@ class RenPyExportVisitor(RenPyASTVisitor):
       self.dest.write(' ')
       self.visitRenPyWithNode(with_)
 
+  def visitRenPyPlayNode(self, v : RenPyPlayNode):
+    channel = v.channel.get().get_string()
+    audiospec = v.audiospec.get().get_string()
+    result = ['play', channel, audiospec]
+    if fadein := v.fadein.try_get_value():
+      result.append('fadein')
+      result.append(str(fadein.value))
+    if fadeout := v.fadeout.try_get_value():
+      result.append('fadeout')
+      result.append(str(fadeout.value))
+    self.dest.write(' '.join(result))
+
+  def visitRenPyStopNode(self, v : RenPyStopNode):
+    self.dest.write('stop ' + v.channel.get().get_string())
+
+  def visitRenPyVoiceNode(self, v : RenPyVoiceNode):
+    self.dest.write('voice ' + v.audiospec.get().get_string())
+
   def visitRenPyWithNode(self, v : RenPyWithNode):
     self.dest.write('with ' + ' '.join(self.collect_strings(v.expr)))
 

@@ -135,7 +135,7 @@ class RenPyDefaultNode(RenPyNode, Value):
 
 @irdataop.IROperationDataclass
 class RenPySayNode(RenPyNode):
-  #'who' 发言者
+  #'who' 发言者；旁白的话为空
   #'what' 发言内容
   # 'with_' with 从句
   # 'interact', bool, 是否等待玩家点击
@@ -333,6 +333,37 @@ class RenPyHideNode(RenPyNode):
       result.body.push_back(with_)
     return result
 
+
+@irdataop.IROperationDataclass
+class RenPyPlayNode(RenPyNode):
+  channel : OpOperand[StringLiteral] # 大概是 music 或 sound, 也可能是别的
+  audiospec : OpOperand[StringLiteral]
+  fadein : OpOperand[FloatLiteral] # 秒数时长，可能没有值
+  fadeout : OpOperand[FloatLiteral] # 秒数时长，可能没有值
+
+  CHANNEL_MUSIC : typing.ClassVar[str] = 'music'
+  CHANNEL_SOUND : typing.ClassVar[str] = 'sound'
+
+  @staticmethod
+  def create(context : Context, channel : StringLiteral | str, audiospec : StringLiteral | str, fadein : FloatLiteral | None = None, fadeout : FloatLiteral | None = None):
+    return RenPyPlayNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, channel=channel, audiospec=audiospec, fadein=fadein, fadeout=fadeout)
+
+@irdataop.IROperationDataclass
+class RenPyStopNode(RenPyNode):
+  channel : OpOperand[StringLiteral]
+
+  @staticmethod
+  def create(context : Context, channel : StringLiteral | str):
+    return RenPyStopNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, channel=channel)
+
+@irdataop.IROperationDataclass
+class RenPyVoiceNode(RenPyNode):
+  audiospec : OpOperand[StringLiteral]
+
+  @staticmethod
+  def create(context : Context, audiospec : StringLiteral | str):
+    return RenPyVoiceNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, audiospec=audiospec)
+
 @irdataop.IROperationDataclass
 class RenPyCallNode(RenPyNode):
   # label : str
@@ -457,13 +488,14 @@ class RenPyIfNode(RenPyNode):
 @irdataop.IROperationDataclass
 class RenPyFileAssetOp(Symbol):
   ref : OpOperand
+  export_format : OpOperand[StringLiteral] # 如果非空，我们在导出时需要进行另存为
 
   def get_asset_value(self) -> Value:
     return self.ref.get()
 
   @staticmethod
-  def create(context : Context, assetref : Value, path : str, loc : Location | None = None):
-    return RenPyFileAssetOp(init_mode=IRObjectInitMode.CONSTRUCT, context=context, ref=assetref, name=path, loc=loc)
+  def create(context : Context, assetref : Value, path : str, export_format : StringLiteral | str | None = None, loc : Location | None = None):
+    return RenPyFileAssetOp(init_mode=IRObjectInitMode.CONSTRUCT, context=context, ref=assetref, export_format=export_format, name=path, loc=loc)
 
 @irdataop.IROperationDataclass
 class RenPyScriptFileOp(Symbol):
@@ -526,6 +558,12 @@ class RenPyASTVisitor:
   def visitRenPyWithNode(self, v : RenPyWithNode):
     return self.visitChildren(v)
   def visitRenPyHideNode(self, v : RenPyHideNode):
+    return self.visitChildren(v)
+  def visitRenPyPlayNode(self, v : RenPyPlayNode):
+    return self.visitChildren(v)
+  def visitRenPyStopNode(self, v : RenPyStopNode):
+    return self.visitChildren(v)
+  def visitRenPyVoiceNode(self, v : RenPyVoiceNode):
     return self.visitChildren(v)
   def visitRenPyCallNode(self, v : RenPyCallNode):
     return self.visitChildren(v)
