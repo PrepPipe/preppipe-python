@@ -255,6 +255,10 @@ class TransformRegistration:
         if info.arg_title is not None:
           transform_arg_group = parser.add_argument_group(title=info.arg_title, description=info.arg_desc)
           info.definition.install_arguments(transform_arg_group)
+        else:
+          # 检查一下，如果该类型覆盖了 install_arguments 但是没有 arg_title, 我们报错（提示用 @TransformArgumentGroup 修饰符）
+          if info.definition.install_arguments is not TransformBase.install_arguments:
+            raise RuntimeError('Pass overriding install_arguments() without argument title (did you forgot using @TransformArgumentGroup(<arg_title>) decorator?)')
 
     # 函数主体
     # parser.add_argument('input', nargs='*', type=str)

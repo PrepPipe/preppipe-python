@@ -144,7 +144,7 @@ class RenPySayNode(RenPyNode):
   # 'identifier',发言的ID，用于与语音绑定等
   # 'arguments' 忽略
   # 'rollback', 忽略
-  # <who> [<attribute>] [@ <temporary attribute>] <what> [noninteract] [id <identifier>] [with <with_>]
+  # <who> [<attribute>] [@ <temporary attribute>] <what> [id <identifier>] [with <with_>]
   who : OpOperand[RenPyDefineNode]
   what : OpOperand[Value] # StringLiteral, TextFragmentLiteral, string-type variables
   with_ : OpOperand[StringLiteral] = irdataop.operand_field(lookup_name="with")

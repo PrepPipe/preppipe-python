@@ -4,8 +4,8 @@
 # 如果根命名空间下没有任何函数带入口标记，我们在此尝试找个函数加入口
 # 我们选第一个没有调用者的函数
 
-from ..vnmodel_v4 import *
-from ..pipeline import TransformBase, MiddleEndDecl
+from ...vnmodel_v4 import *
+from ...pipeline import TransformBase, MiddleEndDecl
 
 def vn_entry_inference(m : VNModel):
   rootns = m.get_namespace('/')
@@ -18,7 +18,7 @@ def vn_entry_inference(m : VNModel):
       return
     is_caller_found = False
     for u in func.uses:
-      user = u.user
+      user = u.user_op
       if isinstance(user, VNCallInst):
         is_caller_found = True
         break
