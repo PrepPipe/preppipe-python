@@ -2305,6 +2305,11 @@ class Context:
     self._file_auditor = file_auditor if file_auditor is not None else FileAccessAuditor()
     mimetypes.init()
 
+  def __del__(self):
+    if self._asset_temp_dir:
+      del self._asset_temp_dir
+      self._asset_temp_dir = None
+
   def get_stateless_type(self, ty : type) -> typing.Any:
     if ty in self._stateless_type_dict:
       return self._stateless_type_dict[ty]
