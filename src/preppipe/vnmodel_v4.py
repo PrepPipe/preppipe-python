@@ -670,6 +670,9 @@ class VNInstruction(Operation):
   def get_finish_time(self) -> OpResult:
     return self._finish_time_result
 
+  def set_start_time(self, value : Value, index : int | None = None):
+    self._start_time_operand.set_operand(index if index is not None else 0, value)
+
   def try_get_parent_group(self) -> VNInstructionGroup | None:
     if isinstance(self.parent_op, VNInstructionGroup):
       return self.parent_op
