@@ -1346,7 +1346,13 @@ class Use(IListNode, typing.Generic[_ValueTypeVar]):
 
   @property
   def user(self) -> User[_ValueTypeVar]:
+    # 这个可能是 OpOperand 或是 ConstExpr
     return self._user
+
+  @property
+  def user_op(self) -> Operation:
+    assert isinstance(self._user, OpOperand)
+    return self._user.parent
 
   @property
   def argno(self) -> int:

@@ -266,10 +266,11 @@ class RenPyExportVisitor(RenPyASTVisitor):
       for i in range(0, v.temporary_attributes.get_num_operands()):
         a = v.temporary_attributes.get_operand(i).get_string()
         pieces.append(a)
-    pieces.append('"' + RenPyExportVisitor.stringmarshal(v.what) + '"')
+    tailtags = ''
     if interact := v.interact.try_get_value():
       if not interact.value:
-        pieces.append('noninteract')
+        tailtags += '{nw}' # nowait
+    pieces.append('"' + RenPyExportVisitor.stringmarshal(v.what) + tailtags + '"')
     if identifier := v.identifier.try_get_value():
       s = identifier.get_string()
       if len(s) > 0:
