@@ -213,7 +213,10 @@ def try_parse_value_expr(body : str, loc : Location) -> GeneralCommandOp | str |
   parser = CommandParseParser(tstream)
   parser.addErrorListener(error_listener)
   parser.addErrorListener(ConsoleErrorListener())
-  tree = parser.value()
+  try:
+    tree = parser.value()
+  except:
+    return None
   if error_listener.error_occurred:
     return None
   cmd_visitor = _CommandParseVisitorImpl(body, 0, {}, loc)

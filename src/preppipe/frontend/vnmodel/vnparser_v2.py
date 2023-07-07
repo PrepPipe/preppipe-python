@@ -662,7 +662,7 @@ def _helper_parse_image_exprtree(parser : VNParser, state : VNASTParsingState, v
         elif isinstance(v, collections.OrderedDict):
           state_stack.append(k)
           walk_dict(v)
-          state_stack.pop(k)
+          state_stack.pop()
         else:
           state.emit_error(code='vnparse-invalid-imageexpr', msg=str(v), loc=loc)
     walk_dict(v)

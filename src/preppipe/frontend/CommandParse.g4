@@ -22,7 +22,11 @@ CALLEND      : ')' | '\uff09' ;
 // https://stackoverflow.com/questions/29800106/how-do-i-escape-an-escape-character-with-antlr-4
 // we intentionally NOT supporting escape characters inside string
 // consider using environments if the use case cannot be supported
-QUOTEDSTR : '"' (~'"')*? '"' | '\'' (~'\'')*? '\'' | '\u201C' (~'\u201D')*? '\u201D' ;
+// When using full-width quote (should be '\u201C' (~'\u201D')*? '\u201D'),
+// sometimes it is not very clear if the start and end quotation signs are correct
+// (so we can have both '\u201D' for start and end or '\u201C' or reversed)
+// therefore, here we do not distinguish them
+QUOTEDSTR : '"' (~'"')*? '"' | '\'' (~'\'')*? '\'' | ('\u201C'|'\u201D') (~('\u201C'|'\u201D'))*? ('\u201C'|'\u201D') ;
 
 // NATURALTEXT excludes whitespaces, ',', '"', '\'', '=', '[', ']', '(', ')', ':', '#', and their unicode variants
 NATURALTEXT : (~[ \t\r\n\u00A0\u2000-\u200B\u202F\u205F\u3000\uFEFF,\uFF0C"'\u201C\u201D=\uFF1D[\u3010\]\u3011(\uff08)\uff09:\uFF1A#\uFF03])+ ;

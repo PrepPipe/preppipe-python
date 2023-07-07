@@ -218,11 +218,17 @@ class VNSymbol(Symbol, Value):
   # 有些内容（比如预设的转场效果等）主要是代码，参数部分很少，我们可以为它们新定义字面值(Literal)，然后用常量表达式来表示对它们的引用
   codename : OpOperand[StringLiteral]
 
+
 @IRObjectJsonTypeName("vn_cexpr_record_op")
 class VNConstExprAsSymbol(VNSymbol):
-  def construct_init(self, *, name: str, loc: Location, cexpr : ConstExpr, **kwargs) -> None:
-    super().construct_init(name=name, loc=loc, ty=cexpr.valuetype, **kwargs)
-    self._add_operand_with_value('value', cexpr)
+  def construct_init(self, *, name: str, loc: Location, value : ConstExpr | LiteralExpr | AssetData, **kwargs) -> None:
+    assert isinstance(value, (ConstExpr, LiteralExpr, AssetData))
+    super().construct_init(name=name, loc=loc, ty=value.valuetype, **kwargs)
+    self._add_operand_with_value('value', value)
+
+  @staticmethod
+  def create(context : Context, value : ConstExpr | LiteralExpr | AssetData, name : str, loc : Location | None = None):
+    return VNConstExprAsSymbol(init_mode=IRObjectInitMode.CONSTRUCT, context=context, value=value, name=name, loc=loc)
 
 
 # ------------------------------------------------------------------------------
@@ -998,6 +1004,9 @@ class VNNamespace(Symbol, NamespaceNodeInterface[VNSymbol]):
 
   def get_namespace_path(self) -> tuple[str]:
     return self._namespace_path_tuple
+
+  def get_namespace_string(self) -> str:
+    return self.name
 
   def get_namespace_parent_node(self) -> VNNamespace | None:
     if len(self._namespace_path_tuple) == 0:

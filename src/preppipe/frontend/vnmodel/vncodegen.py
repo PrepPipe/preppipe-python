@@ -12,6 +12,7 @@ from preppipe.frontend.vnmodel.vnast import VNASTASMNode, VNASTChangeDefaultDevi
 
 from ...irbase import *
 from ...vnmodel_v4 import *
+from ...imageexpr import *
 from ..commandsyntaxparser import *
 from .vnast import *
 from ...renpy.ast import RenPyASMNode
@@ -278,7 +279,6 @@ class VNCodeGen:
   _func_prebody_map : dict[VNFunction, Block]
   _func_postbody_map : dict[VNFunction, Block]
   #_char_sprite_map : dict[VNCharacterSymbol, dict[str, VNASTNamespaceSwitchableValueSymbol]]
-  _char_say_parent_map : dict[VNASTCharacterSayInfoSymbol, tuple[VNASTCharacterSymbol, VNCharacterSymbol]] # 记录所有发言信息对应的角色记录
   _char_parent_map : dict[VNCharacterSymbol, VNASTCharacterSymbol]
   _char_state_matcher : dict[VNCharacterSymbol, _PartialStateMatcher]
   _scene_parent_map : dict[VNSceneSymbol, VNASTSceneSymbol]
@@ -298,7 +298,6 @@ class VNCodeGen:
     self._func_prebody_map = {}
     self._func_postbody_map = {}
     #self._char_sprite_map = {}
-    self._char_say_parent_map = {}
     self._char_parent_map = {}
     self._char_state_matcher = {}
     self._scene_parent_map = {}
@@ -1030,6 +1029,8 @@ class VNCodeGen:
       if character in self.codegen._char_parent_map:
         srccharacter = self.codegen._char_parent_map[character]
         sprite = srccharacter.sprites.get(','.join(state))
+        if isinstance(sprite, VNASTNamespaceSwitchableValueSymbol):
+          sprite = sprite.get_value(self.namespace_tuple)
         return sprite
       return None
 
@@ -1045,7 +1046,7 @@ class VNCodeGen:
           statestr = ','.join(state)
           while True:
             if sideimage := srcsayer.sideimages.get(statestr):
-              return sideimage.get_value(VNNamespace.stringize_namespace_path(self.namespace_tuple))
+              return sideimage.get_value(self.namespace_tuple)
             if len(state) == 0:
               break
             state = state[:-1]
@@ -1055,6 +1056,8 @@ class VNCodeGen:
       if scene in self.codegen._scene_parent_map:
         srcscene = self.codegen._scene_parent_map[scene]
         background = srcscene.backgrounds.get(','.join(state))
+        if isinstance(background, VNASTNamespaceSwitchableValueSymbol):
+          background = background.get_value(self.namespace_tuple)
         return background
       return None
 
@@ -1075,7 +1078,7 @@ class VNCodeGen:
       matcher = self.codegen._char_state_matcher[character]
       is_full_match, matchresult = matcher.find_match_besteffort(curstate, statelist)
       if not is_full_match:
-        self.codegen.emit_error(code='vncodegen-character-state-error', msg='Cannot apply state change ' + str(statelist) + ' to original state ' + str(charstate.state), loc=loc, dest=self.destblock)
+        self.codegen.emit_error(code='vncodegen-character-state-error', msg= character.name + ': Cannot apply state change ' + str(statelist) + ' to original state ' + str(charstate.state), loc=loc, dest=self.destblock)
 
       if matchresult == charstate.state:
         # 状态不变的话什么也不做
@@ -1660,7 +1663,87 @@ class VNCodeGen:
 
   def populate_assets(self):
     # 把角色、场景等信息写到输出里
-    pass
+
+    # 这些需要填好：
+    # _char_parent_map : dict[VNCharacterSymbol, VNASTCharacterSymbol]
+    # _char_state_matcher : dict[VNCharacterSymbol, _PartialStateMatcher]
+    # _scene_parent_map : dict[VNSceneSymbol, VNASTSceneSymbol]
+    # _scene_state_matcher : dict[VNSceneSymbol, _PartialStateMatcher]
+
+    # VNASTFileInfo 下有这些：
+    # namespace : OpOperand[StringLiteral] # 无参数表示没有提供（取默认情况），'/'才是根命名空间
+    # functions : Block # 全是 VNASTFunction
+    # assetdecls : SymbolTableRegion[VNASTAssetDeclSymbol] # 可以按名查找的资源声明
+    # characters : SymbolTableRegion[VNASTCharacterSymbol] # 在该文件中正式声明的角色
+    # variables : SymbolTableRegion[VNASTVariableDeclSymbol] # 在该文件中声明的变量
+    # scenes : SymbolTableRegion[VNASTSceneSymbol]
+    # pending_content : Block # VNASTNodeBase | MetadataOp
+
+    # 我们先把所有资源定义的部分解析了（指 VNASTFileInfo.assetdecls），再处理对资源的引用
+    # （可能在声明角色、场景时引用这些资源）
+    for file in self.ast.files.body:
+      assert isinstance(file, VNASTFileInfo)
+      nstuple = self.get_file_nstuple(file)
+      ns = self.get_or_create_ns(nstuple)
+      for asset in file.assetdecls:
+        assert isinstance(asset, VNASTAssetDeclSymbol)
+        name = asset.name
+        value = asset.asset.get()
+        kind = asset.kind.get().value
+        symb = None
+        match kind:
+          case VNASTAssetKind.KIND_IMAGE:
+            assert isinstance(value, BaseImageLiteralExpr)
+            symb = VNConstExprAsSymbol.create(context=self.context, value=value, name=name, loc=asset.location)
+          case VNASTAssetKind.KIND_AUDIO:
+            assert isinstance(value, AudioAssetData)
+            symb = VNConstExprAsSymbol.create(context=self.context, value=value, name=name, loc=asset.location)
+          case _:
+            # 其他资源暂不支持
+            raise NotImplementedError("TODO")
+        if symb:
+          ns.add_asset(symb)
+    # 然后处理角色、场景声明
+    for file in self.ast.files.body:
+      assert isinstance(file, VNASTFileInfo)
+      nstuple = self.get_file_nstuple(file)
+      ns = self.get_or_create_ns(nstuple)
+      for scene in file.scenes:
+        assert isinstance(scene, VNASTSceneSymbol)
+        symb = VNSceneSymbol.create(context=self.context, name=scene.name, loc=scene.location)
+        matcher = _PartialStateMatcher()
+        self._scene_parent_map[symb] = scene
+        self._scene_state_matcher[symb] = matcher
+        ns.add_scene(symb)
+        for u in scene.aliases.operanduses():
+          aliasname = u.value.get_string()
+          alias = VNAliasSymbol.create(context=self.context, name=aliasname, target_name=symb.name, target_namespace=ns.get_namespace_string(), loc=symb.location)
+          ns.add_alias(alias)
+        for bg in scene.backgrounds:
+          state = bg.name.split(',')
+          matcher.add_valid_state(tuple(state))
+        matcher.finish_init()
+
+      for character in file.characters:
+        assert isinstance(character, VNASTCharacterSymbol)
+        symb = VNCharacterSymbol.create(self.context, kind=VNCharacterKind.NORMAL, name=character.name, loc=character.location)
+        matcher = _PartialStateMatcher()
+        self._char_parent_map[symb] = character
+        self._char_state_matcher[symb] = matcher
+        ns.add_character(symb)
+        for u in character.aliases.operanduses():
+          aliasname = u.value.get_string()
+          alias = VNAliasSymbol.create(context=self.context, name=aliasname, target_name=symb.name, target_namespace=ns.get_namespace_string(), loc=symb.location)
+          ns.add_alias(alias)
+        for sprite in character.sprites:
+          state = sprite.name.split(',')
+          matcher.add_valid_state(tuple(state))
+        matcher.finish_init()
+
+      for variable in file.variables:
+        assert isinstance(variable, VNASTVariableDeclSymbol)
+        raise NotImplementedError("TODO")
+    # 结束
 
   def run_pipeline(self):
     self.populate_assets()

@@ -7,7 +7,8 @@ WS : [ \t\r\n\u00A0\u2000-\u200B\u202F\u205F\u3000\uFEFF]+ -> skip;
 // https://stackoverflow.com/questions/29800106/how-do-i-escape-an-escape-character-with-antlr-4
 // we intentionally NOT supporting escape characters inside string
 // consider using environments if the use case cannot be supported
-QUOTEDSTR : '"' (~'"')*? '"' | '\'' (~'\'')*? '\'' | '\u201C' (~'\u201D')*? '\u201D' ;
+// QUOTEDSTR : '"' (~'"')*? '"' | '\'' (~'\'')*? '\'' | '\u201C' (~'\u201D')*? '\u201D' ;
+QUOTEDSTR : '"' (~'"')*? '"' | '\'' (~'\'')*? '\'' | ('\u201C'|'\u201D') (~('\u201C'|'\u201D'))*? ('\u201C'|'\u201D') ;
 
 // non-text elements replaced with unicode null character
 ELEMENT : '\u0000' ;

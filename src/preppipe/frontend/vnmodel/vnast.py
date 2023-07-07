@@ -253,14 +253,24 @@ class VNASTNamespaceSwitchableValueSymbol(Symbol):
   # 根命名空间('/')除外，放在 defaultvalue 里面
   defaultvalue : OpOperand
 
-  def get_value(self, ns : str) -> Value:
-    if ns != '/':
+  def get_value(self, ns : str | tuple[str, ...]) -> Value:
+    if ns == '/' or ns == ():
+      return self.defaultvalue.get()
+
+    if isinstance(ns, str):
       nstuple = VNNamespace.expand_namespace_str(ns)
-      while len(nstuple) > 1 and self.try_get_operand_inst(ns) is None:
-        nstuple = nstuple[:-1]
-        ns = VNNamespace.stringize_namespace_path(nstuple)
-      if operand := self.try_get_operand_inst(ns):
-        return operand.get()
+    elif isinstance(ns, tuple):
+      nstuple = ns
+      ns = VNNamespace.stringize_namespace_path(nstuple)
+    else:
+      raise RuntimeError('Should not happen')
+
+    while len(nstuple) > 1 and self.try_get_operand_inst(ns) is None:
+      nstuple = nstuple[:-1]
+      ns = VNNamespace.stringize_namespace_path(nstuple)
+
+    if operand := self.try_get_operand_inst(ns):
+      return operand.get()
     return self.defaultvalue.get()
 
   def set_value(self, ns : str, v : Value):
