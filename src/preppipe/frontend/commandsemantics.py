@@ -374,7 +374,7 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
       # <A>=<B>
       # <A> <B>
       # A 与 B 可以是用引号引起来的字符串，也可以没有引号（只要没有其他这些字符、没有空格）
-      regex_str = r"^(?P<k>\"[^\"]*\"|'[^']*'|[^'\"=＝:： ]+)(\s*[ =＝:：]\s*(?P<v>\"[^\"]*\"|'[^']*'|[^'\"=＝:： ]+|\0)?)?$"
+      regex_str = r"^(?P<k>\"[^\"]*\"|'[^']*'|[^'\"=＝:： ]+)(\s*[ =＝:：]\s*(?P<v>.+|\0)?)?$"
       match_result = re.match(regex_str, text_str)
       if match_result is None:
         # 这一项没法读，记个错误然后跳过

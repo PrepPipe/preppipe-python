@@ -65,6 +65,8 @@ class _FunctionCodeGenHelper:
 class _RenPyCharacterInfo:
   sayername : str
   mode : str = 'adv'
+  sayerstyle : TextStyleLiteral | None = None
+  textstyle : TextStyleLiteral | None = None
 
 class _RenPyCodeGenHelper:
   model : VNModel
@@ -283,6 +285,7 @@ class _RenPyCodeGenHelper:
       VNSceneSwitchInstructionGroup : _RenPyCodeGenHelper.gen_sceneswitch,
       VNCreateInst : _RenPyCodeGenHelper.gen_create_put,
       VNPutInst : _RenPyCodeGenHelper.gen_create_put,
+      VNModifyInst : _RenPyCodeGenHelper.gen_modify,
       VNRemoveInst : _RenPyCodeGenHelper.gen_remove,
       VNCallInst : _RenPyCodeGenHelper.gen_call,
     }
@@ -321,8 +324,14 @@ class _RenPyCodeGenHelper:
             name_data = self.collect_say_text(op.content)
             assert len(name_data) == 1
             sayername = name_data[0]
-            assert isinstance(sayername, StringLiteral)
-            who = self.get_renpy_character(sayer, sayername=sayername.get_string(), mode=mode)
+            sayerstyle = None
+            if isinstance(sayername, StringLiteral):
+              pass
+            elif isinstance(sayername, TextFragmentLiteral):
+              sayerstyle = sayername.style
+            else:
+              raise RuntimeError("Unexpected sayername type: " + str(type(sayername)))
+            who = self.get_renpy_character(sayer, sayername=sayername.get_string(), mode=mode, sayerstyle=sayerstyle)
           case VNStandardDeviceKind.O_SAY_TEXT_TEXT:
             what = self.collect_say_text(op.content)
             if parent_dev := dev.get_parent_device():
@@ -369,6 +378,24 @@ class _RenPyCodeGenHelper:
     result.insert_before(insert_before)
     return result
 
+  def _get_handle_value_and_device(self, handlein : Value) -> tuple[Value, VNDeviceSymbol]:
+    assert isinstance(handlein, (VNCreateInst, VNModifyInst, BlockArgument))
+    if isinstance(handlein, BlockArgument):
+      raise RuntimeError('Handles from block arguments not supported yet')
+    if isinstance(handlein, VNCreateInst):
+      value = handlein.content.get()
+    elif isinstance(handlein, VNModifyInst):
+      value = handlein.content.get()
+    else:
+      raise RuntimeError('Should not happen')
+    rootdev = None
+    curhandle = handlein
+    while not isinstance(curhandle, VNCreateInst):
+      assert isinstance(curhandle, VNModifyInst)
+      curhandle = curhandle.handlein.get()
+    rootdev = curhandle.device.get()
+    return (value, rootdev)
+
   def gen_sceneswitch(self, instrs : list[VNInstruction], insert_before : RenPyNode) -> RenPyNode:
     assert len(instrs) == 1
     sceneswitch = instrs[0]
@@ -387,6 +414,15 @@ class _RenPyCodeGenHelper:
         if dev.get_std_device_kind() == VNStandardDeviceKind.O_BACKGROUND_DISPLAY:
           is_handled = True
           imspec = self.get_impsec(op.content.get(), user_hint=VNStandardDeviceKind.O_BACKGROUND_DISPLAY)
+      elif isinstance(op, VNRemoveInst):
+        # 如果是前景、背景内容的话就不需要额外操作了，包含在 scene 命令里了
+        removevalue, rootdev = self._get_handle_value_and_device(op.handlein.get())
+        match rootdev.get_std_device_kind():
+          case VNStandardDeviceKind.O_BACKGROUND_DISPLAY | VNStandardDeviceKind.O_FOREGROUND_DISPLAY:
+            is_handled = True
+          case _:
+            pass
+
       if not is_handled:
         # 在这里就地生成
         match_result = self.CODEGEN_MATCH_TREE[type(op)]
@@ -440,27 +476,36 @@ class _RenPyCodeGenHelper:
         # 暂不支持
         return insert_before
 
+  def gen_modify(self, instrs : list[VNInstruction], insert_before : RenPyNode) -> RenPyNode:
+    assert len(instrs) == 1
+    instr = instrs[0]
+    assert isinstance(instr, VNModifyInst)
+    modifyvalue, rootdev = self._get_handle_value_and_device(instr.handlein.get())
+    devkind = rootdev.get_std_device_kind()
+    match devkind:
+      case VNStandardDeviceKind.O_BACKGROUND_DISPLAY | VNStandardDeviceKind.O_FOREGROUND_DISPLAY:
+        assert isinstance(modifyvalue.valuetype, ImageType)
+        remove_imspec = self.get_impsec(modifyvalue, devkind)
+        newvalue = instr.content.get()
+        new_imspec = self.get_impsec(newvalue, devkind)
+        if remove_imspec[0] != new_imspec[0]:
+          # 只有第一项不一样时才要 hide
+          hide = RenPyHideNode.create(context=self.context, imspec=remove_imspec)
+          hide.insert_before(insert_before)
+        show = RenPyShowNode.create(context=self.context, imspec=new_imspec)
+        show.insert_before(insert_before)
+        return show
+      case _:
+        raise NotImplementedError("TODO")
+    return insert_before
+
   def gen_remove(self, instrs : list[VNInstruction], insert_before : RenPyNode) -> RenPyNode:
     # VNRemoveInst
     assert len(instrs) == 1
     instr = instrs[0]
     assert isinstance(instr, VNRemoveInst)
-    handlein : VNCreateInst | VNModifyInst | BlockArgument = instr.handlein.get()
-    if isinstance(handlein, BlockArgument):
-      raise RuntimeError('Handles from block arguments not supported yet')
     transition = instr.transition.try_get_value()
-    if isinstance(handlein, VNCreateInst):
-      removevalue = handlein.content.get()
-    elif isinstance(handlein, VNModifyInst):
-      removevalue = handlein.content.get()
-    else:
-      raise RuntimeError('Should not happen')
-    rootdev = None
-    curhandle = handlein
-    while not isinstance(curhandle, VNCreateInst):
-      assert isinstance(curhandle, VNModifyInst)
-      curhandle = curhandle.handlein.get()
-    rootdev = curhandle.device.get()
+    removevalue, rootdev = self._get_handle_value_and_device(instr.handlein.get())
     if kind := rootdev.get_std_device_kind():
       match kind:
         case VNStandardDeviceKind.O_BACKGROUND_DISPLAY | VNStandardDeviceKind.O_FOREGROUND_DISPLAY:
@@ -624,11 +669,21 @@ class _RenPyCodeGenHelper:
       curname = parentvar + '_' + str(suffix)
     return curname
 
-  def get_renpy_character(self, vncharacter : VNCharacterSymbol, sayername : str, mode : str = 'adv') -> RenPyDefineNode:
+  def _populate_renpy_characterexpr_from_sayerstyle(self, charexpr : RenPyCharacterExpr, sayerstyle : TextStyleLiteral):
+    for style, v in sayerstyle.value:
+      match style:
+        case TextAttribute.TextColor:
+          assert isinstance(v, Color)
+          charexpr.who_color.set_operand(0, StringLiteral.get(v.get_string(), self.context))
+        case _:
+          # TODO
+          pass
+
+  def get_renpy_character(self, vncharacter : VNCharacterSymbol, sayername : str, mode : str = 'adv', sayerstyle : TextStyleLiteral | None = None) -> RenPyDefineNode:
     # 暂不支持 side image
     assert vncharacter in self.char_dict
     display_dict = self.char_dict[vncharacter]
-    info = _RenPyCharacterInfo(sayername=sayername, mode=mode)
+    info = _RenPyCharacterInfo(sayername=sayername, mode=mode, sayerstyle=sayerstyle)
     if info in display_dict:
       return display_dict[info]
     # 我们需要为了这个显示名称新建一个 Character
@@ -640,6 +695,8 @@ class _RenPyCodeGenHelper:
     charexpr.kind.set_operand(0, StringLiteral.get(canonicalvarname, self.context))
     if mode != 'adv':
       charexpr.kind.set_operand(0, StringLiteral.get(mode, self.context))
+    if sayerstyle is not None:
+      self._populate_renpy_characterexpr_from_sayerstyle(charexpr, sayerstyle)
     display_dict[info] = definenode
     self.global_name_dict[definenode.varname.get().get_string()] = definenode
     return definenode
@@ -682,9 +739,9 @@ class _RenPyCodeGenHelper:
         self.anon_asset_index_dict[parentdir] = suffix + 1
     return cur_path
 
-  def _gen_asmexpr(self, v : Value, user_hint : VNStandardDeviceKind | None = None) -> str:
-    if isinstance(v, AssetData):
-      rootdir = ''
+  def _handle_assetdata(self, v : AssetData, user_hint : VNStandardDeviceKind | None = None) -> str:
+    rootdir = ''
+    if isinstance(v, AudioAssetData):
       match user_hint:
         case VNStandardDeviceKind.O_VOICE_AUDIO:
           rootdir = 'audio/voice'
@@ -692,34 +749,40 @@ class _RenPyCodeGenHelper:
           rootdir = 'audio/se'
         case VNStandardDeviceKind.O_BGM_AUDIO:
           rootdir = 'audio/bgm'
-        case VNStandardDeviceKind.O_FOREGROUND_DISPLAY | VNStandardDeviceKind.O_BACKGROUND_DISPLAY:
-          rootdir = 'images'
         case _:
-          rootdir = 'misc'
+          rootdir = 'audio/misc'
+    elif isinstance(v, ImageAssetData):
+      rootdir = 'images'
+    else:
+      rootdir = 'misc'
 
-      # 看看是否需要转换格式，需要的话把值和后缀都改了
-      export_format = None
-      if isinstance(v, ImageAssetData):
-        cur_format = v.format
-        if cur_format is None:
-          # 现在应该没有这种情况
-          raise RuntimeError('Should not happen')
-        if cur_format not in ['webp', 'png', 'jpeg', 'jpg']:
-          # 创建一个 png 格式的新资源
-          export_format = 'png'
-      elif isinstance(v, AudioAssetData):
-        cur_format = v.format
-        if cur_format is None:
-          # 现在应该没有这种情况
-          raise RuntimeError('Should not happen')
-        if cur_format not in ['ogg', 'mp3', 'wav']:
-          export_format = 'ogg'
-      else:
-        raise RuntimeError('Unknown asset type')
-      path = self.get_asset_export_path(v, rootdir, export_format)
-      file = RenPyFileAssetOp.create(context=self.context, assetref=v, export_format=export_format, path=path)
-      self.result.add_asset(file)
-      return '"' + path + '"'
+    # 看看是否需要转换格式，需要的话把值和后缀都改了
+    export_format = None
+    if isinstance(v, ImageAssetData):
+      cur_format = v.format
+      if cur_format is None:
+        # 现在应该没有这种情况
+        raise RuntimeError('Should not happen')
+      if cur_format not in ['webp', 'png', 'jpeg', 'jpg']:
+        # 创建一个 png 格式的新资源
+        export_format = 'png'
+    elif isinstance(v, AudioAssetData):
+      cur_format = v.format
+      if cur_format is None:
+        # 现在应该没有这种情况
+        raise RuntimeError('Should not happen')
+      if cur_format not in ['ogg', 'mp3', 'wav']:
+        export_format = 'ogg'
+    else:
+      raise RuntimeError('Unknown asset type')
+    path = self.get_asset_export_path(v, rootdir, export_format)
+    file = RenPyFileAssetOp.create(context=self.context, assetref=v, export_format=export_format, path=path)
+    self.result.add_asset(file)
+    return path
+
+  def _gen_asmexpr(self, v : Value, user_hint : VNStandardDeviceKind | None = None) -> str:
+    if isinstance(v, AssetData):
+      return '"' + self._handle_assetdata(v, user_hint) + '"'
     if isinstance(v, PlaceholderImageLiteralExpr):
       match v.dest:
         case ImageExprPlaceholderDest.DEST_SCENE_BACKGROUND:
@@ -729,11 +792,23 @@ class _RenPyCodeGenHelper:
         case _:
           kind = "None"
       return 'Placeholder(base=' + kind + ', text="' + v.description.get_string() + '")'
+    if isinstance(v, ImageAssetLiteralExpr):
+      return '"' + self._handle_assetdata(v.image, user_hint) + '"'
     raise NotImplementedError('Unsupported value type for asmexpr generation: ' + str(type(v)))
 
-  def get_impsec(self, v : Value, user_hint : VNStandardDeviceKind | None = None) -> typing.Iterable[StringLiteral]:
+  def get_impsec(self, v : Value, user_hint : VNStandardDeviceKind | None = None) -> tuple[StringLiteral]:
     if result := self.imspec_dict.get(v, None):
       return result
+
+    # 如果是有图片直接支撑的，那就可以直接取图片名
+    if isinstance(v, ImageAssetLiteralExpr):
+      path = self._handle_assetdata(v.image, user_hint)
+      basename = os.path.basename(path)
+      base = os.path.splitext(basename)[0]
+      spec = tuple([StringLiteral.get(v, self.context) for v in base.split()])
+      self.imspec_dict[v] = spec
+      return spec
+
     # 需要创建一个 image 结点
     # 先定名称
     if isinstance(v, VNSymbol):
