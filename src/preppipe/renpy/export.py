@@ -219,7 +219,13 @@ class RenPyExportVisitor(RenPyASTVisitor):
 
   def visitRenPyCharacterExpr(self, v : RenPyCharacterExpr):
     pieces = ["Character(" + '"' + self.stringmarshal(v.displayname) + '"']
-    self.populate_operand(pieces, "kind", v.kind, "")
+
+    # kind 值结果不能加引号，所以这里我们不使用 populate_operand()
+    #self.populate_operand(pieces, "kind", v.kind, "")
+    if kind := v.kind.try_get_value():
+      if len(kind.get_string()) > 0:
+        pieces.append(", kind=" + kind.get_string())
+
     self.populate_operand(pieces, "image", v.image, "")
     self.populate_operand(pieces, "voice_tag", v.voicetag, "")
     self.populate_operand(pieces, "what_color", v.what_color, "")
