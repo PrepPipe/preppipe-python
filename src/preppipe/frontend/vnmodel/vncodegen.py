@@ -1736,6 +1736,11 @@ class VNCodeGen:
         for bg in scene.backgrounds:
           state = bg.name.split(',')
           matcher.add_valid_state(tuple(state))
+          # 尝试声明背景资源
+          bg_img = bg.get_value(nstuple)
+          assert isinstance(bg_img, BaseImageLiteralExpr)
+          bg_entry = VNConstExprAsSymbol.create(context=self.context, value=bg_img, name=bg.name, loc=scene.location)
+          symb.backgrounds.add(bg_entry)
         matcher.finish_init()
 
       for character in file.characters:
@@ -1763,8 +1768,23 @@ class VNCodeGen:
           symb.saytext_style.set_operand(0, saytext_style)
         # 添加立绘信息
         for sprite in character.sprites:
+          # 添加立绘状态
+          assert isinstance(sprite, VNASTNamespaceSwitchableValueSymbol)
           state = sprite.name.split(',')
           matcher.add_valid_state(tuple(state))
+          # 尝试声明立绘资源
+          sprite_img = sprite.get_value(nstuple)
+          assert isinstance(sprite_img, BaseImageLiteralExpr)
+          sprite_entry = VNConstExprAsSymbol.create(context=self.context, value=sprite_img, name=sprite.name, loc=character.location)
+          symb.sprites.add(sprite_entry)
+        # 如果有侧边头像的话把它们也加进去
+        for sideimage in character.sideimages:
+          assert isinstance(sideimage, VNASTNamespaceSwitchableValueSymbol)
+          # 这里我们不加状态
+          sideimage_img = sideimage.get_value(nstuple)
+          assert isinstance(sideimage_img, BaseImageLiteralExpr)
+          sideimage_entry = VNConstExprAsSymbol.create(context=self.context, value=sideimage_img, name=sideimage.name, loc=character.location)
+          symb.sideimages.add(sideimage_entry)
         matcher.finish_init()
 
       for variable in file.variables:

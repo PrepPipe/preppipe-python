@@ -226,6 +226,9 @@ class VNConstExprAsSymbol(VNSymbol):
     super().construct_init(name=name, loc=loc, ty=value.valuetype, **kwargs)
     self._add_operand_with_value('value', value)
 
+  def get_value(self) -> ConstExpr | LiteralExpr | AssetData:
+    return self.get_operand('value') # type: ignore
+
   @staticmethod
   def create(context : Context, value : ConstExpr | LiteralExpr | AssetData, name : str, loc : Location | None = None):
     return VNConstExprAsSymbol(init_mode=IRObjectInitMode.CONSTRUCT, context=context, value=value, name=name, loc=loc)
@@ -485,6 +488,13 @@ class VNCharacterSymbol(VNSymbol):
   sayname_style : OpOperand[TextStyleLiteral] # 可以为空
   saytext_style : OpOperand[TextStyleLiteral] # 可以为空
 
+  # 后端可能可以根据以下内容更好地给导出的资源起名
+  # 如果使用一个声明的资源，我们这里也直接引用其值而不引用资源声明的 VNConstExprAsSymbol
+  # （需要的话之后可以找到值相同的 VNConstExprAsSymbol 进行去重）
+  # 这里只是声明一些可能会用到的，不用的话可以忽略，改变角色状态时肯定会带完整的值，不需要这里的信息
+  sprites : SymbolTableRegion[VNConstExprAsSymbol]
+  sideimages : SymbolTableRegion[VNConstExprAsSymbol]
+
   @staticmethod
   def create(context : Context, kind : EnumLiteral[VNCharacterKind] | VNCharacterKind, name : str, codename : StringLiteral | str | None = None, loc : Location | None = None) -> VNCharacterSymbol:
     if isinstance(kind, VNCharacterKind):
@@ -504,6 +514,9 @@ class VNCharacterSymbol(VNSymbol):
 @IROperationDataclassWithValue(VNSceneDeclType)
 @IRObjectJsonTypeName("vn_scene_symbol_op")
 class VNSceneSymbol(VNSymbol):
+
+  # 后端可能可以根据以下内容更好地给导出的资源起名
+  backgrounds : SymbolTableRegion[VNConstExprAsSymbol]
 
   @staticmethod
   def create(context : Context, name : str, codename : StringLiteral | str | None = None, loc : Location | None = None):
