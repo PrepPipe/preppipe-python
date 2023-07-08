@@ -746,13 +746,14 @@ class VNCodeGen:
 
   @dataclasses.dataclass
   class FunctionCodegenContext:
-    # 除了 entry 之外所有的块都在里面
+    # 除了 entry 之外所有的块都在 block_dict 里面
     # entry 块不接受按名查找
     destfunction : VNFunction
     block_dict : dict[str, Block] = dataclasses.field(default_factory=dict)
     states_dict : dict[Block, VNCodeGen.SceneContext] = dataclasses.field(default_factory=dict)
     anonymous_ctrlflow_entity_indexing_dict : dict[type, int] = dataclasses.field(default_factory=dict) # <像 VNASTMenuNode 这样的 type> --> index
     anon_block_index : int = 0
+    empty_state_characters_warned : set[VNCharacterSymbol] = dataclasses.field(default_factory=set)
 
     def get_or_create_basic_block(self, labelname : str) -> Block:
       assert labelname != 'entry'
@@ -1078,7 +1079,16 @@ class VNCodeGen:
       matcher = self.codegen._char_state_matcher[character]
       is_full_match, matchresult = matcher.find_match_besteffort(curstate, statelist)
       if not is_full_match:
-        self.codegen.emit_error(code='vncodegen-character-state-error', msg= character.name + ': Cannot apply state change ' + str(statelist) + ' to original state ' + str(charstate.state), loc=loc, dest=self.destblock)
+        if len(matcher.get_default_state()) == 0:
+          # 该角色没有声明任何状态
+          # 我们只在第一次生成一个错误
+          if character in self.functioncontext.empty_state_characters_warned:
+            pass
+          else:
+            self.functioncontext.empty_state_characters_warned.add(character)
+            self.codegen.emit_error(code='vncodegen-character-state-empty', msg= character.name + ': No state declared and all state changes ignored', loc=loc, dest=self.destblock)
+        else:
+          self.codegen.emit_error(code='vncodegen-character-state-error', msg= character.name + ': Cannot apply state change ' + str(statelist) + ' to original state ' + str(charstate.state), loc=loc, dest=self.destblock)
 
       if matchresult == charstate.state:
         # 状态不变的话什么也不做
@@ -1197,6 +1207,10 @@ class VNCodeGen:
           v = u.value
           if isinstance(v, StringLiteral):
             v = TextFragmentLiteral.get(self.context, v, textstyle)
+          elif isinstance(v, TextFragmentLiteral):
+            # 我们需要把两个格式合并起来，当前内容里的优先级更高
+            mergedstyle = TextStyleLiteral.get_added(textstyle, v.style)
+            v = TextFragmentLiteral.get(self.context, v.content, mergedstyle)
           textvalue.append(v)
       tnode = VNPutInst.create(context=self.context, start_time=self.starttime, content=textvalue, device=self.parsecontext.dev_say_text, loc=node.location)
       saynode.body.push_back(tnode)
@@ -1343,7 +1357,7 @@ class VNCodeGen:
               raise NotImplementedError()
           return None
         case VNASTAssetKind.KIND_EFFECT:
-          self.codegen.emit_error(code='vncodegen-not-implemented', msg='Video playing not supported yet', loc=node.location, dest=self.destblock)
+          self.codegen.emit_error(code='vncodegen-not-implemented', msg='Special effect not supported yet', loc=node.location, dest=self.destblock)
           return None
         case VNASTAssetKind.KIND_VIDEO:
           self.codegen.emit_error(code='vncodegen-not-implemented', msg='Video playing not supported yet', loc=node.location, dest=self.destblock)

@@ -494,7 +494,7 @@ class _CommandParseVisitorImpl(CommandParseVisitor):
     quoted_str_token = quoted_str_node.getSymbol()
     start = quoted_str_token.start
     end = quoted_str_token.stop + 1
-    text = quoted_str_token.text
+    text = quoted_str_token.text[1:-1]
     return (text, self.global_offset + start + 1, self.global_offset + end - 1)
 
   def _handle_nontext_element(self, element_node) -> tuple[AssetData, int, int]:
