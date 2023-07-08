@@ -158,6 +158,13 @@ class _RenPyCodeGenHelper:
   def handle_asset(self, asset : VNConstExprAsSymbol):
     raise NotImplementedError("TODO")
 
+  def _populate_imspec_from_assetdecl(self, basename : str, symbolname : str, prefix : str | None = None):
+    imspec_list = [nameconvert.str2identifier(v) for v in symbolname.split(',') if len(v) > 0]
+    imspec_list.insert(0, basename)
+    if prefix:
+      imspec_list.insert(0, prefix)
+    return tuple(imspec_list)
+
   def handle_character(self, character : VNCharacterSymbol):
     # 为角色生成 character 对象
     ms = self.get_mainscript()
@@ -195,6 +202,10 @@ class _RenPyCodeGenHelper:
     textstyle = None
     if textstyle := character.saytext_style.try_get_value():
       self._populate_renpy_characterexpr_from_textstyle(charexpr, textstyle)
+    for img in character.sprites:
+      self.try_set_imspec_for_asset(img.get_value(), self._populate_imspec_from_assetdecl(codename, img.name))
+    for img in character.sideimages:
+      self.try_set_imspec_for_asset(img.get_value(), self._populate_imspec_from_assetdecl(codename + '_side', img.name))
     # 暂时不支持其他项
     self.global_name_dict[codename] = definenode
     char_dict = collections.OrderedDict()
@@ -204,8 +215,11 @@ class _RenPyCodeGenHelper:
     self.canonical_char_dict[character] = definenode
 
   def handle_scene(self, scene : VNSceneSymbol):
+    scenename = nameconvert.str2identifier(scene.name)
+    for bg in scene.backgrounds:
+      self.try_set_imspec_for_asset(bg.get_value(), self._populate_imspec_from_assetdecl(scenename, bg.name, 'bg'))
     # 目前不需要其他操作
-    pass
+    return
 
   def get_terminator(self, block : Block) -> VNTerminatorInstBase:
     terminator = block.body.back
@@ -916,6 +930,23 @@ class _RenPyCodeGenHelper:
     resultimspec = (StringLiteral.get(codename, self.context),)
     self.imspec_dict[v] = resultimspec
     return resultimspec
+
+  def try_set_imspec_for_asset(self, v : Value, imspec : tuple[str, ...]):
+    if v in self.imspec_dict:
+      return
+
+    stringtized = ' '.join(imspec)
+    if stringtized in self.global_name_dict:
+      return
+
+    # 可以建
+    expr = self._gen_asmexpr(v, None)
+
+    resultnode = RenPyImageNode.create(self.context, codename=stringtized, displayable=expr)
+    self.insert_at_top(resultnode)
+    self.global_name_dict[stringtized] = resultnode
+    resultimspec = tuple([StringLiteral.get(v, self.context) for v in imspec])
+    self.imspec_dict[v] = resultimspec
 
   def get_audiospec(self, v : Value, src_dev : VNStandardDeviceKind | None) -> StringLiteral:
     if result := self.audiospec_dict.get(v, None):
