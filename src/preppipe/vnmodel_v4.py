@@ -478,6 +478,13 @@ class VNCharacterSymbol(VNSymbol):
 
   kind : OpOperand[EnumLiteral[VNCharacterKind]]
 
+  # 如果后端支持给所有文本上格式（比如 RenPy, 可以指定发言名和内容颜色等），
+  # 我们在这里记录些对发言内容的基础设置，这样可以更好地利用后端的功能
+  # 注意，这里的设置内容都是已经施加在内容上的，生成时对于这些特性不支持的后端不需要再对内容进行调整
+  # （即可以忽略剩下所有的设置项）
+  sayname_style : OpOperand[TextStyleLiteral] # 可以为空
+  saytext_style : OpOperand[TextStyleLiteral] # 可以为空
+
   @staticmethod
   def create(context : Context, kind : EnumLiteral[VNCharacterKind] | VNCharacterKind, name : str, codename : StringLiteral | str | None = None, loc : Location | None = None) -> VNCharacterSymbol:
     if isinstance(kind, VNCharacterKind):

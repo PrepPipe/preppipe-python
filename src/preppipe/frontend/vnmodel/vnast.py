@@ -596,7 +596,6 @@ class VNASTChangeDefaultDeviceNode(VNASTNodeBase):
 class VNASTCharacterSayInfoSymbol(Symbol):
   # 使用继承的 name 作为显示的名称
   displayname_expr : OpOperand[StringLiteral] # 如果是表达式的话用这里的值（暂不支持）
-  aliases : OpOperand[StringLiteral]
   namestyle : OpOperand[TextStyleLiteral] # 大概只会用 TextColor 不过还是预留其他的
   saytextstyle : OpOperand[TextStyleLiteral]
 

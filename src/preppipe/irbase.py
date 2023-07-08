@@ -2976,6 +2976,24 @@ class TextStyleLiteral(Literal):
     return TextStyleLiteral.get(basedict, base.context)
 
   @staticmethod
+  def get_subtracted(base : TextStyleLiteral, result : TextStyleLiteral) -> TextStyleLiteral | None:
+    if base is result:
+      return None
+    has_subtracted = False
+    styledict = {}
+    for k, v in result.value:
+      styledict[k] = v
+    for k, v in base.value:
+      if k in styledict:
+        if styledict[k] == v:
+          # 现在的值在 base 中存在
+          del styledict[k]
+          has_subtracted = True
+    if has_subtracted:
+      return TextStyleLiteral.get(styledict, result.context)
+    return result
+
+  @staticmethod
   def get_style_tuple(styles : dict[TextAttribute, typing.Any]):
     stylelist = []
     for attr, v in styles.items():
