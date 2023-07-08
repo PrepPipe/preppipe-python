@@ -175,6 +175,7 @@ class _RenPyCodeGenHelper:
       codename = self.get_unique_global_name(displayname)
     definenode, charexpr = RenPyDefineNode.create_character(self.context, varname=codename, displayname=displayname)
     ms.body.push_back(definenode)
+
     # charexpr.image.set_operand(0, StringLiteral.get(codename, self.context))
     match character.kind.get().value:
       case VNCharacterKind.NORMAL | VNCharacterKind.CROWD:
@@ -188,10 +189,16 @@ class _RenPyCodeGenHelper:
         # 默认用红字体
         charexpr.who_color.set_operand(0, StringLiteral.get('#800000', self.context))
         charexpr.what_color.set_operand(0, StringLiteral.get('#600000', self.context))
+    sayerstyle = None
+    if sayerstyle := character.sayname_style.try_get_value():
+      self._populate_renpy_characterexpr_from_sayerstyle(charexpr, sayerstyle)
+    textstyle = None
+    if textstyle := character.saytext_style.try_get_value():
+      self._populate_renpy_characterexpr_from_textstyle(charexpr, textstyle)
     # 暂时不支持其他项
     self.global_name_dict[codename] = definenode
     char_dict = collections.OrderedDict()
-    std_char_info = _RenPyCharacterInfo(sayername=displayname)
+    std_char_info = _RenPyCharacterInfo(sayername=displayname, sayerstyle=sayerstyle, textstyle=textstyle)
     char_dict[std_char_info] = definenode
     self.char_dict[character] = char_dict
     self.canonical_char_dict[character] = definenode
@@ -308,6 +315,11 @@ class _RenPyCodeGenHelper:
     what = []
     mode = 'adv'
     embed_voice = None
+    # 由于我们需要尝试在读取发言内容之后再找最合适的 RenPyCharacterExpr，
+    # 这里我们先声明用来找发言者信息的变量
+    sayername_str = ''
+    sayerstyle = None
+    is_sayername_specified = False
     for op in say.body.body:
       assert isinstance(op, VNInstruction)
       if isinstance(op, VNPutInst):
@@ -326,12 +338,13 @@ class _RenPyCodeGenHelper:
             sayername = name_data[0]
             sayerstyle = None
             if isinstance(sayername, StringLiteral):
-              pass
+              sayername_str = sayername.get_string()
             elif isinstance(sayername, TextFragmentLiteral):
               sayerstyle = sayername.style
+              sayername_str = sayername.get_string()
             else:
               raise RuntimeError("Unexpected sayername type: " + str(type(sayername)))
-            who = self.get_renpy_character(sayer, sayername=sayername.get_string(), mode=mode, sayerstyle=sayerstyle)
+            is_sayername_specified = True
           case VNStandardDeviceKind.O_SAY_TEXT_TEXT:
             what = self.collect_say_text(op.content)
             if parent_dev := dev.get_parent_device():
@@ -347,7 +360,69 @@ class _RenPyCodeGenHelper:
           # 忽略其他不支持的设备
           case _:
             continue
-    result = RenPySayNode.create(self.context, who=who, what=what)
+    # 扫完所有的发言内容，确定一个最合适的基础样式
+    single_text_style = None # 最常见的应该是只有单个样式
+    is_multiple_styles = False
+    is_raw_string_found = False # 只要有一个原始字符串，我们就认为没有样式
+    conflicting_attrs : set[TextAttribute] = set()
+    consistent_attrs : dict[TextAttribute, typing.Any] = {}
+    for v in what:
+      if isinstance(v, StringLiteral):
+        is_raw_string_found = True
+        break
+      if isinstance(v, TextFragmentLiteral):
+        curstyle = v.style
+        if single_text_style is None:
+          if not is_multiple_styles:
+            single_text_style = curstyle
+        else:
+          if single_text_style is not curstyle:
+            is_multiple_styles = True
+            single_text_style = None
+        for k, v in curstyle.value:
+          if k in conflicting_attrs:
+            continue
+          if k in consistent_attrs:
+            if consistent_attrs[k] != v:
+              conflicting_attrs.add(k)
+              del consistent_attrs[k]
+          else:
+            consistent_attrs[k] = v
+        # 当前文本片段处理完毕
+        continue
+      # 暂时假设其他内容不管格式
+    # 所有内容处理完毕
+    fallback_text_style = sayer.saytext_style.try_get_value() if sayer is not None else None
+    if is_raw_string_found:
+      final_text_style = None
+    elif single_text_style is not None:
+      final_text_style = single_text_style
+    elif len(consistent_attrs) == 0:
+      final_text_style = fallback_text_style
+    else:
+      # 目前只支持颜色
+      if TextAttribute.TextColor in consistent_attrs:
+        final_text_style = TextStyleLiteral.get({TextAttribute.TextColor : consistent_attrs[TextAttribute.TextColor]}, self.context)
+      else:
+        final_text_style = fallback_text_style
+    if is_sayername_specified:
+      who = self.get_renpy_character(sayer, sayername=sayername_str, mode=mode, sayerstyle=sayerstyle, textstyle=final_text_style)
+    # 根据最终的效果去调整现在 what 中的内容
+    final_what = what
+    if final_text_style is not None:
+      final_what = []
+      for v in what:
+        if isinstance(v, TextFragmentLiteral):
+          curstyle = v.style
+          if diff := TextStyleLiteral.get_subtracted(final_text_style, curstyle):
+            newvalue = TextFragmentLiteral.get(self.context, v.content, diff)
+          else:
+            # 这种情况下时整个文本的样式与基础样式相符，只用字符串就够了
+            newvalue = v.content
+          final_what.append(newvalue)
+        else:
+          final_what.append(v)
+    result = RenPySayNode.create(self.context, who=who, what=final_what)
     if wait is None:
       result.interact.set_operand(0, BoolLiteral.get(False, self.context))
     if sayid := say.sayid.try_get_value():
@@ -680,12 +755,21 @@ class _RenPyCodeGenHelper:
         case _:
           # TODO
           pass
+  def _populate_renpy_characterexpr_from_textstyle(self, charexpr : RenPyCharacterExpr, textstyle : TextStyleLiteral):
+    for style, v in textstyle.value:
+      match style:
+        case TextAttribute.TextColor:
+          assert isinstance(v, Color)
+          charexpr.what_color.set_operand(0, StringLiteral.get(v.get_string(), self.context))
+        case _:
+          # TODO
+          pass
 
-  def get_renpy_character(self, vncharacter : VNCharacterSymbol, sayername : str, mode : str = 'adv', sayerstyle : TextStyleLiteral | None = None) -> RenPyDefineNode:
+  def get_renpy_character(self, vncharacter : VNCharacterSymbol, sayername : str, mode : str = 'adv', sayerstyle : TextStyleLiteral | None = None, textstyle : TextStyleLiteral | None = None) -> RenPyDefineNode:
     # 暂不支持 side image
     assert vncharacter in self.char_dict
     display_dict = self.char_dict[vncharacter]
-    info = _RenPyCharacterInfo(sayername=sayername, mode=mode, sayerstyle=sayerstyle)
+    info = _RenPyCharacterInfo(sayername=sayername, mode=mode, sayerstyle=sayerstyle, textstyle=textstyle)
     if info in display_dict:
       return display_dict[info]
     # 我们需要为了这个显示名称新建一个 Character
@@ -699,6 +783,8 @@ class _RenPyCodeGenHelper:
       charexpr.kind.set_operand(0, StringLiteral.get(mode, self.context))
     if sayerstyle is not None:
       self._populate_renpy_characterexpr_from_sayerstyle(charexpr, sayerstyle)
+    if textstyle is not None:
+      self._populate_renpy_characterexpr_from_textstyle(charexpr, textstyle)
     display_dict[info] = definenode
     self.global_name_dict[definenode.varname.get().get_string()] = definenode
     return definenode
