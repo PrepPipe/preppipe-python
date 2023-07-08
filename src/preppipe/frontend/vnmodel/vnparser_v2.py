@@ -984,6 +984,18 @@ def cmd_long_speech_mode(parser : VNParser, state : VNASTParsingState, commandop
     sayerlist.append(name)
   node = VNASTSayModeChangeNode.create(context=state.context, target_mode=VNASTSayMode.MODE_LONG_SPEECH, specified_sayers=sayerlist)
   state.emit_node(node)
+  # 如果长发言命令指定了状态改变，我们需要加状态改变的结点
+  if sayer is not None:
+    if len(sayer.args) > 0:
+      statelist = []
+      for a in sayer.args:
+        if isinstance(a, StringLiteral):
+          statelist.append(a)
+        elif isinstance(a, TextFragmentLiteral):
+          statelist.append(a.content)
+      if len(statelist) > 0:
+        statechange = VNASTCharacterStateChangeNode.create(context=state.context, character=sayer.name, deststate=sayer.args, loc=commandop.location)
+        state.emit_node(statechange)
 
 @CommandDecl(vn_command_ns, _imports, 'InterleaveSayer', alias={
   '交替发言': {'sayer': '发言者'}, # zh_CN

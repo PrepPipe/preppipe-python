@@ -2965,6 +2965,17 @@ class TextStyleLiteral(Literal):
     return Literal._get_literal_impl(TextStyleLiteral, value, context)
 
   @staticmethod
+  def get_added(base : TextStyleLiteral, override : TextStyleLiteral) -> TextStyleLiteral:
+    if base == override:
+      return base
+    basedict = {}
+    for k, v in base.value:
+      basedict[k] = v
+    for k, v in override.value:
+      basedict[k] = v
+    return TextStyleLiteral.get(basedict, base.context)
+
+  @staticmethod
   def get_style_tuple(styles : dict[TextAttribute, typing.Any]):
     stylelist = []
     for attr, v in styles.items():
