@@ -472,6 +472,9 @@ class _ODParseContext:
         elif element.qname[1] == "soft-page-break":
           # entering a new page
           self.odf_encountering_pagebreak()
+        elif element.qname[1] in ("bookmark"):
+          # ignore
+          pass
         else:
           paragraph.push_back(self._get_unsupported_element_op(element))
           # MessageHandler.warning("Warning: unhandled node type in frame: " + str(element.qname) + ": " + str(element), self.filePath, str(loc))

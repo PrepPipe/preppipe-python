@@ -488,13 +488,15 @@ class _RenPyCodeGenHelper:
         remove_imspec = self.get_impsec(modifyvalue, devkind)
         newvalue = instr.content.get()
         new_imspec = self.get_impsec(newvalue, devkind)
+        show = RenPyShowNode.create(context=self.context, imspec=new_imspec)
+        show.insert_before(insert_before)
+        new_insert_point = show
         if remove_imspec[0] != new_imspec[0]:
           # 只有第一项不一样时才要 hide
           hide = RenPyHideNode.create(context=self.context, imspec=remove_imspec)
-          hide.insert_before(insert_before)
-        show = RenPyShowNode.create(context=self.context, imspec=new_imspec)
-        show.insert_before(insert_before)
-        return show
+          hide.insert_before(show)
+          new_insert_point = hide
+        return new_insert_point
       case _:
         raise NotImplementedError("TODO")
     return insert_before
