@@ -1749,6 +1749,19 @@ class VNCodeGen:
           aliasname = u.value.get_string()
           alias = VNAliasSymbol.create(context=self.context, name=aliasname, target_name=symb.name, target_namespace=ns.get_namespace_string(), loc=symb.location)
           ns.add_alias(alias)
+        # 尝试总结通用的发言名称的样式和发言内容的样式
+        sayname_styles = set()
+        saytext_styles = set()
+        for info in character.sayinfo:
+          sayname_styles.add(info.namestyle.try_get_value())
+          saytext_styles.add(info.saytextstyle.try_get_value())
+        if None not in sayname_styles and len(sayname_styles) == 1:
+          sayname_style = next(iter(sayname_styles))
+          symb.sayname_style.set_operand(0, sayname_style)
+        if None not in saytext_styles and len(saytext_styles) == 1:
+          saytext_style = next(iter(saytext_styles))
+          symb.saytext_style.set_operand(0, saytext_style)
+        # 添加立绘信息
         for sprite in character.sprites:
           state = sprite.name.split(',')
           matcher.add_valid_state(tuple(state))
