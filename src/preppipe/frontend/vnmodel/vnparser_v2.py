@@ -827,6 +827,16 @@ def cmd_hide_image(parser : VNParser, state : VNASTParsingState, commandop : Gen
   node = VNASTAssetReference.create(context=state.context, kind=VNASTAssetKind.KIND_IMAGE, operation=VNASTAssetIntendedOperation.OP_REMOVE, asset=ref, name=commandop.name, loc=commandop.location)
   transition.push_back(node)
 
+@CommandDecl(vn_command_ns, _imports, 'SetBGM', alias={
+  '设置背景音乐': {'bgm': '音乐'}
+})
+def cmd_set_bgm(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, bgm : str | AudioAssetData):
+  if isinstance(bgm, str):
+    result_bgm = VNASTPendingAssetReference.get(value=bgm, args=None, kwargs=None, context=state.context)
+  elif isinstance(bgm, AudioAssetData):
+    result_bgm = bgm
+  node = VNASTSetBackgroundMusicNode.create(context=state.context, bgm=result_bgm, name=commandop.name, loc=commandop.location)
+  state.emit_node(node)
 
 # ------------------------------------------------------------------------------
 # 控制流相关的命令

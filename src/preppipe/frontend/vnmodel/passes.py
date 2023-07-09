@@ -45,7 +45,7 @@ class VNParseTransform(TransformBase):
     for doc in self.inputs:
       self._parser.add_document(doc)
     ast = self._parser.ast
-    print(ast.get_short_str())
+    # print(ast.get_short_str())
     return ast
 
 @MiddleEndDecl('vncodegen', input_decl=VNAST, output_decl=VNModel)

@@ -206,3 +206,18 @@ def emit_image_expr_from_str(context : Context, s : str, basepath : str,  placeh
   if result := emit_image_expr_from_path(context=context, pathexpr=s, basepath=basepath):
     return result
   return None
+
+def _try_open_audio(p : str) -> str | None:
+  try:
+    f = pydub.AudioSegment.from_file(p)
+    if len(f) > 0:
+      # len(f) 是时长，单位是毫秒
+      return p
+  except:
+    return None
+  return None
+
+def emit_audio_from_path(context : Context, pathexpr : str, basepath : str) -> AudioAssetData | None:
+  if path := context.get_file_auditor().search(querypath=pathexpr, basepath=basepath, filecheckCB=_try_open_audio):
+    return context.get_or_create_audio_asset_data_external(path, None)
+  return None

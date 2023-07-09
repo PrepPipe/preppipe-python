@@ -211,6 +211,16 @@ class VNASTAssetReference(VNASTNodeBase):
     return VNASTAssetReference(init_mode=IRObjectInitMode.CONSTRUCT, context=context, kind=kind, operation=operation, asset=asset, name=name, loc=loc)
 
 @IROperationDataclass
+class VNASTSetBackgroundMusicNode(VNASTNodeBase):
+  # 该结点不会在 VNASTTransitionNode 之下，因为它不需要和其他命令进行同步
+  # 即使以后加淡入淡出也是这样
+  bgm : OpOperand # VNASTPendingAssetReference | AudioAssetData
+
+  @staticmethod
+  def create(context : Context, bgm : Value, name : str = '', loc : Location | None = None):
+    return VNASTSetBackgroundMusicNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, bgm=bgm, name=name, loc=loc)
+
+@IROperationDataclass
 class VNASTAssetDeclSymbol(Symbol):
   # 我们使用声明的名称来作为这个 VNASTAssetDeclSymbol 的名称
   kind : OpOperand[EnumLiteral[VNASTAssetKind]]
@@ -795,6 +805,8 @@ class VNASTVisitor:
   def visitVNASTSayNode(self, node : VNASTSayNode):
     return self.visit_default_handler(node)
   def visitVNASTAssetReference(self, node : VNASTAssetReference):
+    return self.visit_default_handler(node)
+  def visitVNASTSetBackgroundMusicNode(self, node : VNASTSetBackgroundMusicNode):
     return self.visit_default_handler(node)
   def visitVNASTSceneSwitchNode(self, node : VNASTSceneSwitchNode):
     return self.visit_default_handler(node)
