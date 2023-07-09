@@ -1,0 +1,18 @@
+name: pyinstaller_build
+
+on: [workflow_dispatch]
+
+jobs:
+  publish:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows]
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/test
+      - name: install pyinstaller
+        run: pip install pyinstaller
+      - name: run pyinstaller
+        run: |
+          pyinstaller --collect-data preppipe -F preppipe_cli.py
