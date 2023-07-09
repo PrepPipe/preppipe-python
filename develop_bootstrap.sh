@@ -3,7 +3,11 @@
 # install dependencies
 sudo apt update
 sudo apt install -y python3-pip python3-venv ffmpeg
-sudo python3 -m pip install odfpy pillow pydub numpy ghostscript editdistance bidict build twine pypinyin graphviz
+# dependendies for building
+sudo python3 -m pip install build twine
+# dependencies for preppipe
+sudo python3 -m pip install llist odfpy pillow pydub numpy ghostscript editdistance bidict pypinyin graphviz
+sudo python3 -m pip install antlr4-python3-runtime>=4.10
 
 # do a build to generate src/preppipe/_version.py
 python3 -m build
