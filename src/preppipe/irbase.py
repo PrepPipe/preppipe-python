@@ -2685,7 +2685,8 @@ class AudioAssetData(AssetData[pydub.AudioSegment, str]):
       return None
     else:
       _basepath, ext = os.path.splitext(backing_store_path)
-      ext = ext.lower()
+      assert ext[0] == '.'
+      ext = ext[1:].lower()
       if ext in self._SUPPORTED_FORMATS:
         return ext
       else:
