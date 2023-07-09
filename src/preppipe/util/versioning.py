@@ -5,7 +5,7 @@ import shutil
 import os
 import subprocess
 
-from .._version import *
+from .._version import __version__
 
 def get_version_string() -> str:
   if shutil.which('git') is not None:
