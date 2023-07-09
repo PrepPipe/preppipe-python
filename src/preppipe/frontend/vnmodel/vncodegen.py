@@ -15,6 +15,7 @@ from ...vnmodel_v4 import *
 from ...imageexpr import *
 from ..commandsyntaxparser import *
 from .vnast import *
+from .vnutil import *
 from ...renpy.ast import RenPyASMNode
 
 class _PartialStateMatcher:
@@ -356,6 +357,12 @@ class VNCodeGen:
       return func
     return None
 
+  def resolve_asset(self, name : str, from_namespace : tuple[str, ...], parsecontext : ParseContext) -> VNConstExprAsSymbol | None:
+    asset = self.resolver.unqualified_lookup(name, from_namespace, None)
+    if asset is None or not isinstance(asset, VNConstExprAsSymbol):
+      return None
+    return asset
+
   def resolve_character(self, sayname : str, from_namespace : tuple[str, ...], parsecontext : ParseContext) -> VNCharacterSymbol | None:
     # 尝试解析对角色名称的引用
     # 返回（1）实际发言名，（2）发言者身份
@@ -518,6 +525,7 @@ class VNCodeGen:
   class _NonlocalCodegenHelper(VNASTVisitor):
     codegen : VNCodeGen
     namespace_tuple : tuple[str, ...]
+    basepath : str
     parsecontext : VNCodeGen.ParseContext
     warningdest : Block
 
@@ -589,7 +597,7 @@ class VNCodeGen:
     # 有部分结点既可以在文件域出现也可以在函数域出现，并且对它们的处理也是一样的
     # 我们就用这一个函数来同时处理这两种情况
     # 如果结点可以处理就返回 True，结点没有处理（不是所列举的情况）就返回 False
-    helper = VNCodeGen._NonlocalCodegenHelper(codegen=self, namespace_tuple=self.get_file_nstuple(file), parsecontext=parsecontext, warningdest=warningdest)
+    helper = VNCodeGen._NonlocalCodegenHelper(codegen=self, namespace_tuple=self.get_file_nstuple(file), basepath=file.location.get_file_path(), parsecontext=parsecontext, warningdest=warningdest)
     return helper.visit(op)
 
   def handle_filelocal_node(self, file : VNASTFileInfo, parsecontext : ParseContext, op : VNASTNodeBase, warningdest : Block):
@@ -660,6 +668,8 @@ class VNCodeGen:
     scene_bg : AssetState | None = None # 场景背景的信息。不参与普通的使用中资源的查找，所以放在外面
     scene_symb : VNSceneSymbol | None = None # 当前场景
     scene_states : tuple[str,...] | None = None
+
+    bgm : AudioAssetData | None = None
 
     def update_character_sayname(self, ch : VNCharacterSymbol, oldname : str, newname : str):
       saynamelist = self.character_sayname_inuse[ch]
@@ -742,7 +752,7 @@ class VNCodeGen:
         character_sayname_inuse[symb] = names.copy()
       asset_info = [info.copy() for info in parent.asset_info]
       scene_bg = parent.scene_bg.copy() if  parent.scene_bg is not None else None
-      return VNCodeGen.SceneContext(character_dict=parent.character_dict.copy(),character_states=character_states, character_sayname_inuse=character_sayname_inuse, asset_info=asset_info, scene_bg=scene_bg, scene_symb=parent.scene_symb, scene_states=parent.scene_states)
+      return VNCodeGen.SceneContext(character_dict=parent.character_dict.copy(),character_states=character_states, character_sayname_inuse=character_sayname_inuse, asset_info=asset_info, scene_bg=scene_bg, scene_symb=parent.scene_symb, scene_states=parent.scene_states, bgm=parent.bgm)
 
   @dataclasses.dataclass
   class FunctionCodegenContext:
@@ -1389,6 +1399,36 @@ class VNCodeGen:
       self.transition_child_finishtimes.clear()
       return None
 
+    def _resolve_audio_reference(self, audio : VNASTPendingAssetReference) -> AudioAssetData | None:
+      args = []
+      kwargs = {}
+      name = audio.populate_argdicts(args, kwargs)
+      # 先找有没有声明的资源
+      if asset := self.codegen.resolve_asset(name, self.namespace_tuple, self.parsecontext):
+        v = asset.get_value()
+        if isinstance(v, AudioAssetData):
+          return v
+      # 再找有没有文件符合要求
+      if asset := emit_audio_from_path(context=self.context, pathexpr=name, basepath=self.basepath):
+        return asset
+      return None
+
+    def visitVNASTSetBackgroundMusicNode(self, node : VNASTSetBackgroundMusicNode) -> VNTerminatorInstBase | None:
+      bgm = node.bgm.get()
+      if isinstance(bgm, AudioAssetData):
+        bgmdata = bgm
+      elif isinstance(bgm, VNASTPendingAssetReference):
+        bgmdata = self._resolve_audio_reference(bgm)
+        if bgmdata is None:
+          self.codegen.emit_error('vncodegen-audio-notfound', msg='Cannot find audio ' + str(bgm), loc=node.location, dest=self.destblock)
+          return None
+      else:
+        raise RuntimeError("Should not happen")
+      bgmnode = VNCreateInst.create(context=self.context, start_time=self.starttime, content=bgmdata, device=self.parsecontext.dev_bgm, name=node.name, loc=node.location)
+      self.destblock.push_back(bgmnode)
+      self.scenecontext.bgm = bgm
+      return None
+
     def visitVNASTSceneSwitchNode(self, node : VNASTSceneSwitchNode) -> VNTerminatorInstBase | None:
       if self.check_blocklocal_cond(node):
         return None
@@ -1532,6 +1572,7 @@ class VNCodeGen:
       VNCodeGen._FunctionCodegenHelper.run_codegen_for_region(
         codegen=self.codegen,
         namespace_tuple=self.namespace_tuple,
+        basepath=self.basepath,
         functioncontext=self.functioncontext,
         baseparsecontext=self.parsecontext,
         basescenecontext=self.scenecontext,
@@ -1638,11 +1679,11 @@ class VNCodeGen:
         self.run_default_terminate()
 
     @staticmethod
-    def run_codegen_for_region(codegen : VNCodeGen, namespace_tuple : tuple[str,...], functioncontext : VNCodeGen.FunctionCodegenContext, baseparsecontext : VNCodeGen.ParseContext, basescenecontext : VNCodeGen.SceneContext | None, srcregion : VNASTCodegenRegion, dest : Block, deststarttime : Value, convergeblock : Block | None = None, loopexitblock : Block | None = None):
+    def run_codegen_for_region(codegen : VNCodeGen, namespace_tuple : tuple[str,...], basepath : str, functioncontext : VNCodeGen.FunctionCodegenContext, baseparsecontext : VNCodeGen.ParseContext, basescenecontext : VNCodeGen.SceneContext | None, srcregion : VNASTCodegenRegion, dest : Block, deststarttime : Value, convergeblock : Block | None = None, loopexitblock : Block | None = None):
       parsecontext = VNCodeGen.ParseContext.forkfrom(baseparsecontext)
       scenecontext = VNCodeGen.SceneContext.forkfrom(basescenecontext) if basescenecontext is not None else VNCodeGen.SceneContext()
       assert isinstance(deststarttime.valuetype, VNTimeOrderType)
-      helper = VNCodeGen._FunctionCodegenHelper(codegen=codegen, namespace_tuple=namespace_tuple, parsecontext=parsecontext, srcregion=srcregion, warningdest=dest, destblock=dest, convergeblock=convergeblock, loopexitblock=loopexitblock, scenecontext=scenecontext, functioncontext=functioncontext, starttime=deststarttime)
+      helper = VNCodeGen._FunctionCodegenHelper(codegen=codegen, namespace_tuple=namespace_tuple, basepath=basepath, parsecontext=parsecontext, srcregion=srcregion, warningdest=dest, destblock=dest, convergeblock=convergeblock, loopexitblock=loopexitblock, scenecontext=scenecontext, functioncontext=functioncontext, starttime=deststarttime)
       helper.codegen_mainloop()
 
   def generate_function_body(self, srcfile : VNASTFileInfo, filecontext : ParseContext, src : VNASTFunction, dest : VNFunction):
@@ -1659,7 +1700,7 @@ class VNCodeGen:
     entry = dest.create_block('Entry')
     starttime = entry.get_argument('start')
     functioncontext = VNCodeGen.FunctionCodegenContext(destfunction=dest)
-    VNCodeGen._FunctionCodegenHelper.run_codegen_for_region(codegen=self, namespace_tuple=self.get_file_nstuple(srcfile), functioncontext=functioncontext, baseparsecontext=filecontext, basescenecontext=None, srcregion=src, dest=entry, deststarttime=starttime)
+    VNCodeGen._FunctionCodegenHelper.run_codegen_for_region(codegen=self, namespace_tuple=self.get_file_nstuple(srcfile), basepath=srcfile.location.get_file_path(), functioncontext=functioncontext, baseparsecontext=filecontext, basescenecontext=None, srcregion=src, dest=entry, deststarttime=starttime)
     # 最后检查所有创建的基本块，看看有没有基本块没有被用上
     # （有的话大概是跳转的时候目标点名字错了）
     # 所有没内容的基本块都塞上错误信息
