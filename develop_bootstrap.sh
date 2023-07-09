@@ -15,6 +15,7 @@ python3 -m build
 # To create pyinstaller package, run:
 # pyinstaller --collect-data preppipe -F preppipe_cli.py
 # (Add --paths <venv>/lib/python3.10/site-packages/ if using virtual environment)
+# (Add --icon=preppipe.ico to include the icon if on Windows or Mac)
 
 # if for whatever reason the build fails, src/preppipe/_version.py can be created with the following content: (remove the comment)
 #-------------------------------------------------------------------------------
