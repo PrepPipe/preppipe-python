@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 
 from .irbase import *
 from .util.audit import *
@@ -501,10 +502,17 @@ def pipeline_main(args : typing.List[str] = None):
   current_ir_ops = []
   step_count = 0
   is_current_ir_used = False
+  starttime = time.time()
+  def get_timestr():
+    curtime = time.time()
+    timestr = "{:.2f}".format(curtime - starttime)
+    return timestr
   for t in pipeline:
     step_count += 1
     transform_cls = type(t)
     info = TransformRegistration._registration_record[transform_cls]
+    if result_args.verbose:
+      print('[' + get_timestr() + '] Running ' + info.flag + " (" + str(step_count) + '/' + str(len(pipeline)) + ')')
     is_append_result = False
     if isinstance(info.input_decl, type):
       # 该转换读取IR
@@ -565,6 +573,9 @@ def pipeline_main(args : typing.List[str] = None):
 
   if len(current_ir_ops) > 0 and not is_current_ir_used:
     print('Warning: last-stage IR not used')
+
+  if result_args.verbose:
+    print('[' + get_timestr() + '] Finished')
 
   return
 
