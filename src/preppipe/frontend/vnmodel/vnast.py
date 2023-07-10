@@ -753,15 +753,17 @@ class UnrecognizedCommandOp(ErrorOp):
   _positionalarg_block : Block
   _keywordarg_region : SymbolTableRegion
 
-  def construct_init(self, *, src_op : GeneralCommandOp | None = None,  **kwargs) -> None:
-    super().construct_init(error_code='vnparser-unrecognized-command', error_msg=None, **kwargs)
+  def construct_init(self, *, src_op : GeneralCommandOp,  **kwargs) -> None:
+    src_head = src_op.get_symbol_table('head')
+    src_name_symbol = src_head.get('name')
+    assert isinstance(src_name_symbol, CMDValueSymbol)
+    assert isinstance(src_name_symbol.value, StringLiteral)
+    super().construct_init(error_code='vnparser-unrecognized-command', error_msg=src_name_symbol.value, **kwargs)
     self._head_region = self._add_symbol_table('head')
     self._positionalarg_region = self._add_region('positional_arg')
     self._keywordarg_region = self._add_symbol_table('keyword_arg')
     self._positionalarg_block = self._positionalarg_region.create_block('')
-    src_head = src_op.get_symbol_table('head')
-    src_name_symbol = src_head.get('name')
-    assert isinstance(src_name_symbol, CMDValueSymbol)
+
     name_symbol = CMDValueSymbol.create(name='name', loc=src_name_symbol.location, value=src_name_symbol.value)
     self._head_region.add(name_symbol)
     src_rawarg_symbol = src_head.get('rawarg')

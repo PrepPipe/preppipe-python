@@ -154,6 +154,10 @@ class GeneralCommandOp(Operation):
     assert self._extend_data_block.body.empty
     self._extend_data_block.push_back(data)
 
+  def try_get_raw_arg(self) -> str | None:
+    if rawarg := self._head_region.get('rawarg'):
+      return rawarg.value.get_string()
+
   def get_short_str(self) -> str:
     namesymbol = self._head_region.get('name')
     result = '[' + namesymbol.value.get_string()
@@ -259,7 +263,8 @@ def _visit_block(hostblock : Block, prev_command : GeneralCommandOp, blocks_to_r
     return None
   # 如果是命令的话就调用下面的具体实现
   # 在第一个字符元素前添加命令操作项
-  last_command = _visit_command_block_impl(hostblock, ctx, result_tuple[0], result_tuple[1], result_tuple[2])
+  command_str, asset_list, first_op, consumed_ops, infolist = result_tuple
+  last_command = _visit_command_block_impl(hostblock, ctx, command_str, asset_list, first_op, infolist)
   # 然后把该块内y用于生成命令的所有内容清除
   consumed_ops = result_tuple[3]
   for deadop in consumed_ops:
@@ -279,7 +284,7 @@ class CommandSyntaxAnalysisTransform(TransformBase):
       result.append(op)
     return result
 
-def check_is_command_start(b : Block, ctx: Context) -> typing.Tuple[str, typing.List[AssetData], IMElementOp, typing.List[IMElementOp]] | None:
+def check_is_command_start(b : Block, ctx: Context) -> tuple[str, list[AssetData], IMElementOp, list[IMElementOp], list[_InitParsedCommandInfo]] | None:
   # 检查该段是否含有以 _command_start_text 中所标的字符开头并且是纯内容（不包含像是 IMFrameOp, IMListOp这种），是的话就返回:
   # (1) 一个纯文本的段落内容，所有资源都以'\0'替代；
   # (2) 一个资源列表（即那些被以'\0'替代的内容）
@@ -331,8 +336,14 @@ def check_is_command_start(b : Block, ctx: Context) -> typing.Tuple[str, typing.
   # 如果没有找到开头的话那也不是命令段
   if first_op is None:
     return None
-  # 完成
-  return (command_str, asset_list, first_op, consumed_ops)
+  # 如果无法顺利完成命令扫描的话也认为不是命令
+  infolist = _split_text_as_commands(command_str)
+  if isinstance(infolist, _CommandParseErrorRecord):
+    #errorloc = get_loc_at_offset(infolist.column)
+    #errop = ErrorOp.create(error_code='cmd-scan-error', context=ctx, error_msg=StringLiteral.get(infolist.msg, ctx), name='', loc=errorloc)
+    #errop.insert_before(insert_before_op)
+    return None
+  return (command_str, asset_list, first_op, consumed_ops, infolist)
 
 # ------------------------------------------------------------------------------
 # 具体实现
@@ -428,13 +439,16 @@ def _split_text_as_commands(text : str) -> typing.List[_InitParsedCommandInfo] |
   lexer = CommandScanLexer(istream)
   #lexer.removeErrorListeners(); # remove ConsoleErrorListener
   lexer.addErrorListener(error_listener)
-  lexer.addErrorListener(ConsoleErrorListener())
+  #lexer.addErrorListener(ConsoleErrorListener())
   tstream = antlr4.CommonTokenStream(lexer)
   parser = CommandScanParser(tstream)
   #parser.removeErrorListeners(); # remove ConsoleErrorListener
   parser.addErrorListener(error_listener)
-  parser.addErrorListener(ConsoleErrorListener())
-  tree = parser.line()
+  #parser.addErrorListener(ConsoleErrorListener())
+  try:
+    tree = parser.line()
+  except:
+    return error_listener.get_error_record()
 
   if error_listener.error_occurred:
     return error_listener.get_error_record()
@@ -621,7 +635,7 @@ class _CommandParseVisitorImpl(CommandParseVisitor):
 #  body : str # content of the body (leading and terminating whitespace trimmed)
 #  body_range : typing.Tuple[int, int] # start and end position of the body text
 
-def _visit_command_block_impl(b : Block, ctx : Context, command_str : str, asset_list : typing.List[AssetData], insert_before_op : IMElementOp) -> GeneralCommandOp | None:
+def _visit_command_block_impl(b : Block, ctx : Context, command_str : str, asset_list : typing.List[AssetData], insert_before_op : IMElementOp, infolist : list[_InitParsedCommandInfo]) -> GeneralCommandOp | None:
   # 如果生成了命令的话，返回最后一个生成的命令
   # 帮助生成位置信息
   headloc = insert_before_op.location
@@ -639,12 +653,13 @@ def _visit_command_block_impl(b : Block, ctx : Context, command_str : str, asset
     asset_map_dict[asset_loc_list[i]] = asset_list[i]
 
   # 首先，把命令段分割成一系列命令，如果无法形成命令则添加一个错误
-  infolist = _split_text_as_commands(command_str)
-  if isinstance(infolist, _CommandParseErrorRecord):
-    errorloc = get_loc_at_offset(infolist.column)
-    errop = ErrorOp.create(error_code='cmd-scan-error', context=ctx, error_msg=StringLiteral.get(infolist.msg, ctx), name='', loc=errorloc)
-    errop.insert_before(insert_before_op)
-    return
+  # 更新：此段内容已移至判断命令段开始处
+  #infolist = _split_text_as_commands(command_str)
+  #if isinstance(infolist, _CommandParseErrorRecord):
+  #  errorloc = get_loc_at_offset(infolist.column)
+  #  errop = ErrorOp.create(error_code='cmd-scan-error', context=ctx, error_msg=StringLiteral.get(infolist.msg, ctx), name='', loc=errorloc)
+  #  errop.insert_before(insert_before_op)
+  #  return
 
   # 开始处理
   last_command = None

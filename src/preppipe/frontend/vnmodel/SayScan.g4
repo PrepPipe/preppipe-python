@@ -24,7 +24,7 @@ SENTENCESPLITTER :  '.' | '\u3002'
 // normal text start with a non-whitespace and non-quote/special character, followed by a sequence of non-quote/special characters (but can have whitespace)
 // We also exclude '(', ')' and the full-width versions in the normal text
 // we will not have leading whitespaces but can have trailing spaces
-NORMALTEXT : ~["'\u201C\u201D[\u3010\]\u3011:\uFF1A(\uFF08)\uFF09,\uFF0C?\uFF1F!\uFF01\u2026 \t\r\n\u00A0\u2000-\u200B\u202F\u205F\u3000\uFEFF]~["'\u201C\u201D[\u3010\]\u3011:\uFF1A(\uFF08)\uFF09,\uFF0C?\uFF1F!\uFF01\u2026]* ;
+NORMALTEXT : ~["'\u201C\u201D[\u3010\]\u3011:\uFF1A(\uFF08)\uFF09,\uFF0C.\u3002?\uFF1F!\uFF01\u2026 \t\r\n\u00A0\u2000-\u200B\u202F\u205F\u3000\uFEFF]~["'\u201C\u201D[\u3010\]\u3011:\uFF1A(\uFF08)\uFF09,\uFF0C.\u3002?\uFF1F!\uFF01\u2026]* ;
 
 statusexpr : STATUSSTART NORMALTEXT (COMMASPLITTER NORMALTEXT)*? STATUSEND ;
 

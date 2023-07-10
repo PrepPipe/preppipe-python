@@ -1803,10 +1803,9 @@ class ErrorOp(MetadataOp):
   # 一般来说所有转换都需要忽视这些错误项，把它们留在IR里不去动它们
   _error_message_operand : OpOperand[StringLiteral]
 
-  def construct_init(self, *, error_code : str, error_msg : StringLiteral | None = None, name: str = '', loc: Location | None = None,  **kwargs) -> None:
+  def construct_init(self, *, error_code : str, error_msg : StringLiteral, name: str = '', loc: Location | None = None,  **kwargs) -> None:
     assert isinstance(error_code, str)
-    if error_msg is not None:
-      assert isinstance(error_msg, StringLiteral)
+    assert isinstance(error_msg, StringLiteral)
     super().construct_init(name=name, loc=loc, **kwargs)
     self._add_operand_with_value('message', error_msg)
     self.set_attr('Code', error_code)
@@ -1824,6 +1823,8 @@ class ErrorOp(MetadataOp):
 
   @staticmethod
   def create(error_code : str, context : Context, error_msg : StringLiteral | None = None, name: str = '', loc: Location | None = None) -> ErrorOp:
+    if error_msg is None:
+      error_msg = StringLiteral.get('', context)
     return ErrorOp(init_mode=IRObjectInitMode.CONSTRUCT, context=context, error_code = error_code, error_msg = error_msg, name = name, loc = loc)
 
 @IRObjectJsonTypeName("comment_op")

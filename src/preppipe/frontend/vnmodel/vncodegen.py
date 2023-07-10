@@ -1275,7 +1275,10 @@ class VNCodeGen:
       finalstate = self.handleCharacterStateChange(sayname=sayname, character=ch, statelist=states, loc=node.location)
       # 然后如果有立绘的话，让角色立绘上场
       info = self.scenecontext.try_get_character_state(sayname, ch)
-      assert info is not None and info.sprite_handle is None
+      assert info is not None
+      if info.sprite_handle is not None:
+        self.codegen.emit_error(code='vncodegen-character-stateerror', msg='Character ' + sayname + ' is already on stage and cannot enter again', loc=node.location, dest=self.destblock)
+        return None
       if sprite := self.get_character_sprite(ch, finalstate):
         assert isinstance(sprite.valuetype, ImageType)
         cnode = VNCreateInst.create(context=self.context, start_time=self.starttime, content=sprite, ty=VNHandleType.get(sprite.valuetype), device=self.parsecontext.dev_foreground, loc=node.location)
@@ -1302,6 +1305,9 @@ class VNCodeGen:
           self.handle_transition_and_finishtime(rm)
           self.destblock.push_back(rm)
           info.sprite_handle = None
+        else:
+          # 角色不在场上
+          self.codegen.emit_error(code='vncodegen-character-stateerror', msg='Character ' + sayname + ' is not on stage and cannot exit', loc=node.location, dest=self.destblock)
       return None
 
 

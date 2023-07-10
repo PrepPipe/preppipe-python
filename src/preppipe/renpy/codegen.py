@@ -309,6 +309,7 @@ class _RenPyCodeGenHelper:
       VNModifyInst : _RenPyCodeGenHelper.gen_modify,
       VNRemoveInst : _RenPyCodeGenHelper.gen_remove,
       VNCallInst : _RenPyCodeGenHelper.gen_call,
+      VNBackendInstructionGroup : _RenPyCodeGenHelper.gen_renpy_asm,
     }
 
   def collect_say_text(self, src : OpOperand) -> list[Value]:
@@ -623,6 +624,18 @@ class _RenPyCodeGenHelper:
     result = RenPyCallNode.create(self.context, label = calleelabel)
     result.insert_before(insert_before)
     return result
+
+  def gen_renpy_asm(self, instrs : list[VNInstruction], insert_before : RenPyNode) -> RenPyNode:
+    group = instrs[0]
+    assert isinstance(group, VNBackendInstructionGroup)
+    firstinstr = None
+    for op in group.body.body:
+      if isinstance(op, (MetadataOp, RenPyNode)):
+        cloned = op.clone()
+        cloned.insert_before(insert_before)
+        if firstinstr is None and isinstance(op, RenPyNode):
+          firstinstr = cloned
+    return firstinstr if firstinstr is not None else insert_before
 
   def match_instr_patterns(self, finishtime : Value, blocktime : Value) -> tuple[list[VNInstruction], typing.Callable[[typing.Any, list[VNInstruction], RenPyNode], RenPyNode]]:
     assert isinstance(finishtime, OpResult) and isinstance(finishtime.valuetype, VNTimeOrderType)
