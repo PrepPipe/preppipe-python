@@ -1103,3 +1103,11 @@ def cmd_expand_table(parser : VNParser, state : VNASTParsingState, commandop : G
           cmd.add_keyword_arg(argname, values[0], commandop.location, commandop.location)
     parser.handle_command_op(state=state, op=cmd)
 
+@CommandDecl(vn_command_ns, _imports, 'Comment', alias={
+  '注释': {'comment' : '注释'}, # zh_CN
+})
+def cmd_comment(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, comment : str):
+  if rawstr := commandop.try_get_raw_arg():
+    comment = rawstr
+  node = CommentOp.create(comment=StringLiteral.get(comment, state.context), name=commandop.name, loc=commandop.location)
+  state.emit_md(node)

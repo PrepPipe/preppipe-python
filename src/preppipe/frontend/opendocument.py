@@ -472,7 +472,7 @@ class _ODParseContext:
         elif element.qname[1] == "soft-page-break":
           # entering a new page
           self.odf_encountering_pagebreak()
-        elif element.qname[1] in ("bookmark"):
+        elif element.qname[1] in ("bookmark", "s"):
           # ignore
           pass
         else:
@@ -772,20 +772,20 @@ class _ODParseContext:
             cur_op = cur_op.get_next_node()
           # finished the first iteration
           # end the last fragment
-          assert len(cur_text) > 0
-          newfrag = StringLiteral.get(cur_text, self.ctx)
-          if cur_style is not None:
-            newfrag = TextFragmentLiteral.get(self.ctx, newfrag, cur_style)
-          # create the new element
-          new_content = None
-          if len(fragment_list) == 0:
-            new_content = newfrag
-          else:
-            fragment_list.append(newfrag)
-            new_content = fragment_list
-          newop  = IMElementOp.create(content = new_content, name = first_text_op.name, loc = first_text_op.location)
-          # now replace the current ops
-          newop.insert_before(first_text_op)
+          if len(cur_text) > 0:
+            newfrag = StringLiteral.get(cur_text, self.ctx)
+            if cur_style is not None:
+              newfrag = TextFragmentLiteral.get(self.ctx, newfrag, cur_style)
+            # create the new element
+            new_content = None
+            if len(fragment_list) == 0:
+              new_content = newfrag
+            else:
+              fragment_list.append(newfrag)
+              new_content = fragment_list
+            newop  = IMElementOp.create(content = new_content, name = first_text_op.name, loc = first_text_op.location)
+            # now replace the current ops
+            newop.insert_before(first_text_op)
           cur_op = first_text_op
           while cur_op is not end_op:
             cur_op = cur_op.erase_from_parent()
