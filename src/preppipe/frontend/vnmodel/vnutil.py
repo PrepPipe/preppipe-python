@@ -19,7 +19,7 @@ class VNASTImageExprSource(enum.Enum):
   SRC_CHARACTER_SIDEIMAGE = enum.auto() # 人物头像
   SRC_SCENE_BACKGROUND    = enum.auto() # 场景背景
 
-def emit_default_placeholder(context : Context, dest : ImageExprPlaceholderDest, screen_resolution : tuple[int, int] | None = None) -> PlaceholderImageLiteralExpr:
+def emit_default_placeholder(context : Context, dest : ImageExprPlaceholderDest, screen_resolution : tuple[int, int] | None = None, description : StringLiteral | None = None) -> PlaceholderImageLiteralExpr:
   if screen_resolution is None:
     screen_resolution = (1920, 1080)
   finalresolution = screen_resolution
@@ -35,7 +35,9 @@ def emit_default_placeholder(context : Context, dest : ImageExprPlaceholderDest,
       finalresolution = (width_p, width_p)
     case _:
       pass
-  placeholder = PlaceholderImageLiteralExpr.get(context=context, dest=dest, desc=StringLiteral.get('', context), size=IntTupleLiteral.get(finalresolution, context))
+  if description is None:
+    description = StringLiteral.get('', context)
+  placeholder = PlaceholderImageLiteralExpr.get(context=context, dest=dest, desc=description, size=IntTupleLiteral.get(finalresolution, context))
   return placeholder
 
 def parse_pixel_resolution_str(s : str) -> tuple[int, int] | None:

@@ -103,6 +103,12 @@ class SayScanner(SayScanVisitor):
       return
     raise RuntimeError("should not happen")
 
+  def visitNameexpr_strong(self, ctx:SayScanParser.Nameexpr_strongContext):
+    if node := ctx.QUOTEDSTR():
+      self.result.sayer = self.handle_quoted_str(node)
+      return
+    raise RuntimeError("should not happen")
+
   def visitStatusexpr(self, ctx:SayScanParser.StatusexprContext):
     if node := ctx.NORMALTEXT():
       if isinstance(node, list):
@@ -112,7 +118,7 @@ class SayScanner(SayScanVisitor):
 
   def visitContentexpr(self, ctx:SayScanParser.ContentexprContext):
     # 如果第一个终结符是 QUOTEDSTR, 那么我们只处理所有 QUOTEDSTR
-    # 如果第一个终结符是 NORMALTEXT，那么我们把所有内容都算进来
+    # 如果第一个终结符是 NORMALTEXT 或是 SENTENCESPLITTER, 那么我们把所有内容都算进来
     firstchild = ctx.getChild(0)
     match firstchild.getSymbol().type:
       case SayScanParser.QUOTEDSTR:
@@ -120,23 +126,30 @@ class SayScanner(SayScanVisitor):
           curresult = self.handle_quoted_str(c)
           self.result.content.append(curresult)
           self.result.is_content_quoted = True
-      case SayScanParser.NORMALTEXT:
+      case SayScanParser.NORMALTEXT | SayScanParser.SENTENCESPLITTER:
         curresult = self.collect_all_child(ctx)
         self.result.content.append(curresult)
       case _:
         raise RuntimeError("should not happen")
 
+  def visitContentexpr_strong(self, ctx:SayScanParser.Contentexpr_strongContext):
+    if node := ctx.QUOTEDSTR():
+      curresult = self.handle_quoted_str(node)
+      self.result.content.append(curresult)
+      self.result.is_content_quoted = True
+
 def analyze_say_expr(text : str, *, debug : bool = False) -> SayScanResult | None:
   error_listener = ErrorListenerBase()
   istream = antlr4.InputStream(text)
   lexer = SayScanLexer(istream)
+  lexer.removeErrorListeners()
   lexer.addErrorListener(error_listener)
-  lexer.addErrorListener(ConsoleErrorListener())
+  #lexer.addErrorListener(ConsoleErrorListener())
   tstream = antlr4.CommonTokenStream(lexer)
   parser = SayScanParser(tstream)
-  #parser.removeErrorListeners(); # remove ConsoleErrorListener
+  parser.removeErrorListeners(); # remove ConsoleErrorListener
   parser.addErrorListener(error_listener)
-  parser.addErrorListener(ConsoleErrorListener())
+  #parser.addErrorListener(ConsoleErrorListener())
   tree = parser.sayexpr()
   if error_listener.error_occurred:
     if debug:

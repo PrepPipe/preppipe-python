@@ -211,12 +211,12 @@ def try_parse_value_expr(body : str, loc : Location) -> GeneralCommandOp | str |
   istream = antlr4.InputStream(body)
   error_listener = _CommandParseErrorListener()
   lexer = CommandParseLexer(istream)
+  lexer.removeErrorListeners()
   lexer.addErrorListener(error_listener)
-  lexer.addErrorListener(ConsoleErrorListener())
   tstream = antlr4.CommonTokenStream(lexer)
   parser = CommandParseParser(tstream)
+  parser.removeErrorListeners()
   parser.addErrorListener(error_listener)
-  parser.addErrorListener(ConsoleErrorListener())
   try:
     tree = parser.value()
   except:
@@ -437,14 +437,12 @@ def _split_text_as_commands(text : str) -> typing.List[_InitParsedCommandInfo] |
   istream = antlr4.InputStream(text)
   error_listener = _CommandScanErrorListener()
   lexer = CommandScanLexer(istream)
-  #lexer.removeErrorListeners(); # remove ConsoleErrorListener
+  lexer.removeErrorListeners(); # remove ConsoleErrorListener
   lexer.addErrorListener(error_listener)
-  #lexer.addErrorListener(ConsoleErrorListener())
   tstream = antlr4.CommonTokenStream(lexer)
   parser = CommandScanParser(tstream)
-  #parser.removeErrorListeners(); # remove ConsoleErrorListener
+  parser.removeErrorListeners(); # remove ConsoleErrorListener
   parser.addErrorListener(error_listener)
-  #parser.addErrorListener(ConsoleErrorListener())
   try:
     tree = parser.line()
   except:
@@ -682,14 +680,12 @@ def _visit_command_block_impl(b : Block, ctx : Context, command_str : str, asset
     istream = antlr4.InputStream(body)
     error_listener = _CommandParseErrorListener()
     lexer = CommandParseLexer(istream)
-    #lexer.removeErrorListeners(); # remove ConsoleErrorListener
+    lexer.removeErrorListeners(); # remove ConsoleErrorListener
     lexer.addErrorListener(error_listener)
-    lexer.addErrorListener(ConsoleErrorListener())
     tstream = antlr4.CommonTokenStream(lexer)
     parser = CommandParseParser(tstream)
-    #parser.removeErrorListeners(); # remove ConsoleErrorListener
+    parser.removeErrorListeners(); # remove ConsoleErrorListener
     parser.addErrorListener(error_listener)
-    parser.addErrorListener(ConsoleErrorListener())
     tree = parser.command()
     if error_listener.error_occurred:
       record = error_listener.get_error_record()
