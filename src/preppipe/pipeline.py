@@ -465,7 +465,7 @@ class _JsonExportIR(TransformBase):
         # 1 --> 2
         toplevel = [toplevel, curop]
     json_str = exporter.write_json(toplevel)
-    with open(self.output, "w", newline="\n") as f:
+    with open(self.output, "w", newline="\n", encoding="utf-8") as f:
       f.write(json_str)
 
 def pipeline_main(args : typing.List[str] = None):
