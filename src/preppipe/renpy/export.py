@@ -522,9 +522,9 @@ def export_renpy(m : RenPyModel, out_path : str, template_dir : str = '') -> Non
   rtsrc = os.path.join(os.path.dirname(os.path.abspath(__file__)), rtname)
   rtdest = os.path.join(out_path, rtname)
   rttitle = '# PrepPipe ' + versioning.get_version_string() + '\n'
-  with open(rtdest, 'w') as dst:
+  with open(rtdest, 'w', encoding="utf-8") as dst:
     dst.write(rttitle)
-    with open(rtsrc, 'r') as src:
+    with open(rtsrc, 'r', encoding="utf-8") as src:
       all = src.read()
       dst.write(all)
 
@@ -533,7 +533,7 @@ def export_renpy(m : RenPyModel, out_path : str, template_dir : str = '') -> Non
     scriptpath = os.path.join(out_path, script.name + '.rpy')
     parentdir = os.path.dirname(scriptpath)
     os.makedirs(parentdir, exist_ok=True)
-    with open(scriptpath, 'w') as f:
+    with open(scriptpath, 'w', encoding="utf-8") as f:
       exporter = RenPyExportVisitor(f, indent_width=4)
       exporter.start_visit(script)
 
