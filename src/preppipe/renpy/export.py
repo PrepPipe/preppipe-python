@@ -218,7 +218,11 @@ class RenPyExportVisitor(RenPyASTVisitor):
     self.dest.write(v.get_string())
 
   def visitRenPyCharacterExpr(self, v : RenPyCharacterExpr):
-    pieces = ["Character(" + '"' + self.stringmarshal(v.displayname) + '"']
+    if v.displayname.try_get_value():
+      displayname_str = '"' + self.stringmarshal(v.displayname) + '"'
+    else:
+      displayname_str = 'None'
+    pieces = ["Character(" + displayname_str]
 
     # kind 值结果不能加引号，所以这里我们不使用 populate_operand()
     #self.populate_operand(pieces, "kind", v.kind, "")

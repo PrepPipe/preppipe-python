@@ -75,7 +75,7 @@ class RenPyCharacterExpr(RenPyNode, Value):
   body        : Block # 放需要的 RenPyASMExpr
 
   @staticmethod
-  def create(context : Context, displayname : StringLiteral | str) -> RenPyCharacterExpr:
+  def create(context : Context, displayname : StringLiteral | str | None) -> RenPyCharacterExpr:
     return RenPyCharacterExpr(init_mode=IRObjectInitMode.CONSTRUCT, context=context, displayname=displayname)
 
 @irdataop.IROperationDataclassWithValue(VoidType)
@@ -97,7 +97,7 @@ class RenPyDefineNode(RenPyNode, Value):
     return RenPyDefineNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, varname=varname, expr=expr, store=store, assign_operator=assign_operator)
 
   @staticmethod
-  def create_character(context : Context, varname : StringLiteral | str, displayname : StringLiteral | str) -> tuple[RenPyDefineNode, RenPyCharacterExpr]:
+  def create_character(context : Context, varname : StringLiteral | str, displayname : StringLiteral | str | None) -> tuple[RenPyDefineNode, RenPyCharacterExpr]:
     charexpr = RenPyCharacterExpr.create(context, displayname)
     defnode = RenPyDefineNode.create(context, varname=varname, expr=charexpr)
     defnode.body.push_back(charexpr)

@@ -3490,6 +3490,8 @@ class IRWriter:
           delayed_content = typing.OrderedDict()
         delayed_content[self.get_id_str(value)] = res
       return delayed_content
+    if isinstance(value, Operation):
+      self._write_body(self.escape(self._get_operation_short_name(value)))
     # unknown value types
     self._write_body(self.escape('[' + self.get_id_str(value) + ' ' + type(value).__name__ + ']'))
     return delayed_content

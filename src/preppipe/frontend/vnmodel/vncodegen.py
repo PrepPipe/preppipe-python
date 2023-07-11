@@ -158,7 +158,9 @@ if __name__ == "__main__":
 class VNCodeGen:
   @dataclasses.dataclass
   class ParseContext:
-    parent : typing.Any | None = None # ParseContext
+    parent : typing.Any # ParseContext
+    narrator : VNCharacterSymbol # 当前的默认旁白
+
     alias_dict : dict[str, str] = dataclasses.field(default_factory=dict)
     say_mode : VNASTSayMode = VNASTSayMode.MODE_DEFAULT
     say_mode_specified_sayers : list[tuple[str, VNCharacterSymbol]] = dataclasses.field(default_factory=list)
@@ -232,23 +234,28 @@ class VNCodeGen:
       return self.last_sayer
 
     def update_last_sayer(self, sayname : str, ch : VNCharacterSymbol):
-      self.last_sayer = (sayname, ch)
+      sayertuple = (sayname, ch)
       if self.say_mode == VNASTSayMode.MODE_INTERLEAVED:
-        if self.last_sayer in self.say_mode_specified_sayers:
-          self.interleaved_mode_last_sayer = self.last_sayer
+        if sayertuple in self.say_mode_specified_sayers:
+          self.interleaved_mode_last_sayer = sayertuple
+      if ch.kind.get().value == VNCharacterKind.NARRATOR:
+        return
+      self.last_sayer = sayertuple
 
-    def get_narration_sayer(self) -> tuple[str, VNCharacterSymbol] | None:
+    def get_narration_sayer(self) -> tuple[str, VNCharacterSymbol]:
       # 对于 <内容> 类发言的发言者
       # 只有长发言模式会给定发言者，其他模式都只有旁白
       if self.say_mode == VNASTSayMode.MODE_LONG_SPEECH:
         return self.say_mode_specified_sayers[0]
-      return None
+      return (self.narrator.name, self.narrator)
 
-    def get_quotedsay_sayer(self) -> tuple[str, VNCharacterSymbol] | None:
+    def get_quotedsay_sayer(self) -> tuple[str, VNCharacterSymbol]:
       # 对于 "<内容>" 类发言的发言者
       match self.say_mode:
         case VNASTSayMode.MODE_DEFAULT:
-          return self.last_sayer
+          if self.last_sayer:
+            return self.last_sayer
+          return (self.narrator.name, self.narrator)
         case VNASTSayMode.MODE_LONG_SPEECH:
           return self.say_mode_specified_sayers[0]
         case VNASTSayMode.MODE_INTERLEAVED:
@@ -304,7 +311,8 @@ class VNCodeGen:
     self._scene_parent_map = {}
     self._scene_state_matcher = {}
     self._global_asm_block = Block.create('global', self.ast.context)
-    self._global_parsecontext = VNCodeGen.ParseContext(parent=None)
+    narrator = VNCharacterSymbol.create_narrator(self.ast.context)
+    self._global_parsecontext = VNCodeGen.ParseContext(parent=None, narrator=narrator)
     self._global_say_index = 0
     self._global_character_index = 0
 
@@ -323,6 +331,10 @@ class VNCodeGen:
     self._global_parsecontext.dev_foreground = rootns.get_device(VNStandardDeviceKind.O_FOREGROUND_DISPLAY_DNAME.value)
     self._global_parsecontext.dev_background = rootns.get_device(VNStandardDeviceKind.O_BACKGROUND_DISPLAY_DNAME.value)
     self._global_parsecontext.dev_overlay = rootns.get_device(VNStandardDeviceKind.O_OVERLAY_DISPLAY_DNAME.value)
+    rootns.add_character(narrator)
+    for name in VNCharacterSymbol.NARRATOR_ALL_NAMES:
+      if name != narrator.name:
+        rootns.add_alias(VNAliasSymbol.create(self.context, name, narrator.name, rootns.get_namespace_string()))
 
   @property
   def context(self):
@@ -1165,24 +1177,24 @@ class VNCodeGen:
               sayertuple = self.parsecontext.get_narration_sayer()
             case _:
               raise NotImplementedError("TODO")
-      # 至此，发言者身份应该已经确定；旁白的话 sayertuple 是 None, 其他情况下 sayertuple 都应该是 (sayname, character)
+      # 至此，发言者身份应该已经确定；sayertuple 都应该是 (sayname, character)，即使是旁白应该也有
       # 如果涉及状态改变，则先处理这个
+      sayname, character = sayertuple
       sayerstatetuple = None
       if len(statelist) > 0:
-        if sayertuple is not None:
-          sayname, ch = sayertuple
-          sayerstatetuple = self.handleCharacterStateChange(sayname=sayname, character=ch, statelist=statelist, loc=node.location)
-        else:
-          # 如果发言带状态但是这句话是旁白说的，我们生成一个错误
+        match character.kind.get().value:
+          case VNCharacterKind.NORMAL:
+            sayerstatetuple = self.handleCharacterStateChange(sayname=sayname, character=character, statelist=statelist, loc=node.location)
+          case VNCharacterKind.NARRATOR:
+            # 如果发言带状态但是这句话是旁白说的，我们生成一个错误
           # （旁白不应该有表情状态）
-          self.codegen.emit_error(code='vncodegen-sayexpr-narrator-expression', msg='Cannot set expression state for the narrator', loc=node.location, dest=self.warningdest)
+            self.codegen.emit_error(code='vncodegen-sayexpr-narrator-expression', msg='Cannot set expression state for the narrator', loc=node.location, dest=self.warningdest)
+          case _:
+            raise NotImplementedError("Unexpected character type: " + character.kind.get().value.name)
+
+      self.parsecontext.update_last_sayer(sayname, character)
 
       # 然后生成发言
-      character = None
-      sayname = ''
-      if sayertuple is not None:
-        sayname, character = sayertuple
-        self.parsecontext.update_last_sayer(sayname, character)
       sayid = self.codegen._global_say_index
       self.codegen._global_say_index += 1
       saynode = VNSayInstructionGroup.create(context=self.context, start_time=self.starttime, sayer=character, name=str(sayid), loc=node.location)
@@ -1203,7 +1215,7 @@ class VNCodeGen:
         if info := self.codegen.resolve_character_sayinfo(character=character, sayname=sayname, parsecontext=self.parsecontext):
           namestyle = info.namestyle.try_get_value()
           textstyle = info.saytextstyle.try_get_value()
-      if len(sayname) > 0:
+      if len(sayname) > 0 and character.kind.get().value != VNCharacterKind.NARRATOR:
         namevalue = StringLiteral.get(sayname, self.context)
         if namestyle is not None:
           namevalue = TextFragmentLiteral.get(context=self.context, string=namevalue, styles=namestyle)
@@ -1594,6 +1606,13 @@ class VNCodeGen:
         self.codegen.emit_error(code='vncodegen-break-without-loop', msg='Break statement outside any loop', loc=node.location, dest=self.destblock)
       return None
 
+    def visitVNASTReturnNode(self, node : VNASTReturnNode) -> VNTerminatorInstBase | None:
+      if self.check_block_or_function_local_cond(node):
+        return None
+      ret = VNReturnInst.create(context=self.context, start_time=self.starttime, name=node.name, loc=node.location)
+      self.destblock.push_back(ret)
+      return ret
+
     def visitVNASTLabelNode(self, node : VNASTLabelNode) -> VNTerminatorInstBase | None:
       if self.check_block_or_function_local_cond(node):
         return None
@@ -1648,6 +1667,7 @@ class VNCodeGen:
       self.cur_terminator = None
       self.destblock = destblock
       self.starttime = destblock.get_argument('start')
+      self.warningdest = destblock
       assert isinstance(self.starttime.valuetype, VNTimeOrderType)
 
     def run_default_terminate(self):
@@ -1668,7 +1688,8 @@ class VNCodeGen:
           #is_originally_inblock = False
           #if self.cur_terminator is None:
           #  is_originally_inblock = True
-          self.cur_terminator = self.visit(op)
+          if new_terminator := self.visit(op):
+            self.cur_terminator = new_terminator
           #if self.cur_terminator is not None and is_originally_inblock:
           #  pass
         elif isinstance(op, MetadataOp):
@@ -1721,6 +1742,11 @@ class VNCodeGen:
     for block in dangling_blocks:
       err = ErrorOp.create(error_code='vncodegen-dangling-block', context=self.context, error_msg=StringLiteral.get(block.name, self.context))
       entry.push_front(err)
+
+  def is_name_for_narrator(self, name : str):
+    if name.lower() in VNCharacterSymbol.NARRATOR_ALL_NAMES:
+      return True
+    return False
 
   def populate_assets(self):
     # 把角色、场景等信息写到输出里
@@ -1792,7 +1818,27 @@ class VNCodeGen:
 
       for character in file.characters:
         assert isinstance(character, VNASTCharacterSymbol)
-        symb = VNCharacterSymbol.create(self.context, kind=VNCharacterKind.NORMAL, name=character.name, loc=character.location)
+        # 如果用户尝试定义一个已存在的角色，那么我们忽略，除非这个角色是初始化时默认创建的旁白
+        obsolete_old_narrator = None
+        if ch := self.resolve_character(character.name, ns.get_namespace_path(), self._global_parsecontext):
+          if ch.kind.get().value == VNCharacterKind.NARRATOR:
+            parentns = ch.parent_op
+            assert isinstance(parentns, VNNamespace)
+            if parentns is ns:
+              # 确保后续可以顺利添加该角色
+              obsolete_old_narrator = ch
+              ch.remove_from_parent()
+              # 也把别名给先撤了
+              for aliasname in VNCharacterSymbol.NARRATOR_ALL_NAMES:
+                if alias := parentns.aliases.get(aliasname):
+                  assert isinstance(alias, VNAliasSymbol)
+                  if alias.target_name == ch.name and alias.target_namespace.get().get_string() == parentns.get_namespace_string():
+                    alias.erase_from_parent()
+          else:
+            # 如果不是覆盖旁白的话就是已有的，跳过
+            return
+        chkind = VNCharacterKind.NORMAL if obsolete_old_narrator is None else VNCharacterKind.NARRATOR
+        symb = VNCharacterSymbol.create(self.context, kind=chkind, name=character.name, loc=character.location)
         matcher = _PartialStateMatcher()
         self._char_parent_map[symb] = character
         self._char_state_matcher[symb] = matcher
@@ -1801,6 +1847,14 @@ class VNCodeGen:
           aliasname = u.value.get_string()
           alias = VNAliasSymbol.create(context=self.context, name=aliasname, target_name=symb.name, target_namespace=ns.get_namespace_string(), loc=symb.location)
           ns.add_alias(alias)
+        # 如果这个角色覆盖了默认的旁白，我们在此更正旁白信息
+        if obsolete_old_narrator:
+          if self._global_parsecontext.narrator is obsolete_old_narrator:
+            self._global_parsecontext.narrator = symb
+          for aliasname in VNCharacterSymbol.NARRATOR_ALL_NAMES:
+            if ns.aliases.get(aliasname) is None:
+              alias = VNAliasSymbol.create(context=self.context, name=aliasname, target_name=symb.name, target_namespace=ns.get_namespace_string(), loc=symb.location)
+              ns.add_alias(alias)
         # 尝试总结通用的发言名称的样式和发言内容的样式
         sayname_styles = set()
         saytext_styles = set()

@@ -866,6 +866,45 @@ def cmd_set_function(parser : VNParser, state : VNASTParsingState, commandop : G
     state.emit_node(callnode)
   state.output_current_region = func
 
+@CommandDecl(vn_command_ns, _imports, 'CallFunction', alias={
+  '调用函数': {'name': '名称'}, # zh_CN
+})
+def cmd_call_function(parser: VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str):
+  # 如果当前在函数体内就生成一个调用结点，否则什么也不做
+  if state.output_current_region is None:
+    return
+  callnode = VNASTCallNode.create(context=state.context, callee=name)
+  state.emit_node(callnode)
+
+@CommandDecl(vn_command_ns, _imports, 'TailCall', alias={
+  ('转至函数', '转至章节'): {'name': '名称'}, # zh_CN
+})
+def cmd_tailcall(parser: VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str):
+  # 如果当前在函数体内就生成一个调用结点，否则什么也不做
+  if state.output_current_region is None:
+    return
+  callnode = VNASTCallNode.create(context=state.context, callee=name)
+  callnode.set_attr(VNASTCallNode.ATTR_TAILCALL, True)
+  state.emit_node(callnode)
+
+@CommandDecl(vn_command_ns, _imports, 'Jump', alias={
+  '转至标签': {'name': '名称'}, # zh_CN
+})
+def cmd_jump(parser: VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str):
+  if len(name) == 0:
+    state.emit_error(code='vnparse-expect-name', msg='Jump expects non-empty dest label', loc=commandop.location)
+  node = VNASTJumpNode.create(context=state.context, target=name)
+  state.emit_node(node)
+
+@CommandDecl(vn_command_ns, _imports, 'Label', alias={
+  '标签': {'name': '名称'}, # zh_CN
+})
+def cmd_label(parser: VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str):
+  if len(name) == 0:
+    state.emit_error(code='vnparse-expect-name', msg='Label expects non-empty label name', loc=commandop.location)
+  node = VNASTLabelNode.create(context=state.context, labelname=name)
+  state.emit_node(node)
+
 @FrontendParamEnum(alias={
   'CONTINUE': { 'continue', '继续'},
   'LOOP': {'loop', '循环'}
@@ -964,6 +1003,14 @@ def cmd_exit_loop(parser : VNParser, state : VNASTParsingState, commandop : Gene
   # 用来在带循环的选项命令中跳出循环
   # 目前没有其他循环结构，只有这里用得到，以后可能会用在其他地方
   node = VNASTBreakNode.create(state.context, name=commandop.name, loc=commandop.location)
+  state.emit_node(node)
+
+@CommandDecl(vn_command_ns, _imports, 'Return', alias={
+  ('FinishSection') : {},
+  ('章节结束','函数返回'): {}
+})
+def cmd_return(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp):
+  node = VNASTReturnNode.create(state.context, name=commandop.name, loc=commandop.location)
   state.emit_node(node)
 
 @CommandDecl(vn_command_ns, _imports, 'Choice', alias={
