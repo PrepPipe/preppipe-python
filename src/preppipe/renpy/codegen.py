@@ -180,10 +180,15 @@ class _RenPyCodeGenHelper:
         raise RuntimeError('Duplicated codename: "' + codename + '"')
     else:
       codename = self.get_unique_global_name(displayname)
+    # 如果是旁白的话，displayname 必须是 None
+    if character.kind.get().value == VNCharacterKind.NARRATOR:
+      displayname = None
     definenode, charexpr = RenPyDefineNode.create_character(self.context, varname=codename, displayname=displayname)
     ms.body.push_back(definenode)
 
     # charexpr.image.set_operand(0, StringLiteral.get(codename, self.context))
+    # 如果这是旁白且我们并没有覆盖任何设置，就把这个结点去掉
+    is_change_made = False
     match character.kind.get().value:
       case VNCharacterKind.NORMAL | VNCharacterKind.CROWD:
         pass
@@ -199,20 +204,30 @@ class _RenPyCodeGenHelper:
     sayerstyle = None
     if sayerstyle := character.sayname_style.try_get_value():
       self._populate_renpy_characterexpr_from_sayerstyle(charexpr, sayerstyle)
+      is_change_made = True
     textstyle = None
     if textstyle := character.saytext_style.try_get_value():
       self._populate_renpy_characterexpr_from_textstyle(charexpr, textstyle)
+      is_change_made = True
     for img in character.sprites:
       self.try_set_imspec_for_asset(img.get_value(), self._populate_imspec_from_assetdecl(codename, img.name))
+      is_change_made = True
     for img in character.sideimages:
       self.try_set_imspec_for_asset(img.get_value(), self._populate_imspec_from_assetdecl(codename + '_side', img.name))
+      is_change_made = True
     # 暂时不支持其他项
+    if character.kind.get().value == VNCharacterKind.NARRATOR:
+      if not is_change_made:
+        definenode.erase_from_parent()
+        return
     self.global_name_dict[codename] = definenode
-    char_dict = collections.OrderedDict()
-    std_char_info = _RenPyCharacterInfo(sayername=displayname, sayerstyle=sayerstyle, textstyle=textstyle)
-    char_dict[std_char_info] = definenode
-    self.char_dict[character] = char_dict
     self.canonical_char_dict[character] = definenode
+    if character.kind.get().value != VNCharacterKind.NARRATOR:
+      assert displayname is not None
+      char_dict = collections.OrderedDict()
+      std_char_info = _RenPyCharacterInfo(sayername=displayname, sayerstyle=sayerstyle, textstyle=textstyle)
+      char_dict[std_char_info] = definenode
+      self.char_dict[character] = char_dict
 
   def handle_scene(self, scene : VNSceneSymbol):
     scenename = nameconvert.str2identifier(scene.name)
@@ -326,7 +341,7 @@ class _RenPyCodeGenHelper:
 
   def _gen_say_impl(self, say : VNSayInstructionGroup, wait : VNWaitInstruction | None, insert_before : RenPyNode) -> RenPyNode:
     sayer = say.sayer.try_get_value()
-    who = None if sayer is None else self.canonical_char_dict[sayer]
+    who = self.canonical_char_dict[sayer] if sayer is not None and sayer in self.canonical_char_dict else None
     what = []
     mode = 'adv'
     embed_voice = None
@@ -792,9 +807,11 @@ class _RenPyCodeGenHelper:
           # TODO
           pass
 
-  def get_renpy_character(self, vncharacter : VNCharacterSymbol, sayername : str, mode : str = 'adv', sayerstyle : TextStyleLiteral | None = None, textstyle : TextStyleLiteral | None = None) -> RenPyDefineNode:
+  def get_renpy_character(self, vncharacter : VNCharacterSymbol, sayername : str, mode : str = 'adv', sayerstyle : TextStyleLiteral | None = None, textstyle : TextStyleLiteral | None = None) -> RenPyDefineNode | None:
     # 暂不支持 side image
-    assert vncharacter in self.char_dict
+    if vncharacter not in self.char_dict:
+      assert vncharacter.kind.get().value == VNCharacterKind.NARRATOR
+      return None
     display_dict = self.char_dict[vncharacter]
     info = _RenPyCharacterInfo(sayername=sayername, mode=mode, sayerstyle=sayerstyle, textstyle=textstyle)
     if info in display_dict:
