@@ -721,6 +721,20 @@ class _ODParseContext:
       # 如果该区内所有的内容都被去除，则返回 True,否则返回 False
       blocks_to_delete = []
       for b in region.blocks:
+        # 我们首先把所有划掉的 IMElementOp 删掉
+        strikethrough_elements : list[IMElementOp] = []
+        for op in b.body:
+          if isinstance(op, IMElementOp):
+            if op.has_attr('StrikeThrough'):
+              strikethrough_elements.append(op)
+        if len(strikethrough_elements) > 0:
+          for op in strikethrough_elements:
+            op.erase_from_parent()
+          # 如果这个块空了，直接跳过
+          if b.body.empty:
+            blocks_to_delete.append(b)
+            continue
+        # 然后开始常规的合并
         first_text_op : IMElementOp = None
         last_text_op : IMElementOp = None
         # 尝试合并从 first_text_op 到 last_text_op 间的所有文本内容
@@ -836,17 +850,6 @@ class _ODParseContext:
         coalesce()
         for op in op_to_delete:
           op.erase_from_parent()
-        # 如果一个段落里全是被删除的文本，则我们在此也将把该段落去掉
-        if not b.body.empty:
-          is_all_strikethrough = True
-          for op in b.body:
-            if type(op) == IMElementOp and op.get_attr('StrikeThrough') is not None:
-              pass
-            else:
-              is_all_strikethrough = False
-              break
-          if is_all_strikethrough:
-            blocks_to_delete.append(b)
         # finished this block
       if len(blocks_to_delete) > 0:
         for b in blocks_to_delete:
