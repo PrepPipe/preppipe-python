@@ -555,7 +555,11 @@ class VNASTLabelNode(VNASTNodeBase):
 
   @staticmethod
   def create(context : Context, labelname : StringLiteral | str):
-    return VNASTJumpNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, labelname=labelname)
+    if isinstance(labelname, str):
+      assert len(labelname) > 0
+    elif isinstance(labelname, StringLiteral):
+      assert len(labelname.get_string()) > 0
+    return VNASTLabelNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, labelname=labelname)
 
 @IROperationDataclass
 class VNASTJumpNode(VNASTNodeBase):
@@ -567,6 +571,10 @@ class VNASTJumpNode(VNASTNodeBase):
 
   @staticmethod
   def create(context : Context, target : StringLiteral | str):
+    if isinstance(target, str):
+      assert len(target) > 0
+    elif isinstance(target, StringLiteral):
+      assert len(target.get_string()) > 0
     return VNASTJumpNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, target_label=target)
 
 @IROperationDataclass
@@ -589,6 +597,12 @@ class VNASTCallNode(VNASTNodeBase):
     if is_tail_call:
       result.set_attr(VNASTCallNode.ATTR_TAILCALL, True)
     return result
+
+@IROperationDataclass
+class VNASTReturnNode(VNASTNodeBase):
+  @staticmethod
+  def create(context : Context, name : str = '', loc : Location | None = None):
+    return VNASTReturnNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, name=name, loc=loc)
 
 @IRWrappedStatelessClassJsonName("vnast_say_device_kind_e")
 class VNASTSayDeviceKind(enum.Enum):
@@ -831,6 +845,8 @@ class VNASTVisitor:
   def visitVNASTJumpNode(self, node : VNASTJumpNode):
     return self.visit_default_handler(node)
   def visitVNASTCallNode(self, node : VNASTCallNode):
+    return self.visit_default_handler(node)
+  def visitVNASTReturnNode(self, node : VNASTReturnNode):
     return self.visit_default_handler(node)
   def visitVNASTChangeDefaultDeviceNode(self, node : VNASTChangeDefaultDeviceNode):
     return self.visit_default_handler(node)

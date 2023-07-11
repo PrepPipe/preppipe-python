@@ -478,6 +478,10 @@ class VNCharacterKind(enum.Enum):
 @IRObjectJsonTypeName("vn_char_record_op")
 class VNCharacterSymbol(VNSymbol):
   NARRATOR_DEFAULT_NAME : typing.ClassVar[str] = "narrator"
+  NARRATOR_ALL_NAMES : typing.ClassVar[list[str]] = [
+    "narrator",
+    "旁白",
+  ]
 
   kind : OpOperand[EnumLiteral[VNCharacterKind]]
 
@@ -522,11 +526,11 @@ class VNSceneSymbol(VNSymbol):
   def create(context : Context, name : str, codename : StringLiteral | str | None = None, loc : Location | None = None):
     return VNSceneSymbol(init_mode=IRObjectInitMode.CONSTRUCT, context=context, codename=codename, name=name, loc=loc)
 
-@IROperationDataclass
+@IROperationDataclassWithValue(VoidType)
 @IRObjectJsonTypeName("vn_alias_symbol_op")
 class VNAliasSymbol(VNSymbol):
   target_name : OpOperand[StringLiteral]
-  target_namespace : OpOperand[StringLiteral]
+  target_namespace : OpOperand[StringLiteral] # 单个字符串，字符串形式的命名空间路径
 
   def get_entry_dataclass(self) -> NamespaceNodeInterface.AliasEntry:
     return NamespaceNodeInterface.AliasEntry(ns_path=VNNamespace.expand_namespace_str(self.target_namespace.get().get_string()), name=self.target_name.get().get_string())
