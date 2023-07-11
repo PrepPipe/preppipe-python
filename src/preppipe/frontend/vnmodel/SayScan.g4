@@ -6,7 +6,6 @@ WS : [ \t\r\n\u00A0\u2000-\u200B\u202F\u205F\u3000\uFEFF]+ -> skip;
 // quoted strings ("text", 'text', “text”, [text], 【Text】)
 // https://stackoverflow.com/questions/29800106/how-do-i-escape-an-escape-character-with-antlr-4
 // we intentionally NOT supporting escape characters inside string
-// consider using environments if the use case cannot be supported
 QUOTEDSTR : '"' (~'"')*? '"' | '\'' (~'\'')*? '\'' | ('\u201C'|'\u201D') (~('\u201C'|'\u201D'))*? ('\u201C'|'\u201D') | '[' (~']')*? ']' | '\u3010' (~'\u3011')*? '\u3011' ;
 
 SAYSEPARATOR : ':' | '\uFF1A' ;
@@ -30,6 +29,16 @@ statusexpr : STATUSSTART NORMALTEXT (COMMASPLITTER NORMALTEXT)*? STATUSEND ;
 
 nameexpr : (QUOTEDSTR|NORMALTEXT) ;
 
-contentexpr : (QUOTEDSTR|NORMALTEXT) (QUOTEDSTR|NORMALTEXT|STATUSSTART|STATUSEND|SAYSEPARATOR|COMMASPLITTER|SENTENCESPLITTER)*? ;
+nameexpr_strong : QUOTEDSTR ;
 
-sayexpr : nameexpr? SAYSEPARATOR? statusexpr? SAYSEPARATOR? contentexpr EOF ;
+contentexpr : (QUOTEDSTR|NORMALTEXT|SENTENCESPLITTER) (QUOTEDSTR|NORMALTEXT|STATUSSTART|STATUSEND|SAYSEPARATOR|COMMASPLITTER|SENTENCESPLITTER)*? ;
+
+contentexpr_strong : QUOTEDSTR ;
+
+sayexpr : nameexpr? SAYSEPARATOR statusexpr? contentexpr EOF
+        | nameexpr? statusexpr? SAYSEPARATOR contentexpr EOF
+        | nameexpr  statusexpr? contentexpr_strong EOF
+        | nameexpr_strong? statusexpr? contentexpr EOF
+
+        ;
+

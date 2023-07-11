@@ -624,7 +624,8 @@ def cmd_scene_decl(parser : VNParser, state : VNASTParsingState, commandop : Gen
       # ext.data 无效，记一下错误
       state.emit_error('vnparse-scenedecl-invalid-expr', 'Unexpected attached list format', loc=commandop.location)
 
-
+def _get_placeholder_desc_for_missing_img(context : Context, v : str):
+  return StringLiteral.get("Image not found: "+ v, context)
 
 def _helper_parse_image_exprtree(parser : VNParser, state : VNASTParsingState, v : collections.OrderedDict[str, typing.Any] | str, statetree : SymbolTableRegion[VNASTNamespaceSwitchableValueSymbol], placeholderdest : ImageExprPlaceholderDest, loc : Location):
   # 如果是一个词典，那么是个和角色立绘差不多的树状结构，每个子节点根一个图案表达式
@@ -645,20 +646,22 @@ def _helper_parse_image_exprtree(parser : VNParser, state : VNASTParsingState, v
     node.set_value(nsstr, expr)
 
   if isinstance(v, str):
-    if expr := emit_image_expr_from_str(context=state.context, s=v, basepath=state.input_file_path, placeholderdest=placeholderdest, warnings=warnings, screen_resolution=parser.resolution):
-      submit_expr('', expr)
-    else:
+    expr = emit_image_expr_from_str(context=state.context, s=v, basepath=state.input_file_path, placeholderdest=placeholderdest, warnings=warnings, screen_resolution=parser.resolution)
+    if expr is None:
+      expr = emit_default_placeholder(context=state.context, dest=placeholderdest, screen_resolution=parser.resolution, description=_get_placeholder_desc_for_missing_img(state.context, v))
       state.emit_error(code='vnparse-invalid-imageexpr', msg=v, loc=loc)
+    submit_expr('', expr)
   elif isinstance(v, collections.OrderedDict):
     state_stack = []
     def walk_dict(d : collections.OrderedDict):
       for k, v in d.items():
         if isinstance(v, str):
-          if expr := emit_image_expr_from_str(context=state.context, s=v, basepath=state.input_file_path, placeholderdest=placeholderdest, warnings=warnings, screen_resolution=parser.resolution):
-            tmpstatelist = [*state_stack, k]
-            submit_expr(','.join(tmpstatelist), expr)
-          else:
+          expr = emit_image_expr_from_str(context=state.context, s=v, basepath=state.input_file_path, placeholderdest=placeholderdest, warnings=warnings, screen_resolution=parser.resolution)
+          if expr is None:
+            expr = emit_default_placeholder(context=state.context, dest=placeholderdest, screen_resolution=parser.resolution, description=_get_placeholder_desc_for_missing_img(state.context, v))
             state.emit_error(code='vnparse-invalid-imageexpr', msg=v, loc=loc)
+          tmpstatelist = [*state_stack, k]
+          submit_expr(','.join(tmpstatelist), expr)
         elif isinstance(v, collections.OrderedDict):
           state_stack.append(k)
           walk_dict(v)
