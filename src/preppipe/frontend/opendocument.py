@@ -32,6 +32,8 @@ class _TextStyleInfo:
       assert isinstance(src, _TextStyleInfo)
       self.style = src.style.copy()
       self.is_strike_through = src.is_strike_through
+      self.is_special_block_style = src.is_special_block_style
+      self.special_block_reason = src.special_block_reason
 
   def set_bold(self, bold : bool):
     if bold:
