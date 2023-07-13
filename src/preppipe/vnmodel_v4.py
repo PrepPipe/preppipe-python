@@ -742,7 +742,7 @@ class VNSayInstructionGroup(VNInstructionGroup):
   # 一个发言指令组对应回溯记录（Backlog）里的一条记录
   # 发言人可以不止一个，语音、文本也可以不止一条，但是后端有可能会不支持
   # 我们可以给每条发言设置一个 ID，方便之后搞翻译和配音
-  sayer : OpOperand[VNCharacterSymbol]
+  sayer : OpOperand[VNCharacterSymbol] # 发言者（可以不止一个不过一般是一个）
   sayid : OpOperand[StringLiteral]
 
   def get_single_sayer(self) -> VNCharacterSymbol:
@@ -816,12 +816,13 @@ class VNModifyInst(VNInstruction, Value):
   # content 和 placeat 不为空，不改变对应项就重复之前的内容
   handlein : OpOperand
   content : OpOperand[Value]
+  device : OpOperand[VNDeviceSymbol]
   placeat : SymbolTableRegion
   transition : OpOperand[Value]
 
   @staticmethod
-  def create(context : Context, start_time: Value, handlein : Value, content : Value | None = None, name: str = '', loc: Location | None = None) -> VNModifyInst:
-    return VNModifyInst(init_mode=IRObjectInitMode.CONSTRUCT, context=context, start_time=start_time, handlein=handlein, content=content, ty=handlein.valuetype, name=name, loc=loc)
+  def create(context : Context, start_time: Value, handlein : Value, content : Value, device : VNDeviceSymbol, name: str = '', loc: Location | None = None) -> VNModifyInst:
+    return VNModifyInst(init_mode=IRObjectInitMode.CONSTRUCT, context=context, start_time=start_time, handlein=handlein, content=content, ty=handlein.valuetype, device=device, name=name, loc=loc)
 
 @IROperationDataclass
 class VNRemoveInst(VNInstruction):
