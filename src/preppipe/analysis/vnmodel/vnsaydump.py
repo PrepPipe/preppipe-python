@@ -16,6 +16,9 @@ class _VNSayDumpSettings:
   sayer_noexpr_fmtstr : str = "{sayer}:{content}"
   sayer_withexpr_fmtstr : str = "{sayer}({expression}):{content}"
   expr_separator : str = ','
+  text_escape_dict : dict[str, str] = dataclasses.field(default_factory=dict)
+  text_escape_chars : str = ':：'
+  text_escape_prefix : str = '\\'
   ctrl_return_fmtstr : str = ""
   ctrl_tailcall_fmtstr : str = "# TailCall: {callee}"
   ctrl_call_fmtstr : str = "# Call: {callee}"
@@ -42,6 +45,19 @@ def _get_blocks_list(f : VNFunction, setting : _VNSayDumpSettings, char_state_di
     else:
       blocknames[b] = 'anon_' + str(anon_index)
       anon_index += 1
+
+  def escape_str(s : str) -> str:
+    result = ''
+    for ch in s:
+      if ch in setting.text_escape_dict:
+        # 使用字典进行转义
+        result += setting.text_escape_dict[ch]
+      elif ch in setting.text_escape_chars:
+        # 使用转义字符进行转义
+        result += setting.text_escape_prefix + ch
+      else:
+        result += ch
+    return result
 
   # 开始走遍整个函数
   entryblock = f.get_entry_block()
@@ -117,7 +133,9 @@ def _get_blocks_list(f : VNFunction, setting : _VNSayDumpSettings, char_state_di
             if sayer in curstate.characterstates:
               expr = curstate.characterstates[sayer]
           # 开始输出
+          what = escape_str(what)
           if who is not None:
+            who = escape_str(who)
             if expr is None:
               result = setting.sayer_noexpr_fmtstr.format(sayer=who, content=what)
             else:
@@ -206,6 +224,7 @@ def vn_say_dump(m : VNModel, setting : _VNSayDumpSettings, outputdir : str):
         blockindex = 1
         for blockname, lines in result:
           fname = os.path.join(realpath, str(blockindex) + '_' + blockname + '.txt')
+          blockindex += 1
           with open(fname, 'w', encoding='utf-8') as f:
             f.write('\n'.join(lines) + '\n')
 
@@ -217,6 +236,7 @@ class VNESayDumpPass(TransformBase):
   setting_gamecreator : typing.ClassVar[_VNSayDumpSettings] = _VNSayDumpSettings(
     comment_fmtstr = "//{comment}",
     sayer_withexpr_fmtstr = "{sayer}:{content}", # GameCreator 表情等用的是另一套编号机制，暂时都不导出
+    text_escape_chars = ':：',
     ctrl_tailcall_fmtstr = "// TailCall: {callee}",
     ctrl_call_fmtstr= "// Call: {callee}",
     ctrl_ending_fmtstr = "// Ending: {ending}",
