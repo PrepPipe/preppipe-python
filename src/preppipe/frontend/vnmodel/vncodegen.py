@@ -1122,7 +1122,7 @@ class VNCodeGen:
         sprite = self.get_character_sprite(character, matchresult)
         # 如果在场上有立绘，那么这里我们应该能够找到立绘
         assert sprite is not None
-        handleout = VNModifyInst.create(context=self.context, start_time=self.starttime, handlein=charstate.sprite_handle, content=sprite, loc=loc)
+        handleout = VNModifyInst.create(context=self.context, start_time=self.starttime, handlein=charstate.sprite_handle, content=sprite, device=self.parsecontext.dev_foreground, loc=loc)
         if not self.is_in_transition:
           self.starttime=handleout.get_finish_time()
         charstate.sprite_handle = handleout
