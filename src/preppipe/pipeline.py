@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import argparse
 import sys
+import os
 import time
+import importlib
+import importlib.util
 
 from .irbase import *
 from .util.audit import *
@@ -469,6 +472,8 @@ class _JsonExportIR(TransformBase):
       f.write(json_str)
 
 def pipeline_main(args : typing.List[str] = None):
+  # 先尝试读取插件
+  _load_plugins()
   # args 应该是不带 sys.argv[0] 的
   # (pipeline_cmd.py 中，这个参数是 sys.argv[1:])
   if args is None:
@@ -578,6 +583,42 @@ def pipeline_main(args : typing.List[str] = None):
     print('[' + get_timestr() + '] Finished')
 
   return
+
+def _load_module(module_name, file_path):
+  print("Loading plugin " + module_name + " from " + file_path)
+  is_loaded = False
+  try:
+    if spec := importlib.util.spec_from_file_location(module_name, file_path):
+      module = importlib.util.module_from_spec(spec)
+      sys.modules[module_name] = module
+      spec.loader.exec_module(module)
+      is_loaded = True
+  except ImportError:
+    pass
+  if not is_loaded:
+    print("Cannot load plugin " + module_name + " from " + file_path + ", skipped")
+
+def _load_plugins():
+  if plugindir := os.environ['PREPPIPE_PLUGINS']:
+    plugindir = os.path.realpath(plugindir)
+    plugin_modulebase = "preppipe.plugin."
+    if os.path.isdir(plugindir):
+      dircontent = os.listdir(plugindir)
+      if len(dircontent) > 0:
+        print("Loading plugin(s) from PREPPIPE_PLUGINS:\"" + plugindir + '"')
+        for pluginname in dircontent:
+          curpath = os.path.join(plugindir, pluginname)
+          if os.path.isfile(curpath):
+            # 检查是否是 Python 文件，是的话当作插件来导入
+            basename, ext = os.path.splitext(pluginname)
+            if ext.lower() == '.py':
+              modulename = plugin_modulebase + basename
+              _load_module(modulename, curpath)
+          elif os.path.isdir(curpath):
+            filepath = os.path.join(plugindir, pluginname, pluginname + ".py")
+            if os.path.isfile(filepath):
+              modulename = plugin_modulebase + pluginname
+              _load_module(modulename, filepath)
 
 if __name__ == "__main__":
   raise NotImplementedError('Please invoke pipeline_cmd instead')
