@@ -114,7 +114,7 @@ class FrontendCommandInfo:
   cname : str # 命令的规范名
   aliases : typing.Dict[str | typing.Tuple[str], typing.Dict[str, str]] # 所有 aliases 注册项合并后的结果，第一个 key 是命令名的别名，后面的key是参数规范名
   parameter_alias_dict : typing.Dict[str, str] # 从参数的别名到规范名
-  handler_list : list[tuple[callable, inspect.Signature]] # 所有的实现都在这里
+  handler_list : list[tuple[typing.Callable, inspect.Signature]] # 所有的实现都在这里
 
 class FrontendCommandNamespace(NamespaceNode[FrontendCommandInfo]):
 
@@ -127,38 +127,43 @@ class FrontendCommandNamespace(NamespaceNode[FrontendCommandInfo]):
   def __init__(self, tree: FrontendCommandRegistry, parent: FrontendCommandNamespace, cname: str | None) -> None:
     super().__init__(tree, parent, cname)
 
-  def register_command(self, func : callable, imports : dict[str, typing.Any], name : str, alias : typing.Dict[str, typing.Dict[str, str]]) -> None:
-    cur_entry = self.lookup_name(name)
-    if isinstance(cur_entry, FrontendCommandNamespace):
+  def get_or_create_command_info(self, name : str) -> FrontendCommandInfo:
+    command_info = self.lookup_name(name)
+    if isinstance(command_info, FrontendCommandNamespace):
       raise RuntimeError('Name collision between namespace and command entry: "' + name + '"')
-    if cur_entry is None:
-      cur_entry = FrontendCommandInfo(cname = name, aliases = {}, parameter_alias_dict={}, handler_list=[])
-      self.add_data_entry(name, cur_entry)
-    assert cur_entry.cname == name
+    if command_info is None:
+      command_info = FrontendCommandInfo(cname = name, aliases = {}, parameter_alias_dict={}, handler_list=[])
+      self.add_data_entry(name, command_info)
+    assert isinstance(command_info, FrontendCommandInfo)
+    assert command_info.cname == name
+    return command_info
+
+  def add_command_handler(self, command_info : FrontendCommandInfo, func : typing.Callable, imports : dict[str, typing.Any]):
     # 如果在这里报错（无法解析类型名）的话，请确保：
     # 1. 定义命令的源文件可以在没有 from __future__ import annotations 的情况下顺利使用类型标注
     # 2. 所有在回调函数参数类型的标注中的类全都在 imports 中（不过 imports 也可以为空）
     sig = inspect.signature(func, globals=imports, eval_str=True)
-    cur_entry.handler_list.append((func, sig))
+    command_info.handler_list.append((func, sig))
+
+  def add_command_namealiases(self, command_info : FrontendCommandInfo, alias : dict[str | tuple[str, ...], dict[str, str]]):
     # 把别名信息合并进去
     # 我们需要同时处理 aliases 和 parameter_alias_dict
     for name_alias, param_alias_dict in alias.items():
       assert isinstance(name_alias, str) or isinstance(name_alias, tuple)
       assert isinstance(param_alias_dict, dict)
-      existing_dict = None
-      if name_alias not in cur_entry.aliases:
+      if name_alias not in command_info.aliases:
         if isinstance(name_alias, str):
-          self.add_local_alias(name, name_alias)
+          self.add_local_alias(command_info.cname, name_alias)
         elif isinstance(name_alias, tuple):
           for a in name_alias:
             assert isinstance(a, str)
-            self.add_local_alias(name, a)
+            self.add_local_alias(command_info.cname, a)
         else:
           raise RuntimeError('Unexpected name alias type')
         existing_dict : typing.Dict[str, str] = {}
-        cur_entry.aliases[name_alias] = existing_dict
+        command_info.aliases[name_alias] = existing_dict
       else:
-        existing_dict = cur_entry.aliases[name_alias]
+        existing_dict = command_info.aliases[name_alias]
       for param_cname, param_alias_name in param_alias_dict.items():
         assert isinstance(param_alias_name, str)
         assert isinstance(param_cname, str)
@@ -167,13 +172,17 @@ class FrontendCommandNamespace(NamespaceNode[FrontendCommandInfo]):
             raise RuntimeError('Parameter "' + param_cname + '" already has a different alias: "' + existing_dict[param_cname] + '" != "' + param_alias_name + '"')
         else:
           existing_dict[param_cname] = param_alias_name
-          if param_alias_name in cur_entry.parameter_alias_dict:
-            existing_cname = cur_entry.parameter_alias_dict[param_alias_name]
+          if param_alias_name in command_info.parameter_alias_dict:
+            existing_cname = command_info.parameter_alias_dict[param_alias_name]
             if existing_cname != param_cname:
               raise RuntimeError('Conflicting alias for parameter "' + param_cname + '": "' + existing_cname + '" != "' + param_cname + '"')
           else:
-            cur_entry.parameter_alias_dict[param_alias_name] = param_cname
+            command_info.parameter_alias_dict[param_alias_name] = param_cname
 
+  def register_command(self, func : typing.Callable, imports : dict[str, typing.Any], name : str, alias : dict[str | tuple[str, ...], dict[str, str]]) -> None:
+    command_info = self.get_or_create_command_info(name)
+    self.add_command_handler(command_info, func, imports)
+    self.add_command_namealiases(command_info, alias)
 
 class FrontendCommandRegistry(NameResolver[FrontendCommandInfo]):
   _global_ns : FrontendCommandNamespace

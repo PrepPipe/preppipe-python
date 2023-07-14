@@ -77,13 +77,13 @@ def emit_image_expr_from_callexpr(context : Context, call : CallExprOperand, pla
   # 调用表达式有以下几种可能：
   # 占位（分辨率=...，描述=...），分辨率和描述均可选，按位参数视为分辨率
   # 声明（分辨率=...，引用=...）, 分辨率和引用均必需，不允许按位参数
-  # 纯色（分辨率=..., 颜色=...），均必须，不允许按位参数
+  # 纯色填充（分辨率=..., 颜色=...），均必须，不允许按位参数
   # 所有的分辨率都是一个"宽*高"的字符串，比如 "1920*1080"
 
   _resolution_nametuple = ('Resolution', '分辨率')
   _description_nametuple = ('Description', '描述')
   _reference_nametuple = ('Ref', '引用')
-  _color_nametuple = ('Color', '颜色')
+  _color_nametuple = ('Color', '颜色', '顏色')
 
   def handle_resolution_arg(k : str, v : Value) -> tuple[int, int] | None:
     if isinstance(v, StringLiteral):
@@ -137,7 +137,7 @@ def emit_image_expr_from_callexpr(context : Context, call : CallExprOperand, pla
         resolution = (1920, 1080)
     return PlaceholderImageLiteralExpr.get(context=context, dest=placeholderdest, desc=description, size=IntTupleLiteral.get(resolution, context))
 
-  if call.name in ('Decl', '声明'):
+  if call.name in ('Decl', '声明', '聲明'):
     resolution = None
     ref = None
     for k, v in call.kwargs.items():
@@ -164,7 +164,7 @@ def emit_image_expr_from_callexpr(context : Context, call : CallExprOperand, pla
       warnings.append(('vnparse-declexpr-too-many-arguments', str(len(call.args)) + ' positional argument(s) provided, none used'))
     return DeclaredImageLiteralExpr.get(context=context, decl=ref, size=IntTupleLiteral.get(resolution, context))
 
-  if call.name in ('ColorFill', '纯色填充'):
+  if call.name in ('ColorFill', '纯色填充', '純色填充'):
     resolution = None
     color = None
     for k, v in call.kwargs.items():
