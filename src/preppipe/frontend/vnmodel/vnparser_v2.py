@@ -433,6 +433,7 @@ _imports = globals()
 
 @CommandDecl(vn_command_ns, _imports, 'DeclImage', alias={
   '声明图片': {'name': '名称', 'path': '路径'}, # zh_CN
+  "聲明圖片": {"name": "名稱", 'path': '路徑'}, # zh_HK
 })
 def cmd_image_decl_path(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str, path : str):
   img = emit_image_expr_from_path(context=state.context, pathexpr=path, basepath=state.input_file_path)
@@ -450,6 +451,7 @@ def cmd_image_decl_path(parser : VNParser, state : VNASTParsingState, commandop 
 
 @CommandDecl(vn_command_ns, _imports, 'DeclImage', alias={
   '声明图片': {'name': '名称', 'source': '来源'}, # zh_CN
+  "聲明圖片": {"name": "名稱", "source": "來源"}, # zh_HK
 })
 def cmd_image_decl_src(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str, source : CallExprOperand):
   wlist : list[tuple[str, str]] = []
@@ -465,7 +467,8 @@ def cmd_image_decl_src(parser : VNParser, state : VNASTParsingState, commandop :
   return
 
 @CommandDecl(vn_command_ns, _imports, 'DeclVariable', alias={
-  '声明变量' : {'name': '名称', 'type': '类型', 'initializer': '初始值'},
+  '声明变量' : {'name': '名称', 'type': '类型', 'initializer': '初始值'}, # zh_CN
+  "聲明變量" : {"name": "名稱", "type": "類型", "initializer": "初始值"}, # zh_HK
 })
 # pylint: disable=redefined-builtin
 def cmd_variable_decl(parser: VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str, type : str, initializer : str):
@@ -477,6 +480,7 @@ def cmd_variable_decl(parser: VNParser, state : VNASTParsingState, commandop : G
 
 @CommandDecl(vn_command_ns, _imports, 'DeclCharacter', alias={
   '声明角色' : {'name': '姓名'}, # zh_CN
+  "聲明角色" : {"name": "姓名"}, # zh_HK
 })
 def cmd_character_decl(parser: VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str, ext : ListExprOperand):
   # 声明角色仅用于提供角色的身份
@@ -492,17 +496,17 @@ def cmd_character_decl(parser: VNParser, state : VNASTParsingState, commandop : 
       defaultsay = VNASTCharacterSayInfoSymbol.create(state.context, name, commandop.location)
       ch.sayinfo.add(defaultsay)
       for k, v in ext.data.items():
-        if k in ('Sprite', '立绘'):
+        if k in ("Sprite", "立绘", "立繪"):
           # 这里开始是指定场景背景的信息
           _helper_parse_image_exprtree(parser, state, v, ch.sprites, ImageExprPlaceholderDest.DEST_CHARACTER_SPRITE, commandop.location)
           continue
-        if k in ('SideImage', '头像'):
+        if k in ("SideImage", "头像", "頭像"):
           _helper_parse_image_exprtree(parser, state, v, ch.sideimages, ImageExprPlaceholderDest.DEST_CHARACTER_SIDEIMAGE, commandop.location)
           continue
-        if k in ('Say', '发言'):
+        if k in ("Say", "发言", "發言"):
           _helper_parse_character_sayinfo(state=state, v=v, say=defaultsay, loc=commandop.location)
           continue
-        if k in ('SayAlternativeName', '发言别名'):
+        if k in ("SayAlternativeName", "发言别名", "發言別名"):
           _helper_parse_character_alternativesay(state=state, v=v, sayinfo=ch.sayinfo, defaultsay=defaultsay, loc=commandop.location)
           continue
         # 到这就说明当前的键值没有匹配到认识的
@@ -554,12 +558,12 @@ def _helper_parse_character_alternativesay(state : VNASTParsingState, v : typing
 def _helper_parse_character_sayinfo(state : VNASTParsingState, v : typing.Any, say : VNASTCharacterSayInfoSymbol, loc : Location):
   if isinstance(v, collections.OrderedDict):
     for attr, value in v.items():
-      if attr in ('NameColor', '名字颜色'):
+      if attr in ("NameColor", "名字颜色", "名字顏色"):
         if c := _helper_parse_color(state, value, loc):
           newstyle = _helper_merge_textstyle(state.context, say.namestyle, TextAttribute.TextColor, c)
           say.namestyle.set_operand(0, newstyle)
         continue
-      if attr in ('ContentColor', '内容颜色'):
+      if attr in ("ContentColor", "内容颜色", "內容顏色"):
         if c := _helper_parse_color(state, value, loc):
           newstyle = _helper_merge_textstyle(state.context, say.saytextstyle, TextAttribute.TextColor, c)
           say.saytextstyle.set_operand(0, newstyle)
@@ -586,6 +590,7 @@ def _helper_parse_character_sayinfo(state : VNASTParsingState, v : typing.Any, s
 
 @CommandDecl(vn_command_ns, _imports, 'SetTemporarySayAttr', alias={
   '设置临时发言属性' : {'display_name': '显示名', 'actual_character': '实际角色',}, # zh_CN
+  "設置臨時發言屬性" : {"display_name": "顯示名", "actual_character": "實際角色",}, # zh_HK
 })
 def cmd_temp_say_attr(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, *, display_name : str, actual_character : str, ext : ListExprOperand | None = None):
   # 定义一个角色说话时名称、发言内容的显示方式
@@ -604,6 +609,7 @@ def cmd_temp_say_attr(parser : VNParser, state : VNASTParsingState, commandop : 
 
 @CommandDecl(vn_command_ns, _imports, 'DeclScene', alias={
   '声明场景' : {'name': '名称'}, # zh_CN
+  "聲明場景" : {"name": "名稱"}, # zh_HK
 })
 def cmd_scene_decl(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str, ext : ListExprOperand | None = None):
   if existing := state.output_current_file.scenes.get(name):
@@ -686,6 +692,7 @@ def _helper_parse_image_exprtree(parser : VNParser, state : VNASTParsingState, v
 
 @CommandDecl(vn_command_ns, _imports, 'DeclAlias', alias={
   '声明别名' : {'alias_name': '别名名称', 'target':'目标'}, # zh_CN
+  "聲明別名" : {"alias_name": "別名名稱", "target":"目標"}, # zh_HK
 })
 def cmd_alias_decl(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, alias_name : str, target : str):
   # (仅在解析时用到，不会在IR中)
@@ -699,7 +706,8 @@ def cmd_alias_decl(parser : VNParser, state : VNASTParsingState, commandop : Gen
 # ------------------------------------------------------------------------------
 
 @CommandDecl(vn_command_ns, _imports, 'ASM', alias={
-  '内嵌汇编': {'content': '内容', 'backend': '后端'}
+  '内嵌汇编': {'content': '内容', 'backend': '后端'}, # zh_CN
+  "內嵌匯編": {"content": "内容", "backend": "後端"}, # zh_HK
 })
 def cmd_asm_1(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, content : str, backend : str):
   # 单行内嵌后端命令
@@ -711,7 +719,8 @@ def cmd_asm_1(parser : VNParser, state : VNASTParsingState, commandop : GeneralC
   parser.emit_asm_node(state, commandop, code=[StringLiteral.get(content, state.context)], backend=backend_l)
 
 @CommandDecl(vn_command_ns, _imports, 'ASM', alias={
-  '内嵌汇编': {'backend': '后端'}
+  '内嵌汇编': {'backend': '后端'}, # zh_CN
+  "內嵌匯編": {"backend": "後端"}, # zh_HK
 })
 def cmd_asm_2(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, ext : SpecialBlockOperand, backend : str):
   # 使用特殊块的后端命令
@@ -728,7 +737,8 @@ def cmd_asm_2(parser : VNParser, state : VNASTParsingState, commandop : GeneralC
   parser.emit_asm_node(state, commandop, code=code, backend=backend_l)
 
 @CommandDecl(vn_command_ns, _imports, 'CharacterEnter', alias={
-  '角色入场': {'characters': '角色', 'transition': '转场'}
+  '角色入场': {'characters': '角色', 'transition': '转场'}, # zh_CN
+  "角色入場": {"characters": "角色", "transition": "轉場"}, # zh_HK
 })
 def cmd_character_entry(parser : VNParser, state: VNASTParsingState, commandop : GeneralCommandOp, characters : list[CallExprOperand], transition : CallExprOperand = None):
   transition = parser.emit_transition_node(state, commandop, transition)
@@ -749,7 +759,8 @@ def cmd_character_entry(parser : VNParser, state: VNASTParsingState, commandop :
 #  pass
 
 @CommandDecl(vn_command_ns, _imports, 'CharacterExit', alias={
-  '角色退场': {'characters': '角色', 'transition': '转场'}
+  '角色退场': {'characters': '角色', 'transition': '转场'}, # zh_CN
+  "角色退場": {"characters": "角色", "transition": "轉場"}, # zh_HK
 })
 def cmd_character_exit(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, characters : list[CallExprOperand], transition : CallExprOperand = None):
   # 如果退场时角色带有状态，我们先把角色的状态切换成目标状态，然后再创建一个 Transition 结点存放真正的退场
@@ -764,7 +775,7 @@ def cmd_character_exit(parser : VNParser, state : VNASTParsingState, commandop :
     transition.push_back(node)
 
 @CommandDecl(vn_command_ns, _imports, 'SpecialEffect', alias={
-  '特效': {'effect': '特效'}
+  '特效': {'effect': '特效'} # zh_CN, zh_HK
 })
 def cmd_special_effect(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, effect : CallExprOperand):
   ref = parser.emit_pending_assetref(state, commandop, effect)
@@ -790,7 +801,8 @@ def _helper_collect_scene_expr(parser : VNParser, state : VNASTParsingState, com
   return _helper_collect_character_expr(parser, state, commandop, expr)
 
 @CommandDecl(vn_command_ns, _imports, 'SwitchCharacterState', alias={
-  '切换角色状态': {'state_expr': '状态表达式'}
+  '切换角色状态': {'state_expr': '状态表达式'}, # zh_CN
+  "切換角色狀態": {"state_expr": "狀態表達式"}, # zh_HK
 })
 def cmd_switch_character_state(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, state_expr : list[str] | CallExprOperand):
   # 如果是个调用表达式，则角色名是调用的名称
@@ -813,7 +825,8 @@ def cmd_switch_character_state(parser : VNParser, state : VNASTParsingState, com
   state.emit_node(result)
 
 @CommandDecl(vn_command_ns, _imports, 'SwitchScene', alias={
-  '切换场景': {'scene': '场景', 'transition': '转场'}
+  '切换场景': {'scene': '场景', 'transition': '转场'}, # zh_CN
+  "切換場景": {"scene": "場景", "transition": "轉場"}, # zh_HK
 })
 def cmd_switch_scene(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, scene: CallExprOperand, transition : CallExprOperand = None):
   transition = parser.emit_transition_node(state, commandop, transition)
@@ -822,7 +835,8 @@ def cmd_switch_scene(parser : VNParser, state : VNASTParsingState, commandop : G
   transition.push_back(node)
 
 @CommandDecl(vn_command_ns, _imports, 'HideImage', alias={
-  '收起图片': {'image_name': '图片名', 'transition': '转场'}
+  "收起图片": {"image_name": "图片名", "transition": "转场"}, # zh_CN
+  "收起圖片": {"image_name": "圖片名", "transition": "轉場"}, # zh_HK
 })
 def cmd_hide_image(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, image_name : str, transition : CallExprOperand = None):
   transition = parser.emit_transition_node(state, commandop, transition)
@@ -831,7 +845,8 @@ def cmd_hide_image(parser : VNParser, state : VNASTParsingState, commandop : Gen
   transition.push_back(node)
 
 @CommandDecl(vn_command_ns, _imports, 'SetBGM', alias={
-  '设置背景音乐': {'bgm': '音乐'}
+  "设置背景音乐": {"bgm": "音乐"}, # zh_CN
+  "設置背景音樂": {"bgm": "音樂"}, # zh_HK
 })
 def cmd_set_bgm(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, bgm : str | AudioAssetData):
   if isinstance(bgm, str):
@@ -847,6 +862,7 @@ def cmd_set_bgm(parser : VNParser, state : VNASTParsingState, commandop : Genera
 @CommandDecl(vn_command_ns, _imports, 'Function', alias={
   ('Function', 'Section') : {}, # en
   ('函数', '章节') : {'name': '名称'}, # zh_CN
+  ("函數", "章節") : {"name": "名稱"}, # zh_HK
 })
 def cmd_set_function(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str):
   # 如果我们在(1)该文件还没有函数或(2)现在正在一个函数体中时，我们创建一个新函数，从那里开始构建
@@ -871,6 +887,7 @@ def cmd_set_function(parser : VNParser, state : VNASTParsingState, commandop : G
 
 @CommandDecl(vn_command_ns, _imports, 'CallFunction', alias={
   '调用函数': {'name': '名称'}, # zh_CN
+  "調用函數": {"name": "名稱"}, # zh_HK
 })
 def cmd_call_function(parser: VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str):
   # 如果当前在函数体内就生成一个调用结点，否则什么也不做
@@ -881,6 +898,7 @@ def cmd_call_function(parser: VNParser, state : VNASTParsingState, commandop : G
 
 @CommandDecl(vn_command_ns, _imports, 'TailCall', alias={
   ('转至函数', '转至章节'): {'name': '名称'}, # zh_CN
+  ("轉至函數", "轉至章節"): {"name": "名稱"}, # zh_HK
 })
 def cmd_tailcall(parser: VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str):
   # 如果当前在函数体内就生成一个调用结点，否则什么也不做
@@ -892,6 +910,7 @@ def cmd_tailcall(parser: VNParser, state : VNASTParsingState, commandop : Genera
 
 @CommandDecl(vn_command_ns, _imports, 'Jump', alias={
   '转至标签': {'name': '名称'}, # zh_CN
+  "轉至標簽": {"name": "名稱"}, # zh_HK
 })
 def cmd_jump(parser: VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str):
   if len(name) == 0:
@@ -901,6 +920,7 @@ def cmd_jump(parser: VNParser, state : VNASTParsingState, commandop : GeneralCom
 
 @CommandDecl(vn_command_ns, _imports, 'Label', alias={
   '标签': {'name': '名称'}, # zh_CN
+  "標簽": {"name": "名稱"}, # zh_HK
 })
 def cmd_label(parser: VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str):
   if len(name) == 0:
@@ -909,15 +929,16 @@ def cmd_label(parser: VNParser, state : VNASTParsingState, commandop : GeneralCo
   state.emit_node(node)
 
 @FrontendParamEnum(alias={
-  'CONTINUE': { 'continue', '继续'},
-  'LOOP': {'loop', '循环'}
+  "CONTINUE": { "continue", "继续", "繼續"},
+  "LOOP": {"loop", "循环", "循環"},
 })
 class _SelectFinishActionEnum(enum.Enum):
   CONTINUE = 0 # 默认继续执行分支后的内容（默认值）
   LOOP = 1 # 循环到选项开始（用于类似Q/A，可以反复选择不同选项。可由跳出命令结束）
 
 @CommandDecl(vn_command_ns, _imports, 'Select', alias={
-  '选项': {'name': '名称', 'finish_action': '结束动作'}
+  "选项": {"name": "名称", "finish_action": "结束动作"}, # zh_CN
+  "選項": {"name": "名稱", "finish_action": "結束動作"}, # zh_CN
 })
 def cmd_select(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, ext : ListExprOperand, name : str, finish_action : _SelectFinishActionEnum = _SelectFinishActionEnum.CONTINUE):
   # 该命令应该这样使用：
@@ -1000,7 +1021,8 @@ def cmd_select(parser : VNParser, state : VNASTParsingState, commandop : General
   # 结束
 
 @CommandDecl(vn_command_ns, _imports, 'ExitLoop', alias={
-  '跳出循环': {}
+  '跳出循环' : {}, # zh_CN
+  "跳出循環" : {}, # zh_HK
 })
 def cmd_exit_loop(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp):
   # 用来在带循环的选项命令中跳出循环
@@ -1010,16 +1032,18 @@ def cmd_exit_loop(parser : VNParser, state : VNASTParsingState, commandop : Gene
 
 @CommandDecl(vn_command_ns, _imports, 'Return', alias={
   ('FinishSection') : {},
-  ('章节结束','函数返回'): {}
+  ("章节结束","函数返回") : {}, # zh_CN
+  ("章節結束","函數返回") : {}, # zh_HK
 })
 def cmd_return(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp):
   node = VNASTReturnNode.create(state.context, name=commandop.name, loc=commandop.location)
   state.emit_node(node)
 
-@CommandDecl(vn_command_ns, _imports, 'Choice', alias={
-  '分支': {'condition': '条件'}
+@CommandDecl(vn_command_ns, _imports, 'Switch', alias={
+  "分支": {"condition": "条件"}, # zh_CN
+  #"分支": {"condition": "條件"}, # zh_HK
 })
-def cmd_branch(parser : VNParser, commandop : GeneralCommandOp, ext : ListExprOperand, condition : str = None):
+def cmd_switch(parser : VNParser, commandop : GeneralCommandOp, ext : ListExprOperand, condition : str = None):
   # 有两种方式使用该命令：
   # 1. 【分支】
   #       * <条件1>
@@ -1036,6 +1060,7 @@ def cmd_branch(parser : VNParser, commandop : GeneralCommandOp, ext : ListExprOp
 
 @CommandDecl(vn_command_ns, _imports, 'LongSpeech', alias={
   '长发言': {'sayer': '发言者'}, # zh_CN
+  "長發言": {"sayer": "發言者"}, # zh_HK
 })
 def cmd_long_speech_mode(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, sayer : CallExprOperand = None):
   sayerlist : list[StringLiteral] = []
@@ -1059,6 +1084,7 @@ def cmd_long_speech_mode(parser : VNParser, state : VNASTParsingState, commandop
 
 @CommandDecl(vn_command_ns, _imports, 'InterleaveSayer', alias={
   '交替发言': {'sayer': '发言者'}, # zh_CN
+  "交替發言": {"sayer": "發言者"}, # zh_HK
 })
 def cmd_interleave_mode(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, sayer : list[CallExprOperand]):
   # 目前忽略额外状态，只记录名称
@@ -1072,6 +1098,7 @@ def cmd_interleave_mode(parser : VNParser, state : VNASTParsingState, commandop 
 
 @CommandDecl(vn_command_ns, _imports, 'DefaultSayMode', alias={
   '默认发言模式': {}, # zh_CN
+  "默認發言模式": {}, # zh_HK
 })
 def cmd_default_say_mode(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp):
   node = VNASTSayModeChangeNode.create(context=state.context, target_mode=VNASTSayMode.MODE_DEFAULT)
@@ -1102,6 +1129,7 @@ def _helper_collect_arguments(ctx : Context, operand : OpOperand) -> list[Value]
 
 @CommandDecl(vn_command_ns, _imports, 'ExpandTable', alias={
   '表格展开': {'cmdname' : '命令名'}, # zh_CN
+  "表格展開": {"cmdname" : "命令名"}, # zh_HK
 })
 def cmd_expand_table(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, cmdname : str, table : TableExprOperand):
   # 表格第一行是参数名
@@ -1155,6 +1183,7 @@ def cmd_expand_table(parser : VNParser, state : VNASTParsingState, commandop : G
 
 @CommandDecl(vn_command_ns, _imports, 'Comment', alias={
   '注释': {'comment' : '注释'}, # zh_CN
+  "註釋": {"comment" : "註釋"}, # zh_HK
 })
 def cmd_comment(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, comment : str):
   if rawstr := commandop.try_get_raw_arg():
