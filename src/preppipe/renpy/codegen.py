@@ -555,6 +555,9 @@ class _RenPyCodeGenHelper:
     if transition is not None:
       if defaulttransition := VNDefaultTransitionType.get_default_transition_type(transition):
         match defaulttransition:
+          case VNDefaultTransitionType.DT_NO_TRANSITION:
+            # 保持 None 的状态
+            pass
           case VNDefaultTransitionType.DT_IMAGE_SHOW | VNDefaultTransitionType.DT_IMAGE_HIDE | VNDefaultTransitionType.DT_IMAGE_MODIFY:
             renpy_displayable_transition = "dissolve"
           case VNDefaultTransitionType.DT_IMAGE_MOVE:
@@ -569,6 +572,11 @@ class _RenPyCodeGenHelper:
             renpy_audio_transition = (decimal.Decimal(0.3), decimal.Decimal(0.3))
           case _:
             raise NotImplementedError("Unhandled default transition kind")
+      elif isinstance(transition, VNBackendDisplayableTransitionExpr):
+        if transition.backend.get_string().lower() == 'renpy':
+          renpy_displayable_transition = transition.expression.get_string()
+        else:
+          return self._resolve_transition(transition.fallback)
       else:
         # TODO
         pass
