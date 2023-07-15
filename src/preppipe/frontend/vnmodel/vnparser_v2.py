@@ -267,7 +267,7 @@ class VNParser(FrontendParserBase[VNASTParsingState]):
           if last_say is not None:
             last_say.embed_voice = firstvalue
           else:
-            result = VNASTAssetReference.create(context=self.context, name=op.name, loc=op.location, kind=VNASTAssetKind.KIND_AUDIO, operation=VNASTAssetIntendedOperation.OP_PUT, asset=firstvalue)
+            result = VNASTAssetReference.create(context=self.context, name=op.name, loc=op.location, kind=VNASTAssetKind.KIND_AUDIO, operation=VNASTAssetIntendedOperation.OP_PUT, asset=firstvalue, transition=None)
             state.emit_node(result)
           last_say = None
         elif isinstance(firstvalue, ImageAssetData):
@@ -275,7 +275,7 @@ class VNParser(FrontendParserBase[VNASTParsingState]):
           try_emit_pending_content()
           last_say = None
           assert op.content.get_num_operands() == 1
-          result = VNASTAssetReference.create(context=self.context, name=op.name, loc=op.location, kind=VNASTAssetKind.KIND_IMAGE, operation=VNASTAssetIntendedOperation.OP_CREATE, asset=firstvalue)
+          result = VNASTAssetReference.create(context=self.context, name=op.name, loc=op.location, kind=VNASTAssetKind.KIND_IMAGE, operation=VNASTAssetIntendedOperation.OP_CREATE, asset=firstvalue, transition=VNDefaultTransitionType.DT_IMAGE_SHOW.get_enum_literal(state.context))
           state.emit_node(result)
           # 尝试在这个 IMElementOp 之后找到一个 IMSpecialBlockOp 来作为该图片的描述、标题
           # 我们假设有两种情况：
@@ -779,7 +779,7 @@ def cmd_character_exit(parser : VNParser, state : VNASTParsingState, commandop :
 })
 def cmd_special_effect(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, effect : CallExprOperand):
   ref = parser.emit_pending_assetref(state, commandop, effect)
-  result = VNASTAssetReference.create(context=state.context, kind=VNASTAssetKind.KIND_EFFECT, operation=VNASTAssetIntendedOperation.OP_PUT, asset=ref, name=commandop.name, loc=commandop.location)
+  result = VNASTAssetReference.create(context=state.context, kind=VNASTAssetKind.KIND_EFFECT, operation=VNASTAssetIntendedOperation.OP_PUT, asset=ref, transition=None, name=commandop.name, loc=commandop.location)
   state.emit_node(result)
 
 def _helper_collect_character_expr(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, expr : CallExprOperand) -> list[StringLiteral]:
@@ -841,7 +841,7 @@ def cmd_switch_scene(parser : VNParser, state : VNASTParsingState, commandop : G
 def cmd_hide_image(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, image_name : str, transition : CallExprOperand = None):
   transition = parser.emit_transition_node(state, commandop, transition)
   ref = VNASTPendingAssetReference.get(value=image_name, args=None, kwargs=None, context=state.context)
-  node = VNASTAssetReference.create(context=state.context, kind=VNASTAssetKind.KIND_IMAGE, operation=VNASTAssetIntendedOperation.OP_REMOVE, asset=ref, name=commandop.name, loc=commandop.location)
+  node = VNASTAssetReference.create(context=state.context, kind=VNASTAssetKind.KIND_IMAGE, operation=VNASTAssetIntendedOperation.OP_REMOVE, asset=ref, transition=VNDefaultTransitionType.DT_IMAGE_HIDE.get_enum_literal(state.context), name=commandop.name, loc=commandop.location)
   transition.push_back(node)
 
 @CommandDecl(vn_command_ns, _imports, 'SetBGM', alias={
@@ -853,7 +853,7 @@ def cmd_set_bgm(parser : VNParser, state : VNASTParsingState, commandop : Genera
     result_bgm = VNASTPendingAssetReference.get(value=bgm, args=None, kwargs=None, context=state.context)
   elif isinstance(bgm, AudioAssetData):
     result_bgm = bgm
-  node = VNASTSetBackgroundMusicNode.create(context=state.context, bgm=result_bgm, name=commandop.name, loc=commandop.location)
+  node = VNASTSetBackgroundMusicNode.create(context=state.context, bgm=result_bgm, transition=VNDefaultTransitionType.DT_BGM_CHANGE.get_enum_literal(state.context), name=commandop.name, loc=commandop.location)
   state.emit_node(node)
 
 # ------------------------------------------------------------------------------

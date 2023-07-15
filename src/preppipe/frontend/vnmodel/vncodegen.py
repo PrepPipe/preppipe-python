@@ -1023,16 +1023,19 @@ class VNCodeGen:
         # 这样所有的都找完后，剩下的就是只有该块进入时才有的内容，我们把这些内容都撤下去
         rmindex = 0
         rmfinishtimes = []
-        def remove_handle(handle : Value):
+        def remove_handle(handle : Value, transition : Value | None = None):
           nonlocal rmindex
           rm = VNRemoveInst.create(context=self.context, start_time=self.starttime, handlein=handle, name='pathjoin_remove_'+str(rmindex))
           rmindex += 1
+          if transition is not None:
+            rm.transition.set_operand(0, transition)
           self.destblock.push_back(rm)
           rmfinishtimes.append(rm.get_finish_time())
 
+        chhide = VNDefaultTransitionType.DT_SPRITE_HIDE.get_enum_literal(self.context)
         for ch, d in character_sprites.items():
           for creation, handle in d.items():
-            remove_handle(handle)
+            remove_handle(handle, chhide)
         for dev, d1 in asset_usages.items():
           for asset, d2 in d1.items():
             for creation, handle in d2.items():
@@ -1123,6 +1126,7 @@ class VNCodeGen:
         # 如果在场上有立绘，那么这里我们应该能够找到立绘
         assert sprite is not None
         handleout = VNModifyInst.create(context=self.context, start_time=self.starttime, handlein=charstate.sprite_handle, content=sprite, device=self.parsecontext.dev_foreground, loc=loc)
+        # 改变状态导致的立绘变更应该不需要转场效果
         if not self.is_in_transition:
           self.starttime=handleout.get_finish_time()
         charstate.sprite_handle = handleout
@@ -1294,6 +1298,7 @@ class VNCodeGen:
       if sprite := self.get_character_sprite(ch, finalstate):
         assert isinstance(sprite.valuetype, ImageType)
         cnode = VNCreateInst.create(context=self.context, start_time=self.starttime, content=sprite, ty=VNHandleType.get(sprite.valuetype), device=self.parsecontext.dev_foreground, loc=node.location)
+        cnode.transition.set_operand(0, VNDefaultTransitionType.DT_SPRITE_SHOW.get_enum_literal(self.context))
         self.handle_transition_and_finishtime(cnode)
         info.sprite_handle = cnode
         self.destblock.push_back(cnode)
@@ -1314,6 +1319,7 @@ class VNCodeGen:
       if info := self.scenecontext.try_get_character_state(sayname, ch):
         if info.sprite_handle:
           rm = VNRemoveInst.create(self.context, start_time=self.starttime, handlein=info.sprite_handle, loc=node.location)
+          rm.transition.set_operand(0, VNDefaultTransitionType.DT_SPRITE_HIDE.get_enum_literal(self.context))
           self.handle_transition_and_finishtime(rm)
           self.destblock.push_back(rm)
           info.sprite_handle = None
@@ -1352,6 +1358,8 @@ class VNCodeGen:
             case VNASTAssetIntendedOperation.OP_CREATE:
               assert isinstance(assetdata, ImageAssetData)
               cnode = VNCreateInst.create(context=self.context, start_time=self.starttime, content=assetdata, ty=VNHandleType.get(assetdata.valuetype), device=self.parsecontext.dev_foreground, name=node.name, loc=node.location)
+              if transition := node.transition.try_get_value():
+                cnode.transition.set_operand(0, transition)
               self.destblock.push_back(cnode)
               self.handle_transition_and_finishtime(cnode)
               info = VNCodeGen.SceneContext.AssetState(dev=self.parsecontext.dev_foreground, search_names=description, data=assetdata, output_handle=cnode)
@@ -1366,6 +1374,8 @@ class VNCodeGen:
                 for info in infolist:
                   assert info.output_handle is not None
                   rnode = VNRemoveInst.create(context=self.context, start_time=self.starttime, handlein=info.output_handle, name=node.name, loc=node.location)
+                  if transition := node.transition.try_get_value():
+                    rnode.transition.set_operand(0, transition)
                   self.handle_transition_and_finishtime(rnode)
                   self.destblock.push_back(rnode)
                   self.scenecontext.asset_info.remove(info)
@@ -1378,6 +1388,8 @@ class VNCodeGen:
             case VNASTAssetIntendedOperation.OP_PUT:
               assert isinstance(assetdata, AudioAssetData)
               pnode = VNPutInst.create(context=self.context, start_time=self.starttime, content=assetdata, device=self.parsecontext.dev_soundeffect, name=node.name, loc=node.location)
+              if transition := node.transition.try_get_value():
+                pnode.transition.set_operand(0, transition)
               # 这种情况下我们一般不更新开始时间，这个也不应该有渐变
               self.destblock.push_back(pnode)
             case _:
@@ -1443,6 +1455,8 @@ class VNCodeGen:
       else:
         raise RuntimeError("Should not happen")
       bgmnode = VNCreateInst.create(context=self.context, start_time=self.starttime, content=bgmdata, device=self.parsecontext.dev_bgm, name=node.name, loc=node.location)
+      if transition := node.transition.try_get_value():
+        bgmnode.transition.set_operand(0, transition)
       self.destblock.push_back(bgmnode)
       self.scenecontext.bgm = bgm
       return None
@@ -1490,6 +1504,8 @@ class VNCodeGen:
           rm = VNRemoveInst.create(context=self.context, start_time=self.starttime, handlein=characterinfo.sprite_handle, loc=node.location)
           if self.is_in_transition and self.parent_transition is not None:
             rm.transition.set_operand(0, self.parent_transition)
+          else:
+            rm.transition.set_operand(0, VNDefaultTransitionType.DT_SPRITE_HIDE.get_enum_literal(self.context))
           switchnode.body.push_back(rm)
           rmtimes.append(rm.get_finish_time())
           characterinfo.sprite_handle = None
@@ -1504,6 +1520,8 @@ class VNCodeGen:
         rm = VNRemoveInst.create(context=self.context, start_time=self.starttime, handlein=self.scenecontext.scene_bg.output_handle, loc=node.location)
         if self.is_in_transition and self.parent_transition is not None:
           rm.transition.set_operand(0, self.parent_transition)
+        else:
+          rm.transition.set_operand(0, VNDefaultTransitionType.DT_BACKGROUND_HIDE.get_enum_literal(self.context))
         switchnode.body.push_back(rm)
         rmtimes.append(rm.get_finish_time())
         self.scenecontext.scene_bg.output_handle = None
@@ -1516,6 +1534,8 @@ class VNCodeGen:
         cnode = VNCreateInst.create(context=self.context, start_time=best_finish_time, content=scene_background, ty=VNHandleType.get(scene_background.valuetype), device=self.parsecontext.dev_background, loc=node.location)
         if self.is_in_transition and self.parent_transition is not None:
           cnode.transition.set_operand(0, self.parent_transition)
+        else:
+          cnode.transition.set_operand(0, VNDefaultTransitionType.DT_BACKGROUND_SHOW.get_enum_literal(self.context))
         self.scenecontext.scene_bg = VNCodeGen.SceneContext.AssetState(dev=self.parsecontext.dev_background, search_names=[], data=scene_background, output_handle=cnode)
         best_finish_time = cnode.get_finish_time()
         switchnode.body.push_back(cnode)
