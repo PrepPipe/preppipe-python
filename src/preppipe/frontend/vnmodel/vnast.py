@@ -203,22 +203,25 @@ class VNASTAssetReference(VNASTNodeBase):
   # 每段都是一个 StringLiteral
   descriptions : OpOperand[StringLiteral]
 
+  transition : OpOperand # EnumLiteral[VNDefaultTransitionType] | ...
+
   def get_short_str(self, indent : int = 0) -> str:
     return 'AssetRef<' + self.kind.get().value.name[5:] + '> ' + self.operation.get().value.name[3:] + ' ' + self.get_target_str(self.asset.get(), indent) + ' [' + ','.join([ '"' + u.value.get_string() + '"' for u in self.descriptions.operanduses()]) + ']'
 
   @staticmethod
-  def create(context : Context, kind : VNASTAssetKind, operation : VNASTAssetIntendedOperation, asset : VNASTPendingAssetReference | AssetData, name : str = '', loc : Location = None):
-    return VNASTAssetReference(init_mode=IRObjectInitMode.CONSTRUCT, context=context, kind=kind, operation=operation, asset=asset, name=name, loc=loc)
+  def create(context : Context, kind : VNASTAssetKind, operation : VNASTAssetIntendedOperation, asset : VNASTPendingAssetReference | AssetData, transition : Value | None, name : str = '', loc : Location = None):
+    return VNASTAssetReference(init_mode=IRObjectInitMode.CONSTRUCT, context=context, kind=kind, operation=operation, asset=asset, transition=transition, name=name, loc=loc)
 
 @IROperationDataclass
 class VNASTSetBackgroundMusicNode(VNASTNodeBase):
   # 该结点不会在 VNASTTransitionNode 之下，因为它不需要和其他命令进行同步
   # 即使以后加淡入淡出也是这样
   bgm : OpOperand # VNASTPendingAssetReference | AudioAssetData
+  transition : OpOperand # EnumLiteral[VNDefaultTransitionType] | ...
 
   @staticmethod
-  def create(context : Context, bgm : Value, name : str = '', loc : Location | None = None):
-    return VNASTSetBackgroundMusicNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, bgm=bgm, name=name, loc=loc)
+  def create(context : Context, bgm : Value, transition : Value | None, name : str = '', loc : Location | None = None):
+    return VNASTSetBackgroundMusicNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, bgm=bgm, transition=transition, name=name, loc=loc)
 
 @IROperationDataclass
 class VNASTAssetDeclSymbol(Symbol):
@@ -421,6 +424,7 @@ class VNASTTransitionNode(VNASTCodegenRegion):
   # 为了同时保留 args 和 kwargs，如果转场表达式有 a 个 arg 和 k 个 kwarg, 那么：
   # 1. transition_args 有 (a+k) 项，前 a 项是 args 的值，后 k 项是 kwargs 的值
   # 2. transition_argnames 有 k 项，第 i 项对应第 i 个 kwargs 的值（即 transition_args 中第 a+i 项）
+  # 这个结点只有在源文档中提供了转场时才有用，没有提供转场的话仍然依赖内部包裹的事件的默认转场
 
   transition_name : OpOperand[StringLiteral] # 转场效果的名称（如果有的话）
   transition_args : OpOperand[Literal] # 转场效果的所有参数

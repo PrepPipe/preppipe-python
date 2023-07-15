@@ -506,6 +506,7 @@ class _RenPyCodeGenHelper:
     sceneswitch = instrs[0]
     assert isinstance(sceneswitch, VNSceneSwitchInstructionGroup)
     imspec = ''
+    transition = None
     # 我们需要做这些：
     # 1. 找到向背景设备写入的create/put，生成背景的 impsec
     # 2. 对所有剩下的创建类的指令，对它们单独做生成
@@ -519,6 +520,7 @@ class _RenPyCodeGenHelper:
         if dev.get_std_device_kind() == VNStandardDeviceKind.O_BACKGROUND_DISPLAY:
           is_handled = True
           imspec = self.get_impsec(op.content.get(), user_hint=VNStandardDeviceKind.O_BACKGROUND_DISPLAY)
+          transition = op.transition.try_get_value()
       elif isinstance(op, VNRemoveInst):
         # 如果是前景、背景内容的话就不需要额外操作了，包含在 scene 命令里了
         removevalue, rootdev = self._get_handle_value_and_device(op.handlein.get())
@@ -537,10 +539,54 @@ class _RenPyCodeGenHelper:
         if top_insert_place is None:
           top_insert_place = genresult
     result = RenPySceneNode.create(self.context, imspec=imspec)
+    if transition is not None:
+      if img_transition := self.resolve_displayable_transition(transition):
+        withnode = RenPyWithNode.create(self.context, expr=img_transition)
+        result.with_.set_operand(0, withnode)
+        result.body.push_back(withnode)
     if top_insert_place is None:
       top_insert_place = insert_before
     result.insert_before(top_insert_place)
     return result
+
+  def _resolve_transition(self, transition : Value) -> tuple[str|None, tuple[decimal.Decimal, decimal.Decimal] | None]:
+    renpy_displayable_transition = None
+    renpy_audio_transition = None # tuple[Decimal, Decimal] : <fadein, fadeout>
+    if transition is not None:
+      if defaulttransition := VNDefaultTransitionType.get_default_transition_type(transition):
+        match defaulttransition:
+          case VNDefaultTransitionType.DT_IMAGE_SHOW | VNDefaultTransitionType.DT_IMAGE_HIDE | VNDefaultTransitionType.DT_IMAGE_MODIFY:
+            renpy_displayable_transition = "dissolve"
+          case VNDefaultTransitionType.DT_IMAGE_MOVE:
+            renpy_displayable_transition = "move"
+          case VNDefaultTransitionType.DT_BACKGROUND_SHOW | VNDefaultTransitionType.DT_BACKGROUND_HIDE | VNDefaultTransitionType.DT_BACKGROUND_CHANGE:
+            renpy_displayable_transition = "fade"
+          case VNDefaultTransitionType.DT_SPRITE_SHOW | VNDefaultTransitionType.DT_SPRITE_HIDE:
+            renpy_displayable_transition = "dissolve"
+          case VNDefaultTransitionType.DT_SPRITE_MOVE:
+            renpy_displayable_transition = "move"
+          case VNDefaultTransitionType.DT_BGM_CHANGE:
+            renpy_audio_transition = (decimal.Decimal(0.3), decimal.Decimal(0.3))
+          case _:
+            raise NotImplementedError("Unhandled default transition kind")
+      else:
+        # TODO
+        pass
+    return (renpy_displayable_transition, renpy_audio_transition)
+
+  def resolve_displayable_transition(self, transition : Value) -> str | None:
+    renpy_displayable_transition, renpy_audio_transition = self._resolve_transition(transition)
+    return renpy_displayable_transition
+
+  def resolve_audio_transition(self, transition : Value) -> tuple[decimal.Decimal, decimal.Decimal] | None:
+    renpy_displayable_transition, renpy_audio_transition = self._resolve_transition(transition)
+    return renpy_audio_transition
+
+  def _add_audio_transition(self, transition : Value, play : RenPyPlayNode):
+    if audio_transition := self.resolve_audio_transition(transition):
+      fadein, fadeout = audio_transition
+      play.fadein.set_operand(0, FloatLiteral.get(fadein, self.context))
+      play.fadeout.set_operand(0, FloatLiteral.get(fadeout, self.context))
 
   def gen_create_put(self, instrs : list[VNInstruction], insert_before : RenPyNode) -> RenPyNode:
     # VNCreateInst/VNPutInst
@@ -550,7 +596,6 @@ class _RenPyCodeGenHelper:
     content = instr.content.get()
     device : VNDeviceSymbol = instr.device.get()
     # placeat : SymbolTableRegion
-    transition = instr.transition.try_get_value()
     devkind = device.get_std_device_kind()
     if devkind is None:
       # 暂不支持
@@ -560,18 +605,27 @@ class _RenPyCodeGenHelper:
         # 放置在前景，用 show
         imspec = self.get_impsec(content, user_hint=devkind)
         show = RenPyShowNode.create(context=self.context, imspec=imspec)
+        if transition := instr.transition.try_get_value():
+          if img_transition := self.resolve_displayable_transition(transition):
+            withnode = RenPyWithNode.create(self.context, img_transition)
+            show.with_.set_operand(0, withnode)
+            show.body.push_back(withnode)
         show.insert_before(insert_before)
         return show
       case VNStandardDeviceKind.O_SE_AUDIO:
         # 音效，用 play
         audiospec = self.get_audiospec(content, devkind)
         play = RenPyPlayNode.create(context=self.context, channel=RenPyPlayNode.CHANNEL_SOUND, audiospec=audiospec)
+        if transition := instr.transition.try_get_value():
+          self._add_audio_transition(transition, play)
         play.insert_before(insert_before)
         return play
       case VNStandardDeviceKind.O_BGM_AUDIO:
         # 背景音乐，用 play
         audiospec = self.get_audiospec(content, devkind)
         play = RenPyPlayNode.create(context=self.context, channel=RenPyPlayNode.CHANNEL_MUSIC, audiospec=audiospec)
+        if transition := instr.transition.try_get_value():
+          self._add_audio_transition(transition, play)
         play.insert_before(insert_before)
         return play
       case VNStandardDeviceKind.O_SAY_NAME_TEXT | VNStandardDeviceKind.O_SAY_TEXT_TEXT | VNStandardDeviceKind.O_BACKGROUND_DISPLAY | VNStandardDeviceKind.O_VOICE_AUDIO:
