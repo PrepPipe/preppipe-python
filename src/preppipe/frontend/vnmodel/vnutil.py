@@ -223,3 +223,56 @@ def emit_audio_from_path(context : Context, pathexpr : str, basepath : str) -> A
   if path := context.get_file_auditor().search(querypath=pathexpr, basepath=basepath, filecheckCB=_try_open_audio):
     return context.get_or_create_audio_asset_data_external(path, None)
   return None
+
+def parse_transition(context : Context, transition_name : str, transition_args : list[Literal], transition_kwargs : dict[str, Literal], warnings : list[tuple[str, str]]) -> Value | tuple[StringLiteral, StringLiteral] | None:
+  # 如果没有提供转场，就返回 None
+  # 如果提供了后端专有的转场，则返回 tuple[StringLiteral, StringLiteral] 表示后端名和表达式
+  # 如果提供了通用的转场，则返回对应的值 (Value)
+
+  if len(transition_name) == 0:
+    return None
+
+  # 目前我们支持以下转场：
+  # 1. 无：立即发生，无转场
+  # 2. 后端转场<表达式，后端>：后端专有的表达式
+  # 等以后做通用的再加
+  if transition_name in ("None", "无", "無"):
+    return VNDefaultTransitionType.DT_NO_TRANSITION.get_enum_literal(context)
+
+  if transition_name in ("BackendTransition", "后端转场", "後端轉場"):
+    backend_name = None
+    expr = None
+    def try_set_backend(s : Literal):
+      nonlocal backend_name
+      if isinstance(s, StringLiteral):
+        backend_name = s
+      elif isinstance(s, TextFragmentLiteral):
+        backend_name = s.content
+      else:
+        warnings.append(("vncodegen-transition-invalid-argument", "unexpected backend value type: " + type(s).__name__))
+
+    def try_set_expr(s : Literal):
+      nonlocal expr
+      if isinstance(s, StringLiteral):
+        expr = s
+      elif isinstance(s, TextFragmentLiteral):
+        expr = s.content
+      else:
+        warnings.append(("vncodegen-transition-invalid-argument", "unexpected expression value type: " + type(s).__name__))
+
+    if len(transition_args) > 0:
+      if len(transition_args) == 1:
+        try_set_expr(transition_args[0])
+      else:
+        warnings.append(("vncodegen-transition-unused-args", "extra positional arguments " + ','.join([str(v) for v in transition_args[1:]]) + " ignored"))
+    for k, v in transition_kwargs.items():
+      if k in ("expr", "表达式", "表達式"):
+        try_set_expr(v)
+      elif k in ("backend", "后端", "後端"):
+        try_set_backend(v)
+    if backend_name is None or expr is None:
+      # 如果任意一项没填，视为默认转场
+      warnings.append(("vncodegen-transition-incomplete-args", "BackendTransition expects both <expr, backend>; using default transition"))
+      return None
+    return (backend_name, expr)
+  return None

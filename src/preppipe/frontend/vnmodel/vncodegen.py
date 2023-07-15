@@ -838,7 +838,10 @@ class VNCodeGen:
     loopexitblock : Block | None = None # 如果在循环内的话，这是最内侧循环的出口块
     # 如果现在正在解析 VNASTTransitionNode 下的内容的话，这里应该是解析好的转场效果
     is_in_transition : bool = False
-    parent_transition : Value | None = None
+    # 如果是 Value, 这是一个通用的转场
+    # 如果是 tuple, 这是某个后端独有的转场
+    # 如果是 None,  则父转场结点没有提供转场
+    parent_transition : Value | tuple[StringLiteral, StringLiteral] | None = None
     transition_child_finishtimes : list[Value] = dataclasses.field(default_factory=list)
 
     # 当前是否已经有终指令
@@ -1273,7 +1276,19 @@ class VNCodeGen:
         self.starttime = node.get_finish_time()
       else:
         if self.parent_transition is not None:
-          node.transition.set_operand(0, self.parent_transition)
+          if isinstance(self.parent_transition, Value):
+            node.transition.set_operand(0, self.parent_transition)
+          elif isinstance(self.parent_transition, tuple):
+            curfallback = node.transition.try_get_value()
+            if isinstance(curfallback, EnumLiteral) and isinstance(curfallback.value, VNDefaultTransitionType):
+              pass
+            else:
+              curfallback = VNDefaultTransitionType.DT_NO_TRANSITION.get_enum_literal(self.context)
+            backend, expr = self.parent_transition
+            final_transition = VNBackendDisplayableTransitionExpr.get(context=self.context, backend=backend, expression=expr, fallback=curfallback)
+            node.transition.set_operand(0, final_transition)
+          else:
+            raise RuntimeError("Unexpected parent_transition type")
         self.transition_child_finishtimes.append(node.get_finish_time())
 
     def visitVNASTCharacterEntryNode(self, node : VNASTCharacterEntryNode) -> VNTerminatorInstBase | None:
@@ -1411,8 +1426,10 @@ class VNCodeGen:
       transition_args = []
       transition_kwargs = {}
       transition_name = node.populate_argdicts(transition_args, transition_kwargs)
-      # TODO 查找转场效果
-      transition = None
+      warnings = []
+      transition = parse_transition(self.context, transition_name=transition_name, transition_args=transition_args, transition_kwargs=transition_kwargs, warnings=warnings)
+      for code, msg in warnings:
+        self.codegen.emit_error(code, msg, node.location, dest=self.destblock)
       assert not self.is_in_transition
       self.parent_transition = transition
       self.is_in_transition = True

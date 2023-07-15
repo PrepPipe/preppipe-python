@@ -156,12 +156,6 @@ class VNParser(FrontendParserBase[VNASTParsingState]):
     result = VNASTASMNode.create(self.context, body=body, backend=backend, name=backingop.name, loc=backingop.location)
     state.emit_node(result)
 
-  def get_literal_from_call_arg(self, arg : typing.Any, type_hint : type | None = None) -> Literal | None:
-    if v := convert_literal(arg, self.context, type_hint=type_hint):
-      assert isinstance(v, Literal)
-      return v
-    return None
-
   def emit_transition_node(self, state : VNASTParsingState, backingop : Operation, transition : CallExprOperand | None) -> VNASTTransitionNode:
     if transition is None:
       result = VNASTTransitionNode.create(context=self.context, transition_name=None, name=backingop.name, loc=backingop.location)
@@ -170,14 +164,14 @@ class VNParser(FrontendParserBase[VNASTParsingState]):
     assert isinstance(transition, CallExprOperand)
     result = VNASTTransitionNode.create(context=self.context, transition_name=transition.name, name=backingop.name, loc=backingop.location)
     for a in transition.args:
-      if l := self.get_literal_from_call_arg(a):
-        result.add_arg(l)
+      if isinstance(a, Literal):
+        result.add_arg(a)
       else:
         state.emit_error('vnparser-unexpected-argument-in-transition', transition.name + ': "' + str(a) + '"', loc=backingop.location)
     for k, v in transition.kwargs.items():
-      if l := self.get_literal_from_call_arg(v):
+      if isinstance(v, Literal):
         name = StringLiteral.get(k, state.context)
-        result.add_kwarg(name, l)
+        result.add_kwarg(name, v)
       else:
         state.emit_error('vnparser-unexpected-argument-in-transition', transition.name + ' arg "' + k +'": "' + str(v) + '"', loc=backingop.location)
     state.emit_node(result)
@@ -188,13 +182,13 @@ class VNParser(FrontendParserBase[VNASTParsingState]):
     args : list[Literal] = []
     kwargs : dict[str, Literal] = {}
     for a in ref.args:
-      if l := self.get_literal_from_call_arg(a):
-        args.append(l)
+      if isinstance(a, Literal):
+        args.append(a)
       else:
         state.emit_error('vnparser-unexpected-argument-in-assetref', ref.name + ': "' + str(a) + '"', loc=backingop.location)
     for k, v in ref.kwargs.items():
-      if l := self.get_literal_from_call_arg(v):
-        kwargs[k] = l
+      if isinstance(v, Literal):
+        kwargs[k] = v
       else:
         state.emit_error('vnparser-unexpected-argument-in-assetref', ref.name + ' arg "' + k +'": "' + str(v) + '"', loc=backingop.location)
     return VNASTPendingAssetReference.get(value=refname, args=args, kwargs=kwargs, context=state.context)
@@ -784,10 +778,10 @@ def cmd_special_effect(parser : VNParser, state : VNASTParsingState, commandop :
 
 def _helper_collect_character_expr(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, expr : CallExprOperand) -> list[StringLiteral]:
   # 将描述角色状态的 CallExprOperand 转化为字符串数组
-  deststate = []
+  deststate : list[StringLiteral] = []
   for arg in expr.args:
-    if l := parser.get_literal_from_call_arg(arg, StringLiteral):
-      deststate.append(l)
+    if isinstance(arg, StringLiteral):
+      deststate.append(arg)
     else:
       state.emit_error('vnparser-unexpected-argument-in-character-expr', expr.name + ': "' + str(arg) + '"', loc=commandop.location)
   # 目前我们不支持提取 kwargs

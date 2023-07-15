@@ -626,6 +626,7 @@ class VNTransitionEffectConstExpr(ConstExpr):
 class VNDefaultTransitionType(enum.Enum):
   # 默认的转场，包括图片、音视频
   # 使用默认转场时，这个值应该在 EnumLiteral 中
+  DT_NO_TRANSITION  = enum.auto()
   DT_SPRITE_SHOW  = enum.auto()
   DT_SPRITE_MOVE  = enum.auto()
   # 没有修改的情形；立绘改变内容时（主要是切换表情时）默认没有渐变
@@ -651,6 +652,52 @@ class VNDefaultTransitionType(enum.Enum):
 
   def get_enum_literal(self, context : Context) -> EnumLiteral:
     return EnumLiteral.get(context, self)
+
+class VNBackendDisplayableTransitionExpr(LiteralExpr):
+  # 后端特有的
+  def construct_init(self, *, context : Context, value_tuple : tuple[StringLiteral, StringLiteral, EnumLiteral[VNDefaultTransitionType]], **kwargs) -> None:
+    assert len(value_tuple) == 3
+    assert isinstance(value_tuple[0], StringLiteral)
+    assert isinstance(value_tuple[1], StringLiteral)
+    assert isinstance(value_tuple[2], EnumLiteral)
+    assert isinstance(value_tuple[2].value, VNDefaultTransitionType)
+    ty = VNEffectFunctionType.get(context)
+    super().construct_init(ty=ty, value_tuple=value_tuple, **kwargs)
+
+  @staticmethod
+  def get_fixed_value_type():
+    return VNEffectFunctionType
+
+  @property
+  def value(self) -> tuple[StringLiteral, StringLiteral, EnumLiteral[VNDefaultTransitionType]]:
+    return super().value
+
+  @property
+  def backend(self) -> StringLiteral:
+    return self.get_operand(0)
+
+  @property
+  def expression(self) -> StringLiteral:
+    return self.get_operand(1)
+
+  @property
+  def fallback(self) -> EnumLiteral[VNDefaultTransitionType]:
+    return self.get_operand(2)
+
+  def __str__(self) -> str:
+    return 'Transition<' + self.backend.get_string() + ">(\"" + self.expression.get_string() + "\", fallback=" + self.fallback.value.name +")"
+
+  @staticmethod
+  def get(context : Context, backend : StringLiteral, expression : StringLiteral, fallback : EnumLiteral[VNDefaultTransitionType]) -> VNBackendDisplayableTransitionExpr:
+    if not isinstance(backend, StringLiteral):
+      raise RuntimeError("Expecting StringLiteral for backend: " + type(backend).__name__)
+    if not isinstance(expression, StringLiteral):
+      raise RuntimeError("Expecting StringLiteral for expression: " + type(expression).__name__)
+    if not isinstance(fallback, EnumLiteral):
+      raise RuntimeError("Expecting EnumLiteral for fallback: " + type(fallback).__name__)
+    elif not isinstance(fallback.value, VNDefaultTransitionType):
+      raise RuntimeError("Expecting VNDefaultTransitionType for fallback element: " + type(fallback.value).__name__)
+    return VNBackendDisplayableTransitionExpr._get_literalexpr_impl((backend, expression, fallback), context)
 
 # ------------------------------------------------------------------------------
 # 函数、指令等
