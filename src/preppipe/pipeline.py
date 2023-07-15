@@ -599,7 +599,7 @@ def _load_module(module_name, file_path):
     print("Cannot load plugin " + module_name + " from " + file_path + ", skipped")
 
 def _load_plugins():
-  if plugindir := os.environ['PREPPIPE_PLUGINS']:
+  if plugindir := os.environ.get("PREPPIPE_PLUGINS"):
     plugindir = os.path.realpath(plugindir)
     plugin_modulebase = "preppipe.plugin."
     if os.path.isdir(plugindir):
