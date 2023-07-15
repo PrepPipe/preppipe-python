@@ -569,7 +569,7 @@ class _RenPyCodeGenHelper:
           case VNDefaultTransitionType.DT_SPRITE_MOVE:
             renpy_displayable_transition = "move"
           case VNDefaultTransitionType.DT_BGM_CHANGE:
-            renpy_audio_transition = (decimal.Decimal(0.3), decimal.Decimal(0.3))
+            renpy_audio_transition = (VNAudioFadeTransitionExpr.DEFAULT_FADEIN, VNAudioFadeTransitionExpr.DEFAULT_FADEOUT)
           case _:
             raise NotImplementedError("Unhandled default transition kind")
       elif isinstance(transition, VNBackendDisplayableTransitionExpr):
@@ -577,6 +577,8 @@ class _RenPyCodeGenHelper:
           renpy_displayable_transition = transition.expression.get_string()
         else:
           return self._resolve_transition(transition.fallback)
+      elif isinstance(transition, VNAudioFadeTransitionExpr):
+        renpy_audio_transition = (transition.fadein.value, transition.fadeout.value)
       else:
         # TODO
         pass
