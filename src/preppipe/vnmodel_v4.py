@@ -699,6 +699,49 @@ class VNBackendDisplayableTransitionExpr(LiteralExpr):
       raise RuntimeError("Expecting VNDefaultTransitionType for fallback element: " + type(fallback.value).__name__)
     return VNBackendDisplayableTransitionExpr._get_literalexpr_impl((backend, expression, fallback), context)
 
+# 目前音频仅支持淡入淡出渐变
+# TODO 加入前端支持
+class VNAudioFadeTransitionExpr(LiteralExpr):
+  DEFAULT_FADEIN : typing.ClassVar[decimal.Decimal] = decimal.Decimal(0.5)
+  DEFAULT_FADEOUT : typing.ClassVar[decimal.Decimal] = decimal.Decimal(0.5)
+
+  def construct_init(self, *, context : Context, value_tuple : tuple[FloatLiteral, FloatLiteral], **kwargs) -> None:
+    assert len(value_tuple) == 2
+    assert isinstance(value_tuple[0], FloatLiteral) and isinstance(value_tuple[1], FloatLiteral)
+    ty = VNEffectFunctionType.get(context)
+    super().construct_init(ty=ty, value_tuple=value_tuple, **kwargs)
+
+  @staticmethod
+  def get_fixed_value_type():
+    return VNEffectFunctionType
+
+  @property
+  def value(self) -> tuple[FloatLiteral, FloatLiteral]:
+    return super().value
+
+  @property
+  def fadein(self) -> FloatLiteral:
+    return self.get_operand(0)
+
+  @property
+  def fadeout(self) -> FloatLiteral:
+    return self.get_operand(1)
+
+  def __str__(self) -> str:
+    return "AudioFade(fadein=" + str(self.fadein.value) + ", fadeout=" + str(self.fadeout.value) + ")"
+
+  @staticmethod
+  def get(context : Context, fadein: FloatLiteral | None, fadeout : FloatLiteral | None):
+    if fadein:
+      assert isinstance(fadein, FloatLiteral)
+    else:
+      fadein = FloatLiteral.get(VNAudioFadeTransitionExpr.DEFAULT_FADEIN, context)
+    if fadeout:
+      assert isinstance(fadeout, FloatLiteral)
+    else:
+      fadeout = FloatLiteral.get(VNAudioFadeTransitionExpr.DEFAULT_FADEOUT, context)
+    return VNAudioFadeTransitionExpr._get_literalexpr_impl((fadein, fadeout), context)
+
 # ------------------------------------------------------------------------------
 # 函数、指令等
 # ------------------------------------------------------------------------------
