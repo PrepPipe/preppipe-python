@@ -623,6 +623,35 @@ class VNTransitionEffectConstExpr(ConstExpr):
 # 特效有两种，一种作用于有句柄的内容（比如角色小跳），一种作用于设备（基本就是多一个内容项）
 # 我们使用 put/create 来表示作用于设备的特效，使用 modify 来表示作用于句柄的特效
 
+class VNDefaultTransitionType(enum.Enum):
+  # 默认的转场，包括图片、音视频
+  # 使用默认转场时，这个值应该在 EnumLiteral 中
+  DT_SPRITE_SHOW  = enum.auto()
+  DT_SPRITE_MOVE  = enum.auto()
+  # 没有修改的情形；立绘改变内容时（主要是切换表情时）默认没有渐变
+  DT_SPRITE_HIDE  = enum.auto()
+  DT_IMAGE_SHOW   = enum.auto()
+  DT_IMAGE_MOVE   = enum.auto()
+  DT_IMAGE_MODIFY = enum.auto()
+  DT_IMAGE_HIDE   = enum.auto()
+  DT_BACKGROUND_SHOW    = enum.auto()
+  DT_BACKGROUND_CHANGE  = enum.auto()
+  DT_BACKGROUND_HIDE    = enum.auto()
+  #DT_BGM_START    = enum.auto()
+  DT_BGM_CHANGE   = enum.auto()
+  #DT_BGM_STOP     = enum.auto()
+
+  @staticmethod
+  def get_default_transition_type(v : Value) -> VNDefaultTransitionType | None:
+    if isinstance(v, EnumLiteral):
+      e = v.value
+      if isinstance(e, VNDefaultTransitionType):
+        return e
+    return None
+
+  def get_enum_literal(self, context : Context) -> EnumLiteral:
+    return EnumLiteral.get(context, self)
+
 # ------------------------------------------------------------------------------
 # 函数、指令等
 # ------------------------------------------------------------------------------
