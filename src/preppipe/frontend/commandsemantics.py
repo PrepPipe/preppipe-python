@@ -80,8 +80,8 @@ def FrontendParamEnum(alias : dict[str, set[str]]):
 @dataclasses.dataclass
 class CallExprOperand:
   name : str
-  args : list[typing.Any] = dataclasses.field(default_factory=list) # str, int, float, ConstantXXX, CallExprOperand
-  kwargs : typing.OrderedDict[str, Value] = dataclasses.field(default_factory=collections.OrderedDict)
+  args : list[Value | CallExprOperand] = dataclasses.field(default_factory=list) # XXXLiteral, CallExprOperand
+  kwargs : typing.OrderedDict[str, Value | CallExprOperand] = dataclasses.field(default_factory=collections.OrderedDict)
 
 # 所有延伸的数据的基类
 # 这些数据是在命令之外的、根据语法整合进该命令的数据
