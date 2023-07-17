@@ -5,6 +5,8 @@ import io, sys, os
 import typing
 from warnings import warn
 import PIL.Image
+import dataclasses
+import re
 
 import odf.opendocument
 import zipfile
@@ -14,26 +16,28 @@ from ..inputmodel import *
 import argparse
 from ..pipeline import TransformBase, FrontendDecl, IODecl
 
+@dataclasses.dataclass
 class _TextStyleInfo:
-  # temporary structure for text style
-  # we don't have a relative font sizing metric (used in InputModel) until we parsed all the text
-  # this structure temporarily holds the style info during the parsing
-  style : typing.Dict[TextAttribute, typing.Any]
-  is_strike_through : bool # if the font has strikethrough (and we will drop it after generation)
-  is_special_block_style : bool # if the text style satisfy requirement for special block
-  special_block_reason : str | None
+  # 用来存储文本样式的结构
+  # 源文档中文本样式既包含“文本样式”又包含“段落样式”，所以这里我们也都存储
+  # 生成 IMElementOp 时会只取文本样式的内容，段落样式则会影响内容的组织方式
+  # 注意，有些地方的文本的段落样式包含在段落中而不是文本自身，比如段落
+  # <p style="P1"><span style="T1">ABC</span></p>
+  # 可能 P1 的段落样式使得该段需要特殊处理而 T1 不包含段落样式
+  # 这些情况都需要特判
+  style : dict[TextAttribute, typing.Any] = dataclasses.field(default_factory=dict)
+  is_strike_through : bool = False # if the font has strikethrough (and we will drop it after generation)
+  is_special_block_style : bool = False # if the text style satisfy requirement for special block
+  special_block_reason : str | None = None
+  # 有些编辑器导出的 odf 文档会把列表“压平”，列表项内没有层级，只用文字属性来标明列表项的缩进
+  # 我们需要在文字属性这里记录其缩进距离，这样之后可以将列表项的层级结构还原出来
+  base_list_style : str | None = None # 只有文本属性包含 "style:list-style-name" 时，我们才考虑它是否是列表项中的文本
+  paragraph_margin_left : str | None = None # e.g., <style:paragraph-properties ... fo:margin-left="0.635cm" ></style:paragraph-properties>
 
-  def __init__(self, src = None):
-    self.style = {}
-    self.is_strike_through = False
-    self.is_special_block_style = False
-    self.special_block_reason = None
-    if src is not None:
-      assert isinstance(src, _TextStyleInfo)
-      self.style = src.style.copy()
-      self.is_strike_through = src.is_strike_through
-      self.is_special_block_style = src.is_special_block_style
-      self.special_block_reason = src.special_block_reason
+  @staticmethod
+  def forkfrom(src):
+    assert isinstance(src, _TextStyleInfo)
+    return dataclasses.replace(src, style=src.style.copy())
 
   def set_bold(self, bold : bool):
     if bold:
@@ -48,6 +52,7 @@ class _TextStyleInfo:
       self.style.pop(TextAttribute.Italic, None)
 
   def set_color(self, color: Color):
+    # 前景色默认为黑色
     if color.red() == 0 and color.green() == 0 and color.blue() == 0 and color.alpha() == 255:
       if TextAttribute.TextColor in self.style:
         del self.style[TextAttribute.TextColor]
@@ -55,7 +60,9 @@ class _TextStyleInfo:
     self.style[TextAttribute.TextColor] = color
 
   def set_background_color(self, color: Color):
-    if color.red() == 0 and color.green() == 0 and color.blue() == 0 and color.alpha() == 255:
+    # 背景色默认为白色
+    # 将背景色设为白色或透明都被认为是去掉当前背景
+    if (color.red(), color.green(), color.blue()) == (255, 255, 255) or color.alpha() == 0:
       if TextAttribute.BackgroundColor in self.style:
         del self.style[TextAttribute.BackgroundColor]
       return
@@ -72,6 +79,12 @@ class _TextStyleInfo:
       if self.special_block_reason is not None and self.special_block_reason == reason:
         self.is_special_block_style = False
         self.special_block_reason = None
+
+  def set_in_list_style(self, list_style : str):
+    self.base_list_style = list_style
+
+  def set_margin_left(self, margin_left : str):
+    self.paragraph_margin_left = margin_left
 
   def empty(self) -> bool:
     return len(self.style) == 0 and not self.is_strike_through and not self.is_special_block_style
@@ -171,9 +184,13 @@ class _ODParseContext:
         # if we have a parent-style-name, we need to modify from the parent style
         parent_style = self._get_element_attribute(child, "parent-style-name")
         if len(parent_style) > 0:
-          current_style = _TextStyleInfo(self.style_data[parent_style])
+          current_style = _TextStyleInfo.forkfrom(self.style_data[parent_style])
         else:
           current_style = _TextStyleInfo()
+        # check if is in some list
+        parent_list_style = self._get_element_attribute(child, 'list-style-name')
+        if len(parent_list_style) > 0:
+          current_style.set_in_list_style(parent_list_style)
         # we should have child nodes of type text-properties
         # we don't care about paragraph-properties for now
         for property_node in child.childNodes:
@@ -194,9 +211,13 @@ class _ODParseContext:
             for k in property_node.attributes.keys():
               match k[1]:
                 case "background-color":
-                  current_style.set_is_pecial_block(property_node.attributes[k] != '#ffffff', IMSpecialBlockOp.ATTR_REASON_BG_HIGHLIGHT)
+                  bgcolor = Color.get(property_node.attributes[k])
+                  is_special_block = bgcolor.alpha() > 0 and (bgcolor.red(), bgcolor.green(), bgcolor.blue()) != (255, 255, 255)
+                  current_style.set_is_pecial_block(is_special_block, IMSpecialBlockOp.ATTR_REASON_BG_HIGHLIGHT)
                 case "text-align":
                   current_style.set_is_pecial_block(property_node.attributes[k] == 'center', IMSpecialBlockOp.ATTR_REASON_CENTERED)
+                case "margin-left":
+                  current_style.set_margin_left(property_node.attributes[k])
                 case _:
                   pass
 
@@ -239,7 +260,7 @@ class _ODParseContext:
   def get_DILocation(self, page : int, row : int, column : int) -> DILocation:
     return self.ctx.get_DILocation(self.difile, page, row, column)
 
-  def create_text_element(self, text:str, style_name:str, loc : DILocation) -> IMElementOp | IMSpecialBlockOp | typing.Tuple[IMElementOp, IMErrorElementOp]:
+  def create_text_element(self, text:str, style_name:str, paragraph_style_src : str, loc : DILocation) -> IMElementOp | IMSpecialBlockOp | typing.Tuple[IMElementOp, IMErrorElementOp]:
     """Create the text element with the provided text and style name.
     The flags for the text element will be set from the style name
     """
@@ -249,12 +270,23 @@ class _ODParseContext:
     cstyle = None
     is_strike_through = False
     special_block_reason : str | None = None
+    left_margin_in_list : str | None = None
     if style_name in self.style_data:
       style = self.style_data[style_name]
       if style.is_strike_through:
         is_strike_through = True
       if style.is_special_block_style:
         special_block_reason = style.special_block_reason
+      if style.base_list_style is not None:
+        left_margin_in_list = style.paragraph_margin_left
+      # 如果当前设置没有段落设置的话，尝试从段落样式中读取
+      if paragraph_style_src in self.style_data:
+        paragraph_style = self.style_data[paragraph_style_src]
+        if special_block_reason is None and paragraph_style.is_special_block_style:
+          special_block_reason = paragraph_style.special_block_reason
+        if left_margin_in_list is None and paragraph_style.base_list_style is not None:
+          left_margin_in_list = paragraph_style.paragraph_margin_left
+      # 开始实际创建样式
       if not style.empty() and special_block_reason is None:
         cstyle = TextStyleLiteral.get(style.style, self.ctx)
     else:
@@ -265,6 +297,9 @@ class _ODParseContext:
       node = IMSpecialBlockOp.create(name = '', reason=special_block_reason, loc = loc, content = content)
     else:
       node = IMElementOp.create(name = '', loc = loc, content = content)
+      # 如果这个内容结点在列表中，我们在这记录一下左边距来辅助重构列表层级
+      if left_margin_in_list is not None and len(left_margin_in_list) > 0:
+        node.set_attr("LeftMarginInList", left_margin_in_list)
     if is_strike_through:
       node.set_attr('StrikeThrough', True)
     if error_op is None:
@@ -390,14 +425,16 @@ class _ODParseContext:
     elementname = str(element.qname)
     return IMErrorElementOp.create(name = elementname, loc = loc, content = StringLiteral.get(str(element), self.ctx), error_code='unsupported-element', error_msg=StringLiteral.get(elementname, self.ctx))
 
-  def _populate_paragraph_impl(self, paragraph: Block, rootnode : odf.element.Element, default_style: str, isInFrame : bool) -> None:
+  def _populate_paragraph_impl(self, paragraph: Block, rootnode : odf.element.Element, default_style: str, paragraph_style_src : str, isInFrame : bool) -> None:
+    # default_style 是没有额外样式标注时的内容样式
+    # 纯文本内容的话，有时段落样式只在段落开始时指定，内容都用 span 包裹且该样式只有文本样式没有段落样式，所以需要一个额外的 paragraph_style_src
     for element in rootnode.childNodes:
       loc = self.get_DILocation(self.cur_page_count, self.cur_row_count, self.cur_column_count)
       if element.nodeType == 3:
         # this is a text node
         text = str(element)
         if len(text) > 0:
-          element_node_or_pair = self.create_text_element(text, default_style, loc)
+          element_node_or_pair = self.create_text_element(text, default_style, paragraph_style_src, loc)
           if isinstance(element_node_or_pair, tuple):
             # an IMElementOp and an IMErrorElementOp
             for e in element_node_or_pair:
@@ -412,7 +449,7 @@ class _ODParseContext:
           style = self.get_style(element)
           if (style == ""):
             style = default_style
-          self._populate_paragraph_impl(paragraph, element, style, isInFrame)
+          self._populate_paragraph_impl(paragraph, element, style, paragraph_style_src, isInFrame)
         elif element.qname[1] == "frame":
           if len(element.childNodes) == 0:
             continue
@@ -489,7 +526,7 @@ class _ODParseContext:
     default_style_read = self.get_style(rootnode)
     if len(default_style_read) > 0:
       default_style = default_style_read
-    self._populate_paragraph_impl(paragraph, rootnode, default_style, isInFrame)
+    self._populate_paragraph_impl(paragraph, rootnode, default_style, default_style, isInFrame)
     # exiting the current paragraph; reset column
     self.cur_row_count += 1
     self.cur_column_count = 1
@@ -585,6 +622,12 @@ class _ODParseContext:
           # skip sequence-decls
           # do nothing
           pass
+        case "section":
+          new_default_style = default_style
+          default_style_read = self.get_style(node)
+          if len(default_style_read) > 0:
+            new_default_style = default_style_read
+          self.odf_parse_frame(result, node, isInFrame, new_default_style)
         case "p":
           # paragraph
           paragraph = self.odf_parse_paragraph(node, isInFrame, default_style)
@@ -755,10 +798,18 @@ class _ODParseContext:
           fragment_list = []
           end_op = last_text_op.get_next_node()
           cur_op = first_text_op
+          merged_attribute_dict = {}
           while cur_op is not end_op:
             assert type(cur_op) == IMElementOp
             # 加上这条检查，这样万一以后在首次生成 IMElementOp 时沾上属性后，我们可以在这里添加对属性的合并
-            assert len(cur_op.attributes) == 0
+            if len(cur_op.attributes) > 0:
+              for k, v in cur_op.attributes.items():
+                match k:
+                  case "LeftMarginInList":
+                    if k not in merged_attribute_dict:
+                      merged_attribute_dict[k] = v
+                  case _:
+                    raise RuntimeError("Unexpected IMElementOp attribute on merge: " + k)
             for u in cur_op.content.operanduses():
               cur_content = u.value
               if isinstance(cur_content, TextFragmentLiteral):
@@ -802,6 +853,8 @@ class _ODParseContext:
             newop  = IMElementOp.create(content = new_content, name = first_text_op.name, loc = first_text_op.location)
             # now replace the current ops
             newop.insert_before(first_text_op)
+            for k, v in merged_attribute_dict.items():
+              newop.set_attr(k, v)
           cur_op = first_text_op
           while cur_op is not end_op:
             cur_op = cur_op.erase_from_parent()
@@ -907,9 +960,11 @@ class _ODParseContext:
 
       for b in region.blocks:
         # 一般而言这个块内应该只有一个 IMSpecialBlockOp, 其他只可能有 MetadataOp
-        # 第一遍只判断是否可以合并，第二遍再合并
+        # 不过如果段内有不止一个文本样式的话可能会被拆分成多个 IMSpecialBlockOp
+        # 这里我们第一遍进行段内合并，第二遍再做段间合并
         is_other_elements_found = False
         cur_leader_op : IMSpecialBlockOp | None = None
+        subsequent_specialblocks = []
         cur_specialblock_text = []
         for op in b.body:
           if isinstance(op, MetadataOp):
@@ -919,9 +974,21 @@ class _ODParseContext:
               cur_specialblock_text.append(u.value)
             if cur_leader_op is None:
               cur_leader_op = op
+            else:
+              subsequent_specialblocks.append(op)
             continue
           is_other_elements_found = True
           break
+        # 如有需要，尝试段内合并
+        if len(subsequent_specialblocks) > 0:
+          cur_leader_op.content.drop_all_uses()
+          cumulative_str = ''.join([v.get_string() for v in cur_specialblock_text])
+          cumulative_str_l = StringLiteral.get(cumulative_str, self.ctx)
+          cur_specialblock_text = [cumulative_str_l]
+          cur_leader_op.content.add_operand(cumulative_str_l)
+          for op in subsequent_specialblocks:
+            op.erase_from_parent()
+          subsequent_specialblocks.clear()
         # 开始判断
         if leader_block is None:
           # 现在还没有块可以合并
@@ -1143,6 +1210,121 @@ class _ODParseContext:
     # end of the helper
     walk_frame(doc)
 
+  def _try_recover_flattened_list(self, rootlist : IMListOp):
+    # 首先检查是否只有一个层级，如果已经有多层级了就可以结束了
+    # 同时收集每项的缩进距离
+    # 如果有某层没有，那也没法做
+
+    # 简单的情况先排除
+    if rootlist.get_num_items() < 2:
+      return
+
+    dist_list : list[str] = []
+    content_list : list[list[Operation]] = []
+    for i in range(0, rootlist.get_num_items()):
+      r = rootlist.get_item(i+1)
+      cur_lmargin = None
+      cur_contents = []
+      has_content = False
+      for b in r.blocks:
+        for op in b.body:
+          if isinstance(op, IMListOp):
+            # 有内嵌列表，我们不需要修改这个的父列表
+            return
+          if isinstance(op, IMElementOp):
+            if lmargin := op.get_attr("LeftMarginInList"):
+              if isinstance(lmargin, str) and len(lmargin) > 0 and cur_lmargin is None:
+                cur_lmargin = lmargin
+            cur_contents.append(op)
+            has_content = True
+          elif isinstance(op, MetadataOp):
+            cur_contents.append(op)
+      if cur_lmargin is None:
+        # 没这个信息也没法做转换
+        return
+      if not has_content:
+        # 有项为空，不应该
+        raise RuntimeError("Empty list item")
+      dist_list.append(cur_lmargin)
+      content_list.append(cur_contents)
+    # 到这，所有项的距离都有了
+    # 我们检查是否是同一单位（应该是同一单位），如果不是的话目前也放弃
+    # (可能是百分比值也可能是绝对值+单位)
+    dist_stripped_list : list[str] = []
+    dist_set : set[str] = set()
+    cur_tail = None
+    for diststr in dist_list:
+      if res := re.match(r"^(?P<dist>\d+(\.\d+)?).*$", diststr):
+        dist = res.group("dist")
+        tail = diststr[len(dist):]
+        if cur_tail is None:
+          cur_tail = tail
+        else:
+          if cur_tail != tail:
+            # 单位不一致，没法转换
+            return
+        dist_stripped_list.append(dist)
+        dist_set.add(dist)
+      else:
+        # 该参数不符合正则表达式，大概是bug...
+        raise RuntimeError("Unexpected left margin repr: " + diststr)
+    if len(dist_set) < 2:
+      # 如果左边距都一样那也区分不了层级
+      return
+    dist_sorted : list[str] = []
+    for dist in dist_set:
+      dist_sorted.append(dist)
+    dist_sorted.sort(key=lambda s : float(s))
+    assert len(dist_stripped_list) == len(content_list)
+    # 开始创建新列表
+    # 如果某层级存着的是一个 IMListOp，那么我们已经为该层级创建了子列表，直接在其下加区即可
+    # 如果某层级存着的是 Region，那么当前这一层级还是叶子结点，我们需要新建一个块、一个 IMListOp，然后再在其中加区
+    # 先把旧列表清空，然后原地创造
+    old_regions = [r for r in rootlist.regions]
+    # 这里先只 remove，我们需要保留列表内容
+    for r in old_regions:
+      r.remove_from_parent()
+    layerstack : list[IMListOp | Region] = [rootlist]
+    for i in range(0, len(dist_stripped_list)):
+      contents = content_list[i]
+      for c in contents:
+        c.remove_from_parent()
+      level = dist_sorted.index(dist_stripped_list[i])
+      if level >= len(layerstack):
+        # 大概出了点 bug...
+        level = len(layerstack) -1
+      while len(layerstack) > level + 1:
+        layerstack.pop()
+      parent = layerstack[-1]
+      if isinstance(parent, IMListOp):
+        pass
+      elif isinstance(parent, Region):
+        pb = Block.create('', self.ctx)
+        parent.push_back(pb)
+        parent = IMListOp.create('', contents[0].location)
+        layerstack[-1] = parent
+        pb.push_back(parent)
+      r = parent.add_list_item()
+      b = Block.create('', self.ctx)
+      r.push_back(b)
+      for c in contents:
+        b.push_back(c)
+      layerstack.append(r)
+    # 完成
+    for r in old_regions:
+      r.erase_from_parent()
+
+  def transform_pass_recover_flattened_list(self, doc : IMDocumentOp):
+    # 有些文档编辑器 (TextMaker) 生成的列表项没有嵌套的 list 结构，不管树状结构如何，所有的列表项都是平级
+    # 不同层级之间用段落样式中的 margin-left 来表示缩进
+    # 所以在此我们需要还原列表项结构
+    for r in doc.regions:
+      for b in r.blocks:
+        for op in b.body:
+          if isinstance(op, IMListOp):
+            self._try_recover_flattened_list(op)
+    # 完成
+
   def parse_odf(self) -> IMDocumentOp:
     self._populate_style_data(self.odfhandle.styles)
     self._populate_style_data(self.odfhandle.automaticstyles)
@@ -1156,6 +1338,7 @@ class _ODParseContext:
     self.transform_pass_fix_text_elements(result)
     self.transform_pass_merge_special_blocks(result)
     self.transform_pass_reassociate_lists(result)
+    self.transform_pass_recover_flattened_list(result)
     return result
 
 def parse_odf(ctx : Context, filePath : str):
