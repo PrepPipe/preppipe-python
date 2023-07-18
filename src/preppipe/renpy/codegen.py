@@ -598,6 +598,12 @@ class _RenPyCodeGenHelper:
       play.fadein.set_operand(0, FloatLiteral.get(fadein, self.context))
       play.fadeout.set_operand(0, FloatLiteral.get(fadeout, self.context))
 
+  def _add_image_transition(self, transition : Value, node : RenPyShowNode | RenPyHideNode):
+    if img_transition := self.resolve_displayable_transition(transition):
+      withnode = RenPyWithNode.create(self.context, img_transition)
+      node.with_.set_operand(0, withnode)
+      node.body.push_back(withnode)
+
   def gen_create_put(self, instrs : list[VNInstruction], insert_before : RenPyNode) -> RenPyNode:
     # VNCreateInst/VNPutInst
     assert len(instrs) == 1
@@ -616,10 +622,7 @@ class _RenPyCodeGenHelper:
         imspec = self.get_impsec(content, user_hint=devkind)
         show = RenPyShowNode.create(context=self.context, imspec=imspec)
         if transition := instr.transition.try_get_value():
-          if img_transition := self.resolve_displayable_transition(transition):
-            withnode = RenPyWithNode.create(self.context, img_transition)
-            show.with_.set_operand(0, withnode)
-            show.body.push_back(withnode)
+          self._add_image_transition(transition, show)
         show.insert_before(insert_before)
         return show
       case VNStandardDeviceKind.O_SE_AUDIO:
@@ -659,6 +662,8 @@ class _RenPyCodeGenHelper:
         new_imspec = self.get_impsec(newvalue, devkind)
         show = RenPyShowNode.create(context=self.context, imspec=new_imspec)
         show.insert_before(insert_before)
+        if transition := instr.transition.try_get_value():
+          self._add_image_transition(transition, show)
         new_insert_point = show
         if remove_imspec[0] != new_imspec[0]:
           # 只有第一项不一样时才要 hide
@@ -675,7 +680,6 @@ class _RenPyCodeGenHelper:
     assert len(instrs) == 1
     instr = instrs[0]
     assert isinstance(instr, VNRemoveInst)
-    transition = instr.transition.try_get_value()
     removevalue, rootdev = self._get_handle_value_and_device(instr.handlein.get())
     if kind := rootdev.get_std_device_kind():
       match kind:
@@ -683,6 +687,8 @@ class _RenPyCodeGenHelper:
           imspec = self.get_impsec(removevalue, kind)
           hide = RenPyHideNode.create(context=self.context, imspec=imspec)
           hide.insert_before(insert_before)
+          if transition := instr.transition.try_get_value():
+            self._add_image_transition(transition, hide)
           return hide
         case VNStandardDeviceKind.O_BGM_AUDIO:
           stop = RenPyStopNode.create(context=self.context,channel=RenPyPlayNode.CHANNEL_MUSIC)
