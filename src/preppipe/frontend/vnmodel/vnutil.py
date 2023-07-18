@@ -11,6 +11,7 @@ from ...imageexpr import *
 from ..commandsemantics import *
 from ..commandsyntaxparser import *
 from .vnast import *
+from ...commontypes import MessageHandler
 
 class VNASTImageExprSource(enum.Enum):
   # 当我们要读取树结构的图片表达式时，用这个来表示图片表达式是用来干什么的
@@ -215,7 +216,10 @@ def _try_open_audio(p : str) -> str | None:
     if len(f) > 0:
       # len(f) 是时长，单位是毫秒
       return p
-  except:
+    else:
+      MessageHandler.critical_warning(msg="Try opening as audio but having zero duration", file=p)
+  except Exception as e:
+    MessageHandler.critical_warning(msg="Exception when trying to open potential audio file: " + str(e), file=p)
     return None
   return None
 
