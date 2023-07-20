@@ -3,9 +3,14 @@
 
 from __future__ import annotations
 
-from .icfg import ICFG
+from preppipe.irbase import Operation, typing
+from preppipe.util.audit import typing
+
+from ..icfg import ICFG
 from .timemodel import TimeModelBase
-from ..vnmodel_v4 import *
+from .timemodel import SayCountTimeModel
+from ...vnmodel_v4 import *
+from ...pipeline import TransformBase, BackendDecl, IODecl
 
 @dataclasses.dataclass(frozen=True)
 class AssetUsage:
@@ -38,6 +43,10 @@ class AssetUsage:
       for asset, duration, occurrence in vlist:
         result.append('    ' + str(asset) + ': ' + str(duration) + ' + ' + str(occurrence))
     return '\n'.join(result)
+
+  def pretty_print(self) -> str:
+    # TODO
+    return str(self)
 
   @staticmethod
   def build(m : VNModel, icfg : ICFG, t : TimeModelBase) -> AssetUsage:
@@ -167,7 +176,7 @@ class AssetUsage:
           if isinstance(op, MetadataOp):
             continue
           assert isinstance(op, VNInstruction)
-          if isinstance(op, VNInstructionGroup):
+          if isinstance(op, VNInstructionGroup) and not isinstance(op, VNBackendInstructionGroup):
             for comp in op.body.body:
               if isinstance(comp, MetadataOp):
                 continue
@@ -270,3 +279,15 @@ class AssetUsage:
 
     return AssetUsage(direct_value_usage_duration=direct_value_usage_duration, direct_value_usage_occurrence=direct_value_usage_occurrence, asset_references=asset_references, asset_usage_stat=asset_usage_stat)
 
+@BackendDecl('vn-assetusage', input_decl=VNModel, output_decl=IODecl("Output Report", match_suffix="txt", nargs=1))
+class VNAssetUsagePass(TransformBase):
+  def run(self) -> None:
+    assert len(self.inputs) == 1
+    model = self.inputs[0]
+    assert isinstance(model, VNModel)
+    graph = ICFG.build(model)
+    # graph.dump_graphviz_dot()
+    tm = SayCountTimeModel()
+    usage = AssetUsage.build(model, graph, tm)
+    with open(self.output, "w", encoding="utf-8") as f:
+      f.write(usage.pretty_print())
