@@ -6,8 +6,8 @@ from .irbase import *
 from .vnmodel_v4 import *
 from .imageexpr import *
 from .analysis.icfg import *
-from .analysis.timemodel import *
-from .analysis.assetusage import AssetUsage
+from .analysis.vnmodel.timemodel import *
+from .analysis.vnmodel.assetusage import AssetUsage
 
 @FrontendDecl('test-vnmodel-build', input_decl=IODecl(description='<No Input>', nargs=0), output_decl=VNModel)
 class _TestVNModelBuild(TransformBase):

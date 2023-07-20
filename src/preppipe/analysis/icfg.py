@@ -10,6 +10,9 @@ from ..util import graphtrait
 from ..vnmodel_v4 import *
 
 # Inter-procedural Control-Flow Graph (ICFG)
+# 虽然 ICFG 应该是抽象的、可服务于除 VNModel 之外其他带简单控制流信息的 IR 的图，
+# 由于目前只有 VNModel 一个合适的IR，目前还是把 ICFG 与 VNModel 绑死
+# 等以后有其他可适配的 IR 之后再做解耦
 class ICFGNode(graphtrait.GenericNodeBase):
   # 所有 ICFG 结点的基类
   nodeindex : int
