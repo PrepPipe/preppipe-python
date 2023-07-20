@@ -3,3 +3,4 @@
 
 from . import vnentryinference
 from . import vnlongsaysplitting
+from . import vnblocksorting

@@ -882,6 +882,8 @@ class VNCodeGen:
         return None
       if result := self.codegen.emit_asm(node):
         self.destblock.push_back(result)
+        result.set_start_time(self.starttime)
+        self.starttime = result.get_finish_time()
       return None
 
     # 这些可以直接继承父类的处理

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from preppipe.vnmodel_v4 import Block, Value, decimal
-from ..vnmodel_v4 import *
+from ...vnmodel_v4 import *
 
 class TimeModelBase:
   # VNModel 的 IR 使用抽象的“时间值”用来表达指令间的起止要求等
@@ -46,7 +46,7 @@ class SayCountTimeModel(TimeModelBase):
       startinst = starttime.parent.get_next_node()
       if startinst.parent_block is not block:
         assert isinstance(startinst.parent_op, VNInstructionGroup)
-        startinst = endinst.parent_op
+        startinst = startinst.parent_op
         assert startinst.parent_block is block
     else:
       raise RuntimeError("Unexpected starttime source")
