@@ -8,10 +8,13 @@ import os
 import time
 import importlib
 import importlib.util
+import traceback
 
 from .irbase import *
 from .util.audit import *
 from ._version import __version__
+from .language import TranslationDomain, Translatable
+from .exceptions import *
 
 # 这里提供一个类似 clang cc1 的界面，我们在这里支持详细的命令行设定
 # driver 以后就提供一个更简单易用的界面
@@ -91,11 +94,11 @@ class TransformBase:
           input_list.append('"' + v + '"')
         elif isinstance(v, Operation):
           input_list.append('[' + type(v).__name__ + ']"' + v.name + '"')
-      iostr += 'input={' + ', '.join(input_list) + '}'
+      iostr += TR_pipeline_input.get() + "={" + ', '.join(input_list) + '}'
     if len(self.output) > 0:
       if len(iostr) > 0:
         iostr += ', '
-      iostr += 'output="' + self.output + '"'
+      iostr += TR_pipeline_output.get() + '="' + self.output + '"'
     if len(iostr) > 0:
       result += '(' + iostr + ')'
     return result
@@ -133,7 +136,8 @@ class IODecl:
       if isinstance(self.match_suffix, tuple):
         match_suffix_str = ', '.join(self.match_suffix)
       else:
-        assert isinstance(self.match_suffix, str)
+        if not isinstance(self.match_suffix, str):
+          raise PPAssertionError
         match_suffix_str = self.match_suffix
     if len(match_suffix_str) > 0:
       if len(result) > 0:
@@ -153,7 +157,7 @@ def MiddleEndDecl(flag : str, input_decl : type, output_decl : type):
     return cls
   return decorator_middleend_decl
 
-def BackendDecl(flag : str, input_decl : str, output_decl : IODecl):
+def BackendDecl(flag : str, input_decl : type, output_decl : IODecl):
   def decorator_backend_decl(cls):
     TransformRegistration.register_backend_transform(cls, flag, input_decl, output_decl)
     return cls
@@ -172,6 +176,19 @@ def TransformArgumentGroup(title : str, desc : str | None = None):
 # 实现
 # ------------------------------------------------------------------------------
 
+TR_pipeline = TranslationDomain("pipeline")
+
+TR_pipeline_input = TR_pipeline.tr("input",
+  en="input",
+  zh_cn="输入",
+  zh_hk="輸入",
+)
+TR_pipeline_output = TR_pipeline.tr("output",
+  en="output",
+  zh_cn="输出",
+  zh_hk="輸出",
+)
+
 # 我们想要记住命令行的顺序，所以用一个自定义的 Action
 class _OrderedPassAction(argparse.Action):
   def __call__(self, parser: argparse.ArgumentParser, namespace: argparse.Namespace, values: str | typing.Sequence[typing.Any] | None, option_string: str | None = ...) -> None:
@@ -182,13 +199,12 @@ class _OrderedPassAction(argparse.Action):
     setattr(namespace, 'ordered_passes', previous)
 
 class TransformRegistration:
-
   @dataclasses.dataclass
   class TransformInfo:
-    definition : type
+    definition : type[TransformBase]
     flag : str
-    input_decl : type | IODecl
-    output_decl : type | IODecl
+    input_decl : type[Operation] | IODecl
+    output_decl : type[Operation] | IODecl
     arg_title : str | None
     arg_desc : str | None
 
@@ -212,17 +228,32 @@ class TransformRegistration:
     middleends : typing.List[TransformBase] # 所有的中端
     backends : typing.List[TransformBase] # 所有的后端
 
+  _tr_TransformRegistration_noinst = TR_pipeline.tr("transformregistration_noinst",
+    en="TransformRegistration should not be instantiated. Please do not create the instance.",
+    zh_cn="TransformRegistration 不应该被实例化，请勿创建其实例。",
+    zh_hk="TransformRegistration 不應該被實例化，請勿創建其實例。",
+  )
+
   def __init__(self) -> None:
-    raise RuntimeError('TransformRegistration should not be instantiated')
+    raise RuntimeError(self._tr_TransformRegistration_noinst)
+
+  _tr_TransformRegistration_arg_before_reg = TR_pipeline.tr("transformregistration_arg_before_reg",
+    en="Transform not registered yet when registering arguments (please double check if decorator @TransformArgumentGroup is added before @FrontendDecl/@MiddleEndDecl/@BackendDecl).",
+    zh_cn="转换步骤在添加参数时还未注册 （请检查是否已将修饰符 @TransformArgumentGroup 加在 @FrontendDecl/@MiddleEndDecl/@BackendDecl 之前）。",
+    zh_hk="轉換步驟在添加參數時還未註冊 （請檢查是否已將修飾符 @TransformArgumentGroup 加在 @FrontendDecl/@MiddleEndDecl/@BackendDecl 之前）。",
+  )
 
   @staticmethod
   def register_argument_group(transform_cls, arg_title : str, arg_desc : str | None):
-    assert issubclass(transform_cls, TransformBase)
-    assert isinstance(arg_title, str)
+    if not issubclass(transform_cls, TransformBase):
+      raise PPAssertionError("Registering transform not inherting from TransformBase")
+    if not isinstance(arg_title, str):
+      raise PPAssertionError("Transform argument title must be a string")
     if arg_desc is not None:
-      assert isinstance(arg_desc, str)
+      if not isinstance(arg_desc, str):
+        raise PPAssertionError("Transform argument group description must be a string")
     if transform_cls not in TransformRegistration._registration_record:
-      raise RuntimeError('Transform not registered yet (check the order of decorators)')
+      raise RuntimeError(TransformRegistration._tr_TransformRegistration_arg_before_reg)
     info = TransformRegistration._registration_record[transform_cls]
     info.arg_title = arg_title
     info.arg_desc = arg_desc
@@ -231,8 +262,15 @@ class TransformRegistration:
   def _iodecl_to_string(decl : type | IODecl):
     if isinstance(decl, IODecl):
       return str(decl)
-    assert isinstance(decl, type) and issubclass(decl, Operation)
+    if not (isinstance(decl, type) and issubclass(decl, Operation)):
+      raise PPAssertionError("Invalid decl type; should be either IODecl instance or a type which is either Operation or one of its subclass")
     return decl.__name__
+
+  _tr_TransformRegistration_install_args_without_reg = TR_pipeline.tr("transformregistration_install_args_without_reg",
+    en="Pass overriding install_arguments() without argument title (did you forgot using @TransformArgumentGroup(<arg_title>) decorator?)",
+    zh_cn="转换步骤覆盖了 install_arguments() 但是没有参数组名 （你是否忘记使用 @TransformArgumentGroup(<参数组名>) 修饰符？）",
+    zh_hk="轉換步驟覆蓋了 install_arguments() 但是沒有參數組名 （你是否忘記使用 @TransformArgumentGroup(<參數組名>) 修飾符？）",
+  )
 
   @staticmethod
   def setup_argparser(parser : argparse.ArgumentParser):
@@ -251,8 +289,9 @@ class TransformRegistration:
     def add_middleend_transform_arg(group : argparse._ArgumentGroup, info : TransformRegistration.TransformInfo):
       group.add_argument('--' + info.flag, dest=info.flag, action=_OrderedPassAction, nargs=0, help=get_transform_helpstr(info))
 
-    def handle_stage_group(flags_dict : typing.Dict[str, TransformRegistration.TransformInfo], stage_name : str, stage_desc : str, cb_add_arg : callable):
-      assert len(flags_dict) > 0
+    def handle_stage_group(flags_dict : typing.Dict[str, TransformRegistration.TransformInfo], stage_name : str, stage_desc : str, cb_add_arg : typing.Callable):
+      if not len(flags_dict) > 0:
+        raise PPAssertionError("handling empty stage group?")
       group = parser.add_argument_group(title=stage_name, description=stage_desc)
       for flag, info in sorted(flags_dict.items()):
         cb_add_arg(group, info)
@@ -262,7 +301,7 @@ class TransformRegistration:
         else:
           # 检查一下，如果该类型覆盖了 install_arguments 但是没有 arg_title, 我们报错（提示用 @TransformArgumentGroup 修饰符）
           if info.definition.install_arguments is not TransformBase.install_arguments:
-            raise RuntimeError('Pass overriding install_arguments() without argument title (did you forgot using @TransformArgumentGroup(<arg_title>) decorator?)')
+            raise RuntimeError(TransformRegistration._tr_TransformRegistration_install_args_without_reg)
 
     # 函数主体
     # parser.add_argument('input', nargs='*', type=str)
@@ -274,6 +313,22 @@ class TransformRegistration:
       handle_stage_group(TransformRegistration._middleend_records, 'Middle end', 'Options tp enable middle-end transforms', add_middleend_transform_arg)
     if len(TransformRegistration._backend_records) > 0:
       handle_stage_group(TransformRegistration._backend_records, 'Back end', 'Options tp enable backend transforms', add_backend_transform_arg)
+
+  _tr_pipeline_mismatched_input_type = TR_pipeline.tr("pipeline_static_mismatched_input_type",
+    en="IR type in pipeline does not match with the supported input type: current type: {curtype}, input type supported by the pass: {inputtype}. Please check if you missed flags or misplaced pass arguments.",
+    zh_cn="管线中的 IR 类型与步骤支持的类型不一致： 当前类型： {curtype}, 步骤支持的输入类型： {inputtype}。请检查是否遗漏了步骤选项或是将其放错了位置。",
+    zh_hk="管線中的 IR 類型與步驟支持的類型不一致： 當前類型： {curtype}, 步驟支持的輸入類型： {inputtype}。請檢查是否遺漏了步驟選項或是將其放錯了位置。",
+  )
+  _tr_pipeline_mismatched_output_type = TR_pipeline.tr("pipeline_static_mismatched_output_type",
+    en="IR type in pipeline does not match with the output type: current type: {curtype}, output type emitted by the pass: {outputtype}. Please check if you missed flags or misplaced pass arguments.",
+    zh_cn="管线中的 IR 类型与步骤输出的类型不一致： 当前类型： {curtype}, 步骤的输出类型： {outputtype}。请检查是否遗漏了步骤选项或是将其放错了位置。",
+    zh_hk="管線中的 IR 類型與步驟輸出的類型不一致： 當前類型： {curtype}, 步驟的輸出類型： {outputtype}。請檢查是否遺漏了步驟選項或是將其放錯了位置。",
+  )
+  _tr_pipeline_stage = TR_pipeline.tr("static_prompt",
+    en="Pipeline stage {index} ({flag}): ",
+    zh_cn="管线步骤 {index} ({flag}): ",
+    zh_hk="管線步驟 {index} ({flag}): "
+  )
 
   @staticmethod
   def build_pipeline(parsed_args : argparse.Namespace, ctx : Context) -> typing.List[TransformBase]:
@@ -291,7 +346,9 @@ class TransformRegistration:
     ordered_passes : typing.List[typing.Tuple[str, typing.Any]] = parsed_args.ordered_passes
     pipeline : typing.List[TransformBase] = []
     initialized_tys : typing.Set[type] = set()
+    pipeline_index = 0
     for flag, value in ordered_passes:
+      pipeline_index += 1
       # print('Pipeline: before flag ' + flag + ': cur type = ' + ('None' if current_ir_type is None else current_ir_type.__name__))
       transform_cls = TransformRegistration._flag_to_type_dict[flag]
       info = TransformRegistration._registration_record[transform_cls]
@@ -314,7 +371,8 @@ class TransformRegistration:
         # 如果类型是 Operation 的话就是什么 IR 都能输入，不进行检查
         elif input_decl != Operation and current_ir_type != Operation and input_decl != current_ir_type:
           # 找到错误，报错
-          raise RuntimeError('Mismatching IR type in pipeline: at pass "' + flag + '": current type: ' + current_ir_type.__name__ + ', input type: ' + input_decl.__name__)
+          raise RuntimeError(TransformRegistration._tr_pipeline_stage.format(index=str(pipeline_index), flag=flag)
+                            +TransformRegistration._tr_pipeline_mismatched_input_type.format(curtype=current_ir_type.__name__, inputtype=input_decl.__name__))
       elif isinstance(input_decl, IODecl):
         # 现在把输入赋值过去
         input_list = []
@@ -323,7 +381,8 @@ class TransformRegistration:
         elif isinstance(value, str):
           input_list = [value]
         else:
-          raise RuntimeError("Unexpected value type " + str(type(value)))
+          # raise RuntimeError("Unexpected value type " + str(type(value)))
+          raise PPInternalError
         transform_inst.set_input(input_list)
       # 处理输出
       output_decl = info.output_decl
@@ -332,7 +391,8 @@ class TransformRegistration:
         # 先检查例外情况，如果输入是非IR，那么我们同样要求该类型与当前IR类型匹配
         if isinstance(input_decl, IODecl):
           if output_decl != Operation and current_ir_type is not None and current_ir_type != Operation and output_decl != current_ir_type:
-            raise RuntimeError('Mismatching IR type in pipeline: at pass "' + flag + '": current type: ' + current_ir_type.__name__ + ', input type: ' + input_decl.__name__)
+            raise RuntimeError(TransformRegistration._tr_pipeline_stage.format(index=str(pipeline_index), flag=flag)
+                              +TransformRegistration._tr_pipeline_mismatched_output_type.format(curtype=current_ir_type.__name__, outputtype=output_decl.__name__))
         # 更新当前 IR 类型
         if current_ir_type is None or current_ir_type == Operation or (output_decl is not Operation and issubclass(output_decl, Operation)):
           current_ir_type = output_decl
@@ -341,28 +401,39 @@ class TransformRegistration:
         # 把输出值赋过去
         output_path = ''
         if isinstance(value, list):
-          assert len(value) < 2
+          if not len(value) < 2:
+            raise PPAssertionError("Pipeline currently only support 0-1 output taking path arguments")
           if len(value) != 0:
             output_path = value[0]
         else:
           output_path = value
         transform_inst.set_output_path(output_path)
       pipeline.append(transform_inst)
-    if verbose:
-      # 把当前流水线的内容全都显示一下
-      for i in range(0, len(pipeline)):
-        print("Pipeline "+str(i) + ':' + str(pipeline[i]))
+      if verbose:
+        print(TransformRegistration._tr_pipeline_stage.format(index=str(pipeline_index), flag=flag) + str(transform_inst))
     return pipeline
+
+  _tr_transform_already_registered = TR_pipeline.tr("transform_already_registered",
+    en="Transform class {classname} is registered more than once. Please check if annotated with more than one of @FrontendDecl/@MiddleEndDecl/@BackendDecl.",
+    zh_cn="转换步骤类 {classname} 被重复注册。请检查其是否被不止一个 @FrontendDecl/@MiddleEndDecl/@BackendDecl 所标注。",
+    zh_hk="轉換步驟類 {classname} 被重復註冊。請檢查其是否被不止一個 @FrontendDecl/@MiddleEndDecl/@BackendDecl 所標註。"
+  )
+  _tr_transform_flag_already_used = TR_pipeline.tr("transform_flag_already_used",
+    en="Pass flag {flag} already in use: registered class: {existing}, current class: {current}",
+    zh_cn="步骤选项 {flag} 已被占用：已注册的类：{existing}, 当前正在注册的类：{current}",
+    zh_hk="步驟選項 {flag} 已被占用：已註冊的類：{existing}, 當前正在註冊的類：{current}",
+  )
 
   @staticmethod
   def register_transform_common(transform_cls, flag : str, input_decl : type | IODecl, output_decl : type | IODecl) -> TransformInfo:
-    assert isinstance(transform_cls, type)
-    assert issubclass(transform_cls, TransformBase)
-    assert isinstance(flag, str) and not flag.startswith('-')
+    if not (isinstance(transform_cls, type) and issubclass(transform_cls, TransformBase)):
+      raise PPAssertionError("Transform should be a subclass of TransformBase")
+    if not (isinstance(flag, str) and not flag.startswith('-')):
+      raise PPAssertionError("Transform flag must be a string without starting '-'")
     if transform_cls in TransformRegistration._registration_record:
-      raise RuntimeError('Transform ' + str(transform_cls) + ' registered more than once??')
+      raise RuntimeError(TransformRegistration._tr_transform_already_registered.format(classname=str(transform_cls)))
     if flag in TransformRegistration._flag_to_type_dict:
-      raise RuntimeError('Flag "' + flag + '" already in use: existing: ' + str(TransformRegistration._flag_to_type_dict[flag]) + ', current: ' + str(transform_cls))
+      raise RuntimeError(TransformRegistration._tr_transform_flag_already_used.format(flag=flag, existing=str(TransformRegistration._flag_to_type_dict[flag]), current=str(transform_cls)))
     TransformRegistration._flag_to_type_dict[flag] = transform_cls
     info = TransformRegistration.TransformInfo(transform_cls, flag, input_decl, output_decl, None, None)
     TransformRegistration._registration_record[transform_cls] = info
@@ -371,35 +442,40 @@ class TransformRegistration:
 
   @staticmethod
   def register_frontend_transform(transform_cls, flag : str, input_decl : IODecl, output_decl : type):
-    assert isinstance(input_decl, IODecl)
-    assert isinstance(output_decl, type)
-    assert issubclass(output_decl, Operation)
+    if not isinstance(input_decl, IODecl):
+      raise PPAssertionError("Frontend must use IODecl for input declaration")
+    if not (isinstance(output_decl, type) and issubclass(output_decl, Operation)):
+      raise PPAssertionError("Frontend must use Operation subclass for output declaration")
     info = TransformRegistration.register_transform_common(transform_cls, flag, input_decl, output_decl)
     TransformRegistration._frontend_records[flag] = info
 
   @staticmethod
-  def register_middleend_transform(transform_cls, flag : str, input_decl : type, output_decl : str):
-    assert issubclass(input_decl, Operation)
-    assert issubclass(output_decl, Operation)
+  def register_middleend_transform(transform_cls, flag : str, input_decl : type, output_decl : type):
+    if not issubclass(input_decl, Operation):
+      raise PPAssertionError("MiddleEnd must use Operation subclass for input declaration")
+    if not issubclass(output_decl, Operation):
+      raise PPAssertionError("MiddleEnd must use Operation subclass for output declaration")
     info = TransformRegistration.register_transform_common(transform_cls, flag, input_decl, output_decl)
     TransformRegistration._middleend_records[flag] = info
 
   @staticmethod
   def register_backend_transform(transform_cls, flag : str, input_decl : type, output_decl : IODecl):
-    assert issubclass(input_decl, Operation)
-    assert isinstance(output_decl, IODecl)
+    if not issubclass(input_decl, Operation):
+      raise PPAssertionError("Backend must use Operation subclass for input declaration")
+    if not isinstance(output_decl, IODecl):
+      raise PPAssertionError("Backend must use IODecl for output declaration")
     info = TransformRegistration.register_transform_common(transform_cls, flag, input_decl, output_decl)
     TransformRegistration._backend_records[flag] = info
 
 @FrontendDecl('load', input_decl=IODecl(description='IR file', nargs='+'), output_decl=Operation)
 class _LoadIR(TransformBase):
   def run(self) -> Operation | typing.List[Operation]:
-    raise NotImplementedError()
+    raise PPNotImplementedError
 
 @BackendDecl('save', input_decl=Operation, output_decl=IODecl('IR file', nargs=1))
 class _SaveIR(TransformBase):
   def run(self) -> None:
-    raise NotImplementedError()
+    raise PPNotImplementedError
 
 @BackendDecl('dump', input_decl=Operation, output_decl=IODecl('<No output>', nargs=0))
 class _DumpIR(TransformBase):
@@ -444,20 +520,21 @@ class _TestCopyDumpIR(TransformBase):
         src_path = _TestCopyDumpIR.save_dump(src, 'src')
         dest_path = _TestCopyDumpIR.save_dump(dest, 'dest')
         print('Diff: A=' + src_path + ', B=' + dest_path)
-        raise RuntimeError('Cloned output not matching with input!')
+        raise PPInternalError('Cloned output not matching with input!')
 
 @BackendDecl('json-export', input_decl=Operation, output_decl=IODecl('JSON file', nargs=1))
 class _JsonExportIR(TransformBase):
   def run(self) -> Operation | typing.List[Operation] | None:
     if len(self.inputs) == 0:
-      raise RuntimeError('No IR for export')
+      raise PPInternalError('No IR for export')
     exporter = IRJsonExporter(self.context)
     toplevel = None
     for op in self.inputs:
       if not isinstance(op, Operation):
-        raise RuntimeError('Toplevel should be an operation')
+        raise PPInternalError('Toplevel should be an operation')
       curop = op.json_export(exporter = exporter)
-      assert isinstance(curop, dict)
+      if not isinstance(curop, dict):
+        raise PPInternalError("Operation output should be a dict")
       if toplevel is None:
         # 0 --> 1
         toplevel = curop
@@ -471,154 +548,233 @@ class _JsonExportIR(TransformBase):
     with open(self.output, "w", newline="\n", encoding="utf-8") as f:
       f.write(json_str)
 
-def pipeline_main(args : typing.List[str] = None):
-  # 先尝试读取插件
-  _load_plugins()
-  # args 应该是不带 sys.argv[0] 的
-  # (pipeline_cmd.py 中，这个参数是 sys.argv[1:])
-  if args is None:
-    args = sys.argv[1:]
+class _PipelineManager:
+  _TR_pipeline_version = TR_pipeline.tr("preppipe_version",
+    en="preppipe {version}",
+    zh_cn="语涵编译器 {version}",
+    zh_hk="語涵編譯器 {version}",
+  )
+  _TR_pipeline_running = TR_pipeline.tr("running",
+    en="Running",
+    zh_cn="正在执行",
+    zh_hk="正在執行",
+  )
+  _TR_pipeline_finished = TR_pipeline.tr("finished",
+    en="Finished",
+    zh_cn="执行结束",
+    zh_hk="執行結束",
+  )
+  _TR_pipeline_base_prompt = TR_pipeline.tr("runtime_prompt",
+    en="At pipeline step {step_count} ({flag}): ",
+    zh_cn="步骤 {step_count} ({flag}): ",
+    zh_hk="步驟 {step_count} ({flag}): ",
+  )
+  _TR_pipeline_no_input = TR_pipeline.tr("no_input",
+    en="No IR input available. This probably means the previous pipeline stage does not produce any output. Please check if the source input is valid.",
+    zh_cn="没有输入 IR。这一般是因为前一步骤没有产生任何输出。请确认源文件是否存在、有效。",
+    zh_hk="沒有輸入 IR。這一般是因為前一步驟沒有產生任何輸出。請確認源文件是否存在、有效。",
+  )
+  _tr_pipeline_mismatched_input_type = TR_pipeline.tr("pipeline_runtime_mismatched_input_type",
+    en="IR type in pipeline does not match with the supported input type: current type: {curtype}, input type supported by the pass: {inputtype}. Please contact the developer(s) to fix this.",
+    zh_cn="管线中的 IR 类型与步骤支持的类型不一致： 当前类型： {curtype}, 步骤支持的输入类型： {inputtype}。请联系开发者以解决该问题。",
+    zh_hk="管線中的 IR 類型與步驟支持的類型不一致： 當前類型： {curtype}, 步驟支持的輸入類型： {inputtype}。請聯系開發者以解決該問題。",
+  )
+  _tr_pipeline_mismatched_output_type = TR_pipeline.tr("pipeline_runtime_mismatched_output_type",
+    en="IR type in pipeline does not match with the output type: current type: {curtype}, output type emitted by the pass: {outputtype}. Please contact the developer(s) to fix this.",
+    zh_cn="管线中的 IR 类型与步骤输出的类型不一致： 当前类型： {curtype}, 步骤的输出类型： {outputtype}。请联系开发者以解决该问题。",
+    zh_hk="管線中的 IR 類型與步驟輸出的類型不一致： 當前類型： {curtype}, 步驟的輸出類型： {outputtype}。請聯系開發者以解決該問題。",
+  )
+  _tr_pipeline_last_ir_notused = TR_pipeline.tr("pipeline_output_unused",
+    en="Warning: last-stage IR not used and will be discarded. Please check if you missed any output transform flags.",
+    zh_cn="警告：最后生成的 IR 未被使用，结果将被丢弃。请检查是否遗漏了输出步骤的选项。",
+    zh_hk="警告：最後生成的 IR 未被使用，結果將被丟棄。請檢查是否遺漏了輸出步驟的選項。",
+  )
 
-  def _print_version_info():
-    print('preppipe ' + __version__)
-  # 第一步：读取
-  parser = argparse.ArgumentParser(prog='preppipe_pipeline', description='Direct commandline interface for preppipe')
-  parser.add_argument('--searchpath', nargs='*')
+  @staticmethod
+  def pipeline_main(args : typing.List[str] | None = None):
+    Translatable._init_lang_list()
+    # 先尝试读取插件
+    _PipelineManager._load_plugins()
+    # args 应该是不带 sys.argv[0] 的
+    # (pipeline_cmd.py 中，这个参数是 sys.argv[1:])
+    if args is None:
+      args = sys.argv[1:]
 
-  TransformRegistration.setup_argparser(parser)
-  result_args = parser.parse_args(args)
+    def _print_version_info():
+      print(_PipelineManager._TR_pipeline_version.format(version=__version__))
+    # 第一步：读取
+    parser = argparse.ArgumentParser(prog='preppipe_pipeline', description='Direct commandline interface for preppipe')
+    parser.add_argument('--searchpath', nargs='*')
+    Translatable._language_install_arguments(parser) # pylint: disable=protected-access
 
-  # if there is no valid action performed, we want to print the help message
-  is_action_performed = False
+    TransformRegistration.setup_argparser(parser)
+    result_args = parser.parse_args(args)
+    Translatable._language_handle_arguments(result_args, result_args.verbose) # pylint: disable=protected-access
 
-  # print version info if needed
-  if result_args.verbose:
-    _print_version_info()
-    is_action_performed = True
+    # if there is no valid action performed, we want to print the help message
+    is_action_performed = False
 
-  ctx = Context()
-  for path in result_args.searchpath:
-    ctx.get_file_auditor().add_permissible_path(path)
-    ctx.get_file_auditor().add_global_searchpath(path)
-  if result_args.verbose:
-    ctx.get_file_auditor().dump()
-
-  pipeline = TransformRegistration.build_pipeline(result_args, ctx)
-  current_ir_ops = []
-  step_count = 0
-  is_current_ir_used = False
-  starttime = time.time()
-  def get_timestr():
-    curtime = time.time()
-    timestr = "{:.2f}".format(curtime - starttime)
-    return timestr
-  for t in pipeline:
-    step_count += 1
-    transform_cls = type(t)
-    info = TransformRegistration._registration_record[transform_cls]
+    # print version info if needed
     if result_args.verbose:
-      print('[' + get_timestr() + '] Running ' + info.flag + " (" + str(step_count) + '/' + str(len(pipeline)) + ')')
-    is_append_result = False
-    if isinstance(info.input_decl, type):
-      # 该转换读取IR
-      assert issubclass(info.input_decl, Operation)
-      # 确认当前是否有有效的IR
-      if len(current_ir_ops) == 0:
-        raise RuntimeError('At pipeline step ' + str(step_count) + ': (' + info.flag + '): No IR input available')
-      # 检查当前 IR 是否每项都是指定类型
-      # 如果类型是 Operation 就代表不限制输入类型
-      if info.input_decl != Operation:
-        for op in current_ir_ops:
-          if not isinstance(op, info.input_decl):
-            raise RuntimeError('At pipeline step ' + str(step_count) + ': (' + info.flag + '): Mismatching IR type: expecting '+ info.input_decl.__name__ + ', found IR type: ' + type(op).__name__)
-      # 检查完毕，可以继续
-      t.set_input(current_ir_ops.copy())
-      is_current_ir_used = True
-    else:
-      # 该转换读取外部文件
-      # 不用做什么
-      is_append_result = True
-      pass
-    if len(t.inputs) == 0:
-      if isinstance(info.input_decl, IODecl) and info.input_decl.nargs in [0, '?']:
-        # in this case it is permissible to have zero input
+      _print_version_info()
+      is_action_performed = True
+
+    ctx = Context()
+    for path in result_args.searchpath:
+      ctx.get_file_auditor().add_permissible_path(path)
+      ctx.get_file_auditor().add_global_searchpath(path)
+    if result_args.verbose:
+      ctx.get_file_auditor().dump()
+
+    pipeline = TransformRegistration.build_pipeline(result_args, ctx)
+    current_ir_ops : list[Operation | str] = []
+    step_count = 0
+    is_current_ir_used = False
+    starttime = time.time()
+    def get_timestr():
+      curtime = time.time()
+      timestr = "{:.2f}".format(curtime - starttime)
+      return timestr
+    for t in pipeline:
+      step_count += 1
+      transform_cls = type(t)
+      info = TransformRegistration._registration_record[transform_cls]
+      if result_args.verbose:
+        print('[' + get_timestr() + '] ' + _PipelineManager._TR_pipeline_running.get() + ' ' + info.flag + " (" + str(step_count) + '/' + str(len(pipeline)) + ')')
+      is_append_result = False
+      if isinstance(info.input_decl, type):
+        # 该转换读取IR
+        if not issubclass(info.input_decl, Operation):
+          raise PPAssertionError("Incompatible pipeline spec sliped through static check?")
+        # 确认当前是否有有效的IR
+        if len(current_ir_ops) == 0:
+          raise RuntimeError(_PipelineManager._TR_pipeline_base_prompt.format(step_count=str(step_count), flag=info.flag) + _PipelineManager._TR_pipeline_no_input.get())
+          #raise RuntimeError('At pipeline step ' + str(step_count) + ': (' + info.flag + '): No IR input available')
+        # 检查当前 IR 是否每项都是指定类型
+        # 如果类型是 Operation 就代表不限制输入类型
+        if info.input_decl != Operation:
+          for op in current_ir_ops:
+            if not isinstance(op, info.input_decl):
+              raise RuntimeError(_PipelineManager._TR_pipeline_base_prompt.format(step_count=str(step_count), flag=info.flag)
+                                +_PipelineManager._tr_pipeline_mismatched_input_type.format(curtype=type(op).__name__, inputtype=info.input_decl.__name__))
+              #raise RuntimeError('At pipeline step ' + str(step_count) + ': (' + info.flag + '): Mismatching IR type: expecting '+ info.input_decl.__name__ + ', found IR type: ' + type(op).__name__)
+        # 检查完毕，可以继续
+        t.set_input(current_ir_ops.copy())
+        is_current_ir_used = True
+      else:
+        # 该转换读取外部文件
+        # 不用做什么
+        is_append_result = True
         pass
+      # 对输入的数量做最终检查
+      if len(t.inputs) == 0:
+        if isinstance(info.input_decl, IODecl) and info.input_decl.nargs in [0, '?']:
+          # in this case it is permissible to have zero input
+          pass
+        else:
+          # 一般不会到这
+          raise PPInternalError('At pipeline step ' + str(step_count) + ': (' + info.flag + '): No input available')
+      run_result = t.run()
+      if isinstance(info.output_decl, type):
+        # 该转换输出 IR
+        if not issubclass(info.output_decl, Operation):
+          raise PPAssertionError("Should be caught during transform pass registration but is not")
+        list_result : list[Operation] = []
+        if isinstance(run_result, list):
+          list_result = run_result.copy()
+        elif isinstance(run_result, Operation):
+          list_result = [run_result]
+        else:
+          if run_result is not None:
+            raise PPInternalError('Unexpected return type for TransformBase.run(): ' + type(run_result).__name__)
+        for r in list_result:
+          if not isinstance(r, info.output_decl):
+            raise PPInternalError('At pipeline step ' + str(step_count) + ': (' + info.flag + '): Unexpected output IR type: expecting ' + info.input_decl.__name__ + ', actual type: ' + type(r).__name__)
+        if is_append_result:
+          current_ir_ops = [*current_ir_ops, *list_result]
+        else:
+          current_ir_ops = list_result
+          is_current_ir_used = False
       else:
-        raise RuntimeError('At pipeline step ' + str(step_count) + ': (' + info.flag + '): No input available')
-    run_result = t.run()
-    if isinstance(info.output_decl, type):
-      # 该转换输出 IR
-      assert issubclass(info.output_decl, Operation)
-      list_result = []
-      if isinstance(run_result, list):
-        list_result = run_result.copy()
-      elif isinstance(run_result, Operation):
-        list_result = [run_result]
-      else:
-        if run_result is not None:
-          raise RuntimeError('Unexpected return type for TransformBase.run(): ' + type(run_result).__name__)
-      for r in list_result:
-        if not isinstance(r, info.output_decl):
-          raise RuntimeError('At pipeline step ' + str(step_count) + ': (' + info.flag + '): Unexpected output IR type: expecting ' + info.input_decl.__name__ + ', actual type: ' + type(r).__name__)
-      if is_append_result:
-        current_ir_ops = [*current_ir_ops, *list_result]
-      else:
-        current_ir_ops = list_result
-        is_current_ir_used = False
-    else:
-      # 该转换输出非IR内容
-      assert isinstance(info.output_decl, IODecl)
+        # 该转换输出非IR内容
+        if not isinstance(info.output_decl, IODecl):
+          raise PPAssertionError("Should be caught during transform pass registration but is not")
 
-  if step_count > 0:
-    is_action_performed = True
+    if step_count > 0:
+      is_action_performed = True
 
-  if not is_action_performed:
-    parser.print_usage()
+    if not is_action_performed:
+      parser.print_usage()
+      return
+
+    if len(current_ir_ops) > 0 and not is_current_ir_used:
+      print(_PipelineManager._tr_pipeline_last_ir_notused.get())
+
+    if result_args.verbose:
+      print('[' + get_timestr() + '] ' + _PipelineManager._TR_pipeline_finished.get())
+
     return
 
-  if len(current_ir_ops) > 0 and not is_current_ir_used:
-    print('Warning: last-stage IR not used')
+  _tr_plugin_loading = TR_pipeline.tr("plugin_loading",
+    en="Loading plugin {modulename} from {filepath}",
+    zh_cn="正在从 {filepath} 读取插件 {modulename}",
+    zh_hk="正在從 {filepath} 讀取插件 {modulename}",
+  )
+  _tr_plugin_load_fail = TR_pipeline.tr("plugin_load_fail",
+    en="Cannot load plugin {modulename} from {filepath}, skipped",
+    zh_cn="无法从 {filepath} 读取插件 {modulename}, 跳过",
+    zh_hk="無法從 {filepath} 讀取插件 {modulename}, 跳過",
+  )
 
-  if result_args.verbose:
-    print('[' + get_timestr() + '] Finished')
+  @staticmethod
+  def _load_module(module_name, file_path):
+    print(_PipelineManager._tr_plugin_loading.format(modulename=module_name, filepath=file_path))
+    is_loaded = False
+    try:
+      if spec := importlib.util.spec_from_file_location(module_name, file_path):
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)
+        is_loaded = True
+    except Exception as e:
+      traceback.print_exception(e)
+    if not is_loaded:
+      print(_PipelineManager._tr_plugin_load_fail.format(modulename=module_name, filepath=file_path))
 
-  return
+  _tr_plugin_load_start = TR_pipeline.tr("plugin_load_start",
+    en="Loading plugin(s) from PREPPIPE_PLUGINS: ",
+    zh_cn="即将从 PREPPIPE_PLUGINS 读取插件: ",
+    zh_hk="即將從 PREPPIPE_PLUGINS 讀取插件: ",
+  )
 
-def _load_module(module_name, file_path):
-  print("Loading plugin " + module_name + " from " + file_path)
-  is_loaded = False
-  try:
-    if spec := importlib.util.spec_from_file_location(module_name, file_path):
-      module = importlib.util.module_from_spec(spec)
-      sys.modules[module_name] = module
-      spec.loader.exec_module(module)
-      is_loaded = True
-  except ImportError:
-    pass
-  if not is_loaded:
-    print("Cannot load plugin " + module_name + " from " + file_path + ", skipped")
+  @staticmethod
+  def _load_plugins():
+    if plugindir := os.environ.get("PREPPIPE_PLUGINS"):
+      plugindir = os.path.realpath(plugindir)
+      plugin_modulebase = "preppipe.plugin."
+      if os.path.isdir(plugindir):
+        dircontent = os.listdir(plugindir)
+        if len(dircontent) > 0:
+          print(_PipelineManager._tr_plugin_load_start.get() + '"' + plugindir + '"')
+          for pluginname in dircontent:
+            curpath = os.path.join(plugindir, pluginname)
+            if os.path.isfile(curpath):
+              # 检查是否是 Python 文件，是的话当作插件来导入
+              basename, ext = os.path.splitext(pluginname)
+              if ext.lower() == '.py':
+                modulename = plugin_modulebase + basename
+                _PipelineManager._load_module(modulename, curpath)
+            elif os.path.isdir(curpath):
+              filepath = os.path.join(plugindir, pluginname, pluginname + ".py")
+              if os.path.isfile(filepath):
+                modulename = plugin_modulebase + pluginname
+                _PipelineManager._load_module(modulename, filepath)
 
-def _load_plugins():
-  if plugindir := os.environ.get("PREPPIPE_PLUGINS"):
-    plugindir = os.path.realpath(plugindir)
-    plugin_modulebase = "preppipe.plugin."
-    if os.path.isdir(plugindir):
-      dircontent = os.listdir(plugindir)
-      if len(dircontent) > 0:
-        print("Loading plugin(s) from PREPPIPE_PLUGINS:\"" + plugindir + '"')
-        for pluginname in dircontent:
-          curpath = os.path.join(plugindir, pluginname)
-          if os.path.isfile(curpath):
-            # 检查是否是 Python 文件，是的话当作插件来导入
-            basename, ext = os.path.splitext(pluginname)
-            if ext.lower() == '.py':
-              modulename = plugin_modulebase + basename
-              _load_module(modulename, curpath)
-          elif os.path.isdir(curpath):
-            filepath = os.path.join(plugindir, pluginname, pluginname + ".py")
-            if os.path.isfile(filepath):
-              modulename = plugin_modulebase + pluginname
-              _load_module(modulename, filepath)
+def pipeline_main(args : typing.List[str] | None = None):
+  # 保持一个统一性，这个全局函数作为对外的接口
+  # 以后类型拆分或是重命名都不会改变这个函数的名称和输入
+  _PipelineManager.pipeline_main(args)
 
 if __name__ == "__main__":
-  raise NotImplementedError('Please invoke pipeline_cmd instead')
+  # 这个文件只是被所有转换步骤所引用，自身并没有向外的引用，所以只执行该文件的话步骤不会被注册
+  raise PPNotImplementedError('Please invoke pipeline_cmd instead')

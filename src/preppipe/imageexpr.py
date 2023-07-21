@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 from .irbase import *
+from .language import TranslationDomain
 
 # 此文件定义了一系列对于图片的操作以及能满足后端演出等实际需求的图片结点类型
 # IRBase 中所有的素材(AssetData)都被要求不带除格式之外的元数据，在这里我们的类型将以 LiteralExpr/ConstExpr 的形式引用它们并添加元数据
@@ -21,6 +22,8 @@ from .irbase import *
 # 因为这些信息不影响图片的展示，并且名称可能影响到图片值的唯一性，以上这些信息应该在其他IR中另外提供
 
 # TODO 目前只定义了基础的图片源类型，没有定义图像操作（如重叠、剪裁等），早晚得做
+
+TR_imageexpr = TranslationDomain("imageexpr")
 
 @IRObjectJsonTypeName('base_image_le')
 class BaseImageLiteralExpr(LiteralExpr):
@@ -113,9 +116,15 @@ class PlaceholderImageLiteralExpr(BaseImageLiteralExpr, AssetPlaceholderTrait):
   def dest(self) -> ImageExprPlaceholderDest:
     return self.get_value_tuple()[1].value
 
+  _tr_placeholder_name = TR_imageexpr.tr("placeholder_name",
+    en="Placeholder",
+    zh_cn="占位图",
+    zh_hk="占位圖",
+  )
+
   def __str__(self) -> str:
     width, height = self.size.value
-    return '[' + str(width) + '*' + str(height) + '] Placeholder ' + self.dest.name + (' ' + self.description.get_string() if len(self.description.get_string()) > 0 else '')
+    return '[' + str(width) + '*' + str(height) + '] ' + self._tr_placeholder_name.get() +' ' + self.dest.name + (' ' + self.description.get_string() if len(self.description.get_string()) > 0 else '')
 
   @staticmethod
   def get(context : Context, dest : ImageExprPlaceholderDest, desc : StringLiteral, size : IntTupleLiteral) -> PlaceholderImageLiteralExpr:

@@ -42,6 +42,7 @@ import enum
 from .irbase import *
 from .irdataop import *
 from .commontypes import *
+from .exceptions import *
 
 @IRObjectJsonTypeName("im_element_op")
 class IMElementOp(Operation):
@@ -281,6 +282,6 @@ def _collect_text_from_paragraph_impl(b : Block) -> tuple[str, list[AssetData]]:
         content_str += '\0'
         asset_list.append(v)
       else:
-        raise NotImplementedError('TODO support other possible element types in IMElementOp')
+        raise PPNotImplementedError('TODO support other possible element types in IMElementOp')
 
   return (content_str, asset_list)

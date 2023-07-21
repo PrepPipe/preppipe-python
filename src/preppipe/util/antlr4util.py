@@ -4,6 +4,7 @@
 import random
 import antlr4
 from ..irbase import *
+from ..exceptions import *
 from antlr4.error.ErrorListener import ErrorListener, ConsoleErrorListener
 
 class ErrorListenerBase(ErrorListener):
@@ -22,8 +23,8 @@ class ErrorListenerBase(ErrorListener):
 
   def syntaxError(self, recognizer, offendingSymbol, line, column, msg, e):
     if not self._error_occurred:
-      assert isinstance(column, int)
-      assert isinstance(msg, str)
+      if not (isinstance(column, int) and isinstance(msg, str)):
+        raise PPAssertionError
       self._error_occurred = True
       self._error_column = column
       self._error_msg = msg
@@ -50,7 +51,8 @@ class TextStringParsingUtil:
     merged_str = ''
     length = 0
     for v in content:
-      assert isinstance(v, (StringLiteral, TextFragmentLiteral))
+      if not isinstance(v, (StringLiteral, TextFragmentLiteral)):
+        raise PPAssertionError
       curstr = v.get_string()
       merged_str += curstr
       cumulative_lengths.append(length)
@@ -64,7 +66,8 @@ class TextStringParsingUtil:
     # 把 [start, end) 区间内的字符都提出来
     if start == end:
       return []
-    assert start >= 0 and end <= len(self.fullstr) and start < end
+    if not (start >= 0 and end <= len(self.fullstr) and start < end):
+      raise PPAssertionError
     curindex = 0
     while curindex < len(self.content) and self.cumulative_lengths[curindex] <= start:
       curindex += 1
@@ -74,7 +77,8 @@ class TextStringParsingUtil:
     result = []
     while True:
       curoffset = self.cumulative_lengths[curindex]
-      assert curoffset <= start
+      if not curoffset <= start:
+        raise PPAssertionError
       curvalue = self.content[curindex]
       curstr = curvalue.get_string()
       curstop = curoffset + len(curstr)
@@ -90,7 +94,7 @@ class TextStringParsingUtil:
           v = TextFragmentLiteral.get(curvalue.context, strliteral, curvalue.style)
           result.append(v)
         else:
-          raise RuntimeError("Should not happen")
+          raise PPInternalError
         break
       # 我们需要继续
       if curoffset == start:
@@ -107,7 +111,7 @@ class TextStringParsingUtil:
           v = TextFragmentLiteral.get(curvalue.context, strliteral, curvalue.style)
           result.append(v)
         else:
-          raise RuntimeError("Should not happen")
+          raise PPInternalError
       curindex += 1
       start = curstop
     return result
@@ -142,10 +146,12 @@ def _testround():
     baseoffset = cut
     content.append(StringLiteral.get(curstr, ctx))
   pu = TextStringParsingUtil.create(content=content)
-  assert pu.get_full_str() == randstr
+  if not pu.get_full_str() == randstr:
+    raise PPAssertionError
   for start, end, expected in testcases:
     npu = TextStringParsingUtil.create(content=pu.extract_str_from_interval(start, end))
-    assert npu.get_full_str() == expected
+    if not npu.get_full_str() == expected:
+      raise PPAssertionError
 
 if __name__ == "__main__":
   for i in range(0, 100):
