@@ -8,6 +8,7 @@ from preppipe.util.graphtrait import GenericNodeBase
 from preppipe.vnmodel_v4 import VNFunction
 from ..util import graphtrait
 from ..vnmodel_v4 import *
+from ..pipeline import BackendDecl, IODecl, TransformBase
 
 # Inter-procedural Control-Flow Graph (ICFG)
 # 虽然 ICFG 应该是抽象的、可服务于除 VNModel 之外其他带简单控制流信息的 IR 的图，
@@ -215,7 +216,7 @@ class ICFG(graphtrait.GenericGraphBase):
   def get_entry_nodes(self) -> typing.Iterable[GlobalICFGNode]:
     return self.start_nodes.values()
 
-  def get_dot_source(self) -> str:
+  def get_graphviz_dot_source(self) -> str:
     exporter = graphtrait.GraphvizDotGraphExporter(self)
     exporter.set_node_colors({
       GlobalICFGNode : "purple",
@@ -393,3 +394,16 @@ class ICFG(graphtrait.GenericGraphBase):
     for n in self.get_all_nodes():
       result[n] = decimal.Decimal(1)
     return result
+
+
+@BackendDecl('dump-icfg', input_decl=VNModel, output_decl=IODecl("Graphviz DOT source", match_suffix="dot", nargs=1))
+class DumpICFGPass(TransformBase):
+  # 目前我们按照 IR 无关的方式设置命令（没有VN前缀），但是运行时检查是否是 VNModel
+  # 等以后有其他需要 ICFG 的 IR 时，我们这里直接改检查，不用改调用方式
+  def run(self) -> None:
+    assert len(self.inputs) == 1
+    model = self.inputs[0]
+    assert isinstance(model, VNModel)
+    graph = ICFG.build(model)
+    with open(self.output, "w", encoding="utf-8") as f:
+      f.write(graph.get_graphviz_dot_source())
