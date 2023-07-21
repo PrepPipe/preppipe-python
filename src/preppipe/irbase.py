@@ -29,6 +29,7 @@ import llist
 from .commontypes import TextAttribute, Color
 from ._version import __version__
 from .util.audit import *
+from .exceptions import *
 
 # ------------------------------------------------------------------------------
 # ADT needed for IR
@@ -250,7 +251,7 @@ class NameDict(collections.abc.MutableMapping[str, _NameDictNodeTypeVar], typing
 
   def __setitem__(self, key : str, value : _NameDictNodeTypeVar) -> None:
     if value.dictref is not None:
-      raise RuntimeError("Inserting one node into more than one NameDict")
+      raise PPInternalError("Inserting one node into more than one NameDict")
     self._dict[key] = value
     value._update_parent_info(self, key) # type: ignore
 
@@ -390,7 +391,7 @@ class IRObject:
 
   def json_export_impl(self, *, exporter : IRJsonExporter, dest : dict, **kwargs) -> None:
     if 'JSON_TYPE_NAME' not in type(self).__dict__:
-      raise RuntimeError('Type '+ type(self).__name__ + ' not registered with @IRObjectJsonTypeName("<name>") decorator')
+      raise PPInternalError('Type '+ type(self).__name__ + ' not registered with @IRObjectJsonTypeName("<name>") decorator')
     json_name = type(self).__dict__['JSON_TYPE_NAME']
     if json_name != IRObject.JSON_NAME_NOT_USED:
       dest[IRJsonRepr.ANY_TYPE.value] = json_name
@@ -403,7 +404,7 @@ class IRObject:
   @property
   @abc.abstractmethod
   def context(self) -> Context:
-    raise NotImplementedError()
+    raise PPInternalError("context attribute not overriden by derived class")
 
   def clone(self : _IRObjectTypeVar, value_mapper : IRValueMapper | None = None) -> _IRObjectTypeVar:
     if value_mapper is None:
@@ -534,7 +535,7 @@ class IRJsonExporter:
     # 如果碰到一个没见过的类型，那么我们需要把他注册到 output_type_dict 里面
     assert issubclass(ty, IRObject)
     if 'JSON_TYPE_NAME' not in ty.__dict__:
-      raise RuntimeError('Type not registered with @IRObjectJsonTypeName("<object_json_name>"): ' + ty.__name__)
+      raise PPInternalError('Type not registered with @IRObjectJsonTypeName("<object_json_name>"): ' + ty.__name__)
     json_name = getattr(ty, 'JSON_TYPE_NAME')
     assert isinstance(json_name, str)
     # 把类型所有的直接父类列出来
@@ -581,7 +582,7 @@ class IRJsonExporter:
       elif toplevel_type is ValueType:
         ref = self.get_value_type_repr(value)
       else:
-        raise RuntimeError('Unexpected toplevel type for metadata value: ' + str(toplevel_type))
+        raise PPInternalError('Unexpected toplevel type for metadata value: ' + str(toplevel_type))
       result = {}
       result[IRJsonRepr.ANY_KIND.value] = IRJsonRepr.MDLIKE_VALUEKIND_REF.value
       result[IRJsonRepr.ANY_REF.value] = ref
@@ -594,7 +595,7 @@ class IRJsonExporter:
         result.append(self._emit_metadata_like_value(v, toplevel_type))
       return result
     # 暂不支持其他类型
-    raise RuntimeError('Unexpected value type')
+    raise PPInternalError('Unexpected value type')
 
 
   def export_metadata_like_object(self, obj : Metadata | ValueType) -> dict:
@@ -605,7 +606,7 @@ class IRJsonExporter:
     elif isinstance(obj, ValueType):
       toplevel_type = ValueType
     else:
-      raise RuntimeError('Unexpected metadata-like type: ' + type(obj).__name__)
+      raise PPInternalError('Unexpected metadata-like type: ' + type(obj).__name__)
     data = {}
     for field in dataclasses.fields(obj):
       value = getattr(obj, field.name)
@@ -642,12 +643,12 @@ class IRJsonExporter:
 
     # 以下所有情况都需要使用类型标识
     if 'JSON_TYPE_NAME' not in type(value).__dict__:
-      raise RuntimeError('Value type ' + type(value).__name__ + ' not decorated with @IRObjectJsonTypeName("<name>")')
+      raise PPInternalError('Value type ' + type(value).__name__ + ' not decorated with @IRObjectJsonTypeName("<name>")')
     json_name = type(value).__dict__['JSON_TYPE_NAME']
 
     # 资源的话我们需要另起一个类似 Metadata-like 区域来存放，暂不支持
     if isinstance(value, AssetData):
-      raise NotImplementedError()
+      raise PPNotImplementedError()
 
     # 处理复合值的情况
     if isinstance(value, (LiteralExpr, ConstExpr)):
@@ -704,13 +705,13 @@ class IRJsonExporter:
           case TextAttribute.BackgroundColor:
             body_dict[IRJsonRepr.TEXTATTR_HIGHLIGHTCOLOR.value] = self.emit_color(v)
           case _:
-            raise NotImplementedError('Unexpected text attribute')
+            raise PPNotImplementedError('Unexpected text attribute')
       result_dict[IRJsonRepr.ANY_BODY.value] = body_dict
     elif isinstance(value, UndefLiteral):
       # 不需要额外值
       pass
     else:
-      raise NotImplementedError()
+      raise PPNotImplementedError()
     return result_dict
 
   def get_value_id(self, value: Value) -> int:
@@ -730,7 +731,7 @@ class IRJsonExporter:
 
   def get_value_type_repr(self, vty : ValueType) -> str:
     if 'JSON_TYPE_NAME' not in type(vty).__dict__:
-      raise RuntimeError('ValueType ' + type(vty).__name__ + ' not registered with @IRObjectJsonTypeName("<name>") decorator')
+      raise PPInternalError('ValueType ' + type(vty).__name__ + ' not registered with @IRObjectJsonTypeName("<name>") decorator')
     json_name = type(vty).__dict__['JSON_TYPE_NAME']
     if isinstance(vty, StatelessType):
       return json_name
@@ -751,7 +752,7 @@ class IRJsonExporter:
       return name_str
 
     # 到这里的话就既不是 StatelessType 也不是 ParameterizedType
-    raise RuntimeError("Value type is neither stateless nor parameterized: " + type(vty).__name__)
+    raise PPInternalError("Value type is neither stateless nor parameterized: " + type(vty).__name__)
 
   def get_plain_value_repr(self, value : str | int | bool | decimal.Decimal) -> dict | str | int | bool:
     assert isinstance(value, (int, str, bool, decimal.Decimal))
@@ -843,10 +844,10 @@ class IRJsonExporter:
 
 
 def _stub_copy_init(self, *, init_src : IRObject, value_mapper : IRValueMapper, **kwargs):
-  raise RuntimeError("Class cannot be copy-constructed: " + type(self).__name__)
+  raise PPInternalError("Class cannot be copy-constructed: " + type(self).__name__)
 
 def _metadata_object_json_import_init(self, *, importer : IRJsonImporter, init_src : dict, **kwargs) -> None:
-  raise NotImplementedError()
+  raise PPNotImplementedError()
 
 def IRObjectUniqueTrait(cls):
   '''该修饰符用于不可被复制的对象（比如他们需要在 Context 被去重，比如字面值）'''
@@ -905,7 +906,7 @@ class IRJsonImporter:
     # 2.  类型列表 (Python 类型到 ID)
     # 3.  元数据节点，包括 DIFile/DILocation 和各种 ValueType
     # 4.  顶层操作项
-    raise NotImplementedError()
+    raise PPNotImplementedError()
 
 
   def get_value_type(self, value_type_id : int):
@@ -993,7 +994,7 @@ class ValueType(IRObject):
 
   @staticmethod
   def get(*args, **kwargs):
-    raise NotImplementedError()
+    raise PPNotImplementedError
 
 @IRObjectJsonTypeName("parameterized_t")
 @dataclasses.dataclass(init=False, slots=True, frozen=True)
@@ -1586,12 +1587,12 @@ class Operation(IRObject, IListNode):
   def get_result(self, name : str) -> OpResult:
     if v := self._results.get(name):
       return v
-    raise RuntimeError('Result not found')
+    raise PPInternalError('Result not found')
 
   def get_operand_inst(self, name : str) -> OpOperand:
     if v := self._operands.get(name):
       return v
-    raise RuntimeError('Operand not found')
+    raise PPInternalError('Operand not found')
 
   def try_get_operand_inst(self, name: str) -> OpOperand | None:
     if name not in self._operands:
@@ -1971,13 +1972,13 @@ class Block(Value, IListNode):
   def push_back(self, op : Operation):
     assert isinstance(op, Operation)
     if op.parent is not None:
-      raise RuntimeError('Cannot add operation with parent')
+      raise PPInternalError('Cannot add operation with parent')
     self._ops.push_back(op)
 
   def push_front(self, op : Operation):
     assert isinstance(op, Operation)
     if op.parent is not None:
-      raise RuntimeError('Cannot add operation with parent')
+      raise PPInternalError('Cannot add operation with parent')
     self._ops.push_front(op)
 
   def view(self) -> None:
@@ -2056,7 +2057,7 @@ class Region(NameDictNode):
   def create_block(self, name : str = '') -> Block:
     ctx = self.context
     if ctx is None:
-      raise RuntimeError('Cannot find context')
+      raise PPInternalError('Cannot find context')
     block = Block.create(name, ctx)
     self._blocks.push_back(block)
     return block

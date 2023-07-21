@@ -9,6 +9,7 @@ import os
 import tempfile
 import graphviz
 from ..irbase import IList, IListNode, get_sanitized_filename
+from ..language import TranslationDomain
 
 # ----------------------------------------------------------
 # 图本身的类
@@ -269,6 +270,13 @@ class GraphvizDotGraphExporter(GraphExporter):
   def finalize(self, graph : GenericGraphBase):
     pass
 
+_TR_graph = TranslationDomain("graph")
+_TR_graph_dot_dump = _TR_graph.tr("graphviz_dot_dump",
+  en="Graphviz DOT dump at: ",
+  zh_cn="Graphviz DOT 导出文件保存在该位置：",
+  zh_hk="Graphviz DOT 導出文件保存在該位置：",
+)
+
 def dump_graphviz_dot(graph : GenericGraphBase, name : str):
   name_portion = 'anon'
   if len(name) > 0:
@@ -279,4 +287,4 @@ def dump_graphviz_dot(graph : GenericGraphBase, name : str):
   file.write(graph.get_graphviz_dot_source())
   file.close()
   path = os.path.abspath(file.name)
-  print('Graphviz DOT dump at ' + path)
+  print(_TR_graph_dot_dump.get() + path)
