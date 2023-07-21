@@ -3,6 +3,7 @@
 
 import os
 import typing
+from ..language import TranslationDomain
 
 class FileAccessAuditor:
   # 该类用于存储所有在读取阶段有关的设置，读取完毕后可扔
@@ -12,6 +13,8 @@ class FileAccessAuditor:
   # 所有的字符串都是绝对路径
   _accessible_directories : set[str] # 绝对路径
   _global_searchroots : list[str]
+
+  _tr : typing.ClassVar[TranslationDomain] = TranslationDomain("FileAccessAuditor")
 
   def add_permissible_path(self, v : str):
     realpath = os.path.realpath(v)
@@ -67,12 +70,28 @@ class FileAccessAuditor:
             return result
     return None
 
+  _tr_name = _tr.tr("name",
+    en="File access auditor: ",
+    zh_cn="文件访问控制信息：",
+    zh_hk="文件訪問控製信息：",
+  )
+  _tr_searchpath = _tr.tr("search_path",
+    en="Search path(s): ",
+    zh_cn="搜索路径：",
+    zh_hk="搜索路徑：",
+  )
+  _tr_accessiblepath = _tr.tr("accessible_path",
+    en="Accessible path(s): ",
+    zh_cn="允许访问的路径：",
+    zh_hk="允許訪問的路徑：",
+  )
+
   def dump(self):
-    print('FileAccessAuditor:')
-    print('  Search path(s): ' + str(len(self._global_searchroots)))
+    print(self._tr_name)
+    print('  ' + self._tr_searchpath.get() + str(len(self._global_searchroots)))
     for p in self._global_searchroots:
       print('    ' + p)
-    print('  Accessible: ' + str(len(self._accessible_directories)))
+    print('  ' + self._tr_accessiblepath.get() + str(len(self._accessible_directories)))
     for p in self._accessible_directories:
       print('    ' + p)
 
