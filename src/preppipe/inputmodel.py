@@ -240,26 +240,6 @@ class IMDocumentOp(IMFrameOp):
   def create(name : str, loc : Location):
     return IMDocumentOp(init_mode=IRObjectInitMode.CONSTRUCT, context=loc.context, name=name, loc=loc)
 
-class InputModelV2(Operation):
-  _content : Region
-
-  def construct_init(self, *, name: str = '', loc: Location | None = None, **kwargs) -> None:
-    # name 作为项目名，loc 是初始目录的位置
-    super().construct_init(name=name, loc=loc, **kwargs)
-    self._add_region('content')
-
-  def post_init(self) -> None:
-    super().post_init()
-    self._content = self.get_region('content')
-
-  @property
-  def content(self):
-    return self._content
-
-  @staticmethod
-  def create(name : str, loc : Location):
-    return InputModelV2(init_mode=IRObjectInitMode.CONSTRUCT, context=loc.context, name=name, loc=loc)
-
 def _collect_text_from_paragraph_impl(b : Block) -> tuple[str, list[AssetData]]:
   content_str = ''
   asset_list : typing.List[AssetData] = []

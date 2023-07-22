@@ -5,9 +5,9 @@ from __future__ import annotations
 import typing
 
 from preppipe.util.graphtrait import GenericNodeBase
-from preppipe.vnmodel_v4 import VNFunction
+from preppipe.vnmodel import VNFunction
 from ..util import graphtrait
-from ..vnmodel_v4 import *
+from ..vnmodel import *
 from ..pipeline import BackendDecl, IODecl, TransformBase
 
 # Inter-procedural Control-Flow Graph (ICFG)

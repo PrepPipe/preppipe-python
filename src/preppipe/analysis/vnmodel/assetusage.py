@@ -9,7 +9,7 @@ from preppipe.util.audit import typing
 from ..icfg import ICFG
 from .timemodel import TimeModelBase
 from .timemodel import SayCountTimeModel
-from ...vnmodel_v4 import *
+from ...vnmodel import *
 from ...pipeline import TransformBase, BackendDecl, IODecl
 
 @dataclasses.dataclass(frozen=True)

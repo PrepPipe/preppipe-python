@@ -4,7 +4,7 @@
 # 如果根命名空间下没有任何函数带入口标记，我们在此尝试找个函数加入口
 # 我们选第一个没有调用者的函数
 
-from ...vnmodel_v4 import *
+from ...vnmodel import *
 from ...pipeline import TransformBase, MiddleEndDecl
 
 def vn_entry_inference(m : VNModel):

@@ -10,7 +10,7 @@ from preppipe.irbase import IRJsonExporter, IRJsonImporter
 from ...irbase import *
 from ...irdataop import *
 from ..commandsyntaxparser import *
-from ...vnmodel_v4 import *
+from ...vnmodel import *
 
 @IROperationDataclass
 class VNASTNodeBase(Operation):

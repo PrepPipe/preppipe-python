@@ -11,7 +11,7 @@ from typing import Any
 from preppipe.frontend.vnmodel.vnast import VNASTASMNode, VNASTChangeDefaultDeviceNode, VNASTCharacterTempSayAttrNode, VNASTNodeBase, VNASTSayModeChangeNode, VNASTTempAliasNode
 
 from ...irbase import *
-from ...vnmodel_v4 import *
+from ...vnmodel import *
 from ...imageexpr import *
 from ..commandsyntaxparser import *
 from .vnast import *

@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2023 PrepPipe's Contributors
 # SPDX-License-Identifier: Apache-2.0
 
-from preppipe.vnmodel_v4 import Block, Value, decimal
-from ...vnmodel_v4 import *
+from preppipe.vnmodel import Block, Value, decimal
+from ...vnmodel import *
 
 class TimeModelBase:
   # VNModel 的 IR 使用抽象的“时间值”用来表达指令间的起止要求等
