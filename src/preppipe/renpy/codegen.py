@@ -6,7 +6,7 @@ import dataclasses
 import typing
 
 from .ast import *
-from ..vnmodel_v4 import *
+from ..vnmodel import *
 from ..imageexpr import *
 from ..util import nameconvert
 

@@ -6,7 +6,7 @@ import dataclasses
 import collections
 import os
 
-from ...vnmodel_v4 import *
+from ...vnmodel import *
 from ...pipeline import TransformBase, IODecl, BackendDecl, TransformArgumentGroup
 
 @dataclasses.dataclass

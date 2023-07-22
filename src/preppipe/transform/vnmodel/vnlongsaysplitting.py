@@ -5,7 +5,7 @@ import unicodedata
 import dataclasses
 import argparse
 
-from ...vnmodel_v4 import *
+from ...vnmodel import *
 from ...pipeline import TransformBase, TransformArgumentGroup, MiddleEndDecl
 
 def _is_character_fullwidth(ch : str):

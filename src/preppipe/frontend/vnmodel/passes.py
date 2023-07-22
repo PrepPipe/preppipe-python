@@ -8,8 +8,8 @@ from ...pipeline import *
 from ...irbase import *
 from .vncodegen import VNCodeGen
 from .vnutil import parse_pixel_resolution_str
-from .vnparser_v2 import VNParser
-from ...vnmodel_v4 import VNModel
+from .vnparser import VNParser
+from ...vnmodel import VNModel
 
 @TransformArgumentGroup('vnparse', 'Options for VNModel source parsing')
 @MiddleEndDecl('vnparse', input_decl=IMDocumentOp, output_decl=VNAST)
