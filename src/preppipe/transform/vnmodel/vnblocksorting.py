@@ -5,7 +5,7 @@
 # 我们在这里给每个函数的基本块进行排序
 # 如果能用拓扑排序就拓扑排序，有循环时则把返回边给去掉，再拓扑排序
 
-from ...vnmodel_v4 import *
+from ...vnmodel import *
 from ...pipeline import MiddleEndDecl, TransformBase
 
 def vn_sort_function_blocks(func : VNFunction):

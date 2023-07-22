@@ -3,7 +3,7 @@
 
 from .pipeline import *
 from .irbase import *
-from .vnmodel_v4 import *
+from .vnmodel import *
 from .imageexpr import *
 from .analysis.icfg import *
 from .analysis.vnmodel.timemodel import *

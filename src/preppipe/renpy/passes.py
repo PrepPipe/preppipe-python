@@ -7,7 +7,7 @@ from ..pipeline import *
 from ..irbase import *
 from .export import export_renpy
 from .codegen import codegen_renpy
-from ..vnmodel_v4 import VNModel
+from ..vnmodel import VNModel
 import shutil
 
 @FrontendDecl('test-renpy-build', input_decl=IODecl(description='<No Input>', nargs=0), output_decl=RenPyModel)

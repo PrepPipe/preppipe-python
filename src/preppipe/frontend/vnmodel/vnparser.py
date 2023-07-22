@@ -10,7 +10,7 @@ from preppipe.irbase import Location, StringLiteral
 from ...irbase import *
 from ..commandsyntaxparser import *
 from ..commandsemantics import *
-from ...vnmodel_v4 import *
+from ...vnmodel import *
 from ...imageexpr import *
 from .vnast import *
 from .vncodegen import *
