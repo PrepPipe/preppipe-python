@@ -343,7 +343,7 @@ class TransformRegistration:
     #backends : typing.List[typing.Tuple[TransformRegistration.TransformInfo, typing.Tuple[str]]] # 所有的后端以及它们的输出
     current_ir_type : type = None
     verbose = parsed_args.verbose
-    ordered_passes : typing.List[typing.Tuple[str, typing.Any]] = parsed_args.ordered_passes
+    ordered_passes : typing.List[typing.Tuple[str, typing.Any]] = getattr(parsed_args, "ordered_passes", [])
     pipeline : typing.List[TransformBase] = []
     initialized_tys : typing.Set[type] = set()
     pipeline_index = 0
@@ -589,6 +589,11 @@ class _PipelineManager:
     zh_cn="警告：最后生成的 IR 未被使用，结果将被丢弃。请检查是否遗漏了输出步骤的选项。",
     zh_hk="警告：最後生成的 IR 未被使用，結果將被丟棄。請檢查是否遺漏了輸出步驟的選項。",
   )
+  tr_pipeline_no_searchpath = TR_pipeline.tr("pipeline_no_searchpath",
+    en="Warning: No search path is specified on command line. The program will not search any directory for assets. We need your explicit authorization with \"--searchpath <paths>...\" option to permit asset lookup in the specified directories.",
+    zh_cn="警告：命令行参数中没有指定搜索路径。程序将不会在任何目录中查找资源。我们需要您使用 \"--searchpath <路径>...\" 来授权程序在指定的目录下查找资源。",
+    zh_hk="警告：命令行參數中沒有指定搜索路徑。程序將不會在任何目錄中查找資源。我們需要您使用 \"--searchpath <路徑>...\" 來授權程序在指定的目錄下查找資源。",
+  )
 
   @staticmethod
   def pipeline_main(args : typing.List[str] | None = None):
@@ -620,9 +625,12 @@ class _PipelineManager:
       is_action_performed = True
 
     ctx = Context()
-    for path in result_args.searchpath:
-      ctx.get_file_auditor().add_permissible_path(path)
-      ctx.get_file_auditor().add_global_searchpath(path)
+    if result_args.searchpath:
+      for path in result_args.searchpath:
+        ctx.get_file_auditor().add_permissible_path(path)
+        ctx.get_file_auditor().add_global_searchpath(path)
+    else:
+      print(_PipelineManager.tr_pipeline_no_searchpath.get())
     if result_args.verbose:
       ctx.get_file_auditor().dump()
 
