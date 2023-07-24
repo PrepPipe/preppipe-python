@@ -5,10 +5,13 @@ from __future__ import annotations
 
 from ..irbase import *
 from .. import irdataop
+from ..language import TranslationDomain, Translatable
 
 # 在此我们定义 RenPy 语法的一个子集，以供我们对 Renpy 进行生成
 # （有朝一日应该也能把读取 Renpy 的功能做进来吧。。）
 # 我们使用 IR 形式组成 AST 的结构，这样便于我们使用 IR 提供的一系列功能
+
+TR_renpy = TranslationDomain("renpy")
 
 #-----------------------------------------------------------
 # 抽象基类

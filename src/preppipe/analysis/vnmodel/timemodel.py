@@ -3,6 +3,7 @@
 
 from preppipe.vnmodel import Block, Value, decimal
 from ...vnmodel import *
+from ...exceptions import *
 
 class TimeModelBase:
   # VNModel 的 IR 使用抽象的“时间值”用来表达指令间的起止要求等
@@ -20,7 +21,7 @@ class TimeModelBase:
   def get_duration(self, starttime : Value, endtime : Value, block : Block) -> decimal.Decimal:
     # 计算开始时间值到结束时间值之间流逝的时间
     # 两个时间值所涉及的指令一定在同一个基本块中
-    raise NotImplementedError()
+    raise PPNotImplementedError()
 
 
 class SayCountTimeModel(TimeModelBase):
@@ -49,7 +50,7 @@ class SayCountTimeModel(TimeModelBase):
         startinst = startinst.parent_op
         assert startinst.parent_block is block
     else:
-      raise RuntimeError("Unexpected starttime source")
+      raise PPInternalError("Unexpected starttime source")
 
     cnt = 0
     while True:

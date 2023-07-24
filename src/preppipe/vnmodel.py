@@ -18,6 +18,9 @@ from .commontypes import *
 from .irbase import *
 from .irdataop import *
 from .nameresolution import NamespaceNodeInterface, NameResolver
+from .language import TranslationDomain
+
+TR_vnmodel = TranslationDomain("vnmodel")
 
 # VNModel 只保留核心的、基于文本的IR信息，其他内容（如图片显示位置等）大部分都会放在抽象接口后
 # 像图片位置（2D屏幕坐标）、设备外观（对话框贴图）等信息，在后端生成时会用到，所以需要在IR中记录
@@ -311,6 +314,58 @@ class VNStandardDeviceKind(enum.Enum):
   @staticmethod
   def get_standard_device_name(kind: VNStandardDeviceKind) -> str:
     return getattr(VNStandardDeviceKind, kind.name + '_DNAME').value
+
+  @staticmethod
+  def get_pretty_device_name(devname : str):
+    # 当我们在资源统计时，如果设备名是默认值，我们希望有个更好理解的输出名
+    # 目前只加了大概会需要的设备
+    match devname:
+      case VNStandardDeviceKind.O_BGM_AUDIO_DNAME.value:
+        return _VNDeviceNamePrettyPrintScope._tr_devname_bgm.get()
+      case VNStandardDeviceKind.O_SE_AUDIO_DNAME.value:
+        return _VNDeviceNamePrettyPrintScope._tr_devname_se.get()
+      case VNStandardDeviceKind.O_VOICE_AUDIO_DNAME.value:
+        return _VNDeviceNamePrettyPrintScope._tr_devname_voice.get()
+      case VNStandardDeviceKind.O_BACKGROUND_DISPLAY_DNAME.value:
+        return _VNDeviceNamePrettyPrintScope._tr_devname_background.get()
+      case VNStandardDeviceKind.O_FOREGROUND_DISPLAY_DNAME.value:
+        return _VNDeviceNamePrettyPrintScope._tr_devname_foreground.get()
+      case VNStandardDeviceKind.O_SAY_SIDEIMAGE_DISPLAY_DNAME.value:
+        return _VNDeviceNamePrettyPrintScope._tr_devname_sideimage.get()
+      case _:
+        return devname
+
+class _VNDeviceNamePrettyPrintScope:
+  _tr_devname_bgm = TR_vnmodel.tr("devname_bgm",
+    en="Used as background music",
+    zh_cn="用作背景音乐",
+    zh_hk="用作背景音樂",
+  )
+  _tr_devname_se = TR_vnmodel.tr("devname_se",
+    en="Used as sound effect",
+    zh_cn="用作音效",
+    zh_hk="用作音效",
+  )
+  _tr_devname_voice = TR_vnmodel.tr("devname_voice",
+    en="Used as voice",
+    zh_cn="用作语音",
+    zh_hk="用作語音",
+  )
+  _tr_devname_background = TR_vnmodel.tr("devname_background",
+    en="Used as background image",
+    zh_cn="用作背景图片",
+    zh_hk="用作背景圖片",
+  )
+  _tr_devname_foreground = TR_vnmodel.tr("devname_foreground",
+    en="Used as foreground image",
+    zh_cn="用作前景图片（包含角色立绘和其他物件图）",
+    zh_hk="用作前景圖片（包含角色立繪和其他物件圖）",
+  )
+  _tr_devname_sideimage = TR_vnmodel.tr("devname_sideimage",
+    en="Used as side image",
+    zh_cn="用作头像",
+    zh_hk="用作頭像",
+  )
 
 @IROperationDataclass
 @IRObjectJsonTypeName("vn_device_record_op")

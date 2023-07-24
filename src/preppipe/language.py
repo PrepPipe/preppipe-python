@@ -91,6 +91,7 @@ class Translatable:
 
   # 这些是临时数据
   cached_str : str | None = None
+  cached_allcandidates : tuple[str, ...] | None = None
   cached_ver : int # 最后一次更新 cached_str 时 PREFERRED_LANG_VER 的值
 
   # 以下是程序初始化时设定的
@@ -108,7 +109,7 @@ class Translatable:
   def get(self) -> str:
     if self.cached_str is not None and self.cached_ver == self.PREFERRED_LANG_VER:
       return self.cached_str
-    self.cached_ver = self.PREFERRED_LANG_VER
+    self.flush_cache()
     for lang in self.PREFERRED_LANG:
       if lang in self.candidates:
         l = self.candidates[lang]
@@ -127,11 +128,27 @@ class Translatable:
       result += '\n' + msg
     return result
 
+  def get_all_candidates(self) -> tuple[str, ...]:
+    if self.cached_allcandidates is not None:
+      return self.cached_allcandidates
+    self.flush_cache()
+    resultset : set[str] = set()
+    for vlist in self.candidates.values():
+      for v in vlist:
+        resultset.add(v)
+    self.cached_allcandidates = tuple(resultset)
+    return self.cached_allcandidates
+
   def dump(self) -> str:
     result = "TR " + self.parent.name + '.' + self.code + ":"
     for lang, l in self.candidates.items():
       result += "\n  " + lang + ": " + str(l)
     return result
+
+  def flush_cache(self):
+    self.cached_str = None
+    self.cached_allcandidates = None
+    self.cached_ver = self.PREFERRED_LANG_VER
 
   def __str__(self) -> str:
     return self.get()

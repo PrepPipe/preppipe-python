@@ -2161,7 +2161,7 @@ class Literal(Value):
     self._value = value
 
   def json_import_init(self, *, importer: IRJsonImporter, init_src: dict, **kwargs) -> None:
-    raise NotImplementedError('Subclass should override this')
+    raise PPNotImplementedError('Subclass should override this')
 
   @property
   def value(self) -> typing.Any:
@@ -2227,7 +2227,7 @@ class ConstExpr(Value, User):
     # 使用的值被删除，使得该表达式也该被删除时，本函数会被调用
     self.remove_dead_constant_users()
     if not self.use_empty():
-      raise RuntimeError('Destroying ConstExpr in use')
+      raise PPInternalError('Destroying ConstExpr in use')
     self_cls = type(self)
     key_tuple = (self_cls, *[v.value for v in self.operanduses()])
     self.valuetype.context.get_constexpr_uniquing_dict(self_cls).erase_constant(key_tuple)
@@ -2522,14 +2522,18 @@ class AssetData(Value, IListNode, typing.Generic[_DataTV, _FmtTV]):
   def location(self) -> DIFile | None:
     return self._loc
 
+  @classmethod
+  def get_pretty_name(cls) -> str:
+    return cls.__name__
+
   def __str__(self) -> str:
-    result = self.__class__.__name__ + ' '
-    if self._format is not None:
-      result += str(self._format) + ' '
+    result = self.__class__.get_pretty_name()
     if len(self._backing_store_path) > 0:
-      result += 'store: ' + self._backing_store_path
+      result += ' ' + self._backing_store_path
     elif self._loc is not None:
-      result += 'location: ' + str(self._loc)
+      result += ' @' + str(self._loc)
+    if self._format is not None:
+      result += ' [' + str(self._format) + ']'
     return result
 
   def load(self) -> _DataTV:
@@ -2541,13 +2545,13 @@ class AssetData(Value, IListNode, typing.Generic[_DataTV, _FmtTV]):
 
   def load_from_storage(self) -> _DataTV:
     # load the asset from the backing store path
-    raise NotImplementedError()
+    raise PPNotImplementedError()
 
   def export(self, dest_path : str) -> None:
     # save the asset data to the specified path
     # we do not try to create another AssetData instance here
     # if the caller want one, they can always create one using the dest_path
-    raise NotImplementedError()
+    raise PPNotImplementedError()
 
   @staticmethod
   def secure_overwrite(exportpath: str, write_callback: typing.Callable):
@@ -2584,6 +2588,16 @@ class BytesAssetData(AssetData[bytes, None]):
         f.write(data)
     else:
       shutil.copy2(self.backing_store_path, dest_path, follow_symlinks=False)
+
+  _tr_bytesassetdata_name = TR_preppipe.tr("bytesassetdata_name",
+    en="Binary Asset",
+    zh_cn="二进制资源",
+    zh_hk="二進製資源",
+  )
+
+  @classmethod
+  def get_pretty_name(cls) -> str:
+    return cls._tr_bytesassetdata_name.get()
 
 @IRObjectJsonTypeName('image_ad')
 class ImageAssetData(AssetData[PIL.Image.Image, str]):
@@ -2650,6 +2664,16 @@ class ImageAssetData(AssetData[PIL.Image.Image, str]):
       image = PIL.Image.open(self.backing_store_path)
       image.save(dest_path)
 
+  _tr_imagesassetdata_name = TR_preppipe.tr("imagesassetdata_name",
+    en="Image Asset",
+    zh_cn="图片资源",
+    zh_hk="圖片資源",
+  )
+
+  @classmethod
+  def get_pretty_name(cls) -> str:
+    return cls._tr_imagesassetdata_name.get()
+
 @IRObjectJsonTypeName('audio_ad')
 class AudioAssetData(AssetData[pydub.AudioSegment, str]):
   _SUPPORTED_FORMAT_BIDICT : typing.ClassVar[bidict.bidict[str, str]] | None = None
@@ -2692,7 +2716,7 @@ class AudioAssetData(AssetData[pydub.AudioSegment, str]):
       if ext in self._SUPPORTED_FORMATS:
         return ext
       else:
-        raise RuntimeError("Unrecognized audio file format: " + ext)
+        raise PPInternalError("Unrecognized audio file format: " + ext)
 
   @property
   def format(self) -> str | None:
@@ -2715,6 +2739,16 @@ class AudioAssetData(AssetData[pydub.AudioSegment, str]):
       data : pydub.AudioSegment = pydub.AudioSegment.from_file(self._backing_store_path, format = self._format)
       data.export(dest_path, format=fmt)
 
+  _tr_audiosassetdata_name = TR_preppipe.tr("audiosassetdata_name",
+    en="Audio Asset",
+    zh_cn="音频资源",
+    zh_hk="音頻資源",
+  )
+
+  @classmethod
+  def get_pretty_name(cls) -> str:
+    return cls._tr_audiosassetdata_name.get()
+
 @IRWrappedStatelessClassJsonName('asset_placeholder_trait')
 class AssetPlaceholderTrait:
   # 如果某个值表示占位资源，则应继承自该类来告诉其余代码
@@ -2724,31 +2758,6 @@ class AssetPlaceholderTrait:
 class AssetDeclarationTrait:
   # 如果某个值表示声明的资源（即内容暂缺的外部资源），则应继承自该类来告诉其余代码
   pass
-
-#class AssetBase(User):
-  # base class of assets that other IR components can reference
-  # depending on the use case, the asset may or may not reference an actual asset data
-  # (e.g., if we are at backend, the asset can just export the asset and do not track it)
-#  def __init__(self, **kwargs) -> None:
-#    super().__init__(**kwargs)
-
-#  def load(self) -> typing.Any:
-#    data : AssetData = self.get_operand(0)
-#    if data is not None:
-#      return data.load()
-#    return None
-
-#  def set_data(self, data : typing.Any):
-    # the correct way of modifying an asset data is:
-    # 1. load the asset data to memory (call AssetBase.load())
-    # 2. do modification on it
-    # 3. call Context.create_backing_path() to get a destination for saving
-    # 4. save the data to the file
-    # 5. create the new AssetData with Context.add_asset_data()
-    # 6. call AssetBase.set_operand(0, ...)
-    # AssetBase.set_data() takes care of step 3-6 above
-    # should be implemented in derived classes
-#    raise NotImplementedError("AssetBase.set_data() not overriden in " + type(self).__name__)
 
 # ------------------------------------------------------------------------------
 # Debug info (DI)
@@ -3006,12 +3015,12 @@ class TextStyleLiteral(Literal):
       match attr:
         case TextAttribute.Bold:
           if v is not None and v is not True:
-            raise RuntimeError("文本属性“加粗”不应该带参数，但现有参数：" + str(v) + "<类型：" + str(type(v).__name__))
+            raise PPInternalError("文本属性“加粗”不应该带参数，但现有参数：" + str(v) + "<类型：" + str(type(v).__name__))
           if v is None:
             v = True
         case TextAttribute.Italic:
           if v is not None and v is not True:
-            raise RuntimeError("文本属性“斜体”不应该带参数，但现有参数：" + str(v) + "<类型：" + str(type(v).__name__))
+            raise PPInternalError("文本属性“斜体”不应该带参数，但现有参数：" + str(v) + "<类型：" + str(type(v).__name__))
           if v is None:
             v = True
         case TextAttribute.Hierarchy:
@@ -3019,13 +3028,13 @@ class TextStyleLiteral(Literal):
           isDiscard = True
         case TextAttribute.Size:
           if not isinstance(v, int):
-            raise RuntimeError("文本属性“大小”应该带一个整数型参数，但现有参数：" + str(v) + "<类型：" + str(type(v).__name__))
+            raise PPInternalError("文本属性“大小”应该带一个整数型参数，但现有参数：" + str(v) + "<类型：" + str(type(v).__name__))
         case TextAttribute.TextColor:
           if not isinstance(v, Color):
-            raise RuntimeError("文本属性“文本颜色”应该带一个颜色类型的参数，但现有参数：" + str(v) + "<类型：" + str(type(v).__name__))
+            raise PPInternalError("文本属性“文本颜色”应该带一个颜色类型的参数，但现有参数：" + str(v) + "<类型：" + str(type(v).__name__))
         case TextAttribute.BackgroundColor:
           if not isinstance(v, Color):
-            raise RuntimeError("文本属性“背景颜色”应该带一个颜色类型的参数，但现有参数：" + str(v) + "<类型：" + str(type(v).__name__))
+            raise PPInternalError("文本属性“背景颜色”应该带一个颜色类型的参数，但现有参数：" + str(v) + "<类型：" + str(type(v).__name__))
         case _:
           isDiscard = True
       if not isDiscard:
@@ -3105,9 +3114,9 @@ class TextFragmentLiteral(LiteralExpr):
   @staticmethod
   def get(context : Context, string : StringLiteral, styles : TextStyleLiteral) -> TextFragmentLiteral:
     if not isinstance(string, StringLiteral):
-      raise RuntimeError("string 参数应为对字符串常量的引用")
+      raise PPInternalError("string 参数应为对字符串常量的引用")
     if not isinstance(styles, TextStyleLiteral):
-      raise RuntimeError("styles 参数应为对文本样式常量的引用")
+      raise PPInternalError("styles 参数应为对文本样式常量的引用")
     return TextFragmentLiteral._get_literalexpr_impl((string, styles), context)
 
 @IRObjectJsonTypeName('strlist_le')
@@ -3478,10 +3487,6 @@ class IRWriter:
         ev = value.value
         self._write_body(self.escape(type(ev).__name__ + '.' + ev.name))
         return delayed_content
-      #elif isinstance(value, TextListLiteral):
-      #  raise NotImplementedError('TODO')
-      #elif isinstance(value, TableLiteral):
-      #  raise NotImplementedError('TODO')
       else:
         self._write_body(self.escape(str(value)))
         return delayed_content

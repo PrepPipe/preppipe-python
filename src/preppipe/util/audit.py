@@ -95,6 +95,14 @@ class FileAccessAuditor:
     for p in self._accessible_directories:
       print('    ' + p)
 
+  _tr_asset_not_found_general = _tr.tr("asset_not_found_general",
+    en="Please check if the asset name is spelled correctly and whether the directory containing the asset is included in the search paths. Current search paths: {searchpath}",
+    zh_cn="请确认资源名称是否有拼写、输入错误，并检查存放资源的目录是否包含在搜索路径中。当前的搜索路径： {searchpath}",
+    zh_hk="請確認資源名稱是否有拼寫、輸入錯誤，並檢查存放資源的目錄是否包含在搜索路徑中。當前的搜索路徑： {searchpath}",
+  )
+  def get_asset_not_found_errmsg(self):
+    return self._tr_asset_not_found_general.format(searchpath=str(self._global_searchroots))
+
   def __init__(self) -> None:
     self._accessible_directories = set()
     self._global_searchroots = []
