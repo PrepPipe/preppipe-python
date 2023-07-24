@@ -430,7 +430,10 @@ _imports = globals()
   "聲明圖片": {"name": "名稱", 'path': '路徑'}, # zh_HK
 })
 def cmd_image_decl_path(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str, path : str):
-  img = emit_image_expr_from_path(context=state.context, pathexpr=path, basepath=state.input_file_path)
+  warnings : list[tuple[str,str]] = []
+  img = emit_image_expr_from_path(context=state.context, pathexpr=path, basepath=state.input_file_path, warnings=warnings)
+  for code, msg in warnings:
+    state.emit_error(code, msg, commandop.location)
   if img is None:
     # 找不到图片，生成一个错误
     state.emit_error('vnparse-image-notfound', path, loc=commandop.location)
