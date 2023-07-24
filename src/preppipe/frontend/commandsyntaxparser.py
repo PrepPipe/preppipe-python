@@ -23,6 +23,7 @@ from ._antlr_generated.CommandParseVisitor   import CommandParseVisitor
 from ..irbase import *
 from ..inputmodel import *
 from ..pipeline import TransformBase, MiddleEndDecl
+from ..exceptions import *
 
 # 命令扫描（语法分析阶段）
 
@@ -324,7 +325,7 @@ def check_is_command_start(b : Block, ctx: Context) -> tuple[str, list[AssetData
         command_str += '\0'
         asset_list.append(v)
       else:
-        raise NotImplementedError('TODO support other possible element types in IMElementOp')
+        raise PPNotImplementedError('TODO support other possible element types in IMElementOp')
     if first_op is None:
       # 这是开头
       if command_str.startswith(_command_start_text):
@@ -527,7 +528,7 @@ class _CommandParseVisitorImpl(CommandParseVisitor):
     elif ctx.QUOTEDSTR() is not None:
       content_tuple = self._handle_quoted_str(ctx.QUOTEDSTR())
     else:
-      raise RuntimeError('Name without valid child?')
+      raise PPInternalError('Name without valid child?')
 
     name_str, name_start, _name_end = content_tuple
     name_value = StringLiteral.get(name_str, self.context)
@@ -590,7 +591,7 @@ class _CommandParseVisitorImpl(CommandParseVisitor):
     elif ctx.evalue() is not None:
       return self.visitEvalue(ctx.evalue())
     else:
-      raise RuntimeError('Invalid value')
+      raise PPInternalError('Invalid value')
 
   def visitCallexpr(self, ctx: CommandParseParser.CallexprContext) -> tuple[Value, Location]:
     # 如果我们只是解析值的的话（不是解析一个完整的命令），
@@ -617,7 +618,7 @@ class _CommandParseVisitorImpl(CommandParseVisitor):
       assert isinstance(data, AssetData)
       return (data, self._get_loc(start))
     else:
-      raise RuntimeError('evalue without valid child?')
+      raise PPInternalError('evalue without valid child?')
 
     content_str, startpos, _endpos = content_tuple
     value = StringLiteral.get(content_str, self.context)

@@ -8,6 +8,7 @@ import typing
 import enum
 import dataclasses
 import abc
+from .exceptions import *
 
 # ------------------------------------------------------------------------------
 # 类似C++的命名解析在语涵编译器中至少有两处应用：
@@ -37,7 +38,7 @@ class NameResolver(typing.Generic[T]):
 
   # derived class may override the following methods (get root node and get node at specific path)
   def get_root_node(self) -> NamespaceNodeInterface[T]:
-    raise NotImplementedError()
+    raise PPNotImplementedError()
 
   def get_namespace_node(self, path : typing.Tuple[str]) -> NamespaceNodeInterface[T] | None:
     current_node = self.get_root_node()
@@ -114,11 +115,11 @@ class NamespaceNodeInterface(typing.Generic[T], abc.ABC):
 
   @abc.abstractmethod
   def get_namespace_parent_node(self) -> NamespaceNodeInterface[T] | None:
-    raise NotImplementedError()
+    raise PPNotImplementedError()
 
   @abc.abstractmethod
   def get_namespace_path(self) -> tuple[str]:
-    raise NotImplementedError()
+    raise PPNotImplementedError()
 
   def get_using_namespace_paths(self) -> typing.Iterable[tuple[str]] | None:
     # 除了在该命名空间搜索之外，还应该在哪里搜索
@@ -127,7 +128,7 @@ class NamespaceNodeInterface(typing.Generic[T], abc.ABC):
 
   @abc.abstractmethod
   def lookup_name(self, name : str) -> NamespaceNodeInterface[T] | T | AliasEntry | None:
-    raise NotImplementedError()
+    raise PPNotImplementedError()
 
 class NamespaceNode(typing.Generic[T], NamespaceNodeInterface[T]):
   # 某个在该命名空间下的名称代表什么
@@ -180,7 +181,7 @@ class NamespaceNode(typing.Generic[T], NamespaceNodeInterface[T]):
         return NamespaceNodeInterface.AliasEntry(ns_path=data)
         # return self.namespace_tree.get_namespace_node(data)
       case _:
-        raise NotImplementedError('Unexpected data entry kind')
+        raise PPNotImplementedError('Unexpected data entry kind')
 
   def unqualified_lookup(self, name : str, using_namespace_paths : typing.Iterable[typing.Tuple[str]]) -> NamespaceNode[T] | T | None:
     return self.namespace_tree.unqualified_lookup(name, self.get_namespace_path(), using_namespace_paths)
@@ -201,13 +202,13 @@ class NamespaceNode(typing.Generic[T], NamespaceNodeInterface[T]):
   def add_data_entry(self, cname : str, data : T) -> None:
     assert data is not None
     if cname in self._data_dict:
-      raise RuntimeError('given cname "' + cname + '" is already used:' + str(self._data_dict[cname]))
+      raise PPInternalError('given cname "' + cname + '" is already used:' + str(self._data_dict[cname]))
     self._data_dict[cname] = (NamespaceNode._NameResolutionDataEntryKind.CanonicalEntry, data)
 
   def add_child(self, cname : str, child : NamespaceNode[T]) -> None:
     assert child is not None
     if cname in self._data_dict:
-      raise RuntimeError('given cname "' + cname + '" is already used:' + str(self._data_dict[cname]))
+      raise PPInternalError('given cname "' + cname + '" is already used:' + str(self._data_dict[cname]))
     self._data_dict[cname] = (NamespaceNode._NameResolutionDataEntryKind.CanonicalChild, child)
 
   def add_local_alias(self, name : str, alias : str) -> None:
@@ -216,11 +217,11 @@ class NamespaceNode(typing.Generic[T], NamespaceNodeInterface[T]):
     if name == alias:
       return
     if alias in self._data_dict:
-      raise RuntimeError('given alias "' + alias + '" is already used:' + str(self._data_dict[alias]))
+      raise PPInternalError('given alias "' + alias + '" is already used:' + str(self._data_dict[alias]))
     resolved_name = name
     while True:
       if resolved_name not in self._data_dict:
-        raise RuntimeError('Cannot resolve name "' + name + '"')
+        raise PPInternalError('Cannot resolve name "' + name + '"')
       kind, data = self._data_dict[resolved_name]
       match kind:
         case NamespaceNode._NameResolutionDataEntryKind.CanonicalEntry:
@@ -240,7 +241,7 @@ class NamespaceNode(typing.Generic[T], NamespaceNodeInterface[T]):
           self._data_dict[alias] = (kind, data)
           return
         case _:
-          raise NotImplementedError('Unhandled data entry kind')
+          raise PPNotImplementedError('Unhandled data entry kind')
 
   def _add_remote_alias_check(self, remote_path : typing.Tuple[str], alias : str) -> None:
     assert remote_path != self.get_namespace_path()
@@ -248,7 +249,7 @@ class NamespaceNode(typing.Generic[T], NamespaceNodeInterface[T]):
     for step in remote_path:
       assert isinstance(step, str)
     if alias in self._data_dict:
-      raise RuntimeError('given alias "' + alias + '" is already used:' + str(self._data_dict[alias]))
+      raise PPInternalError('given alias "' + alias + '" is already used:' + str(self._data_dict[alias]))
 
   def add_remote_node_alias(self, remote_path : typing.Tuple[str], alias : str) -> None:
     self._add_remote_alias_check(remote_path, alias)

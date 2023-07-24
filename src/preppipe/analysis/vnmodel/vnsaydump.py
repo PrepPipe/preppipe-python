@@ -8,6 +8,9 @@ import os
 
 from ...vnmodel import *
 from ...pipeline import TransformBase, IODecl, BackendDecl, TransformArgumentGroup
+from ...language import TranslationDomain
+
+TR_vn_saydump = TranslationDomain("vn_saydump")
 
 @dataclasses.dataclass
 class _VNSayDumpSettings:
@@ -178,6 +181,18 @@ def _get_blocks_list(f : VNFunction, setting : _VNSayDumpSettings, char_state_di
       handle_op(op)
   return blocks
 
+_TR_vn_saydump_name = TR_vn_saydump.tr("name_prefix",
+  en="vn-saydump: ",
+  zh_cn="发言导出：",
+  zh_hk="發言導出：",
+)
+
+_TR_vn_saydump_dump_outside_outputdir = TR_vn_saydump.tr("dump_outside_outputdir",
+  en="Export directory \"{realpath}\" outside output directory \"{outputdir}\" and will be skipped. Please check if the file names or the namespace path may be misunderstood.",
+  zh_cn="要导出的目录 \"{realpath}\" 不在指定的输出目录中： \"{outputdir}\"。该导出将不会进行。请检查文件名和命名空间路径是否会引起歧义。",
+  zh_hk="要導出的目錄 \"{realpath}\" 不在指定的輸出目錄中： \"{outputdir}\"。該導出將不會進行。請檢查文件名和命名空間路徑是否會引起歧義。",
+)
+
 def vn_say_dump(m : VNModel, setting : _VNSayDumpSettings, outputdir : str):
   # 我们首先扫描所有的角色信息，构建角色状态表（什么立绘对应什么角色状态）
   # 由于每个立绘可能有多个角色同时使用，我们假设所有这些角色的状态都会改变
@@ -206,7 +221,7 @@ def vn_say_dump(m : VNModel, setting : _VNSayDumpSettings, outputdir : str):
       realpath = os.path.realpath(os.path.join(outputdir, dname))
       # 检查 realpath 是否在 outputdir 下，如果不在的话报错并跳过
       if os.path.commonprefix([realpath, outputdir]) != outputdir:
-        print("vnsaydump: Export directory \"" +realpath + "\" outside output directory \"" + outputdir + "\" and will be skipped")
+        print(_TR_vn_saydump_name.get() + _TR_vn_saydump_dump_outside_outputdir.format(realpath=realpath, outputdir=outputdir))
         continue
       result = _get_blocks_list(f, setting, char_state_dict, char_sideimage_state_dict)
       if len(result) == 0:
@@ -230,7 +245,7 @@ def vn_say_dump(m : VNModel, setting : _VNSayDumpSettings, outputdir : str):
 
 @TransformArgumentGroup('vn-saydump', "Options for Dumping say contents")
 @BackendDecl('vn-saydump', input_decl=VNModel, output_decl=IODecl("Dump directory", nargs=1))
-class VNESayDumpPass(TransformBase):
+class VNSayDumpPass(TransformBase):
   setting : typing.ClassVar[_VNSayDumpSettings] = _VNSayDumpSettings()
 
   setting_gamecreator : typing.ClassVar[_VNSayDumpSettings] = _VNSayDumpSettings(
@@ -252,20 +267,32 @@ class VNESayDumpPass(TransformBase):
   def install_arguments(argument_group : argparse._ArgumentGroup):
     argument_group.add_argument("--vnsaydump-preset", nargs=1, type=str, default='')
 
+  _tr_unknown_preset = TR_vn_saydump.tr("unknown_preset",
+    en="Preset \"{preset}\" does not exist. Presets registered: ",
+    zh_cn="预设 \"{preset}\" 不存在。已注册的预设有： ",
+    zh_hk="預設 \"{preset}\" 不存在。已註冊的預設有： ",
+  )
+
   @staticmethod
   def handle_arguments(args : argparse.Namespace):
     if preset := args.vnsaydump_preset:
       preset_name = preset[0]
       if len(preset_name) > 0:
-        if preset_name in VNESayDumpPass.setting_presets_dict:
-          VNESayDumpPass.setting = VNESayDumpPass.setting_presets_dict[preset_name]
+        if preset_name in VNSayDumpPass.setting_presets_dict:
+          VNSayDumpPass.setting = VNSayDumpPass.setting_presets_dict[preset_name]
         else:
-          raise RuntimeError("Unknown vnsaydump preset: "+ str(preset_name))
+          raise RuntimeError(VNSayDumpPass._tr_unknown_preset.format(preset=preset_name)+ str(list(VNSayDumpPass.setting_presets_dict.keys())))
+
+  _tr_invalid_path = TR_vn_saydump.tr("invalid_path",
+    en="Export path should be a valid directory is instead of a file: ",
+    zh_cn="导出目录应是一个有效的目录而不是个文件： ",
+    zh_hk="導出目錄應是一個有效的目錄而不是個文件： ",
+    )
 
   def run(self) -> None:
     assert len(self.inputs) == 1
     out_path = self.output
     if os.path.exists(out_path):
       if not os.path.isdir(out_path):
-        raise RuntimeError("vn-saydump: exporting to non-directory path: " + out_path)
+        raise RuntimeError(VNSayDumpPass._tr_invalid_path.get() + out_path)
     vn_say_dump(self.inputs[0], self.setting, out_path)

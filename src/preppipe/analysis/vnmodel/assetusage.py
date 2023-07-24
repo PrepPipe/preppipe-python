@@ -11,6 +11,9 @@ from .timemodel import TimeModelBase
 from .timemodel import SayCountTimeModel
 from ...vnmodel import *
 from ...pipeline import TransformBase, BackendDecl, IODecl
+from ...language import TranslationDomain
+
+_TR_assetusage = TranslationDomain("assetusage")
 
 @dataclasses.dataclass(frozen=True)
 class AssetUsage:
@@ -36,16 +39,39 @@ class AssetUsage:
   # 设备类型 --> [<资源，使用总时长>] (降序排列)
   asset_usage_stat : dict[VNDeviceSymbol, list[tuple[Value, decimal.Decimal, decimal.Decimal]]]
 
+  _tr_assetusage = _TR_assetusage.tr("header",
+    en="Asset usages:",
+    zh_cn="资源使用情况：",
+    zh_hk="資源使用情況：",
+  )
+  _tr_usage_detail_duration = _TR_assetusage.tr("detail_duration",
+    en="{duration} say(s)",
+    zh_cn="{duration} 句发言",
+    zh_hk="{duration} 句發言",
+  )
+  _tr_usage_detail_occurrence = _TR_assetusage.tr("detail_occurrence",
+    en="{occurrence} appearance with unknown duration",
+    zh_cn="{occurrence} 次使用（未知时长）",
+    zh_hk="{occurrence} 次使用（未知時長）",
+  )
+
   def __str__(self) -> str:
-    result = ['AssetUsage:']
+    result = [self._tr_assetusage.get()]
     for dev, vlist in self.asset_usage_stat.items():
-      result.append('  Device ' + dev.name + ':')
+      pretty_name = VNStandardDeviceKind.get_pretty_device_name(dev.name)
+      result.append(pretty_name + ':')
       for asset, duration, occurrence in vlist:
-        result.append('    ' + str(asset) + ': ' + str(duration) + ' + ' + str(occurrence))
+        details = []
+        if duration > 0:
+          details.append(self._tr_usage_detail_duration.format(duration=str(duration)))
+        if occurrence > 0:
+          details.append(self._tr_usage_detail_occurrence.format(occurrence=str(occurrence)))
+        detailstr = ' + '.join(details)
+        result.append('    ' + str(asset) + ': ' + detailstr)
     return '\n'.join(result)
 
   def pretty_print(self) -> str:
-    # TODO
+    # 已在 __str__ 中实现
     return str(self)
 
   @staticmethod

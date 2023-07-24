@@ -173,6 +173,11 @@ class RenPyExportVisitor(RenPyASTVisitor):
     return ''.join(pieces)
 
   RENPY_ERROR_SAYER_NAME : typing.ClassVar[str] = 'preppipe_error_sayer'
+  RENPY_ERROR_SAYER_CUR : typing.ClassVar[Translatable] = TR_renpy.tr("preppipe_error_sayer",
+    en="preppipe_error_sayer_en",
+    zh_cn="preppipe_error_sayer_zh_cn",
+    zh_hk="preppipe_error_sayer_zh_hk",
+  )
 
   def walk_body(self, b : Block, no_leading_newline : bool = False):
     for op in b.body:
@@ -185,12 +190,12 @@ class RenPyExportVisitor(RenPyASTVisitor):
       elif isinstance(op, ErrorOp):
         code : str = op.error_code
         msg : str = op.error_message.get_string()
-        fullmsg = code + ": " + msg
+        fullmsg = msg + ' (' + code + ')'
         if not no_leading_newline:
           self.dest.write(self.get_eol_with_ws())
         else:
           no_leading_newline = False
-        self.dest.write(self.RENPY_ERROR_SAYER_NAME + " \"" + self.escapestr(fullmsg) + '"')
+        self.dest.write(self.RENPY_ERROR_SAYER_CUR.get() + " \"" + self.escapestr(fullmsg) + '"')
       elif isinstance(op, MetadataOp):
         continue
       else:
