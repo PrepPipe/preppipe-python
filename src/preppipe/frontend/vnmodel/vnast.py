@@ -120,9 +120,12 @@ class VNASTPendingAssetReference(LiteralExpr):
     return super().construct_init(ty=ty, value_tuple=value_tuple, **kwargs)
 
   def get_short_str(self, indent : int = 0) -> str:
+    return "PendingAssetRef " + self.get_short_str_noheading()
+
+  def get_short_str_noheading(self, indent : int = 0) -> str:
     args : list[Literal] = []
     kwargs : dict[str, Literal] = {}
-    result = 'PendingAssetRef "' + self.populate_argdicts(args, kwargs) + '"'
+    result = '"' + self.populate_argdicts(args, kwargs) + '"'
     if len(args) > 0 or len(kwargs) > 0:
       argstrlist = []
       for v in args:
