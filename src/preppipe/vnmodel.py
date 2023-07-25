@@ -813,17 +813,20 @@ class VNFunction(VNSymbol):
   ATTR_ENTRYPOINT : typing.ClassVar[str] = "EntryPoint" # 表示该函数应当作为引擎的某个入口。带一个字符串参数，表示是什么入口。
   ATTRVAL_ENTRYPOINT_MAIN : typing.ClassVar[str] = "main"
 
+  NAME_PREBODY  : typing.ClassVar[str] = "prebody"
+  NAME_POSTBODY : typing.ClassVar[str] = "postbody"
+
   lost : Region # 编译中碰到的不属于任何其他函数或命令的内容
   body: Region # 内容主体
 
   def set_lost_block_prebody(self, block : Block):
     assert self.lost.blocks.empty
-    block.name = 'prebody'
+    block.name = self.NAME_PREBODY
     self.lost.blocks.push_back(block)
 
   def set_lost_block_postbody(self, block : Block):
     assert self._lost.blocks.size < 2
-    block.name = 'postbody'
+    block.name = self.NAME_POSTBODY
     self.lost.blocks.push_back(block)
 
   def create_block(self, name : str) -> Block:

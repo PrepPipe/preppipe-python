@@ -197,7 +197,16 @@ class RenPyExportVisitor(RenPyASTVisitor):
           no_leading_newline = False
         self.dest.write(self.RENPY_ERROR_SAYER_CUR.get() + " \"" + self.escapestr(fullmsg) + '"')
       elif isinstance(op, MetadataOp):
-        continue
+        if isinstance(op, CommentOp):
+          content = op.comment.get_string()
+        else:
+          content = str(op)
+        for s in content.split('\n'):
+          if not no_leading_newline:
+            self.dest.write(self.get_eol_with_ws())
+          else:
+            no_leading_newline = False
+          self.dest.write('# ' + s)
       else:
         raise NotImplementedError("TODO")
 
