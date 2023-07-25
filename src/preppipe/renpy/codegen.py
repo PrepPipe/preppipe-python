@@ -803,7 +803,51 @@ class _RenPyCodeGenHelper:
     # （比如某物件的图片在屏幕上出现两次，第二个显示命令处会发现该图片已有一个使用中的句柄）
     # 则我们需要安排一个不一样的句柄（show 命令中的 as 参数）
 
+    # 呃。。首先把函数前的错误信息给加上
+    prebody : Block | None = None
+    postbody : Block | None = None
+    for b in func.lost.blocks:
+      if b.name == VNFunction.NAME_PREBODY:
+        prebody = b
+      elif b.name == VNFunction.NAME_POSTBODY:
+        postbody = b
+      else:
+        raise PPNotImplementedError("Unexpected lost block name")
+    def write_md_block(block : Block):
+      # 在这里将元数据块中的所有内容搬到输出
+      # 唯一要变动的是 ErrorOp, 如果此时不变的话，它们在之后导出时会变为发言，这在标签外会出错
+      # 我们把这些 ErrorOp 转为注释
+      # 如果是全局的 ASM 则按照要求输出
+      # 虽然我们可以保留 MetadataOp 直到输出时，不过他们的输出会有所不同
+      destblock = self.get_mainscript().body
+      def copy_and_add(op : Operation):
+        if isinstance(op, ErrorOp):
+          code = op.error_code
+          msg = op.error_message.get_string()
+          content = msg + ' (' + code + ')'
+          content_rows = content.split('\n')
+          asm_rows = [StringLiteral.get('# ' + v, self.context) for v in content_rows]
+          asm = StringListLiteral.get(self.context, asm_rows)
+          node = RenPyASMNode.create(context=self.context, asm=asm, name=op.name, loc=op.location)
+          destblock.push_back(node)
+          return
+        destblock.push_back(op.clone())
+      for op in block.body:
+        # 先对类似 ASM 这样的内容特判
+        if isinstance(op, VNBackendInstructionGroup):
+          for childop in op.body.body:
+            if isinstance(childop, (MetadataOp, RenPyNode)):
+              copy_and_add(childop)
+          continue
+        if not isinstance(op, MetadataOp):
+          raise PPAssertionError
+        copy_and_add(op)
+    if prebody is not None:
+      write_md_block(prebody)
+
     if func.body.blocks.size == 0:
+      if postbody is not None:
+        write_md_block(postbody)
       return
 
     helper = self.func_dict[func]
@@ -844,6 +888,8 @@ class _RenPyCodeGenHelper:
         start.body.push_back(RenPyJumpNode.create(self.context, target=self.func_dict[func].codename))
 
     # 第三步暂时不做
+    if postbody is not None:
+      write_md_block(postbody)
 
   def check_identifier(self, idstr : str, is_label : bool = False):
     if not is_label:

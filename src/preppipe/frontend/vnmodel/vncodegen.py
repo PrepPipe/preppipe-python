@@ -309,7 +309,6 @@ class VNCodeGen:
   _char_state_matcher : dict[VNCharacterSymbol, _PartialStateMatcher]
   _scene_parent_map : dict[VNSceneSymbol, VNASTSceneSymbol]
   _scene_state_matcher : dict[VNSceneSymbol, _PartialStateMatcher]
-  _global_asm_block : Block # 全局范围的ASM结点放这里；应该都是 VNBackendInstructionGroup 加 ASM 子节点
   _global_parsecontext : ParseContext
   _global_say_index : int
   _global_character_index : int
@@ -328,7 +327,6 @@ class VNCodeGen:
     self._char_state_matcher = {}
     self._scene_parent_map = {}
     self._scene_state_matcher = {}
-    self._global_asm_block = Block.create('global', self.ast.context)
     narrator = VNCharacterSymbol.create_narrator(self.ast.context)
     self._global_parsecontext = VNCodeGen.ParseContext(parent=None, narrator=narrator)
     self._global_say_index = 0
@@ -679,7 +677,7 @@ class VNCodeGen:
     zh_hk="命令結點 {node} 只在函數內有意義(也就是說不能在函數範圍外、只在文件域內)，將被忽略。",
   )
 
-  def handle_filelocal_node(self, file : VNASTFileInfo, parsecontext : ParseContext, op : VNASTNodeBase, warningdest : Block):
+  def handle_filelocal_node(self, file : VNASTFileInfo, parsecontext : ParseContext, op : VNASTNodeBase, warningdest : Block, asmdest : Block):
     # 当我们在函数体外碰到非 MetadataOp 时，我们使用该函数来处理操作项
     # 报错信息写到 warningdest 中
     if type(op).TRAIT_FUNCTION_CONTEXT_ONLY:
@@ -688,7 +686,7 @@ class VNCodeGen:
       return
     if isinstance(op, VNASTASMNode):
       if node := self.emit_asm(op):
-        self._global_asm_block.push_back(node)
+        asmdest.push_back(node)
       return
     if self.handle_nonlocal_noasm_node(file, parsecontext, op, warningdest):
       return
@@ -1663,7 +1661,7 @@ class VNCodeGen:
       elif isinstance(bgm, VNASTPendingAssetReference):
         bgmdata = self._resolve_audio_reference(bgm, node.location)
         if bgmdata is None:
-          msg = self._tr_bgm_audio_notfound.format(bgm=str(bgm))
+          msg = self._tr_bgm_audio_notfound.format(bgm=bgm.get_short_str_noheading())
           self.codegen.emit_error('vncodegen-audio-notfound', msg=msg, loc=node.location, dest=self.destblock)
           self.codegen.emit_assetnotfound(loc=node.location, dest=self.destblock)
           return None
@@ -1996,7 +1994,7 @@ class VNCodeGen:
         else:
           if not isinstance(op, VNASTNodeBase):
             raise PPAssertionError
-          self.handle_filelocal_node(file=srcfile, parsecontext=filecontext, op=op, warningdest=prebody)
+          self.handle_filelocal_node(file=srcfile, parsecontext=filecontext, op=op, warningdest=prebody, asmdest=prebody)
     # 然后处理函数体
     entry = dest.create_block('Entry')
     starttime = entry.get_argument('start')
