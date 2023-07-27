@@ -3,19 +3,24 @@
 import os
 import hashlib
 import shutil
+import fnmatch
 
-def collectDirectoryDataAsText(path : str) -> str:
+def collectDirectoryDataAsText(path : str, excludepattern : str | None = None) -> str:
   """Dump all contents in a directory as a single string to ease comparison"""
   result = []
   rootpath = os.path.abspath(path)
   for root, subdirs, files in os.walk(rootpath):
     subdirs.sort()
+    files.sort()
     for file in files:
       filePath = os.path.join(root, file)
       printPath = os.path.relpath(filePath, rootpath)
+      if excludepattern:
+        if fnmatch.fnmatch(printPath, excludepattern):
+          continue
       result.append(printPath + ":")
       with open(filePath, "rb") as f:
-        bin = f.read();
+        bin = f.read()
         isString = True
         try:
           fileString = bin.decode("utf-8")
@@ -24,9 +29,9 @@ def collectDirectoryDataAsText(path : str) -> str:
         if isString:
           result.append(fileString)
         else:
-          result.append("<Binary file; MD5=" + str(hashlib.md5(bin)) + ">")
+          result.append("<Binary file; MD5=" + hashlib.md5(bin).hexdigest() + ">")
   return "\n".join(result)
-    
+
 def copyTestDirIfRequested(srcdir: str, testname: str) -> None:
   """Sometimes we want to preserve the temporary files from tests (for manual inspection and testing)
   To preserve the output file, the unittest should be invoked with the following two environment variables set:

@@ -1,0 +1,52 @@
+script.rpy:
+define suyuhan = Character("苏语涵", what_color="#00ffff", who_color="#00ffff")
+image suyuhan zhengchang pingjing = Placeholder(base='girl', text="正常平静")
+image suyuhan zhengchang weixiao = Placeholder(base='girl', text="正常微笑")
+image suyuhan zhengchang ganga = Placeholder(base='girl', text="正常尴尬")
+image suyuhan zhengchang wunai = Placeholder(base='girl', text="正常无奈")
+image suyuhan zhengchang yansu = Placeholder(base='girl', text="正常严肃")
+image suyuhan jieshi pingjing = "images/语涵解释平静.png"
+image suyuhan jieshi weixiao = "images/语涵解释微笑.png"
+image suyuhan jieshi ganga = "images/语涵解释尴尬.png"
+image bg fangjian = "images/room.png"
+
+label start:
+    jump zh3
+
+label zh3:
+    "这是语涵编译器原型的样例文本其三，演出说明，主要是关于角色和场景的内容。"
+    "在遇到发言的时候，语涵编译器会将“长得比较像发言者”的部分用作发言者。不过，如果想要调整发言者发言时的内容样式，或是给角色添加立绘，我们需要对角色进行声明："
+    "先看声明的发言部分。这样声明之后，角色“苏语涵”在说话时，名字和颜色都会以 #00FFFF 的颜色（青色）显示。如果某一子项没有（比如没指定名字颜色），则发言会使用引擎所默认的设置。"
+    suyuhan "这句话的名字和颜色都是青色的。"
+    "立绘部分是一个类似文件夹、目录的树状结构，每个层级代表一个互斥的状态。"
+    "比如“正常”和“解释”代表两个不同的动作差分，只能选其一。"
+    "最内层（如“平静”、“微笑”等）可以指定一个图片作为具体的立绘（比如“语涵解释平静”是同一目录下的一张图片的文件名）或是使用占位图。"
+    "立绘信息指定了发言者可以有的状态，这些状态在角色没上场时也会根据发言而更新。比如接下来这句也会改变角色状态："
+    suyuhan "微笑中。"
+    "立绘的第一组完整的状态（例子中的“正常，平静”）将作为角色未指定状态时的默认状态。之后可以使用不完整的状态（比如这里的“微笑”而不是完整的“正常，微笑”）来改变状态。"
+    "要显示立绘，可以使用以下命令让角色上场："
+    show suyuhan zhengchang weixiao with dissolve
+    "也可以在入场时指定状态："
+    show suyuhan jieshi weixiao
+    preppipe_error_sayer_zh_hk "角色 苏语涵 已經入場，不能再次上場。 (vncodegen-character-stateerror)"
+    "角色在场上时，在发言中改变角色状态时，角色的立绘也会随之改变。要使角色退场，可以使用："
+    hide suyuhan jieshi weixiao with dissolve
+    "除了角色外，场景也是演出中重要的部分。目前背景图片是与场景相绑定的。场景可以用以下命令进行声明："
+    "之后可以使用以下命令来切换到该场景："
+    scene bg fangjian with fade
+    "切换场景会使当前场上的角色、已显示的图片全部撤下。"
+    "除了角色和场景外，剩下的一个常见命令就是设置背景音乐："
+    play music "audio/bgm/Gymnopedie No 1.mp3" fadein 0.5 fadeout 0.5
+    "以上就是目前所支持的与演出有关的命令。下个样例见！"
+    return
+
+audio/bgm/Gymnopedie No 1.mp3:
+<Binary file; MD5=789e91a8223efb10b9055238ee70eef8>
+images/room.png:
+<Binary file; MD5=e2d202e2d7860c07279fe8cbd5f22723>
+images/语涵解释尴尬.png:
+<Binary file; MD5=4e09c34bfbb1eeb4d826bb9bcddf2891>
+images/语涵解释平静.png:
+<Binary file; MD5=1d9d1f69296069fcf163b609cd93828a>
+images/语涵解释微笑.png:
+<Binary file; MD5=c324e207180c299bf6534df31323dd23>

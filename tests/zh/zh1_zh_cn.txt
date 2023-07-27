@@ -1,0 +1,72 @@
+script.rpy:
+define yuhan = Character("语涵")
+define suiranzhejujuzihenzhangdanshiyinweimeiyoubiaodianfuhaosuoyizhexiehuahuibeidangzuoyigerenmingranhou = Character("虽然这句句子很长但是因为没有标点符号所以这些话会被当做一个人名然后")
+define suyuhan = Character("苏语涵")
+define yuquan = Character("语泉")
+
+label start:
+    jump zh1
+
+label zh1:
+    "你好，世界！"
+    "这是语涵编译器原型的样例文本其一，基础剧本格式说明。"
+    "一般这样不带特殊格式的文本都会被作为旁白的发言。空行会被忽略。大部分的段落设置（包括段首缩进等）都会被忽略。"
+    "发言有三种格式，除了第一种这样没有引号、没有指定发言者的外："
+    "第二种发言是会将发言内容用引号引起来的。这样的发言会被视为是最后一个发言的人说的。"
+    "如果像现在这样之前没有指定过谁说话，那么仍然视为旁白发言。"
+    preppipe_error_sayer_zh_cn "发言者 语涵 未被声明；我们会以默认设置创建该角色。如果您已经声明该角色，请检查拼写、输入错误。 (vncodegen-sayer-implicit-decl)"
+    yuhan "第三种发言则是像这样，段首有指定发言者，接下来的文本则是发言内容。"
+    yuhan "第三种发言有如下变种格式："
+    yuhan "这是发言1"
+    yuhan "这是发言2"
+    yuhan "这是发言3，这是发言3的后半部分"
+    yuhan "这是发言4"
+    yuhan "这是发言5"
+    yuhan "这是发言6"
+    yuhan "这是发言7"
+    yuhan "这是发言8，这是发言8的后半部分"
+    yuhan "这是发言9"
+    yuhan "这是发言10"
+    "以及以上格式变种的排列组合。空格可有可无。"
+    "语涵编译器仍然采用按行解析（在文档中等效于按段落解析）的模式，所以每个段落只能有一种含义，比如这一段就是第一种发言，后面即使再接【语涵】这是发言，内容也会视为发言内容。"
+    "注意，如果像[[]，【】，（）这种符号在文中出现，如果符号出现的段落中之前的文本不带任何标点符号，那么这些文本有可能会被当作角色名，比如："
+    preppipe_error_sayer_zh_cn "发言者 虽然这句句子很长但是因为没有标点符号所以这些话会被当做一个人名然后 未被声明；我们会以默认设置创建该角色。如果您已经声明该角色，请检查拼写、输入错误。 (vncodegen-sayer-implicit-decl)"
+    suiranzhejujuzihenzhangdanshiyinweimeiyoubiaodianfuhaosuoyizhexiehuahuibeidangzuoyigerenmingranhou "这些内容会被当做发言内容"
+    "除发言外，其他功能都需要命令来做。为了避免误将内容认作命令，所有的命令都需要在“命令段”中。命令段包含如下形式："
+    preppipe_error_sayer_zh_cn "单个命令 (vnparser-unrecognized-command)"
+    preppipe_error_sayer_zh_cn "命令1 (vnparser-unrecognized-command)"
+    preppipe_error_sayer_zh_cn "命令2 (vnparser-unrecognized-command)"
+    # 注释掉的命令
+    preppipe_error_sayer_zh_cn "命令 (vnparser-unrecognized-command)"
+    "及其变体。【】与[[]不作区分，半角#与全角#不作区分。"
+    "行首必须是”【”或”[[“，每个命令都被方括号包裹。所有命令之后可以用 # 追加注释，单个命令也可以在方括号开始处加#来注释掉（使其不起作用）。为了同时支持命令段与使用【】的发言，如果整段内容不能以命令段的方式解析，语涵编译器仍会将其当作发言段。"
+    "如果要专门添加注释（语涵编译器会忽略其内容），可以使用如下形式："
+    # 这也是注释
+    "每个命令在方括号内的格式如下："
+    preppipe_error_sayer_zh_cn "命令名 (vnparser-unrecognized-command)"
+    preppipe_error_sayer_zh_cn "命令名 (vnparser-unrecognized-command)"
+    preppipe_error_sayer_zh_cn "命令名 (vnparser-unrecognized-command)"
+    "比如："
+    play music "audio/bgm/Gymnopedie No 1.mp3" fadein 0.5 fadeout 0.5
+    preppipe_error_sayer_zh_cn "场景 走廊 未找到，我们将新建该场景且不设置其背景。如果您已经声明了该场景，请检查是否有拼写、输入错误。 (vncodegen-scene-notfound)"
+    "如果命令至少支持一个参数，则其支持的第一个参数可以不写参数名（即使用按位参数传递）。语涵编译器不支持多个按位参数，多个其他所有参数在传递时需要指定参数名。比如以上命令，"
+    "把参数名写全是这样的："
+    play music "audio/bgm/Gymnopedie No 1.mp3" fadein 0.5 fadeout 0.5
+    "为了便于移植其他文本，语涵编译器目前有三种发言模式，以上都是默认模式。"
+    preppipe_error_sayer_zh_cn "处理发言模式改变命令时：未知发言者“语涵”，我们将使用默认设置创建该发言者。 (vncodegen-character-nameresolution-failed)"
+    suyuhan "在长发言模式下，所有的除命令段之外的内容都将被当作指定发言者（语涵）所说的话。像这样本来是旁白说的话也会被作为指定发言者的话。"
+    suyuhan "这样用括号引起来的也是。"
+    suyuhan "【即使是这样的内容】也会被作为发言内容。"
+    "还有一种模式用来支持部分对话场景："
+    preppipe_error_sayer_zh_cn "处理发言模式改变命令时：未知发言者“语泉”，我们将使用默认设置创建该发言者。 (vncodegen-character-nameresolution-failed)"
+    "这句话是旁白说的。不指定发言者、没有引号的发言内容不受影响，不过对带有引号的内容："
+    suyuhan "这句话是语涵说的。"
+    yuquan "这句话是语泉说的。"
+    suyuhan "所有用引号引起来的话将会在指定的发言者们之中轮换。这句是语涵说的。"
+    suyuhan "也可以像这样穿插指定发言者，这样这一句是语涵说的，下一句又是语泉说的。"
+    yuquan "这句话是语泉说的。"
+    "感谢你能够阅读到这里，下个样例再见。"
+    return
+
+audio/bgm/Gymnopedie No 1.mp3:
+<Binary file; MD5=789e91a8223efb10b9055238ee70eef8>
