@@ -630,7 +630,7 @@ class VNCodeGen:
         ch = self.codegen.resolve_character(sayname=sayname, from_namespace=ns, parsecontext=self.parsecontext)
         if ch is None:
           # 在这里我们除了报错之外还需要生成一个默认的发言者，这样不至于令后续所有发言者错位
-          msg = self._tr_say_mode_change_char_not_found.format(sayerstr)
+          msg = self._tr_say_mode_change_char_not_found.format(character=sayerstr)
           self.codegen.emit_error(code='vncodegen-character-nameresolution-failed', msg=msg, loc=node.location, dest=self.warningdest)
           ch = self.codegen.create_unknown_sayer(sayname, ns)
         t = (sayname, ch)
