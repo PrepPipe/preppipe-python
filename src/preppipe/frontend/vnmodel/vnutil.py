@@ -185,7 +185,7 @@ _tr_colorfillexpr_too_many_positional_arguments = _TR_vn_util.tr("colorfillexpr_
   zh_cn="纯色填充表达式不允许按位参数(换句话说，除了参数值外还需要提供参数的名称)，但是现在提供了 {num} 个按位参数。这些参数将被忽略。",
   zh_hk="純色填充表達式不允許按位參數(換句話說，除了參數值外還需要提供參數的名稱)，但是現在提供了 {num} 個按位參數。這些參數將被忽略。",
 )
-def emit_image_expr_from_callexpr(context : Context, call : CallExprOperand, placeholderdest : ImageExprPlaceholderDest, warnings : list[tuple[str, str]], screen_resolution : tuple[int, int] | None = None) -> BaseImageLiteralExpr | None:
+def emit_image_expr_from_callexpr(context : Context, call : CallExprOperand, placeholderdest : ImageExprPlaceholderDest, placeholderdesc: str, warnings : list[tuple[str, str]], screen_resolution : tuple[int, int] | None = None) -> BaseImageLiteralExpr | None:
   # 调用表达式有以下几种可能：
   # 占位（分辨率=...，描述=...），分辨率和描述均可选，按位参数视为分辨率
   # 声明（分辨率=...，引用=...）, 分辨率和引用均必需，不允许按位参数
@@ -211,9 +211,11 @@ def emit_image_expr_from_callexpr(context : Context, call : CallExprOperand, pla
     warnings.append(('vnparse-invalid-color-expr',msg))
     return None
 
+  placeholder_description = StringLiteral.get(placeholderdesc, context)
+
   if _is_image_expr_name_placeholder(call.name):
     resolution = None
-    description = None
+    description = placeholder_description
     for k, v in call.kwargs.items():
       if k in _tr_resolution.get_all_candidates():
         resolution = handle_resolution_arg(k, v)
@@ -240,10 +242,6 @@ def emit_image_expr_from_callexpr(context : Context, call : CallExprOperand, pla
     if len(call.args) > consumed_posargs:
       msg = _tr_placeholderexpr_too_many_positional_arguments.format(num=str(len(call.args)))
       warnings.append(('vnparse-placeholderexpr-too-many-positional-arguments', msg))
-    if resolution is None and description is None:
-      return emit_default_placeholder(context=context, dest=placeholderdest, screen_resolution=screen_resolution)
-    if description is None:
-      description = StringLiteral.get('', context)
     if resolution is None:
       resolution = screen_resolution
       if resolution is None:
@@ -276,7 +274,7 @@ def emit_image_expr_from_callexpr(context : Context, call : CallExprOperand, pla
         missing_args.append(_tr_resolution.get())
       msg = _tr_declexpr_missing_argument.format(missing=str(missing_args))
       warnings.append(('vnparse-declexpr-missing-argument',msg))
-      return emit_default_placeholder(context=context, dest=placeholderdest, screen_resolution=screen_resolution)
+      return emit_default_placeholder(context=context, dest=placeholderdest, description=placeholder_description, screen_resolution=screen_resolution)
 
     if len(call.args) > 0:
       msg = _tr_declexpr_too_many_positional_arguments.format(num=str(len(call.args)))
@@ -305,7 +303,7 @@ def emit_image_expr_from_callexpr(context : Context, call : CallExprOperand, pla
         missing_args.append(_tr_resolution.get())
       msg = _tr_colorfillexpr_missing_argument.format(missing=str(missing_args))
       warnings.append(('vnparse-colorfillexpr-missing-argument', msg))
-      return emit_default_placeholder(context=context, dest=placeholderdest, screen_resolution=screen_resolution)
+      return emit_default_placeholder(context=context, dest=placeholderdest, description=placeholder_description, screen_resolution=screen_resolution)
 
     if len(call.args) > 0:
       msg = _tr_colorfillexpr_too_many_positional_arguments.format(num=str(len(call.args)))
@@ -316,7 +314,7 @@ def emit_image_expr_from_callexpr(context : Context, call : CallExprOperand, pla
   # 暂不支持的表达式类型
   return None
 
-def emit_image_expr_from_str(context : Context, s : str, basepath : str,  placeholderdest : ImageExprPlaceholderDest, warnings : list[tuple[str, str]], screen_resolution : tuple[int, int] | None = None) -> BaseImageLiteralExpr | None:
+def emit_image_expr_from_str(context : Context, s : str, basepath : str,  placeholderdest : ImageExprPlaceholderDest, placeholderdesc : str, warnings : list[tuple[str, str]], screen_resolution : tuple[int, int] | None = None) -> BaseImageLiteralExpr | None:
   # 不确定字符串是什么形式
   # 先尝试转化成调用表达式，不行的话试试当成路径
   # 都不行的话视为失败
@@ -324,11 +322,11 @@ def emit_image_expr_from_str(context : Context, s : str, basepath : str,  placeh
   # 所以我们需要对这种情况特判
   # （现在仅有占位可以不需要额外参数，所以只需检查占位的情况）
   if _is_image_expr_name_placeholder(s):
-    return emit_default_placeholder(context=context, dest=placeholderdest, screen_resolution=screen_resolution)
+    return emit_default_placeholder(context=context, dest=placeholderdest, description=StringLiteral.get(placeholderdesc, context), screen_resolution=screen_resolution)
   if cmd := try_parse_value_expr(s, context.null_location):
     if isinstance(cmd, GeneralCommandOp):
       callexpr = FrontendParserBase.parse_commandop_as_callexpr(cmd)
-      return emit_image_expr_from_callexpr(context=context, call=callexpr, placeholderdest=placeholderdest, warnings=warnings, screen_resolution=screen_resolution)
+      return emit_image_expr_from_callexpr(context=context, call=callexpr, placeholderdest=placeholderdest, placeholderdesc=placeholderdesc, warnings=warnings, screen_resolution=screen_resolution)
     s = cmd
   if result := emit_image_expr_from_path(context=context, pathexpr=s, basepath=basepath, warnings=warnings):
     return result
