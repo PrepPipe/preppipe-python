@@ -16,12 +16,15 @@ from .vnast import *
 from .vncodegen import *
 from .vnsayscan import *
 from .vnutil import *
+from ...language import TranslationDomain
 
 from ...util.antlr4util import TextStringParsingUtil
 
 # ------------------------------------------------------------------------------
 # 内容声明命令
 # ------------------------------------------------------------------------------
+
+TR_vnparse = TranslationDomain("vnparse")
 
 vn_command_ns = FrontendCommandNamespace.create(None, 'vnmodel')
 
@@ -81,6 +84,9 @@ class VNASTParsingState:
   def emit_error(self, code : str, msg : str, loc : Location | None = None):
     err = ErrorOp.create(error_code=code, context=self.context, error_msg=StringLiteral.get(msg, self.context), loc=loc)
     self._emit_impl(err)
+
+  def emit_assetnotfound(self, loc : Location | None = None):
+    self.emit_error("vnparse-asset-notfound-general", self.context.get_file_auditor().get_asset_not_found_errmsg(), loc=loc)
 
 class VNParser(FrontendParserBase[VNASTParsingState]):
   ast : VNAST
@@ -156,6 +162,12 @@ class VNParser(FrontendParserBase[VNASTParsingState]):
     result = VNASTASMNode.create(self.context, body=body, backend=backend, name=backingop.name, loc=backingop.location)
     state.emit_node(result)
 
+  _tr_unexpected_argument_in_transition = TR_vnparse.tr("unexpected_argument_in_transition",
+    en="Transition expression only takes simple literal value instead of {arg}; please check if the value is expected, and quote the value if needed.",
+    zh_cn="转场表达式只取简单字面值，不能是“{arg}”。请检查该值是否有输入错误，如有需要请用引号引起该内容。",
+    zh_hk="轉場表達式只取簡單字面值，不能是「{arg}」。請檢查該值是否有輸入錯誤，如有需要請用引號引起該內容。",
+  )
+
   def emit_transition_node(self, state : VNASTParsingState, backingop : Operation, transition : CallExprOperand | None) -> VNASTTransitionNode:
     if transition is None:
       result = VNASTTransitionNode.create(context=self.context, transition_name=None, name=backingop.name, loc=backingop.location)
@@ -167,15 +179,21 @@ class VNParser(FrontendParserBase[VNASTParsingState]):
       if isinstance(a, Literal):
         result.add_arg(a)
       else:
-        state.emit_error('vnparser-unexpected-argument-in-transition', transition.name + ': "' + str(a) + '"', loc=backingop.location)
+        state.emit_error('vnparser-unexpected-argument-in-transition', self._tr_unexpected_argument_in_transition.format(arg=str(a)) + " (" + transition.name + ")", loc=backingop.location)
     for k, v in transition.kwargs.items():
       if isinstance(v, Literal):
         name = StringLiteral.get(k, state.context)
         result.add_kwarg(name, v)
       else:
-        state.emit_error('vnparser-unexpected-argument-in-transition', transition.name + ' arg "' + k +'": "' + str(v) + '"', loc=backingop.location)
+        state.emit_error('vnparser-unexpected-argument-in-transition', self._tr_unexpected_argument_in_transition.format(arg=str(v)) + " (" + k + " @ " + transition.name + ")", loc=backingop.location)
     state.emit_node(result)
     return result
+
+  _tr_unexpected_argument_in_assetref = TR_vnparse.tr("unexpected_argument_in_assetref",
+    en="Asset reference expression only takes simple literal value instead of {arg}; please check if the value is expected, and quote the value if needed.",
+    zh_cn="资源引用表达式只取简单字面值，不能是“{arg}”。请检查该值是否有输入错误，如有需要请用引号引起该内容。",
+    zh_hk="資源引用表達式只取簡單字面值，不能是「{arg}」。請檢查該值是否有輸入錯誤，如有需要請用引號引起該內容。",
+  )
 
   def emit_pending_assetref(self, state : VNASTParsingState, backingop : Operation, ref : CallExprOperand) -> VNASTPendingAssetReference:
     refname = StringLiteral.get(ref.name, state.context)
@@ -185,12 +203,14 @@ class VNParser(FrontendParserBase[VNASTParsingState]):
       if isinstance(a, Literal):
         args.append(a)
       else:
-        state.emit_error('vnparser-unexpected-argument-in-assetref', ref.name + ': "' + str(a) + '"', loc=backingop.location)
+        msg = self._tr_unexpected_argument_in_assetref.format(arg=str(a)) + " (" + ref.name + ")"
+        state.emit_error('vnparser-unexpected-argument-in-assetref', msg=msg, loc=backingop.location)
     for k, v in ref.kwargs.items():
       if isinstance(v, Literal):
         kwargs[k] = v
       else:
-        state.emit_error('vnparser-unexpected-argument-in-assetref', ref.name + ' arg "' + k +'": "' + str(v) + '"', loc=backingop.location)
+        msg = self._tr_unexpected_argument_in_assetref.format(arg=str(v)) + " (" + k + "@" + ref.name + ")"
+        state.emit_error('vnparser-unexpected-argument-in-assetref', msg=msg, loc=backingop.location)
     return VNASTPendingAssetReference.get(value=refname, args=args, kwargs=kwargs, context=state.context)
 
   def handle_block(self, state : VNASTParsingState, block : Block):
@@ -452,7 +472,7 @@ def cmd_image_decl_path(parser : VNParser, state : VNASTParsingState, commandop 
 })
 def cmd_image_decl_src(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str, source : CallExprOperand):
   wlist : list[tuple[str, str]] = []
-  img = emit_image_expr_from_callexpr(context=state.context, call=source, placeholderdest=ImageExprPlaceholderDest.DEST_UNKNOWN, warnings=wlist, screen_resolution=parser.resolution)
+  img = emit_image_expr_from_callexpr(context=state.context, call=source, placeholderdest=ImageExprPlaceholderDest.DEST_UNKNOWN, placeholderdesc=name, warnings=wlist, screen_resolution=parser.resolution)
   if img is None:
     state.emit_error('vnparse-imageexpr-invalid', str(source), loc=commandop.location)
     return
@@ -475,6 +495,17 @@ def cmd_variable_decl(parser: VNParser, state : VNASTParsingState, commandop : G
   symb = VNASTVariableDeclSymbol.create(context=state.context, vtype=type, initializer=initializer, name=name, loc=commandop.location)
   state.output_current_file.variables.add(symb)
 
+_tr_chdecl_sprite = TR_vnparse.tr("chdecl_sprite",
+  en="Sprite",
+  zh_cn="立绘",
+  zh_hk="立繪",
+)
+_tr_chdecl_sideimage = TR_vnparse.tr("chdecl_sideimage",
+  en="SideImage",
+  zh_cn="头像",
+  zh_hk="頭像",
+)
+
 @CommandDecl(vn_command_ns, _imports, 'DeclCharacter', alias={
   '声明角色' : {'name': '姓名'}, # zh_CN
   "聲明角色" : {"name": "姓名"}, # zh_HK
@@ -493,12 +524,14 @@ def cmd_character_decl(parser: VNParser, state : VNASTParsingState, commandop : 
       defaultsay = VNASTCharacterSayInfoSymbol.create(state.context, name, commandop.location)
       ch.sayinfo.add(defaultsay)
       for k, v in ext.data.items():
-        if k in ("Sprite", "立绘", "立繪"):
+        if k in _tr_chdecl_sprite.get_all_candidates():
           # 这里开始是指定场景背景的信息
-          _helper_parse_image_exprtree(parser, state, v, ch.sprites, ImageExprPlaceholderDest.DEST_CHARACTER_SPRITE, commandop.location)
+          entityprefix = _tr_chdecl_sprite.get() + '_' + name
+          _helper_parse_image_exprtree(parser, state, v, ch.sprites, ImageExprPlaceholderDest.DEST_CHARACTER_SPRITE, entityprefix, commandop.location)
           continue
-        if k in ("SideImage", "头像", "頭像"):
-          _helper_parse_image_exprtree(parser, state, v, ch.sideimages, ImageExprPlaceholderDest.DEST_CHARACTER_SIDEIMAGE, commandop.location)
+        if k in _tr_chdecl_sideimage.get_all_candidates():
+          entityprefix = _tr_chdecl_sideimage.get() + '_' + name
+          _helper_parse_image_exprtree(parser, state, v, ch.sideimages, ImageExprPlaceholderDest.DEST_CHARACTER_SIDEIMAGE, entityprefix, commandop.location)
           continue
         if k in ("Say", "发言", "發言"):
           _helper_parse_character_sayinfo(state=state, v=v, say=defaultsay, loc=commandop.location)
@@ -619,7 +652,7 @@ def cmd_scene_decl(parser : VNParser, state : VNASTParsingState, commandop : Gen
       for k, v in ext.data.items():
         if k in ('Background', '背景'):
           # 这里开始是指定场景背景的信息
-          _helper_parse_image_exprtree(parser, state, v, scene.backgrounds, ImageExprPlaceholderDest.DEST_SCENE_BACKGROUND, commandop.location)
+          _helper_parse_image_exprtree(parser, state, v, scene.backgrounds, ImageExprPlaceholderDest.DEST_SCENE_BACKGROUND, name, commandop.location)
           continue
         # 到这就说明当前的键值没有匹配到认识的
         state.emit_error('vnparse-scenedecl-invalid-expr', 'Unexpected key "' + k + '"', loc=commandop.location)
@@ -627,10 +660,21 @@ def cmd_scene_decl(parser : VNParser, state : VNASTParsingState, commandop : Gen
       # ext.data 无效，记一下错误
       state.emit_error('vnparse-scenedecl-invalid-expr', 'Unexpected attached list format', loc=commandop.location)
 
-def _get_placeholder_desc_for_missing_img(context : Context, v : str):
-  return StringLiteral.get("Image not found: "+ v, context)
+_tr_image_notfound = TR_vnparse.tr("image_not_found",
+  en="Image not found: ",
+  zh_cn="图片未找到： ",
+  zh_hk="圖片未找到： ",
+)
+_tr_image_notfound_help = TR_vnparse.tr("image_notfound_help",
+  en="When handling \"{dest}\": Image not found: {expr}.",
+  zh_cn="处理 \"{dest}\" 时没有找到图片： {expr}。",
+  zh_hk="處理 \"{dest}\" 時沒有找到圖片： {expr}。",
+)
 
-def _helper_parse_image_exprtree(parser : VNParser, state : VNASTParsingState, v : collections.OrderedDict[str, typing.Any] | str, statetree : SymbolTableRegion[VNASTNamespaceSwitchableValueSymbol], placeholderdest : ImageExprPlaceholderDest, loc : Location):
+def _get_placeholder_desc_for_missing_img(context : Context, v : str):
+  return StringLiteral.get(_tr_image_notfound.get() + v, context)
+
+def _helper_parse_image_exprtree(parser : VNParser, state : VNASTParsingState, v : collections.OrderedDict[str, typing.Any] | str, statetree : SymbolTableRegion[VNASTNamespaceSwitchableValueSymbol], placeholderdest : ImageExprPlaceholderDest, entityprefix : str, loc : Location):
   # 如果是一个词典，那么是个和角色立绘差不多的树状结构，每个子节点根一个图案表达式
   # 如果是一个值，那么只有一个图片
   # 首先把一个值的情况解决了
@@ -649,31 +693,39 @@ def _helper_parse_image_exprtree(parser : VNParser, state : VNASTParsingState, v
     node.set_value(nsstr, expr)
 
   if isinstance(v, str):
-    expr = emit_image_expr_from_str(context=state.context, s=v, basepath=state.input_file_path, placeholderdest=placeholderdest, warnings=warnings, screen_resolution=parser.resolution)
+    expr = emit_image_expr_from_str(context=state.context, s=v, basepath=state.input_file_path, placeholderdest=placeholderdest, placeholderdesc=entityprefix, warnings=warnings, screen_resolution=parser.resolution)
     if expr is None:
       expr = emit_default_placeholder(context=state.context, dest=placeholderdest, screen_resolution=parser.resolution, description=_get_placeholder_desc_for_missing_img(state.context, v))
-      state.emit_error(code='vnparse-invalid-imageexpr', msg=v, loc=loc)
+      msg = _tr_image_notfound_help.format(dest=entityprefix, expr=v)
+      state.emit_error(code='vnparse-invalid-imageexpr', msg=msg, loc=loc)
+      state.emit_assetnotfound(loc=loc)
     submit_expr('', expr)
   elif isinstance(v, collections.OrderedDict):
     state_stack = []
     def walk_dict(d : collections.OrderedDict):
       for k, v in d.items():
         if isinstance(v, str):
-          expr = emit_image_expr_from_str(context=state.context, s=v, basepath=state.input_file_path, placeholderdest=placeholderdest, warnings=warnings, screen_resolution=parser.resolution)
+          tmpstatelist = [*state_stack, k]
+          statestr = ','.join(tmpstatelist)
+          placeholderdesc = entityprefix + ':' + statestr
+          expr = emit_image_expr_from_str(context=state.context, s=v, basepath=state.input_file_path, placeholderdest=placeholderdest, placeholderdesc=placeholderdesc, warnings=warnings, screen_resolution=parser.resolution)
           if expr is None:
             expr = emit_default_placeholder(context=state.context, dest=placeholderdest, screen_resolution=parser.resolution, description=_get_placeholder_desc_for_missing_img(state.context, v))
-            state.emit_error(code='vnparse-invalid-imageexpr', msg=v, loc=loc)
-          tmpstatelist = [*state_stack, k]
-          submit_expr(','.join(tmpstatelist), expr)
+            msg = _tr_image_notfound_help.format(dest=entityprefix, expr=v)
+            state.emit_error(code='vnparse-invalid-imageexpr', msg=msg, loc=loc)
+            state.emit_assetnotfound(loc=loc)
+          submit_expr(statestr, expr)
         elif isinstance(v, collections.OrderedDict):
           state_stack.append(k)
           walk_dict(v)
           state_stack.pop()
         else:
-          state.emit_error(code='vnparse-invalid-imageexpr', msg=str(v), loc=loc)
+          msg = _tr_image_notfound_help.format(dest=entityprefix, expr=str(v))
+          state.emit_error(code='vnparse-invalid-imageexpr', msg=msg, loc=loc)
     walk_dict(v)
   else:
-    state.emit_error(code='vnparse-invalid-imageexpr', msg=str(v), loc=loc)
+    msg = _tr_image_notfound_help.format(dest=entityprefix, expr=str(v))
+    state.emit_error(code='vnparse-invalid-imageexpr', msg=msg, loc=loc)
 
   for t in warnings:
     code, msg = t
@@ -905,6 +957,12 @@ def cmd_tailcall(parser: VNParser, state : VNASTParsingState, commandop : Genera
   callnode.set_attr(VNASTCallNode.ATTR_TAILCALL, True)
   state.emit_node(callnode)
 
+_tr_jump_empty_name = TR_vnparse.tr("jump_empty_name",
+  en="Jump command expects non-empty destination label name.",
+  zh_cn="转至标签命令需要非空的目标标签名。",
+  zh_hk="轉至標簽命令需要非空的目標標簽名。",
+)
+
 @CommandDecl(vn_command_ns, _imports, 'Jump', alias={
   '转至标签': {'name': '名称'}, # zh_CN
   "轉至標簽": {"name": "名稱"}, # zh_HK
@@ -915,13 +973,19 @@ def cmd_jump(parser: VNParser, state : VNASTParsingState, commandop : GeneralCom
   node = VNASTJumpNode.create(context=state.context, target=name)
   state.emit_node(node)
 
+_tr_label_empty_name = TR_vnparse.tr("label_empty_name",
+  en="Label command expects non-empty label name.",
+  zh_cn="标签命令需要非空的标签名。",
+  zh_hk="標簽命令需要非空的標簽名。",
+)
+
 @CommandDecl(vn_command_ns, _imports, 'Label', alias={
   '标签': {'name': '名称'}, # zh_CN
   "標簽": {"name": "名稱"}, # zh_HK
 })
 def cmd_label(parser: VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str):
   if len(name) == 0:
-    state.emit_error(code='vnparse-expect-name', msg='Label expects non-empty label name', loc=commandop.location)
+    state.emit_error(code='vnparse-expect-name', msg=_tr_label_empty_name.get(), loc=commandop.location)
   node = VNASTLabelNode.create(context=state.context, labelname=name)
   state.emit_node(node)
 
@@ -1124,6 +1188,17 @@ def _helper_collect_arguments(ctx : Context, operand : OpOperand) -> list[Value]
     result.append(StringLiteral.get(prev_str, ctx))
   return result
 
+_tr_tableexpand_invalid_positionalarg = TR_vnparse.tr("tableexpand_invalid_positionalarg",
+  en="Column header {col} is empty. An empty column header means the column is a positional argument, but we only accept a single positional argument in the front. Please provide the name of the argument.",
+  zh_cn="第 {col} 列的列标题为空。只有按位参数所在列的列标题应该为空，但我们只支持第一个参数作为唯一的按位参数。请在此填写参数名。",
+  zh_hk="第 {col} 列的列標題為空。只有按位參數所在列的列標題應該為空，但我們只支持第一個參數作為唯一的按位參數。請在此填寫參數名。",
+)
+_tr_tableexpand_excessive_args = TR_vnparse.tr("tableexpand_excessive_args",
+  en="Row {row}: column(s) {cols} should have at most one value and extra values are discarded: ",
+  zh_cn="第 {row} 行中第 {cols} 列应只有最多一个参数；多余的参数将被丢弃： ",
+  zh_hk="第 {row} 行中第 {cols} 列應只有最多一個參數；多余的參數將被丟棄： ",
+)
+
 @CommandDecl(vn_command_ns, _imports, 'ExpandTable', alias={
   '表格展开': {'cmdname' : '命令名'}, # zh_CN
   "表格展開": {"cmdname" : "命令名"}, # zh_HK
@@ -1151,12 +1226,14 @@ def cmd_expand_table(parser : VNParser, state : VNASTParsingState, commandop : G
       if col == 0:
         has_positional_arg = True
       else:
-        state.emit_error('vnparser-tableexpand-invalid-positionalarg', 'column ' + str(col+1), loc=commandop.location)
+        msg = _tr_tableexpand_invalid_positionalarg.format(col=str(col+1))
+        state.emit_error('vnparser-tableexpand-invalid-positionalarg', msg=msg, loc=commandop.location)
         return
     else:
       kwarg_names.append(curstr)
   # 然后读接下来的内容
   cmdnamel = StringLiteral.get(cmdname, state.context)
+  excessive_args : list[tuple[int, str]] = []
   for row in range(1, rowcnt):
     cmd = GeneralCommandOp.create(name='ExpandTable_' + str(row), loc=commandop.location, name_value=cmdnamel, name_loc=commandop.location)
     kwargindex = 0
@@ -1173,9 +1250,14 @@ def cmd_expand_table(parser : VNParser, state : VNASTParsingState, commandop : G
         if len(values) > 0:
           if len(values) > 1:
             # 如果有多个值，只有第一个值保留，其他的都扔掉
-            msg = 'row ' + str(row+1) + ', col ' + str(col+1) + ', discarded: ' + ', '.join(['"' + str(v) + '"' for v in values[1:]])
-            state.emit_error('vnparser-tableexpand-excessive-args', msg, loc=commandop.location)
+            discarded_str = ', '.join(['"' + str(v) + '"' for v in values[1:]])
+            excessive_args.append((col, discarded_str))
           cmd.add_keyword_arg(argname, values[0], commandop.location, commandop.location)
+    if len(excessive_args) > 0:
+      discarded = '{' + '},{'.join([t[1] for t in excessive_args]) + '}'
+      cols = ','.join([str(t[0]+1) for t in excessive_args])
+      msg = _tr_tableexpand_excessive_args.format(row=str(row+1), cols=cols) + discarded
+      state.emit_error('vnparser-tableexpand-excessive-args', msg, loc=commandop.location)
     parser.handle_command_op(state=state, op=cmd)
 
 @CommandDecl(vn_command_ns, _imports, 'Comment', alias={
