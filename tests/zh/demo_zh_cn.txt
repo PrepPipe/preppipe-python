@@ -8,7 +8,7 @@ image suyuhan zhengchang yansu = "images/语涵正常严肃.png"
 image suyuhan jieshi pingjing = "images/语涵解释平静.png"
 image suyuhan jieshi weixiao = "images/语涵解释微笑.png"
 image suyuhan jieshi ganga = "images/语涵解释尴尬.png"
-image suyuhan_side pingjing = Placeholder(base='girl', text="")
+image suyuhan_side pingjing = Placeholder(base='girl', text="头像_苏语涵:平静")
 define suyuquan = Character("苏语泉", what_color="#007fff", who_color="#007fff")
 image bg zoulang = "images/hallway.png"
 image bg fangjian = "images/room.png"
