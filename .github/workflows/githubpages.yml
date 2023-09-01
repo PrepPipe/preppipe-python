@@ -31,18 +31,32 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v3
-      - name: Build and Test
-        uses: ./.github/actions/test
+      # Copied from the test action
+      # we need to run the build step to get the current version
+      - uses: actions/setup-python@v3
+        with:
+          python-version: '3.10.x'
+      - name: fetch tags
+        run: git fetch --prune --unshallow --tags
+        shell: bash
+      - name: install dependencies for building package
+        run: pip install --upgrade build twine
+        shell: bash
+      - name: build
+        run: python3 -m build
+        shell: bash
+      - name: Install dependencies for building doxygen
+        run: sudo apt-get install ripgrep doxygen graphviz
       - name: Build Doxygen Pages
         run: |
-          cd docs/doxygen_build
+          cd docs
           make
       - name: Setup Pages
         uses: actions/configure-pages@v3
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v2
         with:
-          path: 'docs/doxygen_build'
+          path: './docs/doxygen_build/zh_cn/html'
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v2
