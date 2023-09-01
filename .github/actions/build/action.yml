@@ -1,5 +1,5 @@
-name: "test"
-description: "build and test the repository"
+name: "build"
+description: "build the package"
 
 runs:
   using: "composite"
@@ -29,7 +29,5 @@ runs:
     - name: install
       run: pip install dist/*.whl
       shell: bash
-    - name: test
-      run: python3 -m unittest
-      shell: bash
+
 

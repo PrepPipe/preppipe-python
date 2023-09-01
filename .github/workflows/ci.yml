@@ -11,17 +11,17 @@ jobs:
 
     steps:
       - uses: actions/checkout@v3
-      - uses: ./.github/actions/test
+      - uses: ./.github/actions/build
+      - name: Detecting version
+        id: vars
+        run: echo "version_tag=$(python ./.github/workflows/printversion.py)" >> $GITHUB_OUTPUT
+      - name: Print version
+        run: echo "${{ steps.vars.outputs.version_tag }}"
       - name: install pyinstaller
         run: pip install pyinstaller
       - name: run pyinstaller
         run: |
-          pyinstaller --collect-data preppipe -F preppipe_cli.py --onefile -n preppipe_cli-windows-x64
-      - name: Detecting version
-        id: vars
-        run: |
-          sudo apt-get install ripgrep
-          echo "version_tag=$(rg -N -o \"version\s*=\s*'([^']+)'\" -r '$$1' src/preppipe/_version.py)" >> $GITHUB_OUTPUT
+          pyinstaller --collect-data preppipe -F preppipe_cli.py --onefile --icon=preppipe.ico -n preppipe_cli-windows-x64
       - uses: "marvinpinto/action-automatic-releases@latest"
         with:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
