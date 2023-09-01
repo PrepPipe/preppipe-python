@@ -49,13 +49,13 @@ class TestZHDocsRenPyExport(unittest.TestCase):
             expected_content = ""
             expected_path = os.path.join(dirname, filebase + '_' + lang +".txt")
             if os.path.exists(expected_path):
-              with open(expected_path, "r") as f:
+              with open(expected_path, "r", encoding="utf-8") as f:
                 expected_content = f.read()
             else:
               with open(expected_path, "w", encoding="utf-8") as f:
                 f.write(strdump)
               expected_content = strdump
-            self.assertEqual(strdump, expected_content)
+            self.assertListEqual(strdump.splitlines(), expected_content.splitlines())
 
 if __name__ == '__main__':
   unittest.main()
