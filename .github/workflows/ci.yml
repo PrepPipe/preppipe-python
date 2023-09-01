@@ -1,0 +1,32 @@
+name: "ci"
+
+on:
+  push:
+    branches:
+      - "main"
+jobs:
+  pre-release:
+    name: "Pre Release"
+    runs-on: "windows-2019" # Windows 10, VS 2019
+
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/test
+      - name: install pyinstaller
+        run: pip install pyinstaller
+      - name: run pyinstaller
+        run: |
+          pyinstaller --collect-data preppipe -F preppipe_cli.py --onefile -n preppipe_cli-windows-x64
+      - name: Detecting version
+        id: vars
+        run: |
+          sudo apt-get install ripgrep
+          echo "version_tag=$(rg -N -o \"version\s*=\s*'([^']+)'\" -r '$$1' src/preppipe/_version.py)" >> $GITHUB_OUTPUT
+      - uses: "marvinpinto/action-automatic-releases@latest"
+        with:
+          repo_token: "${{ secrets.GITHUB_TOKEN }}"
+          automatic_release_tag: "latest"
+          prerelease: true
+          title: "${{ steps.vars.outputs.version_tag }} 最新版本 (Latest build)"
+          files: |
+            dist/preppipe_cli-windows-x64.exe
