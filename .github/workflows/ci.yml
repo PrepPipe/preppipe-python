@@ -14,7 +14,9 @@ jobs:
       - uses: ./.github/actions/build
       - name: Detecting version
         id: vars
-        run: echo "version_tag=$(python ./.github/workflows/printversion.py)" >> $GITHUB_OUTPUT
+        shell: bash
+        run: |
+          echo "version_tag=$(python3 ./.github/workflows/printversion.py)" >> $GITHUB_OUTPUT
       - name: Print version
         run: echo "${{ steps.vars.outputs.version_tag }}"
       - name: install pyinstaller
