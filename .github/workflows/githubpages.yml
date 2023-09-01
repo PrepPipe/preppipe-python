@@ -31,20 +31,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v3
-      # Copied from the test action
-      # we need to run the build step to get the current version
-      - uses: actions/setup-python@v3
-        with:
-          python-version: '3.10.x'
-      - name: fetch tags
-        run: git fetch --prune --unshallow --tags
-        shell: bash
-      - name: install dependencies for building package
-        run: pip install --upgrade build twine
-        shell: bash
-      - name: build
-        run: python3 -m build
-        shell: bash
+      - name: Build
+        uses: ./.github/actions/build
       - name: Install dependencies for building doxygen
         run: sudo apt-get install ripgrep doxygen graphviz
       - name: Build Doxygen Pages
