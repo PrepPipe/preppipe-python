@@ -33,16 +33,23 @@ jobs:
           files: |
             dist/preppipe_cli-windows-x64.exe
 
-  sync2gitee:
-    name: "Sync to Gitee"
-    runs-on: ubuntu-latest
-    steps:
-      - name: Organization mirror
-        uses: Yikun/hub-mirror-action@master
+      - name: Repository Dispatch
+        uses: peter-evans/repository-dispatch@v2
         with:
-          src: github/preppipe
-          dst: gitee/preppipe
-          dst_key: ${{ secrets.GITEE_PRIVATE_KEY }}
-          dst_token: ${{ secrets.GITEE_TOKEN }}
-          account_type: org
-          force_update: true
+          token: ${{ secrets.PREPPIPE_ALL_IN_ONE_PAT }}
+          repository: PrepPipe/preppipe-latest-all-in-one
+          event-type: update-request
+
+  #sync2gitee:
+  #  name: "Sync to Gitee"
+  #  runs-on: ubuntu-latest
+  #  steps:
+  #    - name: Organization mirror
+  #      uses: Yikun/hub-mirror-action@master
+  #      with:
+  #        src: github/preppipe
+  #        dst: gitee/preppipe
+  #        dst_key: ${{ secrets.GITEE_PRIVATE_KEY }}
+  #        dst_token: ${{ secrets.GITEE_TOKEN }}
+  #        account_type: org
+  #        force_update: true
