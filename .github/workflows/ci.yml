@@ -23,7 +23,9 @@ jobs:
         run: pip install pyinstaller
       - name: run pyinstaller
         run: |
-          pyinstaller --collect-data preppipe -F preppipe_cli.py --onefile --icon=preppipe.ico -n preppipe_cli-windows-x64
+          pyinstaller --collect-data preppipe --icon=preppipe.ico -n preppipe_cli-windows-x64 -F preppipe_cli.py
+          pyinstaller --collect-data preppipe --icon=preppipe.ico -n preppipe_cli -D preppipe_cli.py
+          cd dist/preppipe_cli && 7z.exe a -t7z -mx=9 ../preppipe_cli-windows-x64.7z *
       - uses: "marvinpinto/action-automatic-releases@latest"
         with:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
@@ -32,6 +34,8 @@ jobs:
           title: "${{ steps.vars.outputs.version_tag }} 最新版本 (Latest build)"
           files: |
             dist/preppipe_cli-windows-x64.exe
+            dist/preppipe_cli-windows-x64.7z
+            dist/*.whl
 
       - name: Repository Dispatch
         uses: peter-evans/repository-dispatch@v2
