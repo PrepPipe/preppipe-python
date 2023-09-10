@@ -1347,7 +1347,7 @@ def parse_odf(ctx : Context, filePath : str):
   pc.cleanup()
   return result
 
-@FrontendDecl('odf', input_decl=IODecl('OpenDocument files', match_suffix=('.odf',), nargs='+'), output_decl=IMDocumentOp)
+@FrontendDecl('odf', input_decl=IODecl('OpenDocument files', match_suffix=('odf',), nargs='+'), output_decl=IMDocumentOp)
 class ReadOpenDocument(TransformBase):
   _ctx : Context
 
