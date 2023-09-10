@@ -163,6 +163,19 @@ def BackendDecl(flag : str, input_decl : type, output_decl : IODecl):
     return cls
   return decorator_backend_decl
 
+def MetaPassDecl(flag : str, input_decl : IODecl | None = None, output_decl : IODecl | None = None):
+  # 元处理趟不可以同时指定输入和输出（因为只有一个标记来启用这个元处理趟）
+  if input_decl is None:
+    input_decl = IODecl("<No Input>", nargs=0)
+  if output_decl is None:
+    output_decl = IODecl("<No Output>", nargs=0)
+  if input_decl.nargs != 0 and output_decl.nargs != 0:
+    raise PPInternalError("Meta pass cannot have both input and output simultaneously")
+  def decorator_metapass_decl(cls):
+    TransformRegistration.register_metapass(cls, flag, input_decl, output_decl)
+    return cls
+  return decorator_metapass_decl
+
 def TransformArgumentGroup(title : str, desc : str | None = None):
   # 如果某个已经用以上修饰符注册过的转换需要额外的命令行参数，那么再在上面加这个修饰符
   # 转换的类需要定义 install_arguments() 函数，之后创建命令行解析器的时候该函数会被执行
@@ -209,10 +222,11 @@ class TransformRegistration:
     arg_desc : str | None
 
   _registration_record : typing.ClassVar[typing.Dict[type, TransformInfo]] = {}
-  _flag_to_type_dict : typing.ClassVar[typing.Dict[str, type]] = {}
+  _flag_to_type_dict : typing.ClassVar[typing.Dict[str, typing.Type[TransformBase]]] = {}
   _frontend_records : typing.ClassVar[typing.Dict[str, TransformInfo]] = {}
   _middleend_records : typing.ClassVar[typing.Dict[str, TransformInfo]] = {}
   _backend_records : typing.ClassVar[typing.Dict[str, TransformInfo]] = {}
+  _metapass_records : typing.ClassVar[typing.Dict[str, TransformInfo]] = {}
 
   # 我们假设每次运行的流程都是以下过程或其中的一部分：
     # 1. 前端读取非 IR 的文件，或者直接读取 IR 文件。这一步不需要区分读取的先后顺序，可以同时使用多个前端。该步结束时所有的“当前”IR都是同一类型，可能有一个顶层操作项也有可能有多个
@@ -289,6 +303,15 @@ class TransformRegistration:
     def add_middleend_transform_arg(group : argparse._ArgumentGroup, info : TransformRegistration.TransformInfo):
       group.add_argument('--' + info.flag, dest=info.flag, action=_OrderedPassAction, nargs=0, help=get_transform_helpstr(info))
 
+    # 处理元处理趟的辅助函数
+    def add_metapass_arg(group : argparse._ArgumentGroup, info : TransformRegistration.TransformInfo):
+      final_nargs = 0
+      if info.input_decl.nargs != 0:
+        final_nargs = info.input_decl.nargs
+      elif info.output_decl.nargs != 0:
+        final_nargs = info.output_decl.nargs
+      group.add_argument('--' + info.flag, dest=info.flag, action=_OrderedPassAction, nargs=final_nargs, help=get_transform_helpstr(info))
+
     def handle_stage_group(flags_dict : typing.Dict[str, TransformRegistration.TransformInfo], stage_name : str, stage_desc : str, cb_add_arg : typing.Callable):
       if not len(flags_dict) > 0:
         raise PPAssertionError("handling empty stage group?")
@@ -310,9 +333,11 @@ class TransformRegistration:
     if len(TransformRegistration._frontend_records) > 0:
       handle_stage_group(TransformRegistration._frontend_records, 'Front end', 'Options to enable frontend transforms', add_frontend_transform_arg)
     if len(TransformRegistration._middleend_records) > 0:
-      handle_stage_group(TransformRegistration._middleend_records, 'Middle end', 'Options tp enable middle-end transforms', add_middleend_transform_arg)
+      handle_stage_group(TransformRegistration._middleend_records, 'Middle end', 'Options to enable middle-end transforms', add_middleend_transform_arg)
     if len(TransformRegistration._backend_records) > 0:
-      handle_stage_group(TransformRegistration._backend_records, 'Back end', 'Options tp enable backend transforms', add_backend_transform_arg)
+      handle_stage_group(TransformRegistration._backend_records, 'Back end', 'Options to enable backend transforms', add_backend_transform_arg)
+    if len(TransformRegistration._metapass_records) > 0:
+      handle_stage_group(TransformRegistration._metapass_records, 'Meta pass', 'Options to enable meta passes', add_metapass_arg)
 
   _tr_pipeline_mismatched_input_type = TR_pipeline.tr("pipeline_static_mismatched_input_type",
     en="IR type in pipeline does not match with the supported input type: current type: {curtype}, input type supported by the pass: {inputtype}. Please check if you missed flags or misplaced pass arguments.",
@@ -376,13 +401,16 @@ class TransformRegistration:
       elif isinstance(input_decl, IODecl):
         # 现在把输入赋值过去
         input_list = []
-        if isinstance(value, list):
-          input_list = value.copy()
-        elif isinstance(value, str):
-          input_list = [value]
-        else:
-          # raise RuntimeError("Unexpected value type " + str(type(value)))
-          raise PPInternalError
+        if input_decl.nargs != 0:
+          # 我们只在可能有参数时读取这个
+          # 元处理趟的 input_decl/output_decl 都是 IODecl 但是只有一个有非零 nargs
+          if isinstance(value, list):
+            input_list = value.copy()
+          elif isinstance(value, str):
+            input_list = [value]
+          else:
+            # raise RuntimeError("Unexpected value type " + str(type(value)))
+            raise PPInternalError
         transform_inst.set_input(input_list)
       # 处理输出
       output_decl = info.output_decl
@@ -400,13 +428,16 @@ class TransformRegistration:
         # 输出非 IR
         # 把输出值赋过去
         output_path = ''
-        if isinstance(value, list):
-          if not len(value) < 2:
-            raise PPAssertionError("Pipeline currently only support 0-1 output taking path arguments")
-          if len(value) != 0:
-            output_path = value[0]
-        else:
-          output_path = value
+        if output_decl.nargs != 0:
+          # 我们只在可能有参数时读取这个
+          # 元处理趟的 input_decl/output_decl 都是 IODecl 但是只有一个有非零 nargs
+          if isinstance(value, list):
+            if not len(value) < 2:
+              raise PPAssertionError("Pipeline currently only support 0-1 output taking path arguments")
+            if len(value) != 0:
+              output_path = value[0]
+          else:
+            output_path = value
         transform_inst.set_output_path(output_path)
       pipeline.append(transform_inst)
       if verbose:
@@ -466,6 +497,15 @@ class TransformRegistration:
       raise PPAssertionError("Backend must use IODecl for output declaration")
     info = TransformRegistration.register_transform_common(transform_cls, flag, input_decl, output_decl)
     TransformRegistration._backend_records[flag] = info
+
+  @staticmethod
+  def register_metapass(transform_cls, flag : str, input_decl : IODecl, output_decl : IODecl):
+    if not isinstance(input_decl, IODecl):
+      raise PPAssertionError("Meta pass must use IODecl for input declaration")
+    if not isinstance(output_decl, IODecl):
+      raise PPAssertionError("Meta pass must use IODecl for output declaration")
+    info = TransformRegistration.register_transform_common(transform_cls, flag, input_decl, output_decl)
+    TransformRegistration._metapass_records[flag] = info
 
 @FrontendDecl('load', input_decl=IODecl(description='IR file', nargs='+'), output_decl=Operation)
 class _LoadIR(TransformBase):
@@ -547,6 +587,42 @@ class _JsonExportIR(TransformBase):
     json_str = exporter.write_json(toplevel)
     with open(self.output, "w", newline="\n", encoding="utf-8") as f:
       f.write(json_str)
+
+@TransformArgumentGroup("translation-export", desc="Options for translation export")
+@MetaPassDecl("translation-export", output_decl=IODecl("JSON file", match_suffix="json", nargs=1))
+class _TranslationExport(TransformBase):
+  DOMAIN_FILTER : typing.ClassVar[str | None] = None
+  ELEMENT_FILTER : typing.ClassVar[str | None] = None
+
+  @staticmethod
+  def install_arguments(argument_group : argparse._ArgumentGroup):
+    argument_group.add_argument("--translation-export-domain-filter", required=False, type=str, nargs=1)
+    argument_group.add_argument("--translation-export-element-filter", required=False, type=str, nargs=1)
+
+  @staticmethod
+  def handle_arguments(args : argparse.Namespace):
+    # 当命令行解析完毕后，如果该转换被启用，则该函数负责读取该转换所使用的参数
+    # 只会在注册时提供了 arg_title 的情况下调用
+    if domain_filter := args.translation_export_domain_filter:
+      assert isinstance(domain_filter, list) and len(domain_filter) == 1
+      _TranslationExport.DOMAIN_FILTER = domain_filter[0]
+      assert isinstance(_TranslationExport.DOMAIN_FILTER, str)
+    if element_filter := args.translation_export_element_filter:
+      assert isinstance(element_filter, list) and len(element_filter) == 1
+      _TranslationExport.ELEMENT_FILTER = element_filter[0]
+      assert isinstance(_TranslationExport.ELEMENT_FILTER, str)
+
+  def run(self) -> None:
+    result = TranslationDomain.json_dict_export(domain_filter=_TranslationExport.DOMAIN_FILTER, name_filter=_TranslationExport.ELEMENT_FILTER)
+    with open(self.output, "w", encoding="utf-8") as f:
+      json.dump(result, f, ensure_ascii=False, indent=2)
+
+@MetaPassDecl("translation-import", input_decl=IODecl("JSON file", match_suffix="json", nargs=1))
+class _TranslationImport(TransformBase):
+  def run(self) -> None:
+    with open(self.inputs[0], "r", encoding="utf-8") as f:
+      d = json.load(f)
+      TranslationDomain.json_dict_import(d)
 
 class _PipelineManager:
   _TR_pipeline_version = TR_pipeline.tr("preppipe_version",

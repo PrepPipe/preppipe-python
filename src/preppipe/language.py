@@ -23,9 +23,12 @@ import typing
 import dataclasses
 import os
 import locale
+import re
+import collections
 
 class TranslationDomain:
   ALL_DOMAINS : typing.ClassVar[dict[str, TranslationDomain]] = {}
+  SUPPORTED_LANGNAMES : typing.ClassVar[tuple[str,...]] = ("en", "zh_cn", "zh_hk")
   name : str
   elements : dict[str, Translatable]
 
@@ -66,6 +69,55 @@ class TranslationDomain:
 
   def get(self, code : str) -> Translatable:
     return self.elements[code]
+
+  @staticmethod
+  def json_dict_export(domain_filter : str | None = None, name_filter : str | None = None) -> collections.OrderedDict[str, collections.OrderedDict[str, dict[str, list[str]]]]:
+    if domain_filter is None:
+      domains = sorted(TranslationDomain.ALL_DOMAINS.keys())
+    else:
+      domains = [d for d in TranslationDomain.ALL_DOMAINS.keys() if re.fullmatch(domain_filter, d)]
+      domains.sort()
+    result : typing.OrderedDict[str, typing.OrderedDict[str, dict[str, list[str]]]] = collections.OrderedDict()
+    for d in domains:
+      domain = TranslationDomain.ALL_DOMAINS[d]
+      domain_dict : typing.OrderedDict[str, dict[str, list[str]]] = collections.OrderedDict()
+      if name_filter is None:
+        export_translatables = sorted(domain.elements.keys())
+      else:
+        export_translatables = [e for e in domain.elements.keys() if re.fullmatch(name_filter, e)]
+        export_translatables.sort()
+      for name in export_translatables:
+        t = domain.elements[name]
+        domain_dict[name] = t.candidates
+      result[d] = domain_dict
+    return result
+
+  @staticmethod
+  def json_dict_import(d : dict[str, dict[str, dict[str, list[str]]]]):
+    for dname, ddict in d.items():
+      if dname not in TranslationDomain.ALL_DOMAINS:
+        continue
+      domain = TranslationDomain.ALL_DOMAINS[dname]
+      for ename, edict in ddict.items():
+        if ename not in domain.elements:
+          continue
+        t = domain.elements[ename]
+        changed = False
+        for langname, vlist in edict.items():
+          if langname not in TranslationDomain.SUPPORTED_LANGNAMES:
+            continue
+          if langname not in t.candidates:
+            t.candidates[langname] = vlist
+            changed = True
+          else:
+            if t.candidates[langname] == vlist:
+              continue
+            t.candidates[langname] = vlist
+            changed = True
+        if changed:
+          t.flush_cache()
+          if len(t.candidates["en"]) == 0:
+            raise RuntimeError("When editing translation " + dname + '/' + ename + ": cannot clear (base) english version")
 
   # 由于部分错误是任何地方都有可能碰到的，我们把一些常见的范式给放在这
   @property
