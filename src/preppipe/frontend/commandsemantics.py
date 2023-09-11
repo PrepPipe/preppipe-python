@@ -13,6 +13,7 @@ import re
 
 from ..irbase import *
 from ..inputmodel import *
+from ..language import Translatable, TranslationDomain
 from ..nameresolution import NameResolver, NamespaceNode
 from .commandsyntaxparser import GeneralCommandOp, CMDValueSymbol, CMDPositionalArgOp, CommandCallReferenceType
 
@@ -32,12 +33,10 @@ from .commandsyntaxparser import GeneralCommandOp, CMDValueSymbol, CMDPositional
 # decorator for parse commands
 # reference: https://realpython.com/primer-on-python-decorators/#decorators-with-arguments
 # pylint: disable=invalid-name
-def CommandDecl(ns: FrontendCommandNamespace, imports : dict[str, typing.Any], name : str, alias : typing.Dict[str | typing.Tuple[str, ...], typing.Dict[str, str]] = None):
-  if alias is None:
-    alias = {}
+def CommandDecl(ns: FrontendCommandNamespace, imports : dict[str, typing.Any], name : str):
   def decorator_parsecommand(func):
     # register the command
-    ns.register_command(func, imports, name, alias)
+    ns.register_command_minimal(func, imports, name)
     return func
 
     # later on we may add debugging code to the wrapper... nothing for now
@@ -47,25 +46,52 @@ def CommandDecl(ns: FrontendCommandNamespace, imports : dict[str, typing.Any], n
     #return wrapper
   return decorator_parsecommand
 
+def CmdAliasDecl(TR: TranslationDomain,
+                 name_alias: dict[str, str | list[str]] | None = None,
+                 param_alias: dict[str, dict[str, str | list[str]]] | None = None,
+                 additional_keywords : list[Translatable] | None = None):
+  def decorator_aliasdecl(func):
+    command_info : FrontendCommandInfo = getattr(func, "CMD_INFO")
+    # 我们尝试在这里检查 param_alias 的键是否是回调函数中的参数，不是的话（比如因为打错）就在这报错
+    if param_alias is not None:
+      for pname in param_alias.keys():
+        name_found = False
+        for f, s in command_info.handler_list:
+          if pname in s.parameters:
+            name_found = True
+            break
+        if not name_found:
+          raise PPInternalError("When declaring alias for " + '/'.join(command_info.parent.get_namespace_path()) + '/' + command_info.cname + ": parameter \"" + pname +"\" does not exist in handler(s)")
+    command_info.parent.set_command_alias_impl(command_info=command_info, td=TR, name_alias=name_alias, param_alias=param_alias, additional_keywords=additional_keywords)
+    return func
+  return decorator_aliasdecl
+
 # 如果命令参数实质上是个枚举类型，命令可以定义该枚举类型，继承 enum.Enum，并且加上这个修饰符
 # 这个修饰符会添加一个 _translate() 的静态函数，用于把字符串转为枚举类型的值
 # 不同语言的别名也会在该函数中转换
-def FrontendParamEnum(alias : dict[str, set[str]]):
+def FrontendParamEnum(TR: TranslationDomain, name : str, alias : dict[str, dict[str, str | list[str]]]):
+  name_prefix = "ENUM_" + name
+  value_dict : dict[str, Translatable] = {}
+  for vname, vdict in alias.items():
+    if "en" not in vdict:
+      vdict["en"] = vname
+    value_dict[vname] = TR.tr(code=name_prefix + '_' + vname, **vdict)
   def decorator_enum(cls):
     assert issubclass(cls, enum.Enum)
-    used_keys = set()
-    translation_dict = {} # （不同语言的）别名 -> 枚举类值
-    for p in cls:
-      if p.name in alias:
-        used_keys.add(p.name)
-        for v in alias[p.name]:
-          assert v not in translation_dict
-          translation_dict[v] = p
-    if len(used_keys) != len(alias):
-      for key in alias.keys():
-        if key not in used_keys:
-          raise RuntimeError('Invalid key "' + key + '" in ' + cls.__name__ + ' for alias')
     def translate_cb(name : str):
+      if not hasattr(cls, "_translation_dict"):
+        translation_dict = {}
+        for vname, tr in value_dict.items():
+          if vname not in cls.__members__:
+            raise PPInternalError("Name \"" + vname + "\" does not correspond to enum Member in " + cls.__name__)
+          memb = cls.__members__[vname]
+          allnames = tr.get_all_candidates()
+          for n in allnames:
+            if n in translation_dict:
+              raise PPInternalError("Duplicated enum alias: \"" + n + "\" maps to " + translation_dict[n].name + " and " + vname)
+            translation_dict[n] = memb
+        setattr(cls, "_translation_dict", translation_dict)
+      translation_dict = getattr(cls, "_translation_dict")
       if name in translation_dict:
         return translation_dict[name]
       if name in cls.__members__:
@@ -111,12 +137,19 @@ class TableExprOperand(ExtendDataExprBase):
 class FrontendCommandInfo:
   # 为了支持函数重载，我们需要在同一个命令下绑定多个用于实现的函数以及他们的别名
   # 为方便起见，我们要求参数的所有别名必须一致(同一个规范名不能有多个别名)
+  parent : FrontendCommandNamespace
   cname : str # 命令的规范名
-  aliases : typing.Dict[str | typing.Tuple[str], typing.Dict[str, str]] # 所有 aliases 注册项合并后的结果，第一个 key 是命令名的别名，后面的key是参数规范名
-  parameter_alias_dict : typing.Dict[str, str] # 从参数的别名到规范名
-  handler_list : list[tuple[typing.Callable, inspect.Signature]] # 所有的实现都在这里
+  parameter_alias_dict : dict[str, str] = dataclasses.field(default_factory=dict) # 从参数的别名到规范名
+  handler_list : list[tuple[typing.Callable, inspect.Signature]] = dataclasses.field(default_factory=list) # 所有的实现都在这里
+  name_tr : Translatable | None = None # 命令名的翻译、别名
+  param_tr : dict[str, Translatable] = dataclasses.field(default_factory=dict) # 命令参数的翻译、别名
+  additional_keywords : list[Translatable] | None = None # 如果命令处理中用到了其他关键字，那么应该记录在这里
+
+  def __hash__(self) -> int:
+    return hash(self.cname)
 
 class FrontendCommandNamespace(NamespaceNode[FrontendCommandInfo]):
+  _lateinit_aliases : set[FrontendCommandInfo]
 
   @staticmethod
   def create(parent : FrontendCommandNamespace | None, cname : str) -> FrontendCommandNamespace:
@@ -126,14 +159,30 @@ class FrontendCommandNamespace(NamespaceNode[FrontendCommandInfo]):
 
   def __init__(self, tree: FrontendCommandRegistry, parent: FrontendCommandNamespace, cname: str | None) -> None:
     super().__init__(tree, parent, cname)
+    self._lateinit_aliases = set()
+
+  def lookup_name(self, name: str):
+    if len(self._lateinit_aliases) > 0:
+      self.lateinit_command_aliases()
+    return super().lookup_name(name)
 
   def get_or_create_command_info(self, name : str) -> FrontendCommandInfo:
     command_info = self.lookup_name(name)
     if isinstance(command_info, FrontendCommandNamespace):
-      raise RuntimeError('Name collision between namespace and command entry: "' + name + '"')
+      raise PPInternalError('Name collision between namespace and command entry: "' + name + '"')
     if command_info is None:
-      command_info = FrontendCommandInfo(cname = name, aliases = {}, parameter_alias_dict={}, handler_list=[])
+      command_info = FrontendCommandInfo(parent=self, cname = name)
       self.add_data_entry(name, command_info)
+    assert isinstance(command_info, FrontendCommandInfo)
+    assert command_info.cname == name
+    return command_info
+
+  def get_command_info(self, name : str) -> FrontendCommandInfo:
+    command_info = self.lookup_name(name)
+    if isinstance(command_info, FrontendCommandNamespace):
+      raise PPInternalError('Name collision between namespace and command entry: "' + name + '"')
+    if command_info is None:
+      raise PPInternalError("Command name not registered")
     assert isinstance(command_info, FrontendCommandInfo)
     assert command_info.cname == name
     return command_info
@@ -145,44 +194,67 @@ class FrontendCommandNamespace(NamespaceNode[FrontendCommandInfo]):
     sig = inspect.signature(func, globals=imports, eval_str=True)
     command_info.handler_list.append((func, sig))
 
-  def add_command_namealiases(self, command_info : FrontendCommandInfo, alias : dict[str | tuple[str, ...], dict[str, str]]):
-    # 把别名信息合并进去
-    # 我们需要同时处理 aliases 和 parameter_alias_dict
-    for name_alias, param_alias_dict in alias.items():
-      assert isinstance(name_alias, str) or isinstance(name_alias, tuple)
-      assert isinstance(param_alias_dict, dict)
-      if name_alias not in command_info.aliases:
-        if isinstance(name_alias, str):
-          self.add_local_alias(command_info.cname, name_alias)
-        elif isinstance(name_alias, tuple):
-          for a in name_alias:
-            assert isinstance(a, str)
-            self.add_local_alias(command_info.cname, a)
+  def add_command_namealias(self, command_info : FrontendCommandInfo):
+    if command_info.name_tr:
+      allnames = command_info.name_tr.get_all_candidates()
+      added = set()
+      added.add(command_info.cname)
+      for n in allnames:
+        if n in added:
+          continue
+        added.add(n)
+        self.add_local_alias(command_info.cname, n)
+    for pname, p in command_info.param_tr.items():
+      allnames = p.get_all_candidates()
+      for n in allnames:
+        if n in command_info.parameter_alias_dict:
+          existing = command_info.parameter_alias_dict[n]
+          if existing != pname:
+            raise PPInternalError("Parameter alias\"" + n + "\" maps to different canonical parameters: \"" + existing + "\" != \"" + pname + "\"")
         else:
-          raise RuntimeError('Unexpected name alias type')
-        existing_dict : typing.Dict[str, str] = {}
-        command_info.aliases[name_alias] = existing_dict
-      else:
-        existing_dict = command_info.aliases[name_alias]
-      for param_cname, param_alias_name in param_alias_dict.items():
-        assert isinstance(param_alias_name, str)
-        assert isinstance(param_cname, str)
-        if param_cname in existing_dict:
-          if existing_dict[param_cname] != param_alias_name:
-            raise RuntimeError('Parameter "' + param_cname + '" already has a different alias: "' + existing_dict[param_cname] + '" != "' + param_alias_name + '"')
-        else:
-          existing_dict[param_cname] = param_alias_name
-          if param_alias_name in command_info.parameter_alias_dict:
-            existing_cname = command_info.parameter_alias_dict[param_alias_name]
-            if existing_cname != param_cname:
-              raise RuntimeError('Conflicting alias for parameter "' + param_cname + '": "' + existing_cname + '" != "' + param_cname + '"')
-          else:
-            command_info.parameter_alias_dict[param_alias_name] = param_cname
+          command_info.parameter_alias_dict[n] = pname
 
-  def register_command(self, func : typing.Callable, imports : dict[str, typing.Any], name : str, alias : dict[str | tuple[str, ...], dict[str, str]]) -> None:
+  def register_command_minimal(self, func : typing.Callable, imports : dict[str, typing.Any], name : str):
     command_info = self.get_or_create_command_info(name)
     self.add_command_handler(command_info, func, imports)
-    self.add_command_namealiases(command_info, alias)
+    setattr(func, "CMD_INFO", command_info)
+
+  def set_command_alias(self, name : str, td : TranslationDomain,
+                        name_alias: dict[str, str | list[str]] | None = None,
+                        param_alias: dict[str, dict[str, str | list[str]]] | None = None,
+                        additional_keywords : list[Translatable] | None = None):
+    command_info = self.get_command_info(name)
+    self.set_command_alias_impl(command_info, td, name_alias, param_alias, additional_keywords)
+
+  def set_command_alias_impl(self, command_info : FrontendCommandInfo, td : TranslationDomain,
+                             name_alias: dict[str, str | list[str]] | None = None,
+                             param_alias: dict[str, dict[str, str | list[str]]] | None = None,
+                             additional_keywords : list[Translatable] | None = None):
+    # name_alias 和 param_alias 的值都是用于创建 Translatable 的参数，我们使用参数名来做 Translatable 的名字
+    name = command_info.cname
+    if not name.isalnum():
+      raise PPInternalError("Command canonical name should be alphanumeric")
+    if command_info in self._lateinit_aliases:
+      raise PPInternalError("Duplicated alias decl")
+    name_prefix = "CMD_" + name
+    command_info.name_tr = None
+    if name_alias is not None and len(name_alias) > 0:
+      if "en" not in name_alias:
+        name_alias["en"] = name
+      command_info.name_tr = td.tr(code=name_prefix, **name_alias)
+    command_info.param_tr = {}
+    if param_alias is not None:
+      for pname, pdict in param_alias.items():
+        if "en" not in pdict:
+          pdict["en"] = pname
+        command_info.param_tr[pname] = td.tr(code=name_prefix + '_' + pname, **pdict)
+    command_info.additional_keywords = additional_keywords
+    self._lateinit_aliases.add(command_info)
+
+  def lateinit_command_aliases(self):
+    for command_info in self._lateinit_aliases:
+      self.add_command_namealias(command_info)
+    self._lateinit_aliases.clear()
 
 class FrontendCommandRegistry(NameResolver[FrontendCommandInfo]):
   _global_ns : FrontendCommandNamespace
