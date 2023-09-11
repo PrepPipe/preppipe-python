@@ -18,6 +18,17 @@ from ...language import TranslationDomain
 
 _TR_vn_util = TranslationDomain("vn_util")
 
+tr_vnutil_vtype_sayname = _TR_vn_util.tr("vtype_sayname",
+  en="<SayName>",
+  zh_cn="<发言名>",
+  zh_hk="<發言名>",
+)
+tr_vnutil_vtype_imageexprtree = _TR_vn_util.tr("vtype_image_expr_tree",
+  en="<ImageExprTree>",
+  zh_cn="<图片表达式树>",
+  zh_hk="<圖片表達式樹>",
+)
+
 class VNASTImageExprSource(enum.Enum):
   # 当我们要读取树结构的图片表达式时，用这个来表示图片表达式是用来干什么的
   # 这样当读取占位表达式时可以生成对应的结构
