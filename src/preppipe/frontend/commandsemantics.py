@@ -49,7 +49,7 @@ def CommandDecl(ns: FrontendCommandNamespace, imports : dict[str, typing.Any], n
 def CmdAliasDecl(TR: TranslationDomain,
                  name_alias: dict[str, str | list[str]] | None = None,
                  param_alias: dict[str, dict[str, str | list[str]]] | None = None,
-                 additional_keywords : list[Translatable] | None = None):
+                 get_keyword_cb : typing.Callable[[], list[Translatable | tuple[Translatable, list | typing.Callable]] | typing.Callable] | None = None):
   def decorator_aliasdecl(func):
     command_info : FrontendCommandInfo = getattr(func, "CMD_INFO")
     # 我们尝试在这里检查 param_alias 的键是否是回调函数中的参数，不是的话（比如因为打错）就在这报错
@@ -62,7 +62,7 @@ def CmdAliasDecl(TR: TranslationDomain,
             break
         if not name_found:
           raise PPInternalError("When declaring alias for " + '/'.join(command_info.parent.get_namespace_path()) + '/' + command_info.cname + ": parameter \"" + pname +"\" does not exist in handler(s)")
-    command_info.parent.set_command_alias_impl(command_info=command_info, td=TR, name_alias=name_alias, param_alias=param_alias, additional_keywords=additional_keywords)
+    command_info.parent.set_command_alias_impl(command_info=command_info, td=TR, name_alias=name_alias, param_alias=param_alias, get_keyword_cb=get_keyword_cb)
     return func
   return decorator_aliasdecl
 
@@ -143,7 +143,8 @@ class FrontendCommandInfo:
   handler_list : list[tuple[typing.Callable, inspect.Signature]] = dataclasses.field(default_factory=list) # 所有的实现都在这里
   name_tr : Translatable | None = None # 命令名的翻译、别名
   param_tr : dict[str, Translatable] = dataclasses.field(default_factory=dict) # 命令参数的翻译、别名
-  additional_keywords : list[Translatable] | None = None # 如果命令处理中用到了其他关键字，那么应该记录在这里
+  additional_keywords : list[Translatable | tuple[Translatable, list]] | None = None # 如果命令处理中用到了其他关键字，那么应该记录在这里。这可以是一个（递归的）树状结构
+  get_keyword_cb : typing.Callable[[], list[Translatable | tuple[Translatable, list | typing.Callable]] | typing.Callable] | None = None # 延迟获取额外关键字的函数
 
   def __hash__(self) -> int:
     return hash(self.cname)
@@ -214,6 +215,32 @@ class FrontendCommandNamespace(NamespaceNode[FrontendCommandInfo]):
         else:
           command_info.parameter_alias_dict[n] = pname
 
+    def _resolve_keywords(kwdecl : list[Translatable | tuple[Translatable, list | typing.Callable]] | typing.Callable) -> list[Translatable | tuple[Translatable, list]]:
+      if inspect.isfunction(kwdecl):
+        if kw := getattr(kwdecl, "keywords", None):
+          if inspect.isfunction(kw):
+            assert kw != kwdecl
+            kw = kw()
+          return _resolve_keywords(kw)
+        return []
+      if not isinstance(kwdecl, list):
+        raise PPInternalError("Invalid kwdecl type: " + type(kwdecl).__name__)
+      result : list[Translatable | tuple[Translatable, list]] = []
+      for curitem in kwdecl:
+        if isinstance(curitem, Translatable):
+          result.append(curitem)
+        elif isinstance(curitem, tuple):
+          head, body = curitem
+          if not isinstance(head, Translatable):
+            raise PPInternalError("head of keyword decl should be a Translatable")
+          newlist = _resolve_keywords(body)
+          result.append((head, newlist))
+        else:
+          raise PPInternalError("Invalid kwdecl organization")
+      return result
+    if command_info.additional_keywords is None and command_info.get_keyword_cb is not None:
+      command_info.additional_keywords = _resolve_keywords(command_info.get_keyword_cb())
+
   def register_command_minimal(self, func : typing.Callable, imports : dict[str, typing.Any], name : str):
     command_info = self.get_or_create_command_info(name)
     self.add_command_handler(command_info, func, imports)
@@ -222,14 +249,14 @@ class FrontendCommandNamespace(NamespaceNode[FrontendCommandInfo]):
   def set_command_alias(self, name : str, td : TranslationDomain,
                         name_alias: dict[str, str | list[str]] | None = None,
                         param_alias: dict[str, dict[str, str | list[str]]] | None = None,
-                        additional_keywords : list[Translatable] | None = None):
+                        get_keyword_cb : typing.Callable[[], list[Translatable | tuple[Translatable, list | typing.Callable]] | typing.Callable] | None = None):
     command_info = self.get_command_info(name)
-    self.set_command_alias_impl(command_info, td, name_alias, param_alias, additional_keywords)
+    self.set_command_alias_impl(command_info, td, name_alias, param_alias, get_keyword_cb=get_keyword_cb)
 
   def set_command_alias_impl(self, command_info : FrontendCommandInfo, td : TranslationDomain,
                              name_alias: dict[str, str | list[str]] | None = None,
                              param_alias: dict[str, dict[str, str | list[str]]] | None = None,
-                             additional_keywords : list[Translatable] | None = None):
+                             get_keyword_cb : typing.Callable[[], list[Translatable | tuple[Translatable, list | typing.Callable]] | typing.Callable] | None = None):
     # name_alias 和 param_alias 的值都是用于创建 Translatable 的参数，我们使用参数名来做 Translatable 的名字
     name = command_info.cname
     if not name.isalnum():
@@ -248,7 +275,7 @@ class FrontendCommandNamespace(NamespaceNode[FrontendCommandInfo]):
         if "en" not in pdict:
           pdict["en"] = pname
         command_info.param_tr[pname] = td.tr(code=name_prefix + '_' + pname, **pdict)
-    command_info.additional_keywords = additional_keywords
+    command_info.get_keyword_cb = get_keyword_cb
     self._lateinit_aliases.add(command_info)
 
   def lateinit_command_aliases(self):

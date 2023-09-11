@@ -530,6 +530,16 @@ _tr_chdecl_sideimage = TR_vnparse.tr("chdecl_sideimage",
   zh_cn="头像",
   zh_hk="頭像",
 )
+_tr_chdecl_say = TR_vnparse.tr("chdecl_say",
+  en="Say",
+  zh_cn="发言",
+  zh_hk="發言",
+)
+_tr_chdecl_sayalternativename = TR_vnparse.tr("chdecl_say_alternative_name",
+  en="SayAlternativeName",
+  zh_cn="发言别名",
+  zh_hk="發言別名",
+)
 
 @CmdAliasDecl(TR_vnparse, {
   "zh_cn": "声明角色",
@@ -539,7 +549,12 @@ _tr_chdecl_sideimage = TR_vnparse.tr("chdecl_sideimage",
     "zh_cn": "姓名",
     "zh_hk": "姓名",
   },
-})
+}, lambda: [
+  (_tr_chdecl_sprite, [tr_vnutil_vtype_imageexprtree]),
+  (_tr_chdecl_sideimage, [tr_vnutil_vtype_imageexprtree]),
+  (_tr_chdecl_say, _helper_parse_character_sayinfo),
+  (_tr_chdecl_sayalternativename, _helper_parse_character_alternativesay),
+])
 @CommandDecl(vn_command_ns, _imports, 'DeclCharacter')
 def cmd_character_decl(parser: VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str, ext : ListExprOperand):
   # 声明角色仅用于提供角色的身份
@@ -564,10 +579,10 @@ def cmd_character_decl(parser: VNParser, state : VNASTParsingState, commandop : 
           entityprefix = _tr_chdecl_sideimage.get() + '_' + name
           _helper_parse_image_exprtree(parser, state, v, ch.sideimages, ImageExprPlaceholderDest.DEST_CHARACTER_SIDEIMAGE, entityprefix, commandop.location)
           continue
-        if k in ("Say", "发言", "發言"):
+        if k in _tr_chdecl_say.get_all_candidates():
           _helper_parse_character_sayinfo(state=state, v=v, say=defaultsay, loc=commandop.location)
           continue
-        if k in ("SayAlternativeName", "发言别名", "發言別名"):
+        if k in _tr_chdecl_sayalternativename.get_all_candidates():
           _helper_parse_character_alternativesay(state=state, v=v, sayinfo=ch.sayinfo, defaultsay=defaultsay, loc=commandop.location)
           continue
         # 到这就说明当前的键值没有匹配到认识的
@@ -615,16 +630,29 @@ def _helper_parse_character_alternativesay(state : VNASTParsingState, v : typing
       _helper_parse_character_sayinfo(state=state, v=alttree, say=altnode, loc=loc)
   else:
     raise RuntimeError("Should not happen")
+setattr(_helper_parse_character_alternativesay, "keywords", lambda: [
+  (tr_vnutil_vtype_sayname, _helper_parse_character_sayinfo)
+])
 
+_tr_sayinfo_namecolor = TR_vnparse.tr("sayinfo_namecolor",
+  en="NameColor",
+  zh_cn="名字颜色",
+  zh_hk="名字顏色",
+)
+_tr_sayinfo_contentcolor = TR_vnparse.tr("sayinfo_contentcolor",
+  en="ContentColor",
+  zh_cn="内容颜色",
+  zh_hk="內容顏色",
+)
 def _helper_parse_character_sayinfo(state : VNASTParsingState, v : typing.Any, say : VNASTCharacterSayInfoSymbol, loc : Location):
   if isinstance(v, collections.OrderedDict):
     for attr, value in v.items():
-      if attr in ("NameColor", "名字颜色", "名字顏色"):
+      if attr in _tr_sayinfo_namecolor.get_all_candidates():
         if c := _helper_parse_color(state, value, loc):
           newstyle = _helper_merge_textstyle(state.context, say.namestyle, TextAttribute.TextColor, c)
           say.namestyle.set_operand(0, newstyle)
         continue
-      if attr in ("ContentColor", "内容颜色", "內容顏色"):
+      if attr in _tr_sayinfo_contentcolor.get_all_candidates():
         if c := _helper_parse_color(state, value, loc):
           newstyle = _helper_merge_textstyle(state.context, say.saytextstyle, TextAttribute.TextColor, c)
           say.saytextstyle.set_operand(0, newstyle)
@@ -633,6 +661,7 @@ def _helper_parse_character_sayinfo(state : VNASTParsingState, v : typing.Any, s
   else:
     # 发言应该是一个字典；这里报错
     state.emit_error('vnparse-characterdecl-invalid-expr', 'Unexpected data format for Say attribute (should be a dictionary)', loc=loc)
+setattr(_helper_parse_character_sayinfo, "keywords", [_tr_sayinfo_namecolor, _tr_sayinfo_contentcolor])
 
 # 这个命令暂时不做
 #@CommandDecl(vn_co mmand_ns, _imports, 'DeclCharacterSprite', alias={
@@ -661,7 +690,7 @@ def _helper_parse_character_sayinfo(state : VNASTParsingState, v : typing.Any, s
     "zh_cn": "实际角色",
     "zh_hk": "實際角色",
   },
-})
+}, lambda: _helper_parse_character_sayinfo)
 @CommandDecl(vn_command_ns, _imports, 'SetTemporarySayAttr')
 def cmd_temp_say_attr(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, *, display_name : str, actual_character : str, ext : ListExprOperand | None = None):
   # 定义一个角色说话时名称、发言内容的显示方式
@@ -678,6 +707,12 @@ def cmd_temp_say_attr(parser : VNParser, state : VNASTParsingState, commandop : 
   if ext is not None:
     _helper_parse_character_sayinfo(state, ext.data, info, commandop.location)
 
+_tr_scenedecl_background = TR_vnparse.tr("scenedecl_background",
+  en="Background",
+  zh_cn="背景",
+  zh_hk="背景",
+)
+
 @CmdAliasDecl(TR_vnparse, {
   "zh_cn": "声明场景",
   "zh_hk": "聲明場景",
@@ -686,7 +721,9 @@ def cmd_temp_say_attr(parser : VNParser, state : VNASTParsingState, commandop : 
     "zh_cn": "名称",
     "zh_hk": "名稱",
   },
-})
+}, lambda: [
+  (_tr_scenedecl_background, [tr_vnutil_vtype_imageexprtree])
+])
 @CommandDecl(vn_command_ns, _imports, 'DeclScene')
 def cmd_scene_decl(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str, ext : ListExprOperand | None = None):
   if existing := state.output_current_file.scenes.get(name):
@@ -697,7 +734,7 @@ def cmd_scene_decl(parser : VNParser, state : VNASTParsingState, commandop : Gen
   if ext is not None:
     if isinstance(ext.data, collections.OrderedDict):
       for k, v in ext.data.items():
-        if k in ('Background', '背景'):
+        if k in _tr_scenedecl_background.get_all_candidates():
           # 这里开始是指定场景背景的信息
           _helper_parse_image_exprtree(parser, state, v, scene.backgrounds, ImageExprPlaceholderDest.DEST_SCENE_BACKGROUND, name, commandop.location)
           continue
