@@ -3,7 +3,7 @@
 
 import os
 import typing
-from ..language import TranslationDomain
+from ..language import TranslationDomain, Translatable
 
 class FileAccessAuditor:
   # 该类用于存储所有在读取阶段有关的设置，读取完毕后可扔
@@ -13,6 +13,7 @@ class FileAccessAuditor:
   # 所有的字符串都是绝对路径
   _accessible_directories : set[str] # 绝对路径
   _global_searchroots : list[str]
+  _warn_empty_accessible_paths : Translatable | None # 如果命令行上没有给出搜索路径的话，我们需要在实际有搜索需求时给出“未提供搜索路径”的警告
 
   _tr : typing.ClassVar[TranslationDomain] = TranslationDomain("FileAccessAuditor")
 
@@ -27,12 +28,19 @@ class FileAccessAuditor:
       if realpath not in self._global_searchroots:
         self._global_searchroots.append(realpath)
 
+  def warn_empty_accessible_paths(self, tr : Translatable):
+    self._warn_empty_accessible_paths = tr
+
   def check_is_path_accessible(self, realpath : str) -> bool:
     # 检查 abspath 是否为目录白名单中之一
     parent = os.path.dirname(realpath)
     for candidate in self._accessible_directories:
       if os.path.commonprefix([candidate, parent]) == candidate:
         return True
+    # 到这就检查失败了
+    if self._warn_empty_accessible_paths is not None and len(self._accessible_directories) == 0:
+      print(self._warn_empty_accessible_paths.get())
+      self._warn_empty_accessible_paths = None
     return False
 
   def search(self, querypath : str, basepath : str, filecheckCB : typing.Callable) -> typing.Any:
@@ -106,3 +114,4 @@ class FileAccessAuditor:
   def __init__(self) -> None:
     self._accessible_directories = set()
     self._global_searchroots = []
+    self._warn_empty_accessible_paths = None
