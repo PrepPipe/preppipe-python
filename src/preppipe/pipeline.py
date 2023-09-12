@@ -706,7 +706,7 @@ class _PipelineManager:
         ctx.get_file_auditor().add_permissible_path(path)
         ctx.get_file_auditor().add_global_searchpath(path)
     else:
-      print(_PipelineManager.tr_pipeline_no_searchpath.get())
+      ctx.get_file_auditor().warn_empty_accessible_paths(_PipelineManager.tr_pipeline_no_searchpath)
     if result_args.verbose:
       ctx.get_file_auditor().dump()
 

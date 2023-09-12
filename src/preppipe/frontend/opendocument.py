@@ -145,7 +145,6 @@ class _ODParseContext:
     filePath = os.path.realpath(filePath, strict=True)
     self.ctx = ctx
     self.filePath = filePath
-    self.ctx.get_file_auditor().add_permissible_path(os.path.dirname(filePath))
     self.odfhandle = odf.opendocument.load(filePath)
     self.ziphandle = zipfile.ZipFile(filePath, mode = "r")
     self.difile = ctx.get_DIFile(filePath)
