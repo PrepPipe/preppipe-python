@@ -94,9 +94,13 @@ class VNParser(FrontendParserBase[VNASTParsingState]):
   resolution : tuple[int, int]
 
   def __init__(self, ctx: Context, command_ns: FrontendCommandNamespace, screen_resolution : tuple[int, int], name : str = '') -> None:
-    super().__init__(ctx, command_ns, VNASTParsingState)
+    super().__init__(ctx, command_ns)
     self.ast = VNAST.create(name=name, screen_resolution=IntTupleLiteral.get(screen_resolution, ctx), context=ctx)
     self.resolution = screen_resolution
+
+  @classmethod
+  def get_state_type(cls) -> type:
+    return VNASTParsingState
 
   @staticmethod
   def create(ctx: Context, command_ns: FrontendCommandNamespace | None = None, screen_resolution : tuple[int, int] | None = None, name : str = ''):
