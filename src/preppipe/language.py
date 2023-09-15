@@ -191,6 +191,16 @@ class Translatable:
     self.cached_allcandidates = tuple(resultset)
     return self.cached_allcandidates
 
+  def get_current_candidates(self) -> list[str]:
+    # 该函数目前只有导出文档时使用，不需要缓存
+    for lang in self.PREFERRED_LANG:
+      if lang in self.candidates:
+        l = self.candidates[lang]
+        if len(l) > 0:
+          return l
+    assert "en" in self.candidates
+    return self.candidates["en"]
+
   def dump(self) -> str:
     result = "TR " + self.parent.name + '.' + self.code + ":"
     for lang, l in self.candidates.items():

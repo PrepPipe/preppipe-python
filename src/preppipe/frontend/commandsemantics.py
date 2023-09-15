@@ -362,12 +362,10 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
 
   _ctx : Context
   _command_ns : FrontendCommandNamespace
-  _state_type : type # 应与 ParserStateType 所注类型一致
 
-  def __init__(self, ctx : Context, command_ns : FrontendCommandNamespace, state_type : type) -> None:
+  def __init__(self, ctx : Context, command_ns : FrontendCommandNamespace) -> None:
     self._ctx = ctx
     self._command_ns = command_ns
-    self._state_type = state_type
 
   # 不管怎样我们都需要提供这些接口来方便新的外部的实现
 
@@ -379,9 +377,10 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
   def command_ns(self) -> FrontendCommandNamespace:
     return self._command_ns
 
-  @property
-  def state_type(self) -> type:
-    return self._state_type
+  @classmethod
+  def get_state_type(cls) -> type:
+    # 应与 ParserStateType 所注类型一致
+    raise NotImplementedError()
 
   def lookup(self, name : str, using_path : typing.List[typing.Tuple[str]] = None):
     return self.command_ns.namespace_tree.unqualified_lookup(name, self.command_ns.get_namespace_path(), using_path)
@@ -576,7 +575,7 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
     return CallExprOperand(name=call_name, args=positional_args, kwargs=kwargs)
 
   @staticmethod
-  def _check_is_extend_data(annotation : typing.Any) -> list[type]:
+  def check_is_extend_data(annotation : typing.Any) -> list[type]:
     # 给定一个命令回调函数的参数类型标注，如果是延伸参数类型，返回所有的类型标注
     # （如果该命令可以接受多种延伸参数类型，我们想把所有可接受的延伸参数类型找到）
     if isinstance(annotation, types.UnionType):
@@ -641,11 +640,11 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
           if name in kwargs:
             cur_match.add_warning('cmdparser-special-param-name-conflict', name)
           continue
-        if param.annotation == self.state_type:
+        if param.annotation == self.get_state_type():
           if is_state_param_found:
             raise RuntimeError('More than one state parameter found')
           is_state_param_found = True
-          assert isinstance(state, self.state_type)
+          assert isinstance(state, self.get_state_type())
           cur_match.add_parameter(param, state)
           if name in kwargs:
             cur_match.add_warning('cmdparser-special-param-name-conflict', name)
@@ -669,7 +668,7 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
         # 如果有延伸的参数的话也检查它们是否匹配
         # 因为有可能有 T1 | T2 这样的标注，我们使用 check_is_extend_data() 来获取所有可能的类型，而不是只用单个 issubclass() / isinstance()
         if extend_data_value is not None:
-          candidate_type_list = self._check_is_extend_data(param.annotation)
+          candidate_type_list = self.check_is_extend_data(param.annotation)
           is_type_match = False
           for t in candidate_type_list:
             if isinstance(extend_data_value, t):
