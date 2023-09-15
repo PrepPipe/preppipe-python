@@ -132,7 +132,7 @@ class NamespaceNodeInterface(typing.Generic[T], abc.ABC):
 
 class NamespaceNode(typing.Generic[T], NamespaceNodeInterface[T]):
   # 某个在该命名空间下的名称代表什么
-  class _NameResolutionDataEntryKind(enum.Enum):
+  class NameResolutionDataEntryKind(enum.Enum):
     CanonicalEntry = 0 # 代表一个数据项，值是数据项记录
     EntryAlias = 1 # 代表数据项的一个别名，值是该数据项的规范名(canonical name)
     CanonicalChild = 2 # 代表一个子结点，值是子结点的引用
@@ -141,7 +141,7 @@ class NamespaceNode(typing.Generic[T], NamespaceNodeInterface[T]):
     RemoteChildAlias = 5 # 代表一个其他命名空间，值是完整的命名空间路径
 
   _namespace_path : typing.Tuple[str]
-  _data_dict : typing.Dict[str, typing.Tuple[_NameResolutionDataEntryKind, typing.Any]] # 规范名(canonical name) -> 数据(data)、子结点，或者别名到其他东西
+  _data_dict : typing.Dict[str, typing.Tuple[NameResolutionDataEntryKind, typing.Any]] # 规范名(canonical name) -> 数据(data)、子结点，或者别名到其他东西
   _tree : NameResolver[T]
   _parent : NamespaceNode[T]
 
@@ -161,23 +161,23 @@ class NamespaceNode(typing.Generic[T], NamespaceNodeInterface[T]):
       return None
     kind, data = self._data_dict[name]
     match kind:
-      case NamespaceNode._NameResolutionDataEntryKind.CanonicalEntry:
+      case NamespaceNode.NameResolutionDataEntryKind.CanonicalEntry:
         return data # T
-      case NamespaceNode._NameResolutionDataEntryKind.EntryAlias:
+      case NamespaceNode.NameResolutionDataEntryKind.EntryAlias:
         target_kind, target_data = self._data_dict[data]
-        assert target_kind == NamespaceNode._NameResolutionDataEntryKind.CanonicalEntry
+        assert target_kind == NamespaceNode.NameResolutionDataEntryKind.CanonicalEntry
         return target_data # T
-      case NamespaceNode._NameResolutionDataEntryKind.CanonicalChild:
+      case NamespaceNode.NameResolutionDataEntryKind.CanonicalChild:
         return data # NamespaceNode[T]
-      case NamespaceNode._NameResolutionDataEntryKind.ChildAlias:
+      case NamespaceNode.NameResolutionDataEntryKind.ChildAlias:
         target_kind, target_data = self._data_dict[data]
-        assert target_kind == NamespaceNode._NameResolutionDataEntryKind.CanonicalChild
+        assert target_kind == NamespaceNode.NameResolutionDataEntryKind.CanonicalChild
         return target_data # NamespaceNode[T]
-      case NamespaceNode._NameResolutionDataEntryKind.RemoteEntryAlias:
+      case NamespaceNode.NameResolutionDataEntryKind.RemoteEntryAlias:
         nspath, cname = data
         return NamespaceNodeInterface.AliasEntry(ns_path=nspath, name=cname)
         # return self.namespace_tree.get_namespace_node(nspath).lookup_name(cname)
-      case NamespaceNode._NameResolutionDataEntryKind.RemoteChildAlias:
+      case NamespaceNode.NameResolutionDataEntryKind.RemoteChildAlias:
         return NamespaceNodeInterface.AliasEntry(ns_path=data)
         # return self.namespace_tree.get_namespace_node(data)
       case _:
@@ -203,13 +203,13 @@ class NamespaceNode(typing.Generic[T], NamespaceNodeInterface[T]):
     assert data is not None
     if cname in self._data_dict:
       raise PPInternalError('given cname "' + cname + '" is already used:' + str(self._data_dict[cname]))
-    self._data_dict[cname] = (NamespaceNode._NameResolutionDataEntryKind.CanonicalEntry, data)
+    self._data_dict[cname] = (NamespaceNode.NameResolutionDataEntryKind.CanonicalEntry, data)
 
   def add_child(self, cname : str, child : NamespaceNode[T]) -> None:
     assert child is not None
     if cname in self._data_dict:
       raise PPInternalError('given cname "' + cname + '" is already used:' + str(self._data_dict[cname]))
-    self._data_dict[cname] = (NamespaceNode._NameResolutionDataEntryKind.CanonicalChild, child)
+    self._data_dict[cname] = (NamespaceNode.NameResolutionDataEntryKind.CanonicalChild, child)
 
   def add_local_alias(self, name : str, alias : str) -> None:
     assert isinstance(name, str)
@@ -224,20 +224,20 @@ class NamespaceNode(typing.Generic[T], NamespaceNodeInterface[T]):
         raise PPInternalError('Cannot resolve name "' + name + '"')
       kind, data = self._data_dict[resolved_name]
       match kind:
-        case NamespaceNode._NameResolutionDataEntryKind.CanonicalEntry:
-          self._data_dict[alias] = (NamespaceNode._NameResolutionDataEntryKind.EntryAlias, resolved_name)
+        case NamespaceNode.NameResolutionDataEntryKind.CanonicalEntry:
+          self._data_dict[alias] = (NamespaceNode.NameResolutionDataEntryKind.EntryAlias, resolved_name)
           return
-        case NamespaceNode._NameResolutionDataEntryKind.EntryAlias:
+        case NamespaceNode.NameResolutionDataEntryKind.EntryAlias:
           resolved_name = data
-        case NamespaceNode._NameResolutionDataEntryKind.CanonicalChild:
-          self._data_dict[alias] = (NamespaceNode._NameResolutionDataEntryKind.ChildAlias, resolved_name)
+        case NamespaceNode.NameResolutionDataEntryKind.CanonicalChild:
+          self._data_dict[alias] = (NamespaceNode.NameResolutionDataEntryKind.ChildAlias, resolved_name)
           return
-        case NamespaceNode._NameResolutionDataEntryKind.ChildAlias:
+        case NamespaceNode.NameResolutionDataEntryKind.ChildAlias:
           resolved_name = data
-        case NamespaceNode._NameResolutionDataEntryKind.RemoteChildAlias:
+        case NamespaceNode.NameResolutionDataEntryKind.RemoteChildAlias:
           self._data_dict[alias] = (kind, data)
           return
-        case NamespaceNode._NameResolutionDataEntryKind.RemoteEntryAlias:
+        case NamespaceNode.NameResolutionDataEntryKind.RemoteEntryAlias:
           self._data_dict[alias] = (kind, data)
           return
         case _:
@@ -253,10 +253,12 @@ class NamespaceNode(typing.Generic[T], NamespaceNodeInterface[T]):
 
   def add_remote_node_alias(self, remote_path : typing.Tuple[str], alias : str) -> None:
     self._add_remote_alias_check(remote_path, alias)
-    self._data_dict[alias] = (NamespaceNode._NameResolutionDataEntryKind.RemoteChildAlias, remote_path)
+    self._data_dict[alias] = (NamespaceNode.NameResolutionDataEntryKind.RemoteChildAlias, remote_path)
 
   def add_remote_entry_alias(self, remote_path : typing.Tuple[str], remote_name : str, alias : str) -> None:
     self._add_remote_alias_check(remote_path, alias)
     assert isinstance(remote_name, str)
-    self._data_dict[alias] = (NamespaceNode._NameResolutionDataEntryKind.RemoteEntryAlias, (remote_path, remote_name))
+    self._data_dict[alias] = (NamespaceNode.NameResolutionDataEntryKind.RemoteEntryAlias, (remote_path, remote_name))
 
+  def items(self):
+    return self._data_dict.items()
