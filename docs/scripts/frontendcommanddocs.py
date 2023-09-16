@@ -1,7 +1,9 @@
 import typing
+import types
 import enum
 import argparse
 import inspect
+import decimal
 
 import preppipe
 import preppipe.pipeline_cmd
@@ -144,9 +146,44 @@ class FrontendCommandDumper:
     zh_hk="默認值：",
   )
   _tr_optional = TR.tr("optional",
-    en="optional: ",
-    zh_cn="可选：",
-    zh_hk="可選："
+    en="optional",
+    zh_cn="可选",
+    zh_hk="可選"
+  )
+  _tr_vtype_callexpr = TR.tr("vtype_callexpr",
+    en="Call expression",
+    zh_cn="调用表达式",
+    zh_hk="調用表達式",
+  )
+  _tr_vtype_str = TR.tr("vtype_str",
+    en="String",
+    zh_cn="字符串",
+    zh_hk="字符串",
+  )
+  _tr_vtype_float = TR.tr("vtype_float",
+    en="Floating-point number",
+    zh_cn="浮点数",
+    zh_hk="浮點數",
+  )
+  _tr_vtype_int = TR.tr("vtype_int",
+    en="Integer",
+    zh_cn="整数",
+    zh_hk="整數",
+  )
+  _tr_vtype_list = TR.tr("vtype_list",
+    en="1-N of {{" + "{inner}" + "}}",
+    zh_cn="1到N个{{" + "{inner}" + "}}",
+    zh_hk="1到N個{{" + "{inner}" + "}}",
+  )
+  _tr_vtype_image = TR.tr("vtype_image",
+    en="Embedded Image",
+    zh_cn="内嵌图片",
+    zh_hk="內嵌圖片",
+  )
+  _tr_vtype_audio = TR.tr("vtype_audio",
+    en="Embedded Audio",
+    zh_cn="内嵌音频",
+    zh_hk="內嵌音頻",
   )
 
   def check_is_extended_arg(self, a) -> preppipe.language.Translatable | None:
@@ -161,10 +198,50 @@ class FrontendCommandDumper:
     raise RuntimeError("Unexpected annotation: "+str(a))
     return None
 
-  def get_type_annotation_str_impl(self, a) -> str:
-    return str(a)
+  def get_type_annotation_str_impl(self, a, enumtr_list : list) -> str:
+    if isinstance(a, types.UnionType):
+      params = [self.get_type_annotation_str_impl(candidate, enumtr_list) for candidate in a.__args__ if candidate is not None]
+      return self._tr_extarg_sep.get().join(params)
+    elif isinstance(a, types.GenericAlias) or isinstance(a, typing._GenericAlias):
+      if a.__origin__ != list:
+        # 我们只支持 list ，不支持像是 dict 等
+        raise RuntimeError('Generic alias for non-list types not supported')
+      if len(a.__args__) != 1:
+        # list[str] 可以， list[int | str] 可以， list[int, str] 不行
+        raise RuntimeError('List type should have exactly one argument specifying the element type (can be union though)')
+      inner = self.get_type_annotation_str_impl(a.__args__[0], enumtr_list)
+      return self._tr_vtype_list.format(inner=inner)
+    if isinstance(a, type):
+      if issubclass(a, preppipe.frontend.commandsemantics.CallExprOperand):
+        return self._tr_vtype_callexpr.get()
+      if issubclass(a, (preppipe.irbase.StringLiteral, str)):
+        return self._tr_vtype_str.get()
+      if issubclass(a, (preppipe.irbase.FloatLiteral, decimal.Decimal, float)):
+        return self._tr_vtype_float.get()
+      if issubclass(a, (preppipe.irbase.IntLiteral, int)):
+        return self._tr_vtype_int.get()
+      if issubclass(a, preppipe.irbase.ImageAssetData):
+        return self._tr_vtype_image.get()
+      if issubclass(a, preppipe.irbase.AudioAssetData):
+        return self._tr_vtype_audio.get()
+      if issubclass(a, enum.Enum):
+        trdict : dict[str, preppipe.language.Translatable] = getattr(a, "_translation_src")
+        options = []
+        for name, enumtr in trdict.items():
+          options.append('"' + '","'.join(enumtr.get_current_candidates()) + '"')
+          enumtr_list.append(enumtr)
+        return '|'.join(options)
+    raise NotImplementedError(str(a))
 
-  def get_type_annotation_as_str(self, a, default) -> tuple[str | None, bool]:
+  def get_default_value_str(self, v) -> str:
+    if isinstance(v, enum.Enum):
+      # 如果是枚举值的话，尝试使用带翻译的名称
+      trdict : dict[str, preppipe.language.Translatable] = getattr(type(v), "_translation_src")
+      enumtr = trdict[v.name]
+      return '"' + enumtr.get() + '"'
+    return str(v)
+
+  def get_type_annotation_as_str(self, a, default, enumtr_list : list) -> tuple[str | None, bool]:
     if a is None:
       return (None, False)
 
@@ -175,7 +252,7 @@ class FrontendCommandDumper:
       trlist = [self.check_is_extended_arg(t) for t in l]
       s = self._tr_extarg_sep.get().join([t.get() for t in trlist if t is not None])
       if default != inspect.Parameter.empty:
-        s = self._tr_optional.get() + s
+        s = self._tr_optional.get() + self._tr_cmd_namesep.get() + s
       return (s, True)
     # 剩下的情况下都不是拓展参数
     # 先排除几个特殊情况
@@ -187,7 +264,14 @@ class FrontendCommandDumper:
              preppipe.irbase.Context):
       return (None, False)
     # 应该不是特殊情况而是正常参数了
-    s = self.get_type_annotation_str_impl(a)
+    s = self.get_type_annotation_str_impl(a, enumtr_list)
+    if default != inspect.Parameter.empty:
+      if default is None:
+        s = '<' + s + self._tr_cmd_paramsep.get() + self._tr_optional.get() + '>'
+      else:
+        s = '<' + s + self._tr_cmd_paramsep.get() + self._tr_default_value.get() + self.get_default_value_str(default) + '>'
+    else:
+      s = '<' + s + '>'
     return (s, False)
 
   _tr_cmd_invocation = TR.tr("cmd_invocation",
@@ -202,8 +286,8 @@ class FrontendCommandDumper:
   )
   _tr_cmd_tr = TR.tr("cmd_tr",
     en="Translation & Aliasing",
-    zh_cn="翻译或别名项",
-    zh_hk="翻譯或別名项",
+    zh_cn="翻译、别名项",
+    zh_hk="翻譯、別名项",
   )
   _tr_cmd_tr_cmdname = TR.tr("cmd_tr_cmdname",
     en="Command Name ({name}): ",
@@ -349,6 +433,7 @@ class FrontendCommandDumper:
           part_name = self._tr_cmd_invocation.get()
           part_ref = cmdsecref + '_cmd'
           start_part(part_name, part_ref)
+          enumtr_list = []
           # 假设命令是 [命令1：参数1，参数2]，我们把 handler_list 中各项的参数都匹配上去
           # 如果命令名有多个名称（有可能），我们将后面的内容全都复制相应遍数
           # 如果命令参数有多个名称（几乎没有），我们用括号把所有备选项括起来
@@ -368,7 +453,7 @@ class FrontendCommandDumper:
                 pname = stringtize_tr(data.param_tr[pname])
               typestr = "<?>"
               if p.annotation is not None:
-                typestr, isextarg = self.get_type_annotation_as_str(p.annotation, p.default)
+                typestr, isextarg = self.get_type_annotation_as_str(p.annotation, p.default, enumtr_list)
                 if typestr is None:
                   # 如果该参数不是由用户提供的，我们在这里跳过这项参数
                   continue
@@ -419,9 +504,12 @@ class FrontendCommandDumper:
             cur_str = self._tr_cmd_tr_cmdname_noentry.get()
           add_paragraph(cur_str)
           # 然后是所有参数
-          if len(used_pnames) > 0:
+          if len(used_pnames) > 0 or len(enumtr_list) > 0:
             add_paragraph(self._tr_cmd_tr_params.get())
-            add_list([data.param_tr[pname] for pname in used_pnames], 0, True)
+            if len(used_pnames) > 0:
+              add_list([data.param_tr[pname] for pname in used_pnames], 0, True)
+            if len(enumtr_list) > 0:
+              add_list(enumtr_list, 0, True)
           # 再然后是额外关键字
           if data.additional_keywords is not None and len(data.additional_keywords) > 0:
             add_paragraph(self._tr_cmd_tr_additional_keywords.get())
