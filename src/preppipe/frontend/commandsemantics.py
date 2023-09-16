@@ -78,6 +78,7 @@ def FrontendParamEnum(TR: TranslationDomain, name : str, alias : dict[str, dict[
     value_dict[vname] = TR.tr(code=name_prefix + '_' + vname, **vdict)
   def decorator_enum(cls):
     assert issubclass(cls, enum.Enum)
+    setattr(cls, "_translation_src", value_dict) # 用来给文档导出代码
     def translate_cb(name : str):
       if not hasattr(cls, "_translation_dict"):
         translation_dict = {}
