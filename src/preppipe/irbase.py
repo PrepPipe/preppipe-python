@@ -2970,7 +2970,7 @@ class TextStyleLiteral(Literal):
     return super().value
 
   @staticmethod
-  def get(value : tuple[tuple[TextAttribute, typing.Any]] | dict[TextAttribute, typing.Any], context : Context) -> TextStyleLiteral:
+  def get(value : tuple[tuple[TextAttribute, typing.Any],...] | dict[TextAttribute, typing.Any], context : Context) -> TextStyleLiteral:
     if isinstance(value, dict):
       value = TextStyleLiteral.get_style_tuple(value)
     assert isinstance(value, tuple)
@@ -3006,7 +3006,7 @@ class TextStyleLiteral(Literal):
     return result
 
   @staticmethod
-  def get_style_tuple(styles : dict[TextAttribute, typing.Any]):
+  def get_style_tuple(styles : dict[TextAttribute, typing.Any]) -> tuple[tuple[TextAttribute, typing.Any],...]:
     stylelist = []
     for attr, v in styles.items():
       # 检查样式的值是否符合要求
