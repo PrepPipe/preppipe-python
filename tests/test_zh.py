@@ -21,12 +21,12 @@ class TestZHDocsRenPyExport(unittest.TestCase):
     basedir = os.path.dirname(os.path.realpath(__file__))
     assetdir = os.path.join(basedir, "assets")
     dirname = os.path.join(basedir, "zh")
+    self.maxDiff = None
     with tempfile.TemporaryDirectory() as project_dir:
       # print("TestZHDocsRenPyExport.test_zh_docs(): export directory at "+ project_dir)
       for file in os.listdir(dirname):
         filebase, ext = os.path.splitext(file)
-        if ext == ".odt":
-          # 找到了个样例
+        def handle_input(input_flag : str):
           # 给每个语言模式都测试一下
           testpath = os.path.join(project_dir, filebase)
           for lang in self.LANGMODE:
@@ -34,7 +34,7 @@ class TestZHDocsRenPyExport(unittest.TestCase):
             args = ["--language", lang,
                     # "-v",
                     "--searchpath", assetdir,
-                    "--odf", os.path.join(dirname, file),
+                    input_flag, os.path.join(dirname, file),
                     "--cmdsyntax", "--vnparse", "--vncodegen",
                     "--vn-blocksorting", "--vn-entryinference", "--vn-longsaysplitting",
                     "--renpy-codegen",
@@ -56,6 +56,13 @@ class TestZHDocsRenPyExport(unittest.TestCase):
                 f.write(strdump)
               expected_content = strdump
             self.assertListEqual(strdump.splitlines(), expected_content.splitlines())
+        if ext == ".odt":
+          # 找到了个样例
+          handle_input("--odf")
+        elif ext == ".docx":
+          if filebase not in ("zh2", "demo"):
+            # 暂时把这两个去掉；docx 和 odt 对匿名图片的默认命名不一样，比较的时候总把这些不一致当作错误
+            handle_input("--docx")
 
 if __name__ == '__main__':
   unittest.main()
