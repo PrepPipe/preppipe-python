@@ -1758,7 +1758,7 @@ class Operation(IRObject, IListNode):
     # for debugging
     writer = IRWriter(self.context, True, None, None)
     dump = writer.write_op(self)
-    _view_content_helper(dump, self.name)
+    _view_content_helper(dump, self.name, type(self).__name__)
 
   def dump(self) -> None:
     # for debugging
@@ -1985,7 +1985,7 @@ class Block(Value, IListNode):
     # for debugging
     writer = IRWriter(self.context, True, None, None)
     dump = writer.write_block(self)
-    _view_content_helper(dump, self.name)
+    _view_content_helper(dump, self.name, type(self).__name__)
 
   def dump(self) -> None:
     writer = IRWriter(self.context, False, None, None)
@@ -2070,7 +2070,7 @@ class Region(NameDictNode):
       return
     writer = IRWriter(ctx, True, None, None)
     dump = writer.write_region(self)
-    _view_content_helper(dump, self.name)
+    _view_content_helper(dump, self.name, type(self).__name__)
 
   def dump(self) -> None:
     # for debugging
@@ -3875,13 +3875,13 @@ for (asset_name in asset_dict) {
     self._walk_block(b, 0)
     return self._output_body.getvalue()
 
-def _view_content_helper(dump : bytes, name : str):
+def _view_content_helper(dump : bytes, name : str, typename : str):
   name_portion = 'anon'
   if len(name) > 0:
     sanitized_name = get_sanitized_filename(name)
     if len(sanitized_name) > 0:
       name_portion = sanitized_name
-  file = tempfile.NamedTemporaryFile('w+b', suffix='_viewdump.html', prefix='preppipe_' + name_portion + '_', delete=False)
+  file = tempfile.NamedTemporaryFile('w+b', suffix='_viewdump.html', prefix='preppipe_' + typename + '_' + name_portion + '_', delete=False)
   file.write(dump)
   file.close()
   path = os.path.abspath(file.name)
