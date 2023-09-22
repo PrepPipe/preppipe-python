@@ -8,6 +8,7 @@ from .pipeline import pipeline_main
 # （以后应该搞个自定义的检查，代码里如果有加了注册的修饰符但没在这里包含的话就提示报错）
 
 from .frontend import opendocument
+from .frontend import docx
 from .frontend import commandsyntaxparser
 from .renpy import passes as renpy_passes
 from .frontend.vnmodel import passes as vnparser_passes
