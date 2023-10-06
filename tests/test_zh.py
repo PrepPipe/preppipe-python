@@ -66,6 +66,8 @@ class TestZHDocsRenPyExport(unittest.TestCase):
             handle_input("--docx")
         elif ext == ".txt" and filebase.split('_')[-1] in ("utf8", "gb2312"):
           handle_input("--txt")
+        elif ext == ".md":
+          handle_input("--md")
 
 if __name__ == '__main__':
   unittest.main()
