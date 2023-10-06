@@ -638,12 +638,6 @@ class _DocxTextCoalescer:
 
 @FrontendDecl('docx', input_decl=IODecl('OfficeOpenXML files', match_suffix=('docx',), nargs='+'), output_decl=IMDocumentOp)
 class ReadDOCX(TransformBase):
-  _ctx : Context
-
-  def __init__(self, _ctx: Context) -> None:
-    super().__init__(_ctx)
-    self._ctx = _ctx
-
   def run(self) -> IMDocumentOp | typing.List[IMDocumentOp]:
     if len(self.inputs) == 1:
       return _DOCXParseContext.parse_docx(self._ctx, self.inputs[0])

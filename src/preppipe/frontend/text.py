@@ -28,12 +28,6 @@ def _parsetext(ctx : Context, path : str) -> IMDocumentOp:
 
 @FrontendDecl('txt', input_decl=IODecl('Text files', match_suffix=('txt',), nargs='+'), output_decl=IMDocumentOp)
 class ReadText(TransformBase):
-  _ctx : Context
-
-  def __init__(self, _ctx: Context) -> None:
-    super().__init__(_ctx)
-    self._ctx = _ctx
-
   def run(self) -> IMDocumentOp | typing.List[IMDocumentOp]:
     if len(self.inputs) == 1:
       return _parsetext(self._ctx, self.inputs[0])
