@@ -47,7 +47,8 @@ class TestZHDocsRenPyExport(unittest.TestCase):
             # 再取已保存的内容
             # 如果我们还没保存内容，那么这是第一次运行，只记录
             expected_content = ""
-            expected_path = os.path.join(dirname, filebase + '_' + lang +".txt")
+            filerootbase = filebase.split('_')[0]
+            expected_path = os.path.join(dirname, filerootbase + '_' + lang +".txt")
             if os.path.exists(expected_path):
               with open(expected_path, "r", encoding="utf-8") as f:
                 expected_content = f.read()
@@ -63,6 +64,8 @@ class TestZHDocsRenPyExport(unittest.TestCase):
           if filebase not in ("zh2", "demo"):
             # 暂时把这两个去掉；docx 和 odt 对匿名图片的默认命名不一样，比较的时候总把这些不一致当作错误
             handle_input("--docx")
+        elif ext == ".txt" and filebase.split('_')[-1] in ("utf8", "gb2312"):
+          handle_input("--txt")
 
 if __name__ == '__main__':
   unittest.main()
