@@ -281,12 +281,13 @@ class Translatable:
     if t := locale.getlocale():
       # t 应该是类似 ('en_US', 'UTF-8') (Ubuntu) 或者 ('English_Canada', '936') (Windows) 这样的东西
       # 我们只要前一个值
-      # 。。如果能稳定按照文档的说明那就更好了
+      # 。。如果能稳定按照文档的说明那就更好了，不过(None, None)也出现过了。。
       try:
         lang = t[0]
-        if not isinstance(lang, str):
-          raise RuntimeError("Language from locale is not a string: " + str(lang) + " (locale: " + str(t) + ')')
-        Translatable._language_update_preferred_langs([lang])
+        if lang is not None:
+          if not isinstance(lang, str):
+            raise RuntimeError("Language from locale is not a string: " + str(lang) + " (locale: " + str(t) + ')')
+          Translatable._language_update_preferred_langs([lang])
       except:
         traceback.print_exc()
 
