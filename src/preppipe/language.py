@@ -25,6 +25,7 @@ import os
 import locale
 import re
 import collections
+import traceback
 
 class TranslationDomain:
   ALL_DOMAINS : typing.ClassVar[dict[str, TranslationDomain]] = {}
@@ -280,9 +281,14 @@ class Translatable:
     if t := locale.getlocale():
       # t 应该是类似 ('en_US', 'UTF-8') (Ubuntu) 或者 ('English_Canada', '936') (Windows) 这样的东西
       # 我们只要前一个值
-      lang = t[0]
-      assert isinstance(lang, str)
-      Translatable._language_update_preferred_langs([lang])
+      # 。。如果能稳定按照文档的说明那就更好了
+      try:
+        lang = t[0]
+        if not isinstance(lang, str):
+          raise RuntimeError("Language from locale is not a string: " + str(lang) + " (locale: " + str(t) + ')')
+        Translatable._language_update_preferred_langs([lang])
+      except:
+        traceback.print_exc()
 
   @staticmethod
   def _language_handle_arguments(parsed_args : argparse.Namespace, verbose : bool):
