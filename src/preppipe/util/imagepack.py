@@ -20,16 +20,22 @@ class ImagePack:
   class MaskInfo:
     mask : PIL.Image.Image
     basename : str # 保存时使用的名称（不含后缀）
+    applyon : tuple[int,...] # 应该将该 mask 用于这里列出来的图层（空的话就是所有 base 图层都要）
     mask_color : Color
 
     # 如果支持 projective transform，以下是四个顶点（左上，右上，左下，右下）在 mask 中的坐标
     # https://stackoverflow.com/questions/14177744/how-does-perspective-transformation-work-in-pil
     projective_vertices : tuple[tuple[int,int],tuple[int,int],tuple[int,int],tuple[int,int]] | None
 
-    def __init__(self, mask : PIL.Image.Image, mask_color : Color, projective_vertices : tuple[tuple[int,int],tuple[int,int],tuple[int,int],tuple[int,int]] | None = None) -> None:
+    def __init__(self, mask : PIL.Image.Image, mask_color : Color, projective_vertices : tuple[tuple[int,int],tuple[int,int],tuple[int,int],tuple[int,int]] | None = None, basename : str = '', applyon : typing.Iterable[int] | None = None) -> None:
       self.mask = mask
       self.mask_color = mask_color
       self.projective_vertices = projective_vertices
+      self.basename = basename
+      if applyon is not None:
+        self.applyon = tuple(applyon)
+      else:
+        self.applyon = ()
 
   class LayerInfo:
     # 保存时每个图层的信息
@@ -38,23 +44,27 @@ class ImagePack:
     offset_x : int
     offset_y : int
 
+    # 如果是 True 的话，该层视为可被 mask 的部分
+    # （重构原图时，当 mask 与该图层有重叠时，我们在添加结果时需将 mask 参数赋予该图层）
+    base : bool
     # 如果是 True 的话，该层可以不受限制地单独被选取
-    unconstrained : bool
+    toggle : bool
 
-    def __init__(self, patch : PIL.Image.Image, offset_x : int = 0, offset_y : int = 0, unconstrained : bool = False, basename : str = '') -> None:
+    def __init__(self, patch : PIL.Image.Image, offset_x : int = 0, offset_y : int = 0, base : bool = False, toggle : bool = False, basename : str = '') -> None:
       self.patch = patch
       self.basename = basename
       self.offset_x = offset_x
       self.offset_y = offset_y
-      self.unconstrained = unconstrained
+      self.base = base
+      self.toggle = toggle
 
   class TempLayerInfo(LayerInfo):
     # 该类仅用于在生成 ImagePack 时使用，给 patch 附带 np.ndarray 类型的值
     # 保存后读取时不会使用此类
     patch_ndarray : np.ndarray # 应该是一个有 RGBA 通道, uint8 类型的矩阵 (shape=(height, width, 4))
 
-    def __init__(self, patch_ndarray : np.ndarray, offset_x : int = 0, offset_y : int = 0, unconstrained : bool = False) -> None:
-      super().__init__(patch=PIL.Image.fromarray(patch_ndarray, 'RGBA'), offset_x=offset_x, offset_y=offset_y, unconstrained=unconstrained)
+    def __init__(self, patch_ndarray : np.ndarray, offset_x : int = 0, offset_y : int = 0, base : bool = False, toggle : bool = False) -> None:
+      super().__init__(patch=PIL.Image.fromarray(patch_ndarray, 'RGBA'), offset_x=offset_x, offset_y=offset_y, base=base, toggle=toggle)
       self.patch_ndarray = patch_ndarray
 
     # 需要以下函数来把对象当作键值
@@ -73,11 +83,9 @@ class ImagePack:
   width : int
   height : int
 
-  # base 的下标预留为 0
-  # 在 base 之下的图层的标号为负，放在 bg_layers 中，-1 -> [0], -2 -> [1], ...
-  # 在 base 之上的图层标号为正，放在 layers 中，1 -> [0], 2 -> [1], ...
+  # base 之下的图层的标号为负，放在 bg_layers 中，-1 -> [0], -2 -> [1], ...
+  # base 以及 base 之上的图层标号为正，放在 layers 中，0 -> [0], 1 -> [1], ...
 
-  base : PIL.Image.Image | None # 如果图片内容未加载则此项为 None
   masks : list[MaskInfo]
   layers : list[LayerInfo]
   bg_layers : list[LayerInfo]
@@ -91,7 +99,6 @@ class ImagePack:
   def __init__(self, width : int, height : int) -> None:
     self.width = width
     self.height = height
-    self.base = None
     self.masks = []
     self.layers = []
     self.bg_layers = []
@@ -113,12 +120,23 @@ class ImagePack:
     image.save(buffer, format="PNG")
     z.writestr(path, buffer.getvalue())
 
+  def is_imagedata_loaded(self) -> bool:
+    return len(self.layers) > 0
+
   def write_zip(self, path : str):
-    if self.base is None:
+    if not self.is_imagedata_loaded():
       raise PPInternalError("writing ImagePack zip without data")
     z = zipfile.ZipFile(path, "w", zipfile.ZIP_STORED)
-    self._write_image_to_zip(self.base, "base.png", z)
     jsonout = {}
+    used_filenames = set()
+    used_filenames.add("manifest.json")
+    def check_filename(filename : str):
+      nonlocal used_filenames
+      if filename in used_filenames:
+        raise PPInternalError("Duplicated name:" + filename)
+      used_filenames.add(filename)
+
+    jsonout["size"] = (self.width, self.height)
     # masks
     if len(self.masks) > 0:
       json_masks = []
@@ -127,9 +145,12 @@ class ImagePack:
         if len(basename) == 0:
           basename = 'm' + str(len(json_masks))
         filename = basename + ".png"
+        check_filename(filename)
         jsonobj : dict[str, typing.Any] = {"mask" : basename, "maskcolor" : m.mask_color.get_string()}
         if m.projective_vertices is not None:
           jsonobj["projective"] = m.projective_vertices
+        if len(m.applyon) > 0:
+          jsonobj["applyon"] = m.applyon
         json_masks.append(jsonobj)
         self._write_image_to_zip(m.mask, filename, z)
       jsonout["masks"] = json_masks
@@ -139,11 +160,17 @@ class ImagePack:
       for l in layers:
         basename = l.basename
         if len(basename) == 0:
-          basename = prefix + str(len(result)+1)
+          basename = prefix + str(len(result))
         filename = basename + ".png"
+        check_filename(filename)
         jsonobj : dict[str, typing.Any] = {"x":l.offset_x, "y":l.offset_y, "p": basename}
-        if l.unconstrained:
-          jsonobj["unconstrained"] = True
+        flags = []
+        if l.base:
+          flags.append("base")
+        if l.toggle:
+          flags.append("toggle")
+        if len(flags) > 0:
+          jsonobj["flags"] = flags
         result.append(jsonobj)
         self._write_image_to_zip(l.patch, filename, z)
       return result
@@ -151,24 +178,82 @@ class ImagePack:
     if len(self.bg_layers) > 0:
       jsonout["bglayers"] = collect_layer_group("bgl", self.bg_layers)
     jsonout["stacks"] = self.stacks
-    manifest = json.dumps(jsonout, ensure_ascii=False,indent=None)
+    manifest = json.dumps(jsonout, ensure_ascii=False,indent=None,separators=(',', ':'))
     z.writestr("manifest.json", manifest)
     z.close()
 
+  @staticmethod
+  def create_from_zip(path : str):
+    pack = ImagePack(0, 0)
+    pack.read_zip(path)
+    return pack
+
+  def read_zip(self, path : str):
+    if len(self.layers) > 0 or len(self.bg_layers) > 0 or len(self.masks) > 0:
+      raise PPInternalError("Cannot reload when data is already loaded")
+
+    z = zipfile.ZipFile(path, "r")
+
+    # Read manifest.json
+    manifest_str = z.read("manifest.json")
+    manifest = json.loads(manifest_str)
+    if not isinstance(manifest, dict):
+      raise PPInternalError("Invalid manifest.json")
+
+    # Extract size information
+    width, height = manifest["size"]
+    if self.width == 0 and self.height == 0:
+      self.width = width
+      self.height = height
+    else:
+      if width != self.width or height != self.height:
+        raise PPInternalError("ImagePack size mismatch: " + str((width, height)) + " != " + str((self.width, self.height)))
+
+    # Read masks
+    if "masks" in manifest:
+      masks = []
+      for mask_info in manifest["masks"]:
+        mask_filename = mask_info["mask"] + ".png"
+        mask_color = Color.get(mask_info["maskcolor"])
+        projective_vertices = mask_info.get("projective", None)
+        applyon = mask_info.get("applyon", [])
+        mask_img = PIL.Image.open(z.open(mask_filename))
+        masks.append(ImagePack.MaskInfo(mask=mask_img, mask_color=mask_color, projective_vertices=projective_vertices, basename=mask_info["mask"], applyon=applyon))
+      self.masks = masks
+
+    # Read layers
+    def read_layer_group(prefix, group_name):
+      layers = []
+      if group_name in manifest:
+        for layer_info in manifest[group_name]:
+          layer_filename = layer_info["p"] + ".png"
+          offset_x = layer_info["x"]
+          offset_y = layer_info["y"]
+          base = "base" in layer_info.get("flags", [])
+          toggle = "toggle" in layer_info.get("flags", [])
+          layer_img = PIL.Image.open(z.open(layer_filename))
+          layers.append(ImagePack.LayerInfo(patch=layer_img, offset_x=offset_x, offset_y=offset_y, base=base, toggle=toggle, basename=layer_info["p"]))
+      return layers
+
+    self.layers = read_layer_group("l", "layers")
+    self.bg_layers = read_layer_group("bgl", "bglayers")
+
+    # Read stacks
+    self.stacks = manifest.get("stacks", [])
+
   def get_composed_image(self, index : int) -> PIL.Image.Image:
-    if self.base is None:
+    if not self.is_imagedata_loaded():
       raise PPInternalError("Cannot compose images without loading the data")
     layer_indices = self.stacks[index].copy()
     if len(layer_indices) == 0:
       raise PPInternalError("Empty composition? some thing is probably wrong")
-    if layer_indices[0] != 0:
-      raise PPNotImplementedError("TODO composition with background layers")
+    if len(self.masks) > 0:
+      raise PPNotImplementedError("Masking not implemented yet")
 
-    result = self.base.copy()
-    layer_indices = layer_indices[1:]
+    result = PIL.Image.new("RGBA", (self.width, self.height))
 
     for li in layer_indices:
-      layer = self.layers[li-1]
+      layer = self.layers[li] if li >= 0 else self.bg_layers[-1-li]
       extended_patch = PIL.Image.new("RGBA", (self.width, self.height))
       extended_patch.paste(layer.patch, (layer.offset_x, layer.offset_y))
       result = PIL.Image.alpha_composite(result, extended_patch)
@@ -286,7 +371,7 @@ class ImagePack:
     height = base_image.height
 
     result_pack = ImagePack(width, height)
-    result_pack.base = base_image
+    result_pack.layers.append(ImagePack.LayerInfo(base_image, base=True))
 
     layer_dict : dict[ImagePack.LayerInfo, int] = {}
     layers = result_pack.layers
@@ -298,7 +383,7 @@ class ImagePack:
       index = layer_dict.get(l)
       if index is not None:
         return index
-      index = len(layers)+1 # 0 是给 base 预留的
+      index = len(layers)
       layers.append(l)
       layer_dict[l] = index
       return index
@@ -380,10 +465,12 @@ def _test_main():
   printstatus("image pack created")
   pack.write_zip("pack.zip")
   printstatus("zip written")
+  recpack = ImagePack.create_from_zip("pack.zip")
+  printstatus("zip loaded")
   index = 0
   pathlib.Path("recovered").mkdir(parents=True, exist_ok=True)
   for path, original in zip(image_paths, images):
-    recovered = pack.get_composed_image(index)
+    recovered = recpack.get_composed_image(index)
     index += 1
     basename = os.path.basename(path)
     with open("recovered/" + basename, "wb") as f:
