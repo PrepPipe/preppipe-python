@@ -165,6 +165,12 @@ class Color:
       return (self.r, self.g, self.b)
     return (self.r, self.g, self.b, self.a)
 
+  def to_tuple_rgb(self):
+    return (self.r, self.g, self.b)
+
+  def to_float_tuple_rgb(self):
+    return (self.r / 255.0, self.g / 255.0, self.b / 255.0)
+
 class TextAttribute(enum.Enum):
   # we only define TextAttribute without TextFragment because VNModel and InputModel permits different text fields
   # text attributes without associated data

@@ -7,10 +7,13 @@ import io
 import pathlib
 import sys
 import time
+import colorsys
 
 import PIL.Image
 import numpy as np
 import scipy as sp
+import matplotlib
+import cv2
 
 from ..exceptions import *
 from ..commontypes import Color
@@ -20,6 +23,8 @@ class ImagePack:
   class MaskInfo:
     mask : PIL.Image.Image
     basename : str # 保存时使用的名称（不含后缀）
+    offset_x : int
+    offset_y : int
     applyon : tuple[int,...] # 应该将该 mask 用于这里列出来的图层（空的话就是所有 base 图层都要）
     mask_color : Color
 
@@ -27,9 +32,11 @@ class ImagePack:
     # https://stackoverflow.com/questions/14177744/how-does-perspective-transformation-work-in-pil
     projective_vertices : tuple[tuple[int,int],tuple[int,int],tuple[int,int],tuple[int,int]] | None
 
-    def __init__(self, mask : PIL.Image.Image, mask_color : Color, projective_vertices : tuple[tuple[int,int],tuple[int,int],tuple[int,int],tuple[int,int]] | None = None, basename : str = '', applyon : typing.Iterable[int] | None = None) -> None:
+    def __init__(self, mask : PIL.Image.Image, mask_color : Color, offset_x : int = 0, offset_y : int = 0, projective_vertices : tuple[tuple[int,int],tuple[int,int],tuple[int,int],tuple[int,int]] | None = None, basename : str = '', applyon : typing.Iterable[int] | None = None) -> None:
       self.mask = mask
       self.mask_color = mask_color
+      self.offset_x = offset_x
+      self.offset_y = offset_y
       self.projective_vertices = projective_vertices
       self.basename = basename
       if applyon is not None:
@@ -78,6 +85,12 @@ class ImagePack:
 
     def __hash__(self) -> int:
       return hash((self.offset_x, self.offset_y, tuple(np.average(self.patch_ndarray, (0,1)))))
+
+  # 当 imagepack 初始化完成后，里面的所有内容都被视作 immutable, 所有的修改操作都得换新值
+  # mask 是一些可以作用于 base （基底图）上的修饰
+  # 正常生成最终图片时我们不使用 mask
+  # 当我们需要使用 mask 时，我们先 fork_applying_mask(), 使用修改后的 base 创建一个新的 imagepack (不再有mask)，然后再生成图片
+  # fork_applying_mask() 时，所有 layer 中的图都直接引用，不会复制
 
   # 全局值
   width : int
@@ -146,7 +159,7 @@ class ImagePack:
           basename = 'm' + str(len(json_masks))
         filename = basename + ".png"
         check_filename(filename)
-        jsonobj : dict[str, typing.Any] = {"mask" : basename, "maskcolor" : m.mask_color.get_string()}
+        jsonobj : dict[str, typing.Any] = {"mask" : basename, "x":m.offset_x, "y":m.offset_y, "maskcolor" : m.mask_color.get_string()}
         if m.projective_vertices is not None:
           jsonobj["projective"] = m.projective_vertices
         if len(m.applyon) > 0:
@@ -215,10 +228,12 @@ class ImagePack:
       for mask_info in manifest["masks"]:
         mask_filename = mask_info["mask"] + ".png"
         mask_color = Color.get(mask_info["maskcolor"])
+        offset_x = mask_info["x"]
+        offset_y = mask_info["y"]
         projective_vertices = mask_info.get("projective", None)
         applyon = mask_info.get("applyon", [])
         mask_img = PIL.Image.open(z.open(mask_filename))
-        masks.append(ImagePack.MaskInfo(mask=mask_img, mask_color=mask_color, projective_vertices=projective_vertices, basename=mask_info["mask"], applyon=applyon))
+        masks.append(ImagePack.MaskInfo(mask=mask_img, mask_color=mask_color, offset_x=offset_x, offset_y=offset_y, projective_vertices=projective_vertices, basename=mask_info["mask"], applyon=applyon))
       self.masks = masks
 
     # Read layers
@@ -247,8 +262,6 @@ class ImagePack:
     layer_indices = self.stacks[index].copy()
     if len(layer_indices) == 0:
       raise PPInternalError("Empty composition? some thing is probably wrong")
-    if len(self.masks) > 0:
-      raise PPNotImplementedError("Masking not implemented yet")
 
     result = PIL.Image.new("RGBA", (self.width, self.height))
 
@@ -258,6 +271,174 @@ class ImagePack:
       extended_patch.paste(layer.patch, (layer.offset_x, layer.offset_y))
       result = PIL.Image.alpha_composite(result, extended_patch)
     return result
+
+  def add_mask(self, maskimg : PIL.Image.Image, maskcolor : Color, projective_vertices : tuple[tuple[int,int],tuple[int,int],tuple[int,int],tuple[int,int]] | None = None, basename : str = '', applyon : typing.Iterable[int] | None = None):
+    bbox = maskimg.getbbox()
+    if bbox is None:
+      raise PPInternalError("Empty mask?")
+    offset_x = bbox[0]
+    offset_y = bbox[1]
+    maskimg = maskimg.crop(bbox).convert("P", colors=2)
+    mask = ImagePack.MaskInfo(mask=maskimg, mask_color=maskcolor, offset_x=offset_x, offset_y=offset_y, projective_vertices=projective_vertices, basename=basename, applyon=applyon)
+    self.masks.append(mask)
+
+  @staticmethod
+  def rgb_to_hsv(rgb):
+    r, g, b = rgb / 255.0
+    h, s, v = colorsys.rgb_to_hsv(r, g, b)
+    return h * 360, s, v
+
+  @staticmethod
+  def hsv_to_rgb(hsv):
+    h, s, v = hsv
+    r, g, b = colorsys.hsv_to_rgb(h / 360, s, v)
+    return int(r * 255), int(g * 255), int(b * 255)
+
+  @staticmethod
+  def ndarray_hsv_to_rgb(hsv : np.ndarray) -> np.ndarray:
+    #return np.apply_along_axis(ImagePack.hsv_to_rgb, 1, hsv)
+    return (matplotlib.colors.hsv_to_rgb(hsv) * 255).astype(np.uint8)
+
+  @staticmethod
+  def ndarray_rgb_to_hsv(rgb : np.ndarray) -> np.ndarray:
+    #return np.apply_along_axis(ImagePack.rgb_to_hsv, 1, rgb)
+    return matplotlib.colors.rgb_to_hsv(rgb.astype(np.float32)/255.0)
+
+  @staticmethod
+  def change_color_hsv_pillow(base_data : np.ndarray, mask_data : np.ndarray, base_color : Color, new_color : Color | np.ndarray) -> np.ndarray:
+    # base_data 应该是 RGBA 模式, mask_data 应该是 L （灰度）模式
+    # 检查输入
+    base_shape = base_data.shape
+    mask_shape = mask_data.shape
+    assert len(mask_shape) == 2 and len(base_shape) == 3 and base_shape[0] == mask_shape[0] and base_shape[1] == mask_shape[1] and base_shape[2] == 4
+
+    base_hsv = ImagePack.ndarray_rgb_to_hsv(np.array(base_color.to_tuple_rgb()))
+
+    # Find the indices where the mask is non-zero (where the region is)
+    non_zero_indices = np.where((mask_data > 0) & (base_data[:,:,3] > 0))
+    printstatus("non_zero_indices done")
+
+    base_alpha = base_data[non_zero_indices][:,3:4]
+    base_forchange = base_data[non_zero_indices][:,:3]
+
+    # Convert the RGB values in the region to HSV
+    original_hsv = ImagePack.ndarray_rgb_to_hsv(base_forchange)
+
+    # step 1: compute the base color vec and get the delta
+    compensate_hsv = np.copy(original_hsv)
+    compensate_hsv[:, 0] = base_hsv[0]
+    base_rgb = ImagePack.ndarray_hsv_to_rgb(compensate_hsv)
+    delta_rgb = base_forchange.astype(np.int16) - base_rgb.astype(np.int16)
+    printstatus("base_decomp done")
+
+    # step 2: compute the pure new color
+    hsv_values = np.copy(original_hsv)
+    if isinstance(new_color, Color):
+      new_hsv = ImagePack.ndarray_rgb_to_hsv(np.array(new_color.to_tuple_rgb()))
+      saturation_adjust = new_hsv[1] - base_hsv[1]
+      value_adjust = new_hsv[2] - base_hsv[2]
+
+      hsv_values[:, 0] = new_hsv[0]
+      hsv_values[:, 1] = np.clip(hsv_values[:, 1] + saturation_adjust, 0, 1)
+      hsv_values[:, 2] = np.clip(hsv_values[:, 2] + value_adjust, 0, 1)
+    else:
+      # new_color 应该是一个和原图等大小的 np.ndarray
+      # 唯一的区别是 new_color 可以没有 alpha (实际上有了也会被忽略)
+      newcolor_shape = new_color.shape
+      assert len(newcolor_shape) == 3 and newcolor_shape[0] == base_shape[0] and newcolor_shape[1] == base_shape[1]
+      newcolor_masked = new_color[non_zero_indices][:,:3]
+      new_hsv = ImagePack.ndarray_rgb_to_hsv(newcolor_masked)
+      saturation_adjust = new_hsv[:,1] - base_hsv[1]
+      value_adjust = new_hsv[:,2] - base_hsv[2]
+
+      hsv_values[:, 0] = new_hsv[:, 0]
+      hsv_values[:, 1] = np.clip(hsv_values[:, 1] + saturation_adjust, 0, 1)
+      hsv_values[:, 2] = np.clip(hsv_values[:, 2] + value_adjust, 0, 1)
+    printstatus("hsv_values done")
+
+    # Convert the modified HSV values back to RGB
+    new_rgb = ImagePack.ndarray_hsv_to_rgb(hsv_values)
+    new_rgb = np.clip(new_rgb.astype(np.int16) + delta_rgb, 0, 255).astype(np.uint8)
+
+    # Combine RGB values with the original alpha channel
+    nd = np.hstack((new_rgb,base_alpha))
+    base_data[non_zero_indices] = nd
+
+    return base_data
+
+  def fork_applying_mask(self, args : list[Color | PIL.Image.Image | None]):
+    # 创建一个新的 imagepack, 将 mask 所影响的部分替换掉
+    if not self.is_imagedata_loaded():
+      raise PPInternalError("Cannot fork_applying_mask() without data")
+    if len(args) != len(self.masks):
+      raise PPInternalError("Mask arguments not match: " + str(len(self.masks)) + " expected, " + str(len(args)) + " provided")
+    resultpack = ImagePack(self.width, self.height)
+
+    # 除了 mask 和 layers, 其他都照搬
+    resultpack.stacks = self.stacks
+    resultpack.bg_layers = self.bg_layers
+    resultpack.packname = self.packname
+    resultpack.stacknames = self.stacknames
+
+    # 开始搬运 layers
+    for layerindex in range(len(self.layers)): # pylint: disable=consider-using-enumerate
+      l = self.layers[layerindex]
+      if not l.base:
+        resultpack.layers.append(l)
+        continue
+      cur_base = None
+      printstatus("base apply start")
+      for m, arg in zip(self.masks, args):
+        # 如果当前 mask 不需要改动则跳过
+        if arg is None:
+          continue
+        # 如果当前 mask 并不适用于该层则跳过
+        if len(m.applyon) > 0 and layerindex not in m.applyon:
+          continue
+        # 如果当前 mask 不支持图像输入但给了图像则报错
+        if m.projective_vertices is None and not isinstance(arg, Color):
+          raise PPInternalError("Mask does not support image input")
+
+        # 当前 mask 需要加在图层上
+        # 将 base 转化为合适的形式
+        if cur_base is None:
+          # 把图弄全
+          cur_base = np.zeros((self.height, self.width, 4), dtype=np.uint8)
+          cur_base[l.offset_y:l.offset_y+l.patch.height, l.offset_x:l.offset_x+l.patch.width] = np.array(l.patch)
+          printstatus("base prep done")
+
+        # 在开始前，如果输入是图像且需要进行转换，则执行操作
+        if isinstance(arg, Color):
+          converted_arg = arg
+        else:
+          # 之前应该检查过了
+          assert m.projective_vertices is not None
+          converted_arg = np.full((self.height, self.width, 3), m.mask_color.to_float_tuple_rgb(), dtype=np.float32)
+          srcpoints = np.matrix([[0, 0], [arg.width-1, 0], [0, arg.height-1], [arg.width-1, arg.height-1]], dtype=np.float32)
+          dstpoints = np.matrix(m.projective_vertices, dtype=np.float32)
+          projective_matrix = cv2.getPerspectiveTransform(srcpoints, dstpoints)
+          converted_arg = cv2.warpPerspective(src=np.array(arg.convert("RGB")).astype(np.float32)/255.0, M=projective_matrix, dsize=(self.width, self.height), dst=converted_arg, flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_TRANSPARENT)
+          converted_arg = (converted_arg * 255.0).astype(np.uint8)
+
+        # 转换当前的 mask
+        mask_data = PIL.Image.new("L", (self.width, self.height), color=0)
+        mask_data.paste(m.mask.convert("L"), (m.offset_x, m.offset_y))
+
+        cur_base = ImagePack.change_color_hsv_pillow(cur_base, np.array(mask_data), m.mask_color, converted_arg)
+        printstatus("mask applied")
+      if cur_base is None:
+        # 该图层可以原封不动地放到结果里
+        resultpack.layers.append(l)
+      else:
+        newbase = PIL.Image.fromarray(cur_base, "RGBA")
+        bbox = newbase.getbbox()
+        if bbox is None:
+          raise PPInternalError("Empty base after applying mask?")
+        offset_x, offset_y, xmax, ymax = bbox
+        newlayer = ImagePack.LayerInfo(newbase.crop(bbox), offset_x=offset_x, offset_y=offset_y, base=True, toggle=l.toggle, basename=l.basename)
+        resultpack.layers.append(newlayer)
+        printstatus("crop done")
+    return resultpack
 
   @staticmethod
   def inverse_pasting(base : PIL.Image.Image, result : PIL.Image.Image) -> np.ndarray | None:
@@ -462,11 +643,14 @@ def _test_main():
   images = [PIL.Image.open(path) for path in image_paths]
 
   pack = ImagePack.create_image_pack_entry(images, base_image=images[0])
+  pack.add_mask(PIL.Image.open("../mask.png").convert('L'), Color.get((179, 178, 190)), projective_vertices=((1743,1381), (2215,1453), (1753,1682), (2227,1896)))
   printstatus("image pack created")
   pack.write_zip("pack.zip")
   printstatus("zip written")
   recpack = ImagePack.create_from_zip("pack.zip")
   printstatus("zip loaded")
+  recpack = recpack.fork_applying_mask([PIL.Image.open("../testaddon.jpg")])
+  printstatus("pack forked")
   index = 0
   pathlib.Path("recovered").mkdir(parents=True, exist_ok=True)
   for path, original in zip(image_paths, images):
