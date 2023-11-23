@@ -155,15 +155,50 @@ class ImagePack:
     z.writestr("manifest.json", manifest)
     z.close()
 
+  def get_composed_image(self, index : int) -> PIL.Image.Image:
+    if self.base is None:
+      raise PPInternalError("Cannot compose images without loading the data")
+    layer_indices = self.stacks[index].copy()
+    if len(layer_indices) == 0:
+      raise PPInternalError("Empty composition? some thing is probably wrong")
+    if layer_indices[0] != 0:
+      raise PPNotImplementedError("TODO composition with background layers")
+
+    result = self.base.copy()
+    layer_indices = layer_indices[1:]
+
+    for li in layer_indices:
+      layer = self.layers[li-1]
+      extended_patch = PIL.Image.new("RGBA", (self.width, self.height))
+      extended_patch.paste(layer.patch, (layer.offset_x, layer.offset_y))
+      result = PIL.Image.alpha_composite(result, extended_patch)
+    return result
+
+  @staticmethod
+  def inverse_pasting(base : PIL.Image.Image, result : PIL.Image.Image) -> np.ndarray | None:
+    # 假设图片将以 paste 的方式进行叠层，计算使用的 patch
+    base_array = np.array(base)
+    result_array = np.array(result)
+
+    # Create an empty patch image with transparent background
+    patch_image = np.zeros_like(base_array)
+
+    # Find pixels where the values are different
+    diff_mask = np.any(base_array != result_array, axis=-1)
+    if not np.any(diff_mask):
+      return None
+
+    patch_image[diff_mask] = result_array[diff_mask]
+    return patch_image
+
   @staticmethod
   def inverse_alpha_composite(base : PIL.Image.Image, result : PIL.Image.Image) -> np.ndarray | None:
-    # TODO use the following formula instead of plain copy:
-    # say a_b, a_r, a_p are the alpha of base, result, and patch,
-    # and C_b, C_r, C_a are the color channel values,
-    # for values in [0, 1] we should have:
-    # a_p = (a_r - a_b)/(1 - a_b) if a_b < 1 and a_r > a_b else 1
-    # C_p = (C_r*a_r - C_b*a_b*(1 - a_p))/a_p if a_p != 1 else C_r
-    # (need to convert to [0, 255] scale)
+    # 假设图片将以 alpha blending 的方式叠层，计算使用的 patch
+    # 基于维基百科中的算式：
+    # 假设 a_b, a_r, a_p 是 base, result, 和 patch 的 alpha,
+    # C_b, C_r, C_a 是颜色值，则：(所有值都在 [0-1] 区间)
+    # a_r = a_p + a_b(1-a_p)
+    # C_r*a_r = C_p*a_p + C_b*a_b*(1-a_p)
     base_array = np.array(base)
     result_array = np.array(result)
 
@@ -196,26 +231,32 @@ class ImagePack:
 
     case_1_indices = np.nonzero((rraw[:,3:4] == 255) & (braw[:,3:4] == 255))[0]
     if len(case_1_indices) > 0:
+      # 基本算法是 a_p = (CrAr - CbAb) / (Cp - CbAb), 取最小的 a_p
+      # 如果 CrAr >  CbAb, Cp 取1, a_p = (CrAr - CbAb) / (1.0 - CbAb)
+      # 如果 CrAr <= CbAb, Cp 取0, a_p = (CrAr - CbAb) / (0.0 - CbAb)
       CrAr = np.multiply(C_r[case_1_indices], a_r[case_1_indices])
       CbAb = np.multiply(C_b[case_1_indices], a_b[case_1_indices])
-      aptmp = np.divide((CrAr - CbAb), (1.0 - CbAb))
+      dividend = CrAr - CbAb
+      divisor = np.where(dividend > 0, (1.0 - CbAb), (0.0 - CbAb))
+      aptmp = np.divide(dividend, divisor)
       aptmp = np.nan_to_num(aptmp, copy=False)
       aptmp[aptmp < 0.0] = 0.0
       aptmp[aptmp > 1.0] = 1.0
-      aptmp = np.amin(aptmp, axis=1)
+      aptmp = np.amax(aptmp, axis=1)
       a_p[case_1_indices] = np.reshape(aptmp, (-1,1))
 
-    #a_r_minus_a_b = a_r-a_b
-    #one_minus_a_b = 1.0 - a_b
-    #a_p = np.where((a_r_minus_a_b > 0)&(one_minus_a_b > 0), a_r_minus_a_b/one_minus_a_b, 1.0)
+    ap_uint8 = (a_p * 255).astype(np.uint8)
+    a_p = ap_uint8.astype(np.float32) / 255.0
     C_p = np.zeros_like(C_r)
-    case_2_indices = np.nonzero(a_p[:,0] == 1.0)
+    case_2_indices = np.nonzero(ap_uint8[:,0] == 255)
     if len(case_2_indices) > 0:
       C_p[case_2_indices] = C_r[case_2_indices]
 
-    case_1_indices = np.nonzero((a_p[:,0] < 1.0) & (a_p[:,0] > 0.0))
+    case_1_indices = np.nonzero((ap_uint8[:,0] < 255) & (ap_uint8[:,0] > 0))
     if len(case_1_indices) > 0:
       C_p[case_1_indices] = (C_r[case_1_indices]*a_r[case_1_indices] - C_b[case_1_indices]*(a_b[case_1_indices]*(1.0-a_p[case_1_indices])))/a_p[case_1_indices]
+      C_p[C_p < 0.0] = 0.0
+      C_p[C_p > 1.0] = 1.0
 
     #C_p = np.nan_to_num(np.where(a_p < 1.0, (C_r*a_r - C_b*(a_b*(1.0-a_p)))/a_p, C_r))
     results = np.hstack([C_p, a_p]) * 255.0
@@ -224,6 +265,10 @@ class ImagePack:
 
     # Return the patch image
     return patch_image
+
+  @staticmethod
+  def infer_base_image(images : list[PIL.Image.Image]) -> PIL.Image.Image:
+    raise PPNotImplementedError()
 
   @staticmethod
   def create_image_pack_entry(images : list[PIL.Image.Image], base_image : PIL.Image.Image | None = None):
@@ -235,7 +280,7 @@ class ImagePack:
     if len(images) == 0:
       raise PPInternalError()
     if base_image is None:
-      raise PPInternalError()
+      base_image = ImagePack.infer_base_image(images)
 
     width = base_image.width
     height = base_image.height
@@ -262,8 +307,8 @@ class ImagePack:
     merge_distance = max(5, int(min(width,height)/100))
     tmp_y, tmp_x = np.ogrid[-merge_distance: merge_distance + 1, -merge_distance: merge_distance + 1]
     structure_matrix = tmp_x**2 + tmp_y**2 <= merge_distance**2
-    kernel_size = int(2 * merge_distance) + 1
-    kernel = np.ones((kernel_size, kernel_size), dtype=np.uint8)
+    # kernel_size = int(2 * merge_distance) + 1
+    # kernel = np.ones((kernel_size, kernel_size), dtype=np.uint8)
 
     for img in images:
       printstatus("handling image " + str(len(result_pack.stacks)))
@@ -335,6 +380,16 @@ def _test_main():
   printstatus("image pack created")
   pack.write_zip("pack.zip")
   printstatus("zip written")
+  index = 0
+  pathlib.Path("recovered").mkdir(parents=True, exist_ok=True)
+  for path, original in zip(image_paths, images):
+    recovered = pack.get_composed_image(index)
+    index += 1
+    basename = os.path.basename(path)
+    with open("recovered/" + basename, "wb") as f:
+      recovered.save(f, format="PNG")
+  printstatus("recovered written")
+
 
 if __name__ == "__main__":
   _test_main()
