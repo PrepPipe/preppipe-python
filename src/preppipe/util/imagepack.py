@@ -403,7 +403,10 @@ class ImagePack:
         # 将 base 转化为合适的形式
         if cur_base is None:
           # 把图弄全
-          patch_array = np.array(l.patch)
+          if l.patch.mode in ("RGBA", "RGB"):
+            patch_array = np.array(l.patch)
+          else:
+            patch_array = np.array(l.patch.convert("RGBA"))
           cur_base = np.zeros((self.height, self.width, patch_array.shape[2]), dtype=np.uint8)
           cur_base[l.offset_y:l.offset_y+l.patch.height, l.offset_x:l.offset_x+l.patch.width] = patch_array
           ImagePack.printstatus("base prep done")
@@ -772,6 +775,7 @@ class ImagePack:
       if stacks is None:
         for i in range(len(result.layers)):
           result.stacks.append([i])
+          named_stack_entries.append(result.layers[i].basename)
       else:
         for stack_name, stack_list in stacks.items():
           stack = []
