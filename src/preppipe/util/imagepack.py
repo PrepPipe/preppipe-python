@@ -14,12 +14,15 @@ import numpy as np
 import scipy as sp
 import matplotlib
 import cv2
+import yaml
 
 from ..exceptions import *
 from ..commontypes import Color
 from ..language import *
 
 class ImagePack:
+  TR_imagepack = TranslationDomain("imagepack")
+
   class MaskInfo:
     mask : PIL.Image.Image
     basename : str # 保存时使用的名称（不含后缀）
@@ -283,18 +286,6 @@ class ImagePack:
     self.masks.append(mask)
 
   @staticmethod
-  def rgb_to_hsv(rgb):
-    r, g, b = rgb / 255.0
-    h, s, v = colorsys.rgb_to_hsv(r, g, b)
-    return h * 360, s, v
-
-  @staticmethod
-  def hsv_to_rgb(hsv):
-    h, s, v = hsv
-    r, g, b = colorsys.hsv_to_rgb(h / 360, s, v)
-    return int(r * 255), int(g * 255), int(b * 255)
-
-  @staticmethod
   def ndarray_hsv_to_rgb(hsv : np.ndarray) -> np.ndarray:
     #return np.apply_along_axis(ImagePack.hsv_to_rgb, 1, hsv)
     return (matplotlib.colors.hsv_to_rgb(hsv) * 255).astype(np.uint8)
@@ -306,19 +297,24 @@ class ImagePack:
 
   @staticmethod
   def change_color_hsv_pillow(base_data : np.ndarray, mask_data : np.ndarray, base_color : Color, new_color : Color | np.ndarray) -> np.ndarray:
-    # base_data 应该是 RGBA 模式, mask_data 应该是 L （灰度）模式
+    # base_data 应该是 RGB[A] 模式, mask_data 应该是 L （灰度）或者 1 (黑白)模式
     # 检查输入
     base_shape = base_data.shape
     mask_shape = mask_data.shape
-    assert len(mask_shape) == 2 and len(base_shape) == 3 and base_shape[0] == mask_shape[0] and base_shape[1] == mask_shape[1] and base_shape[2] == 4
+    assert len(mask_shape) == 2 and len(base_shape) == 3 and base_shape[0] == mask_shape[0] and base_shape[1] == mask_shape[1] and base_shape[2] in (3, 4)
 
     base_hsv = ImagePack.ndarray_rgb_to_hsv(np.array(base_color.to_tuple_rgb()))
 
     # Find the indices where the mask is non-zero (where the region is)
-    non_zero_indices = np.where((mask_data > 0) & (base_data[:,:,3] > 0))
-    printstatus("non_zero_indices done")
+    if base_shape[2] == 4:
+      non_zero_indices = np.where((mask_data > 0) & (base_data[:,:,3] > 0))
+    else:
+      non_zero_indices = np.where(mask_data > 0)
+    ImagePack.printstatus("non_zero_indices done")
 
-    base_alpha = base_data[non_zero_indices][:,3:4]
+    base_alpha = None
+    if base_shape[2] == 4:
+      base_alpha = base_data[non_zero_indices][:,3:4]
     base_forchange = base_data[non_zero_indices][:,:3]
 
     # Convert the RGB values in the region to HSV
@@ -329,7 +325,7 @@ class ImagePack:
     compensate_hsv[:, 0] = base_hsv[0]
     base_rgb = ImagePack.ndarray_hsv_to_rgb(compensate_hsv)
     delta_rgb = base_forchange.astype(np.int16) - base_rgb.astype(np.int16)
-    printstatus("base_decomp done")
+    ImagePack.printstatus("base_decomp done")
 
     # step 2: compute the pure new color
     hsv_values = np.copy(original_hsv)
@@ -354,15 +350,19 @@ class ImagePack:
       hsv_values[:, 0] = new_hsv[:, 0]
       hsv_values[:, 1] = np.clip(hsv_values[:, 1] + saturation_adjust, 0, 1)
       hsv_values[:, 2] = np.clip(hsv_values[:, 2] + value_adjust, 0, 1)
-    printstatus("hsv_values done")
+    ImagePack.printstatus("hsv_values done")
 
     # Convert the modified HSV values back to RGB
     new_rgb = ImagePack.ndarray_hsv_to_rgb(hsv_values)
     new_rgb = np.clip(new_rgb.astype(np.int16) + delta_rgb, 0, 255).astype(np.uint8)
 
     # Combine RGB values with the original alpha channel
-    nd = np.hstack((new_rgb,base_alpha))
-    base_data[non_zero_indices] = nd
+    if base_shape[2] == 4:
+      assert base_alpha is not None
+      nd = np.hstack((new_rgb,base_alpha))
+      base_data[non_zero_indices] = nd
+    else:
+      base_data[non_zero_indices] = new_rgb
 
     return base_data
 
@@ -387,7 +387,7 @@ class ImagePack:
         resultpack.layers.append(l)
         continue
       cur_base = None
-      printstatus("base apply start")
+      ImagePack.printstatus("base apply start")
       for m, arg in zip(self.masks, args):
         # 如果当前 mask 不需要改动则跳过
         if arg is None:
@@ -403,9 +403,10 @@ class ImagePack:
         # 将 base 转化为合适的形式
         if cur_base is None:
           # 把图弄全
-          cur_base = np.zeros((self.height, self.width, 4), dtype=np.uint8)
-          cur_base[l.offset_y:l.offset_y+l.patch.height, l.offset_x:l.offset_x+l.patch.width] = np.array(l.patch)
-          printstatus("base prep done")
+          patch_array = np.array(l.patch)
+          cur_base = np.zeros((self.height, self.width, patch_array.shape[2]), dtype=np.uint8)
+          cur_base[l.offset_y:l.offset_y+l.patch.height, l.offset_x:l.offset_x+l.patch.width] = patch_array
+          ImagePack.printstatus("base prep done")
 
         # 在开始前，如果输入是图像且需要进行转换，则执行操作
         if isinstance(arg, Color):
@@ -425,19 +426,23 @@ class ImagePack:
         mask_data.paste(m.mask.convert("L"), (m.offset_x, m.offset_y))
 
         cur_base = ImagePack.change_color_hsv_pillow(cur_base, np.array(mask_data), m.mask_color, converted_arg)
-        printstatus("mask applied")
+        ImagePack.printstatus("mask applied")
       if cur_base is None:
         # 该图层可以原封不动地放到结果里
         resultpack.layers.append(l)
       else:
-        newbase = PIL.Image.fromarray(cur_base, "RGBA")
+        if cur_base.shape[2] == 3:
+          mode = "RGB"
+        else:
+          mode = "RGBA"
+        newbase = PIL.Image.fromarray(cur_base, mode)
         bbox = newbase.getbbox()
         if bbox is None:
           raise PPInternalError("Empty base after applying mask?")
         offset_x, offset_y, xmax, ymax = bbox
         newlayer = ImagePack.LayerInfo(newbase.crop(bbox), offset_x=offset_x, offset_y=offset_y, base=True, toggle=l.toggle, basename=l.basename)
         resultpack.layers.append(newlayer)
-        printstatus("crop done")
+        ImagePack.printstatus("crop done")
     return resultpack
 
   @staticmethod
@@ -577,14 +582,14 @@ class ImagePack:
     # kernel = np.ones((kernel_size, kernel_size), dtype=np.uint8)
 
     for img in images:
-      printstatus("handling image " + str(len(result_pack.stacks)))
+      ImagePack.printstatus("handling image " + str(len(result_pack.stacks)))
       if img.width != width:
         raise PPInternalError()
       if img.height != height:
         raise PPInternalError()
 
       patch_image = ImagePack.inverse_alpha_composite(base_image, img)
-      printstatus("invcomp done")
+      ImagePack.printstatus("invcomp done")
       if patch_image is None:
         # 该图就是基底图
         result_pack.stacks.append([0])
@@ -606,11 +611,11 @@ class ImagePack:
       merged_nonzero_regions = sp.ndimage.binary_dilation(nonzero_regions, structure=structure_matrix)
       #merged_regions = sp.ndimage.convolve(nonzero_regions, kernel, mode='constant', cval=0)
       #merged_nonzero_regions = np.logical_or(nonzero_regions, merged_regions)
-      printstatus("merged zones")
+      ImagePack.printstatus("merged zones")
 
       # Label connected components
       labeled_regions, num_labels = sp.ndimage.label(merged_nonzero_regions)
-      printstatus("labeling done")
+      ImagePack.printstatus("labeling done")
 
       stack = [0]
       for label_id in range(1, num_labels + 1):
@@ -630,12 +635,311 @@ class ImagePack:
       result_pack.stacks.append(stack)
     return result_pack
 
-starttime = time.time()
-def printstatus(s : str):
-  curtime = time.time()
-  timestr = "[{:.6f}] ".format(curtime - starttime)
-  print(timestr + s)
+  TR_imagepack_yamlparse_layers = TR_imagepack.tr("layers",
+    en="layers",
+    zh_cn="图层",
+    zh_hk="圖層",
+  )
+  TR_imagepack_yamlparse_masks = TR_imagepack.tr("masks",
+    en="masks",
+    zh_cn="选区",
+    zh_hk="選區",
+  )
+  TR_imagepack_yamlparse_stacks = TR_imagepack.tr("stacks",
+    en="stacks",
+    zh_cn="组合",
+    zh_hk="組合",
+  )
+  TR_imagepack_yamlparse_flags = TR_imagepack.tr("flags",
+    en="flags",
+    zh_cn="特殊标记",
+    zh_hk="特殊標記",
+  )
+  TR_imagepack_yamlparse_base = TR_imagepack.tr("base",
+    en="base",
+    zh_cn="基底",
+    zh_hk="基底",
+  )
+  TR_imagepack_yamlparse_toggle = TR_imagepack.tr("toggle",
+    en="toggle",
+    zh_cn="可选",
+    zh_hk="可選",
+  )
+  TR_imagepack_yamlparse_maskcolor = TR_imagepack.tr("maskcolor",
+    en="basecolor",
+    zh_cn="基础颜色",
+    zh_hk="基礎顏色",
+  )
+  TR_imagepack_yamlparse_applyon = TR_imagepack.tr("applyon",
+    en="applyon",
+    zh_cn="适用于",
+    zh_hk="適用於",
+  )
+  TR_imagepack_yamlparse_projective = TR_imagepack.tr("projective",
+    en="imagecoords",
+    zh_cn="图像坐标",
+    zh_hk="圖像坐標",
+  )
+  TR_imagepack_yamlparse_topleft = TR_imagepack.tr("topleft",
+    en="topleft",
+    zh_cn="左上",
+    zh_hk="左上",
+  )
+  TR_imagepack_yamlparse_topright = TR_imagepack.tr("topright",
+    en="topright",
+    zh_cn="右上",
+    zh_hk="右上",
+  )
+  TR_imagepack_yamlparse_bottomleft = TR_imagepack.tr("bottomleft",
+    en="bottomleft",
+    zh_cn="左下",
+    zh_hk="左下",
+  )
+  TR_imagepack_yamlparse_bottomright = TR_imagepack.tr("bottomright",
+    en="bottomright",
+    zh_cn="右下",
+    zh_hk="右下",
+  )
 
+  @staticmethod
+  def build_image_pack_from_yaml(yamlpath : str, named_stack_entries : list[str]):
+    basepath = os.path.dirname(os.path.abspath(yamlpath))
+    with open(yamlpath, "r", encoding="utf-8") as f:
+      yamlobj = yaml.safe_load(f)
+      result = ImagePack(0, 0)
+      layers = None
+      masks = None
+      stacks = None
+      for k in yamlobj.keys():
+        if k in ImagePack.TR_imagepack_yamlparse_layers.get_all_candidates():
+          layers = yamlobj[k]
+        elif k in ImagePack.TR_imagepack_yamlparse_masks.get_all_candidates():
+          masks = yamlobj[k]
+        elif k in ImagePack.TR_imagepack_yamlparse_stacks.get_all_candidates():
+          stacks = yamlobj[k]
+        else:
+          raise PPInternalError("Unknown key: " + k + "(supported keys: "
+                                + str(ImagePack.TR_imagepack_yamlparse_layers.get_all_candidates()) + ", "
+                                + str(ImagePack.TR_imagepack_yamlparse_masks.get_all_candidates()) + ", "
+                                + str(ImagePack.TR_imagepack_yamlparse_stacks.get_all_candidates()) + ")")
+      if layers is None:
+        raise PPInternalError("No layers in " + yamlpath)
+      layer_dict : dict[str, int] = {}
+      for imgpathbase, d in layers.items():
+        imgpath = imgpathbase + ".png"
+        layerindex = len(result.layers)
+        layer_dict[imgpathbase] = layerindex
+        flag_base = False
+        flag_toggle = False
+        def add_flag(flag : str):
+          nonlocal flag_base
+          nonlocal flag_toggle
+          if not isinstance(flag, str):
+            raise PPInternalError("Invalid flag in " + yamlpath + ": " + str(flag))
+          if flag in ImagePack.TR_imagepack_yamlparse_base.get_all_candidates():
+            flag_base = True
+          elif flag in ImagePack.TR_imagepack_yamlparse_toggle.get_all_candidates():
+            flag_toggle = True
+          else:
+            raise PPInternalError("Unknown flag: " + flag + "(supported flags: "
+                                  + str(ImagePack.TR_imagepack_yamlparse_base.get_all_candidates()) + ", "
+                                  + str(ImagePack.TR_imagepack_yamlparse_toggle.get_all_candidates()) + ")")
+        if isinstance(d, dict):
+          for key, value in d.items():
+            if key in ImagePack.TR_imagepack_yamlparse_flags.get_all_candidates():
+              if isinstance(value, str):
+                add_flag(value)
+              elif isinstance(value, list):
+                for flag in value:
+                  add_flag(flag)
+        if not os.path.exists(os.path.join(basepath, imgpath)):
+          raise PPInternalError("Image file not found: " + imgpath)
+        img = PIL.Image.open(os.path.join(basepath, imgpath))
+        if result.width == 0 and result.height == 0:
+          result.width = img.width
+          result.height = img.height
+        if img.width != result.width or img.height != result.height:
+          raise PPInternalError("Image size mismatch: " + str((img.width, img.height)) + " != " + str((result.width, result.height)))
+        # 尝试缩小图片本体，如果有大片空白的话只截取有内容的部分
+        offset_x = 0
+        offset_y = 0
+        bbox = img.getbbox()
+        if bbox is not None:
+          offset_x, offset_y, xmax, ymax = bbox
+          img = img.crop(bbox)
+        newlayer = ImagePack.LayerInfo(img, offset_x=offset_x, offset_y=offset_y, base=flag_base, toggle=flag_toggle, basename=imgpathbase)
+        result.layers.append(newlayer)
+      if stacks is None:
+        for i in range(len(result.layers)):
+          result.stacks.append([i])
+      else:
+        for stack_name, stack_list in stacks.items():
+          stack = []
+          if stack_list is None:
+            stack.append(layer_dict[stack_name])
+          elif isinstance(stack_list, list):
+            stack = [layer_dict[s] for s in stack_list]
+          result.stacks.append(stack)
+          named_stack_entries.append(stack_name)
+
+      if masks is not None:
+        for imgpathbase, maskinfo in masks.items():
+          applyon : list[int] | None = None
+          maskcolor : Color | None = None
+          projective_vertices_result : tuple[tuple[int,int],tuple[int,int],tuple[int,int],tuple[int,int]] | None = None
+          if not isinstance(maskinfo, dict):
+            raise PPInternalError("Invalid mask in " + yamlpath + ": expecting a dict but got " + str(maskinfo))
+          for key, value in maskinfo.items():
+            if key in ImagePack.TR_imagepack_yamlparse_maskcolor.get_all_candidates():
+              maskcolor = Color.get(value)
+            elif key in ImagePack.TR_imagepack_yamlparse_applyon.get_all_candidates():
+              applyon = []
+              if isinstance(value, str):
+                applyon.append(layer_dict[value])
+              elif isinstance(value, list):
+                for entry in value:
+                  applyon.append(layer_dict[entry])
+              else:
+                raise PPInternalError("Invalid applyon in " + yamlpath + ": expecting a list or str but got " + str(value))
+              if len(applyon) == 0:
+                applyon = None
+            elif key in ImagePack.TR_imagepack_yamlparse_projective.get_all_candidates():
+              if not isinstance(value, dict):
+                raise PPInternalError("Invalid projective in " + yamlpath + ": expecting a dict but got " + str(value))
+              topleft : tuple[int, int] | None = None
+              topright : tuple[int, int] | None = None
+              bottomleft : tuple[int, int] | None = None
+              bottomright : tuple[int, int] | None = None
+              def read_2int_tuple(v) -> tuple[int, int]:
+                if not isinstance(v, list) or len(v) != 2:
+                  raise PPInternalError("Invalid projective vertex in " + yamlpath + ": expecting a list of 2 but got " + str(v))
+                x, y = v
+                if not isinstance(x, int) or not isinstance(y, int):
+                  raise PPInternalError("Invalid projective vertex in " + yamlpath + ": expecting a list of 2 int but got " + str(v))
+                return (x, y)
+              for k, v in value.items():
+                if k in ImagePack.TR_imagepack_yamlparse_topleft.get_all_candidates():
+                  topleft = read_2int_tuple(v)
+                elif k in ImagePack.TR_imagepack_yamlparse_topright.get_all_candidates():
+                  topright = read_2int_tuple(v)
+                elif k in ImagePack.TR_imagepack_yamlparse_bottomleft.get_all_candidates():
+                  bottomleft = read_2int_tuple(v)
+                elif k in ImagePack.TR_imagepack_yamlparse_bottomright.get_all_candidates():
+                  bottomright = read_2int_tuple(v)
+                else:
+                  raise PPInternalError("Invalid projective in " + yamlpath + ": unknown key " + k + "(supported keys: "
+                                        + str(ImagePack.TR_imagepack_yamlparse_topleft.get_all_candidates()) + ", "
+                                        + str(ImagePack.TR_imagepack_yamlparse_topright.get_all_candidates()) + ", "
+                                        + str(ImagePack.TR_imagepack_yamlparse_bottomleft.get_all_candidates()) + ", "
+                                        + str(ImagePack.TR_imagepack_yamlparse_bottomright.get_all_candidates()) + ")")
+              if topleft is None or topright is None or bottomleft is None or bottomright is None:
+                raise PPInternalError("Invalid projective in " + yamlpath + ": missing values")
+              projective_vertices_result = (topleft, topright, bottomleft, bottomright)
+            else:
+              raise PPInternalError("Unknown key: " + key + "(supported keys: "
+                                    + str(ImagePack.TR_imagepack_yamlparse_maskcolor.get_all_candidates()) + ", "
+                                    + str(ImagePack.TR_imagepack_yamlparse_applyon.get_all_candidates()) + ", "
+                                    + str(ImagePack.TR_imagepack_yamlparse_projective.get_all_candidates()) + ")")
+          if maskcolor is None:
+            raise PPInternalError("Invalid mask in " + yamlpath + ": missing maskcolor")
+          maskimgpath = os.path.join(basepath, imgpathbase + ".png")
+          maskimg = PIL.Image.open(maskimgpath).convert("1", dither=None)
+          if maskimg.width != result.width or maskimg.height != result.height:
+            raise PPInternalError("Mask size mismatch: " + str((maskimg.width, maskimg.height)) + " != " + str((result.width, result.height)))
+          offset_x = 0
+          offset_y = 0
+          bbox = maskimg.getbbox()
+          if bbox is not None:
+            offset_x, offset_y, xmax, ymax = bbox
+            maskimg = maskimg.crop(bbox)
+          newmask = ImagePack.MaskInfo(mask=maskimg, mask_color=maskcolor, offset_x=offset_x, offset_y=offset_y, projective_vertices=projective_vertices_result, basename=imgpathbase, applyon=applyon)
+          result.masks.append(newmask)
+      return result
+
+  @staticmethod
+  def tool_main(args : list[str] | None = None):
+    # 创建一个有以下参数的 argument parser: [--debug] [--create <yml> | --load <zip>] [--save <zip>] [--fork [args]] [--export <dir>]
+    Translatable._init_lang_list()
+    parser = argparse.ArgumentParser(description="ImagePack tool")
+    Translatable._language_install_arguments(parser) # pylint: disable=protected-access
+    parser.add_argument("--debug", action="store_true", help="Enable debug mode")
+    parser.add_argument("--create", metavar="<yml>", help="Create a new image pack from a yaml file")
+    parser.add_argument("--load", metavar="<zip>", help="Load an existing image pack from a zip file")
+    parser.add_argument("--save", metavar="<zip>", help="Save the image pack to a zip file")
+    parser.add_argument("--fork", nargs="*", metavar="[args]", help="Fork the image pack with the given arguments")
+    parser.add_argument("--export", metavar="<dir>", help="Export the image pack to a directory")
+    if args is None:
+      args = sys.argv[1:]
+    parsed_args = parser.parse_args(args)
+
+    if parsed_args.debug:
+      ImagePack._debug = True
+    Translatable._language_handle_arguments(parsed_args, ImagePack._debug) # pylint: disable=protected-access
+
+    if parsed_args.create is None and parsed_args.load is None:
+      raise PPInternalError("No input specified")
+    if parsed_args.create is not None and parsed_args.load is not None:
+      raise PPInternalError("Cannot specify both --create and --load")
+
+    ImagePack.printstatus("start pipeline")
+
+    current_pack = None
+    named_stack_entries : list[str] = []
+    if parsed_args.create is not None:
+      ImagePack.printstatus("executing --create")
+      # 创建一个新的 imagepack
+      # 从 yaml 中读取
+      current_pack = ImagePack.build_image_pack_from_yaml(parsed_args.create, named_stack_entries)
+    elif parsed_args.load is not None:
+      # 从 zip 中读取
+      ImagePack.printstatus("executing --load")
+      # TODO
+      raise PPNotImplementedError()
+
+    if parsed_args.save is not None:
+      # 保存到 zip 中
+      ImagePack.printstatus("executing --save")
+      if current_pack is None:
+        raise PPInternalError("Cannot save without input")
+      current_pack.write_zip(parsed_args.save)
+
+    if parsed_args.fork is not None:
+      # 创建一个新的 imagepack, 将 mask 所影响的部分替换掉
+      ImagePack.printstatus("executing --fork")
+      if current_pack is None:
+        raise PPInternalError("Cannot fork without input")
+      if len(parsed_args.fork) != len(current_pack.masks):
+        raise PPInternalError("Mask arguments not match: " + str(len(current_pack.masks)) + " expected, " + str(len(parsed_args.fork)) + " provided")
+      processed_args = []
+      for rawarg in parsed_args.fork:
+        if rawarg == "None":
+          processed_args.append(None)
+        elif rawarg.startswith("#"):
+          processed_args.append(Color.get(rawarg))
+        else:
+          processed_args.append(PIL.Image.open(rawarg))
+      current_pack = current_pack.fork_applying_mask(processed_args)
+
+    if parsed_args.export is not None:
+      ImagePack.printstatus("executing --export")
+      if current_pack is None:
+        raise PPInternalError("Cannot export without input")
+      pathlib.Path(parsed_args.export).mkdir(parents=True, exist_ok=True)
+      for i in range(len(current_pack.stacks)):
+        outputname = named_stack_entries[i] + '.png'
+        img = current_pack.get_composed_image(i)
+        img.save(os.path.join(parsed_args.export, outputname), format="PNG")
+
+  _starttime = time.time()
+  _debug = False
+
+  @staticmethod
+  def printstatus(s : str):
+    if not ImagePack._debug:
+      return
+    curtime = time.time()
+    timestr = "[{:.6f}] ".format(curtime - ImagePack._starttime)
+    print(timestr + s)
 
 def _test_main():
   srcdir = pathlib.Path(sys.argv[1])
@@ -644,13 +948,13 @@ def _test_main():
 
   pack = ImagePack.create_image_pack_entry(images, base_image=images[0])
   pack.add_mask(PIL.Image.open("../mask.png").convert('L'), Color.get((179, 178, 190)), projective_vertices=((1743,1381), (2215,1453), (1753,1682), (2227,1896)))
-  printstatus("image pack created")
+  ImagePack.printstatus("image pack created")
   pack.write_zip("pack.zip")
-  printstatus("zip written")
+  ImagePack.printstatus("zip written")
   recpack = ImagePack.create_from_zip("pack.zip")
-  printstatus("zip loaded")
+  ImagePack.printstatus("zip loaded")
   recpack = recpack.fork_applying_mask([PIL.Image.open("../testaddon.jpg")])
-  printstatus("pack forked")
+  ImagePack.printstatus("pack forked")
   index = 0
   pathlib.Path("recovered").mkdir(parents=True, exist_ok=True)
   for path, original in zip(image_paths, images):
@@ -659,9 +963,9 @@ def _test_main():
     basename = os.path.basename(path)
     with open("recovered/" + basename, "wb") as f:
       recovered.save(f, format="PNG")
-  printstatus("recovered written")
+  ImagePack.printstatus("recovered written")
 
 
 if __name__ == "__main__":
-  _test_main()
+  ImagePack.tool_main()
 
