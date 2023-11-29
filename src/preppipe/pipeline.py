@@ -15,6 +15,7 @@ from .util.audit import *
 from ._version import __version__
 from .language import TranslationDomain, Translatable
 from .exceptions import *
+from .tooldecl import _registered_tools
 
 # 这里提供一个类似 clang cc1 的界面，我们在这里支持详细的命令行设定
 # driver 以后就提供一个更简单易用的界面
@@ -854,9 +855,24 @@ class _PipelineManager:
                 modulename = plugin_modulebase + pluginname
                 _PipelineManager._load_module(modulename, filepath)
 
+def _check_is_using_tool() -> type | None:
+  # 如果环境变量 PREPPIPE_TOOL 有给出：
+  # (1) 如果该名称有类注册了，那么返回该类
+  # (2) 如果该名称没有类注册，那么报错
+  # 如果环境变量 PREPPIPE_TOOL 没有给出，直接返回 None
+  if toolname := os.environ.get("PREPPIPE_TOOL"):
+    if len(toolname) > 0:
+      if toolname in _registered_tools:
+        return _registered_tools[toolname]
+      else:
+        raise RuntimeError("Tool name " + toolname + " not registered")
+
 def pipeline_main(args : typing.List[str] | None = None):
   # 保持一个统一性，这个全局函数作为对外的接口
   # 以后类型拆分或是重命名都不会改变这个函数的名称和输入
+  if tool_cls := _check_is_using_tool():
+    tool_cls.tool_main(args)
+    return
   _PipelineManager.pipeline_main(args)
 
 if __name__ == "__main__":

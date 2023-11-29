@@ -19,7 +19,9 @@ import yaml
 from ..exceptions import *
 from ..commontypes import Color
 from ..language import *
+from ..tooldecl import ToolClassDecl
 
+@ToolClassDecl("imagepack")
 class ImagePack:
   TR_imagepack = TranslationDomain("imagepack")
 
