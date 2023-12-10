@@ -26,7 +26,7 @@ class ImagePack:
   TR_imagepack = TranslationDomain("imagepack")
 
   class MaskInfo:
-    mask : PIL.Image.Image
+    mask : PIL.Image.Image | None # 如果为 None 则表示该 mask 覆盖所有适用的基底图层
     basename : str # 保存时使用的名称（不含后缀）
     offset_x : int
     offset_y : int
@@ -37,7 +37,7 @@ class ImagePack:
     # https://stackoverflow.com/questions/14177744/how-does-perspective-transformation-work-in-pil
     projective_vertices : tuple[tuple[int,int],tuple[int,int],tuple[int,int],tuple[int,int]] | None
 
-    def __init__(self, mask : PIL.Image.Image, mask_color : Color, offset_x : int = 0, offset_y : int = 0, projective_vertices : tuple[tuple[int,int],tuple[int,int],tuple[int,int],tuple[int,int]] | None = None, basename : str = '', applyon : typing.Iterable[int] | None = None) -> None:
+    def __init__(self, mask : PIL.Image.Image | None, mask_color : Color, offset_x : int = 0, offset_y : int = 0, projective_vertices : tuple[tuple[int,int],tuple[int,int],tuple[int,int],tuple[int,int]] | None = None, basename : str = '', applyon : typing.Iterable[int] | None = None) -> None:
       self.mask = mask
       self.mask_color = mask_color
       self.offset_x = offset_x
@@ -101,12 +101,8 @@ class ImagePack:
   width : int
   height : int
 
-  # base 之下的图层的标号为负，放在 bg_layers 中，-1 -> [0], -2 -> [1], ...
-  # base 以及 base 之上的图层标号为正，放在 layers 中，0 -> [0], 1 -> [1], ...
-
   masks : list[MaskInfo]
   layers : list[LayerInfo]
-  bg_layers : list[LayerInfo]
   stacks : list[list[int]]
 
   # 与 Translatable 对接的按名存储部分
@@ -119,7 +115,6 @@ class ImagePack:
     self.height = height
     self.masks = []
     self.layers = []
-    self.bg_layers = []
     self.stacks = []
     self.packname = None
     self.masknames = []
@@ -160,17 +155,22 @@ class ImagePack:
       json_masks = []
       for m in self.masks:
         basename = m.basename
-        if len(basename) == 0:
-          basename = 'm' + str(len(json_masks))
-        filename = basename + ".png"
-        check_filename(filename)
+        if basename != "None":
+          if len(basename) == 0:
+            basename = 'm' + str(len(json_masks))
+          filename = basename + ".png"
+          check_filename(filename)
+          if m.mask is None:
+            raise PPInternalError("Mask is None but basename is not None")
+          self._write_image_to_zip(m.mask, filename, z)
+        else:
+          basename = None
         jsonobj : dict[str, typing.Any] = {"mask" : basename, "x":m.offset_x, "y":m.offset_y, "maskcolor" : m.mask_color.get_string()}
         if m.projective_vertices is not None:
           jsonobj["projective"] = m.projective_vertices
         if len(m.applyon) > 0:
           jsonobj["applyon"] = m.applyon
         json_masks.append(jsonobj)
-        self._write_image_to_zip(m.mask, filename, z)
       jsonout["masks"] = json_masks
     # layers
     def collect_layer_group(prefix : str, layers : list[ImagePack.LayerInfo]):
@@ -193,8 +193,6 @@ class ImagePack:
         self._write_image_to_zip(l.patch, filename, z)
       return result
     jsonout["layers"] = collect_layer_group("l", self.layers)
-    if len(self.bg_layers) > 0:
-      jsonout["bglayers"] = collect_layer_group("bgl", self.bg_layers)
     jsonout["stacks"] = self.stacks
     manifest = json.dumps(jsonout, ensure_ascii=False,indent=None,separators=(',', ':'))
     z.writestr("manifest.json", manifest)
@@ -207,7 +205,7 @@ class ImagePack:
     return pack
 
   def read_zip(self, path : str):
-    if len(self.layers) > 0 or len(self.bg_layers) > 0 or len(self.masks) > 0:
+    if len(self.layers) > 0 or len(self.masks) > 0:
       raise PPInternalError("Cannot reload when data is already loaded")
 
     z = zipfile.ZipFile(path, "r")
@@ -231,13 +229,17 @@ class ImagePack:
     if "masks" in manifest:
       masks = []
       for mask_info in manifest["masks"]:
-        mask_filename = mask_info["mask"] + ".png"
+        mask_basename = mask_info["mask"]
+        mask_img = None
+        if mask_basename is not None:
+          mask_filename = mask_info["mask"] + ".png"
+          mask_img = PIL.Image.open(z.open(mask_filename))
         mask_color = Color.get(mask_info["maskcolor"])
         offset_x = mask_info["x"]
         offset_y = mask_info["y"]
         projective_vertices = mask_info.get("projective", None)
         applyon = mask_info.get("applyon", [])
-        mask_img = PIL.Image.open(z.open(mask_filename))
+
         masks.append(ImagePack.MaskInfo(mask=mask_img, mask_color=mask_color, offset_x=offset_x, offset_y=offset_y, projective_vertices=projective_vertices, basename=mask_info["mask"], applyon=applyon))
       self.masks = masks
 
@@ -256,7 +258,6 @@ class ImagePack:
       return layers
 
     self.layers = read_layer_group("l", "layers")
-    self.bg_layers = read_layer_group("bgl", "bglayers")
 
     # Read stacks
     self.stacks = manifest.get("stacks", [])
@@ -271,7 +272,7 @@ class ImagePack:
     result = PIL.Image.new("RGBA", (self.width, self.height))
 
     for li in layer_indices:
-      layer = self.layers[li] if li >= 0 else self.bg_layers[-1-li]
+      layer = self.layers[li]
       extended_patch = PIL.Image.new("RGBA", (self.width, self.height))
       extended_patch.paste(layer.patch, (layer.offset_x, layer.offset_y))
       result = PIL.Image.alpha_composite(result, extended_patch)
@@ -298,20 +299,28 @@ class ImagePack:
     return matplotlib.colors.rgb_to_hsv(rgb.astype(np.float32)/255.0)
 
   @staticmethod
-  def change_color_hsv_pillow(base_data : np.ndarray, mask_data : np.ndarray, base_color : Color, new_color : Color | np.ndarray) -> np.ndarray:
+  def change_color_hsv_pillow(base_data : np.ndarray, mask_data : np.ndarray | None, base_color : Color, new_color : Color | np.ndarray) -> np.ndarray:
     # base_data 应该是 RGB[A] 模式, mask_data 应该是 L （灰度）或者 1 (黑白)模式
     # 检查输入
     base_shape = base_data.shape
-    mask_shape = mask_data.shape
-    assert len(mask_shape) == 2 and len(base_shape) == 3 and base_shape[0] == mask_shape[0] and base_shape[1] == mask_shape[1] and base_shape[2] in (3, 4)
+    assert len(base_shape) == 3  and base_shape[2] in (3, 4)
 
+    if mask_data is not None:
+      mask_shape = mask_data.shape
+      assert len(mask_shape) == 2 and base_shape[0] == mask_shape[0] and base_shape[1] == mask_shape[1]
     base_hsv = ImagePack.ndarray_rgb_to_hsv(np.array(base_color.to_tuple_rgb()))
 
     # Find the indices where the mask is non-zero (where the region is)
-    if base_shape[2] == 4:
-      non_zero_indices = np.where((mask_data > 0) & (base_data[:,:,3] > 0))
+    if mask_data is None:
+      if base_shape[2] == 4:
+        non_zero_indices = np.where(base_data[:,:,3] > 0)
+      else:
+        non_zero_indices = np.where(np.ones((base_shape[0], base_shape[1]), dtype=np.uint8))
     else:
-      non_zero_indices = np.where(mask_data > 0)
+      if base_shape[2] == 4:
+        non_zero_indices = np.where((mask_data > 0) & (base_data[:,:,3] > 0))
+      else:
+        non_zero_indices = np.where(mask_data > 0)
     ImagePack.printstatus("non_zero_indices done")
 
     base_alpha = None
@@ -378,7 +387,6 @@ class ImagePack:
 
     # 除了 mask 和 layers, 其他都照搬
     resultpack.stacks = self.stacks
-    resultpack.bg_layers = self.bg_layers
     resultpack.packname = self.packname
     resultpack.stacknames = self.stacknames
 
@@ -427,10 +435,13 @@ class ImagePack:
           converted_arg = (converted_arg * 255.0).astype(np.uint8)
 
         # 转换当前的 mask
-        mask_data = PIL.Image.new("L", (self.width, self.height), color=0)
-        mask_data.paste(m.mask.convert("L"), (m.offset_x, m.offset_y))
+        mask_data = None
+        if m.mask is not None:
+          mask_data = PIL.Image.new("L", (self.width, self.height), color=0)
+          mask_data.paste(m.mask.convert("L"), (m.offset_x, m.offset_y))
+          mask_data = np.array(mask_data)
 
-        cur_base = ImagePack.change_color_hsv_pillow(cur_base, np.array(mask_data), m.mask_color, converted_arg)
+        cur_base = ImagePack.change_color_hsv_pillow(cur_base, mask_data, m.mask_color, converted_arg)
         ImagePack.printstatus("mask applied")
       if cur_base is None:
         # 该图层可以原封不动地放到结果里
@@ -640,6 +651,47 @@ class ImagePack:
       result_pack.stacks.append(stack)
     return result_pack
 
+  def optimize_masks(self):
+    # 对任意一个选区，如果它现在有图片，但是它所覆盖的范围可以近似为全图，则把这个图片去掉以减小文件大小
+    # 对于选区和基底图的操作的代码都是从 fork_applying_mask() 中复制过来的
+    for m in self.masks:
+      if m.mask is None:
+        continue
+      isFullyCovers = True
+      mask_img = PIL.Image.new("L", (self.width, self.height), color=0)
+      mask_img.paste(m.mask.convert("L"), (m.offset_x, m.offset_y))
+      mask_data = np.array(mask_img)
+      # 如果 mask_data 全是非零值，那么就是全图，我们已经可以确定了
+      if not np.all(mask_data > 0):
+        # 在不全是非零值的情况下继续检查
+        def check_base_cover(l : ImagePack.LayerInfo) -> bool:
+          nonlocal isFullyCovers
+          # 如果当前基底图没有 alpha 通道，那么就不可能覆盖全图
+          if l.patch.mode != "RGBA":
+            isFullyCovers = False
+            return True
+          patch_array = np.array(l.patch)
+          base_data = np.zeros((self.height, self.width, patch_array.shape[2]), dtype=np.uint8)
+          base_data[l.offset_y:l.offset_y+l.patch.height, l.offset_x:l.offset_x+l.patch.width] = patch_array
+          reference_non_zero_indices = np.where((mask_data > 0) & (base_data[:,:,3] > 0))
+          new_non_zero_indices = np.where(base_data[:,:,3] > 0)
+          if not np.equal(reference_non_zero_indices, new_non_zero_indices).all():
+            isFullyCovers = False
+            return True
+          return False
+        if m.applyon is None or len(m.applyon) == 0:
+          for layer in self.layers:
+            if layer.base:
+              if check_base_cover(layer):
+                break
+        else:
+          for layerindex in m.applyon:
+            if check_base_cover(self.layers[layerindex]):
+              break
+      if isFullyCovers:
+        m.mask = None
+        m.basename = "None"
+
   TR_imagepack_yamlparse_layers = TR_imagepack.tr("layers",
     en="layers",
     zh_cn="图层",
@@ -705,6 +757,23 @@ class ImagePack:
     zh_cn="右下",
     zh_hk="右下",
   )
+
+  @staticmethod
+  def convert_mask_image(mask : PIL.Image.Image) -> PIL.Image.Image:
+    # 如果有 alpha 的话，只要 alpha 不是0就算是选区
+    # 如果没有 alpha 的话，只要 RGB 不是纯黑就算是选区
+    if mask.mode == "1":
+      return mask
+    if mask.mode == "L":
+      maxchannel = np.array(mask)
+    elif mask.mode == "RGBA":
+      ma = np.array(mask)
+      maxchannel = ma[:,:,3] # alpha
+    else:
+      ma = np.array(mask.convert("RGB"))
+      maxchannel = np.maximum.reduce(ma, 2)
+    ra = np.uint8(maxchannel > 0) * 255
+    return PIL.Image.fromarray(ra, "L").convert("1", dither=PIL.Image.Dither.NONE)
 
   @staticmethod
   def build_image_pack_from_yaml(yamlpath : str, named_stack_entries : list[str]):
@@ -849,7 +918,9 @@ class ImagePack:
           if maskcolor is None:
             raise PPInternalError("Invalid mask in " + yamlpath + ": missing maskcolor")
           maskimgpath = os.path.join(basepath, imgpathbase + ".png")
-          maskimg = PIL.Image.open(maskimgpath).convert("1", dither=None)
+          # 读取选区图并将其转化为黑白图片
+          original_mask = PIL.Image.open(maskimgpath)
+          maskimg = ImagePack.convert_mask_image(original_mask)
           if maskimg.width != result.width or maskimg.height != result.height:
             raise PPInternalError("Mask size mismatch: " + str((maskimg.width, maskimg.height)) + " != " + str((result.width, result.height)))
           offset_x = 0
@@ -860,6 +931,7 @@ class ImagePack:
             maskimg = maskimg.crop(bbox)
           newmask = ImagePack.MaskInfo(mask=maskimg, mask_color=maskcolor, offset_x=offset_x, offset_y=offset_y, projective_vertices=projective_vertices_result, basename=imgpathbase, applyon=applyon)
           result.masks.append(newmask)
+      result.optimize_masks()
       return result
 
   @staticmethod
