@@ -1017,7 +1017,7 @@ class ImagePack:
       return
     curtime = time.time()
     timestr = "[{:.6f}] ".format(curtime - ImagePack._starttime)
-    print(timestr + s)
+    print(timestr + s, flush=True)
 
 def _test_main():
   srcdir = pathlib.Path(sys.argv[1])
