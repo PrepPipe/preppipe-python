@@ -725,7 +725,7 @@ class _PipelineManager:
       transform_cls = type(t)
       info = TransformRegistration._registration_record[transform_cls]
       if result_args.verbose:
-        print('[' + get_timestr() + '] ' + _PipelineManager._TR_pipeline_running.get() + ' ' + info.flag + " (" + str(step_count) + '/' + str(len(pipeline)) + ')')
+        print('[' + get_timestr() + '] ' + _PipelineManager._TR_pipeline_running.get() + ' ' + info.flag + " (" + str(step_count) + '/' + str(len(pipeline)) + ')', flush=True)
       is_append_result = False
       if isinstance(info.input_decl, type):
         # 该转换读取IR
@@ -813,7 +813,7 @@ class _PipelineManager:
 
   @staticmethod
   def _load_module(module_name, file_path):
-    print(_PipelineManager._tr_plugin_loading.format(modulename=module_name, filepath=file_path))
+    print(_PipelineManager._tr_plugin_loading.format(modulename=module_name, filepath=file_path), flush=True)
     is_loaded = False
     try:
       if spec := importlib.util.spec_from_file_location(module_name, file_path):
