@@ -15,7 +15,7 @@ from ..irbase import *
 from ..inputmodel import *
 from ..language import Translatable, TranslationDomain
 from ..nameresolution import NameResolver, NamespaceNode
-from .commandsyntaxparser import GeneralCommandOp, CMDValueSymbol, CMDPositionalArgOp, CommandCallReferenceType
+from .commandsyntaxparser import GeneralCommandOp, CMDValueSymbol, CMDPositionalArgOp, CommandCallReferenceType, try_parse_value_expr
 
 # ------------------------------------------------------------------------------
 # 解析器定义 （语义分析阶段）
@@ -121,10 +121,35 @@ class ExtendDataExprBase:
   warnings : list[tuple[str, str]] | None = None
   original_op : Operation | None = None # 原来的 IMListOp, IMSpecialBlockOp, 或者 IMTableOp
 
+@dataclasses.dataclass
+class ListExprTreeNode:
+  key : str | None = None # 如果没有键的话就是 None
+  value : str | CallExprOperand | AssetData | None = None # 如果没有值的话就是空字符串
+  children : list[ListExprTreeNode] = dataclasses.field(default_factory=list)
+  location : Location | None = None
+
+  def try_get_children_as_str_list(self, ctx : Context) -> list[str | CallExprOperand | AssetData] | None:
+    # 如果这个树可以转为一个单层的、只有值没有键的列表，那么返回这个列表，否则返回 None
+    result : list[str | CallExprOperand] = []
+    if len(self.children) == 0:
+      return result
+    for child in self.children:
+      if child.key is None or len(child.children) > 0:
+        assert child.value is not None
+        result.append(child.value)
+      else:
+        # 这不是一个简单的列表
+        return None
+    return result
+
 # 延伸的列表项（只能出现一次）
 @dataclasses.dataclass
 class ListExprOperand(ExtendDataExprBase):
-  data : typing.OrderedDict[str, typing.Any] | list[str]
+  # 用来表示一个列表
+  # 我们只考虑内容没有独立的命令段落的情况，如果有的话，使用者应当遍历 original_op 来获取
+  # 不过列表内容可以包含子列表、调用表达式等
+  # 根节点没有键和值，但是应该有子结点
+  data : ListExprTreeNode
 
 @dataclasses.dataclass
 class SpecialBlockOperand(ExtendDataExprBase):
@@ -441,10 +466,9 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
     if isinstance(op, IMListOp):
       # 我们需要把这个列表项转为 ListExprOperand
       warnings : list[tuple[str, str]] = []
-      data = self._populate_listexpr(op, warnings)
-      if len(warnings) == 0:
-        warnings = None
-      return ListExprOperand(data, warnings=warnings, original_op=op)
+      root = ListExprTreeNode(location=op.location)
+      self._populate_listexpr(op, warnings, root)
+      return ListExprOperand(root, warnings=(warnings if len(warnings) > 0 else None), original_op=op)
 
     if isinstance(op, IMSpecialBlockOp):
       return SpecialBlockOperand(original_op=op)
@@ -455,17 +479,13 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
     # 其他的类型暂不支持
     raise NotImplementedError('Extend data type not supported: ' + str(type(op)))
 
-  def _populate_listexpr(self, src : IMListOp, warnings : list[tuple[str, str]]) -> typing.OrderedDict[str, typing.Any] | list[str]:
-    # 这里我们假设一个简单的情况，接受延伸内容的命令使用该列表来当一个 key-value store 来使用，键都是字符串，值是字符串或者图片、声音等资源
-    # 值可以为空，但如果一个层级里所有的值都为空，那么这是一个列表 (list) 而不是一个字典 (dict)
-    # 如果列表项整个为空，我们跳过该项
-    # 如果整个列表为空，我们返回一个空的字典
-    # 如果列表项键值有重复，
-    # 如果命令对该列表的使用方式与我们这里的处理不一样（比如分支命令，列表表示不同选项，底下的内容作为独立的(可携带命令的)段落），那么命令总归可以接受原始的 GeneralCommandOp 输入来自行处理
-    data : typing.OrderedDict[str, typing.Any] = collections.OrderedDict()
+  def _populate_listexpr(self, src : IMListOp, warnings : list[tuple[str, str]], root: ListExprTreeNode) -> None:
+    # 如果列表中有命令，那么使用该列表的命令总归可以接受原始的 GeneralCommandOp 输入来自行处理
+    # 所以我们只需要处理所有“列表不包含命令”的情况
+    # 每个列表结点都可以有值、都可以有子结点
+
     # 记录每个键值所在的位置，便于在出现重复键值时生成警告
     prev_locations : dict[str, Location] = {}
-    is_nonempty_value_found = False
     for item_region in src.regions:
       # 最多两个块，一个块有 IMElementOp，存的是列表项的内容，另一个块有子列表
       num_blocks = item_region.get_num_blocks()
@@ -485,13 +505,12 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
       regex_str = r"^(?P<k>\"[^\"]*\"|'[^']*'|[^'\"=＝:： ]+)(\s*[ =＝:：]\s*(?P<v>.+|\0)?)?$"
       match_result = re.match(regex_str, text_str)
       if match_result is None:
-        # 这一项没法读，记个错误然后跳过
-        errcode = 'cmdparser-listitem-skipped-in-extend-data'
-        msg = str(frontop.location)
-        warnings.append((errcode, msg))
-        continue
-      key_str = match_result.group('k')
-      value_str = match_result.group('v') # 可能是 None
+        # 如果不匹配上述语法的话，我们假设整行都是值，键为空
+        value_str = text_str
+        key_str = ''
+      else:
+        key_str = match_result.group('k')
+        value_str = match_result.group('v') # 可能是 None
       # 如果 key_str 是被引号引起来的，就把引号去掉
       if key_str.startswith('"') and key_str.endswith('"'):
         key_str = key_str[1:-1]
@@ -507,39 +526,31 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
             warnings.append((errcode, msg))
           else:
             value_v = asset_list[0]
-        elif value_str.startswith('"') and value_str.endswith('"'):
-          value_v = value_str[1:-1]
-        elif value_str.startswith("'") and value_str.endswith("'"):
-          value_v = value_str[1:-1]
         else:
           value_v = value_str
-      if value_v is None and num_blocks > 1:
+      # 如果 value_v 是一个命令调用表达式，我们把它转为 CallExprOperand
+      if value_v is not None:
+        if cmd := try_parse_value_expr(value_v, self.context.null_location):
+          if isinstance(cmd, GeneralCommandOp):
+            value_v = self.parse_commandop_as_callexpr(cmd)
+          elif isinstance(cmd, str):
+            # 这个是用来去掉引号的（如果值被引号包裹的话）
+            value_v = cmd
+      childnode = ListExprTreeNode(key = (key_str if len(key_str) > 0 else None), value = value_v, location=frontop.location)
+      if num_blocks > 1:
         # 应该还有一个列表项，我们读列表项的值
         listblock = textblock.get_next_node()
         assert isinstance(listblock, Block)
         assert listblock.body.size == 1
         frontop = listblock.body.front
         if isinstance(frontop, IMListOp):
-          value_v = self._populate_listexpr(frontop, warnings)
+          self._populate_listexpr(frontop, warnings, childnode)
       # 检查是否所有内容都用上了
       if isinstance(value_v, AssetData) and len(asset_list) > 1 or len(asset_list) > 0:
         errcode = 'cmdparser-listitem-extra-asset-unused'
         msg = str(frontop.location)
         warnings.append((errcode, msg))
-      # 开始将当前项加到结果中
-      if key_str in data:
-        prev = prev_locations[key_str]
-        errcode = 'cmdparser-listitem-overwrite'
-        msg = '"' + key_str + '" @ ' + str(prev)
-        warnings.append((errcode, msg))
-      else:
-        data[key_str] = value_v
-        if value_v is not None:
-          is_nonempty_value_found = True
-    if not is_nonempty_value_found:
-      # 把字典转化成列表
-      return [k for k in data.keys()]
-    return data
+      root.children.append(childnode)
 
   @classmethod
   def parse_commandop_as_callexpr(cls, commandop : GeneralCommandOp) -> CallExprOperand:

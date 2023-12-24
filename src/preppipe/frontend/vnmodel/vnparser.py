@@ -569,31 +569,28 @@ def cmd_character_decl(parser: VNParser, state : VNASTParsingState, commandop : 
   ch = VNASTCharacterSymbol.create(context=state.context, name=name, loc=commandop.location)
   state.output_current_file.characters.add(ch)
   if ext is not None:
-    if isinstance(ext.data, collections.OrderedDict):
-      # 有具体的发言信息
-      defaultsay = VNASTCharacterSayInfoSymbol.create(state.context, name, commandop.location)
-      ch.sayinfo.add(defaultsay)
-      for k, v in ext.data.items():
-        if k in _tr_chdecl_sprite.get_all_candidates():
-          # 这里开始是指定场景背景的信息
-          entityprefix = _tr_chdecl_sprite.get() + '_' + name
-          _helper_parse_image_exprtree(parser, state, v, ch.sprites, ImageExprPlaceholderDest.DEST_CHARACTER_SPRITE, entityprefix, commandop.location)
-          continue
-        if k in _tr_chdecl_sideimage.get_all_candidates():
-          entityprefix = _tr_chdecl_sideimage.get() + '_' + name
-          _helper_parse_image_exprtree(parser, state, v, ch.sideimages, ImageExprPlaceholderDest.DEST_CHARACTER_SIDEIMAGE, entityprefix, commandop.location)
-          continue
-        if k in _tr_chdecl_say.get_all_candidates():
-          _helper_parse_character_sayinfo(state=state, v=v, say=defaultsay, loc=commandop.location)
-          continue
-        if k in _tr_chdecl_sayalternativename.get_all_candidates():
-          _helper_parse_character_alternativesay(state=state, v=v, sayinfo=ch.sayinfo, defaultsay=defaultsay, loc=commandop.location)
-          continue
-        # 到这就说明当前的键值没有匹配到认识的
-        state.emit_error('vnparse-characterdecl-invalid-expr', 'Unexpected key "' + k + '"', loc=commandop.location)
-    else:
-      # ext.data 无效，记一下错误
-      state.emit_error('vnparse-characterdecl-invalid-expr', 'Unexpected attached list format', loc=commandop.location)
+    # 有具体的发言信息
+    defaultsay = VNASTCharacterSayInfoSymbol.create(state.context, name, commandop.location)
+    ch.sayinfo.add(defaultsay)
+    for childnode in ext.data.children:
+      k = childnode.key
+      if k in _tr_chdecl_sprite.get_all_candidates():
+        # 这里开始是指定场景背景的信息
+        entityprefix = _tr_chdecl_sprite.get() + '_' + name
+        _helper_parse_image_exprtree(parser, state, childnode, ch.sprites, ImageExprPlaceholderDest.DEST_CHARACTER_SPRITE, entityprefix, commandop.location)
+        continue
+      if k in _tr_chdecl_sideimage.get_all_candidates():
+        entityprefix = _tr_chdecl_sideimage.get() + '_' + name
+        _helper_parse_image_exprtree(parser, state, childnode, ch.sideimages, ImageExprPlaceholderDest.DEST_CHARACTER_SIDEIMAGE, entityprefix, commandop.location)
+        continue
+      if k in _tr_chdecl_say.get_all_candidates():
+        _helper_parse_character_sayinfo(state=state, v=childnode, say=defaultsay, loc=commandop.location)
+        continue
+      if k in _tr_chdecl_sayalternativename.get_all_candidates():
+        _helper_parse_character_alternativesay(state=state, v=childnode, sayinfo=ch.sayinfo, defaultsay=defaultsay, loc=commandop.location)
+        continue
+      # 到这就说明当前的键值没有匹配到认识的
+      state.emit_error('vnparse-characterdecl-invalid-expr', 'Unexpected key "' + str(k) + '"', loc=commandop.location)
 
 def _helper_merge_textstyle(context : Context, srcoperand : OpOperand[TextStyleLiteral], attr : TextAttribute, v : typing.Any) -> TextStyleLiteral:
   srcdict = {}
@@ -603,7 +600,15 @@ def _helper_merge_textstyle(context : Context, srcoperand : OpOperand[TextStyleL
   srcdict[attr] = v
   return TextStyleLiteral.get(TextStyleLiteral.get_style_tuple(srcdict), context)
 
-def _helper_parse_color(state : VNASTParsingState, v : str, loc : Location, contextstr : str = '') -> Color | None:
+def _helper_parse_color(state : VNASTParsingState, v : typing.Any, loc : Location, contextstr : str = '') -> Color | None:
+  if not isinstance(v, str):
+    msg = 'Invalid color value: "' + str(v) + '"'
+    if len(contextstr) > 0:
+      msg = contextstr + ': ' + msg
+    state.emit_error(code='vnparse-invalid-color', msg=msg, loc=loc)
+    return None
+
+  # 尝试解析颜色
   try:
     color = Color.get(v)
     return color
@@ -614,26 +619,25 @@ def _helper_parse_color(state : VNASTParsingState, v : str, loc : Location, cont
     state.emit_error(code='vnparse-invalid-colorstr', msg=msg, loc=loc)
   return None
 
-def _helper_parse_character_alternativesay(state : VNASTParsingState, v : typing.Any, sayinfo : SymbolTableRegion[VNASTCharacterSayInfoSymbol], defaultsay : VNASTCharacterSayInfoSymbol | None, loc : Location):
-  if isinstance(v, list):
-    for altname in v:
-      if existing := sayinfo.get(altname):
-        continue
-      altnode = VNASTCharacterSayInfoSymbol.create(context=state.context, name=altname, loc=loc)
-      if defaultsay is not None:
-        altnode.copy_from(defaultsay)
-      sayinfo.add(altnode)
-  elif isinstance(v, collections.OrderedDict):
-    for altname, alttree in v.items():
-      if existing := sayinfo.get(altname):
-        continue
-      altnode = VNASTCharacterSayInfoSymbol.create(context=state.context, name=altname, loc=loc)
-      if defaultsay is not None:
-        altnode.copy_from(defaultsay)
-      sayinfo.add(altnode)
+def _helper_parse_character_alternativesay(state : VNASTParsingState, v : ListExprTreeNode, sayinfo : SymbolTableRegion[VNASTCharacterSayInfoSymbol], defaultsay : VNASTCharacterSayInfoSymbol | None, loc : Location):
+  for node in v.children:
+    altname = node.key
+    alttree = node
+    if altname is None:
+      altname = node.value
+      alttree = None
+    if not isinstance(altname, str):
+      state.emit_error('vnparse-charactersay-invalid-expr', 'Say subtree: Unexpected name type "' + str(type(altname)) + '"', loc=loc)
+      continue
+    if existing := sayinfo.get(altname):
+      continue
+    altnode = VNASTCharacterSayInfoSymbol.create(context=state.context, name=altname, loc=loc)
+    if defaultsay is not None:
+      altnode.copy_from(defaultsay)
+    sayinfo.add(altnode)
+    if alttree is not None:
       _helper_parse_character_sayinfo(state=state, v=alttree, say=altnode, loc=loc)
-  else:
-    raise RuntimeError("Should not happen")
+  # 结束
 setattr(_helper_parse_character_alternativesay, "keywords", lambda: [
   (tr_vnutil_vtype_sayname, _helper_parse_character_sayinfo)
 ])
@@ -648,23 +652,24 @@ _tr_sayinfo_contentcolor = TR_vnparse.tr("sayinfo_contentcolor",
   zh_cn="内容颜色",
   zh_hk="內容顏色",
 )
-def _helper_parse_character_sayinfo(state : VNASTParsingState, v : typing.Any, say : VNASTCharacterSayInfoSymbol, loc : Location):
-  if isinstance(v, collections.OrderedDict):
-    for attr, value in v.items():
-      if attr in _tr_sayinfo_namecolor.get_all_candidates():
-        if c := _helper_parse_color(state, value, loc):
-          newstyle = _helper_merge_textstyle(state.context, say.namestyle, TextAttribute.TextColor, c)
-          say.namestyle.set_operand(0, newstyle)
-        continue
-      if attr in _tr_sayinfo_contentcolor.get_all_candidates():
-        if c := _helper_parse_color(state, value, loc):
-          newstyle = _helper_merge_textstyle(state.context, say.saytextstyle, TextAttribute.TextColor, c)
-          say.saytextstyle.set_operand(0, newstyle)
-        continue
-      state.emit_error('vnparse-characterdecl-invalid-expr', 'Say subtree: Unexpected attribute "' + attr + '"', loc=loc)
-  else:
-    # 发言应该是一个字典；这里报错
-    state.emit_error('vnparse-characterdecl-invalid-expr', 'Unexpected data format for Say attribute (should be a dictionary)', loc=loc)
+def _helper_parse_character_sayinfo(state : VNASTParsingState, v : ListExprTreeNode, say : VNASTCharacterSayInfoSymbol, loc : Location):
+  for childNode in v.children:
+    # 不管是什么情况，这里我们都不会处理 childNode 的子结点
+    # 所以如果有子结点就报错
+    if len(childNode.children) > 0:
+      state.emit_error('vnparse-characterdecl-invalid-expr', 'Say subtree: child node ignored for subtree', loc=loc)
+    attr = childNode.key
+    if attr in _tr_sayinfo_namecolor.get_all_candidates():
+      if c := _helper_parse_color(state, childNode.value, loc):
+        newstyle = _helper_merge_textstyle(state.context, say.namestyle, TextAttribute.TextColor, c)
+        say.namestyle.set_operand(0, newstyle)
+      continue
+    if attr in _tr_sayinfo_contentcolor.get_all_candidates():
+      if c := _helper_parse_color(state, childNode.value, loc):
+        newstyle = _helper_merge_textstyle(state.context, say.saytextstyle, TextAttribute.TextColor, c)
+        say.saytextstyle.set_operand(0, newstyle)
+      continue
+    state.emit_error('vnparse-characterdecl-invalid-expr', 'Say subtree: Unexpected attribute "' + str(attr) + '"', loc=loc)
 setattr(_helper_parse_character_sayinfo, "keywords", [_tr_sayinfo_namecolor, _tr_sayinfo_contentcolor])
 
 # 这个命令暂时不做
@@ -736,17 +741,13 @@ def cmd_scene_decl(parser : VNParser, state : VNASTParsingState, commandop : Gen
   scene = VNASTSceneSymbol.create(context=state.context, name=name, loc=commandop.location)
   state.output_current_file.scenes.add(scene)
   if ext is not None:
-    if isinstance(ext.data, collections.OrderedDict):
-      for k, v in ext.data.items():
-        if k in _tr_scenedecl_background.get_all_candidates():
-          # 这里开始是指定场景背景的信息
-          _helper_parse_image_exprtree(parser, state, v, scene.backgrounds, ImageExprPlaceholderDest.DEST_SCENE_BACKGROUND, name, commandop.location)
-          continue
-        # 到这就说明当前的键值没有匹配到认识的
-        state.emit_error('vnparse-scenedecl-invalid-expr', 'Unexpected key "' + k + '"', loc=commandop.location)
-    else:
-      # ext.data 无效，记一下错误
-      state.emit_error('vnparse-scenedecl-invalid-expr', 'Unexpected attached list format', loc=commandop.location)
+    for childnode in ext.data.children:
+      if childnode.key in _tr_scenedecl_background.get_all_candidates():
+        # 这里开始是指定场景背景的信息
+        _helper_parse_image_exprtree(parser, state, childnode, scene.backgrounds, ImageExprPlaceholderDest.DEST_SCENE_BACKGROUND, name, commandop.location)
+        continue
+      # 到这就说明当前的键值没有匹配到认识的
+      state.emit_error('vnparse-scenedecl-invalid-expr', 'Unexpected key "' + str(childnode.key) + '"', loc=commandop.location)
 
 _tr_image_notfound = TR_vnparse.tr("image_not_found",
   en="Image not found: ",
@@ -762,7 +763,7 @@ _tr_image_notfound_help = TR_vnparse.tr("image_notfound_help",
 def _get_placeholder_desc_for_missing_img(context : Context, v : str):
   return StringLiteral.get(_tr_image_notfound.get() + v, context)
 
-def _helper_parse_image_exprtree(parser : VNParser, state : VNASTParsingState, v : collections.OrderedDict[str, typing.Any] | str, statetree : SymbolTableRegion[VNASTNamespaceSwitchableValueSymbol], placeholderdest : ImageExprPlaceholderDest, entityprefix : str, loc : Location):
+def _helper_parse_image_exprtree(parser : VNParser, state : VNASTParsingState, v : ListExprTreeNode, statetree : SymbolTableRegion[VNASTNamespaceSwitchableValueSymbol], placeholderdest : ImageExprPlaceholderDest, entityprefix : str, loc : Location):
   # 如果是一个词典，那么是个和角色立绘差不多的树状结构，每个子节点根一个图案表达式
   # 如果是一个值，那么只有一个图片
   # 首先把一个值的情况解决了
@@ -780,40 +781,37 @@ def _helper_parse_image_exprtree(parser : VNParser, state : VNASTParsingState, v
       statetree.add(node)
     node.set_value(nsstr, expr)
 
-  if isinstance(v, str):
-    expr = emit_image_expr_from_str(context=state.context, s=v, basepath=state.input_file_path, placeholderdest=placeholderdest, placeholderdesc=entityprefix, warnings=warnings, screen_resolution=parser.resolution)
-    if expr is None:
-      expr = emit_default_placeholder(context=state.context, dest=placeholderdest, screen_resolution=parser.resolution, description=_get_placeholder_desc_for_missing_img(state.context, v))
-      msg = _tr_image_notfound_help.format(dest=entityprefix, expr=v)
-      state.emit_error(code='vnparse-invalid-imageexpr', msg=msg, loc=loc)
-      state.emit_assetnotfound(loc=loc)
-    submit_expr('', expr)
-  elif isinstance(v, collections.OrderedDict):
-    state_stack = []
-    def walk_dict(d : collections.OrderedDict):
-      for k, v in d.items():
-        if isinstance(v, str):
-          tmpstatelist = [*state_stack, k]
-          statestr = ','.join(tmpstatelist)
-          placeholderdesc = entityprefix + ':' + statestr
-          expr = emit_image_expr_from_str(context=state.context, s=v, basepath=state.input_file_path, placeholderdest=placeholderdest, placeholderdesc=placeholderdesc, warnings=warnings, screen_resolution=parser.resolution)
-          if expr is None:
-            expr = emit_default_placeholder(context=state.context, dest=placeholderdest, screen_resolution=parser.resolution, description=_get_placeholder_desc_for_missing_img(state.context, v))
-            msg = _tr_image_notfound_help.format(dest=entityprefix, expr=v)
-            state.emit_error(code='vnparse-invalid-imageexpr', msg=msg, loc=loc)
-            state.emit_assetnotfound(loc=loc)
-          submit_expr(statestr, expr)
-        elif isinstance(v, collections.OrderedDict):
-          state_stack.append(k)
-          walk_dict(v)
-          state_stack.pop()
-        else:
-          msg = _tr_image_notfound_help.format(dest=entityprefix, expr=str(v))
-          state.emit_error(code='vnparse-invalid-imageexpr', msg=msg, loc=loc)
-    walk_dict(v)
-  else:
-    msg = _tr_image_notfound_help.format(dest=entityprefix, expr=str(v))
-    state.emit_error(code='vnparse-invalid-imageexpr', msg=msg, loc=loc)
+  def visit_node(statestack : list[str], node : ListExprTreeNode):
+    # 调用时应该已经把 node.key 放入 statestack 了
+    if node.value is not None:
+      # 尝试根据目前项的值来更新图片列表
+      statestr = ','.join(statestack)
+      placeholderdesc = entityprefix + ':' + statestr
+      if isinstance(node.value, ImageAssetData):
+        expr = node.value
+      elif isinstance(node.value, CallExprOperand):
+        expr = emit_image_expr_from_callexpr(context=state.context, call=node.value, placeholderdest=placeholderdest, placeholderdesc=placeholderdesc, warnings=warnings, screen_resolution=parser.resolution)
+      elif isinstance(node.value, str):
+        expr = emit_image_expr_from_str(context=state.context, s=node.value, basepath=state.input_file_path, placeholderdest=placeholderdest, placeholderdesc=placeholderdesc, warnings=warnings, screen_resolution=parser.resolution)
+      else:
+        raise PPInternalError('Unexpected node value type: ' + str(type(node.value)))
+      if expr is None:
+        expr = emit_default_placeholder(context=state.context, dest=placeholderdest, screen_resolution=parser.resolution, description=_get_placeholder_desc_for_missing_img(state.context, str(node.value)))
+        msg = _tr_image_notfound_help.format(dest=placeholderdesc, expr=node.value)
+        state.emit_error(code='vnparse-invalid-imageexpr', msg=msg, loc=loc)
+        state.emit_assetnotfound(loc=loc)
+      submit_expr(statestr, expr)
+    # 开始读取子结点
+    for child in node.children:
+      # 如果子结点没有键，就报错
+      if child.key is None:
+        state.emit_error('vnparse-invalid-imageexpr', 'Unexpected node without key', loc=child.location)
+        continue
+      statestack.append(child.key)
+      visit_node(statestack, child)
+      statestack.pop()
+  statestack = []
+  visit_node(statestack, v)
 
   for t in warnings:
     code, msg = t
@@ -1264,6 +1262,7 @@ def cmd_select(parser : VNParser, state : VNASTParsingState, commandop : General
       node.set_attr(VNASTMenuNode.ATTR_FINISH_ACTION, VNASTMenuNode.ATTR_FINISH_ACTION_LOOP)
     case _:
       raise RuntimeError('should not happen')
+  assert isinstance(ext.original_op, IMListOp)
   listop : IMListOp = ext.original_op
   assert isinstance(listop, IMListOp)
   num_options = listop.get_num_regions()
