@@ -2143,7 +2143,9 @@ class SymbolTableRegion(Region, collections.abc.Sequence, typing.Generic[_Symbol
   def __len__(self):
     return len(self._lookup_dict)
 
-  def __contains__(self, value: _SymbolTypeVar) -> bool:
+  def __contains__(self, value: _SymbolTypeVar | str) -> bool:
+    if isinstance(value, str):
+      return value in self._lookup_dict
     return self._lookup_dict.get(value.name, None) == value
 
   def add(self, symbol : _SymbolTypeVar):
@@ -3189,6 +3191,9 @@ class UnknownEnumLiteral(Literal):
 
 def convert_literal(value, ctx : Context | None, type_hint : type | None = None, type_hint_params : tuple[type,...] | None = None) -> Literal | None | bool:
   '''尝试把一个值转换为 Literal 类型的字面值(返回 Literal|None)。如果 ctx 没有提供，则只做类型检查(返回 bool)'''
+  # 如果 type_hint 只是 Literal, 则没有提供特别的信息，视为 None
+  if type_hint is Literal:
+    type_hint = None
   if isinstance(value, int):
     if type_hint is IntLiteral or type_hint is None:
       return IntLiteral.get(value, ctx) if ctx is not None else True

@@ -377,7 +377,7 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
     def try_add_parameter(self, param : inspect.Parameter, value : typing.Any) -> typing.Tuple[str, typing.Any] | None:
       # 尝试把给定的值赋予参数
       # 如果有错误的话返回错误
-      target_value = _try_convert_parameter(param.annotation, value)
+      target_value = try_convert_parameter(param.annotation, value)
       if target_value is None:
         return ('cmdparser-param-conversion-failed', param.name)
       self.add_parameter(param, target_value)
@@ -443,14 +443,14 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
     # 没有回调函数满足条件时发生
     pass
 
-  @classmethod
-  def convert_value(cls, value : Value) -> Value | CallExprOperand:
+  @staticmethod
+  def convert_value(value : Value) -> Value | CallExprOperand:
     assert isinstance(value, Value)
     if isinstance(value.valuetype, CommandCallReferenceType):
       assert isinstance(value, OpResult)
       callop = value.parent
       assert isinstance(callop, GeneralCommandOp)
-      return cls.parse_commandop_as_callexpr(callop)
+      return FrontendParserBase.parse_commandop_as_callexpr(callop)
     return value
 
   def _extract_extend_data(self, commandop : GeneralCommandOp) -> ExtendDataExprBase | None:
@@ -478,6 +478,19 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
 
     # 其他的类型暂不支持
     raise NotImplementedError('Extend data type not supported: ' + str(type(op)))
+
+  @classmethod
+  def try_get_callexproperand_or_str(cls, ctx : Context, value : str) -> CallExprOperand | str | None:
+    # 尝试把一个字符串转为 CallExprOperand
+    if cmd := try_parse_value_expr(value, ctx.null_location):
+      if isinstance(cmd, GeneralCommandOp):
+        return cls.parse_commandop_as_callexpr(cmd)
+    # 如果不是命令调用表达式，那么我们就返回原始的字符串（要把引号去掉）
+    quotes = ('"', "'", '“', '”')
+    if value.startswith(quotes) and value.endswith(quotes):
+      return value[1:-1]
+    # 什么都没动的话就返回 None
+    return None
 
   def _populate_listexpr(self, src : IMListOp, warnings : list[tuple[str, str]], root: ListExprTreeNode) -> None:
     # 如果列表中有命令，那么使用该列表的命令总归可以接受原始的 GeneralCommandOp 输入来自行处理
@@ -530,12 +543,8 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
           value_v = value_str
       # 如果 value_v 是一个命令调用表达式，我们把它转为 CallExprOperand
       if value_v is not None:
-        if cmd := try_parse_value_expr(value_v, self.context.null_location):
-          if isinstance(cmd, GeneralCommandOp):
-            value_v = self.parse_commandop_as_callexpr(cmd)
-          elif isinstance(cmd, str):
-            # 这个是用来去掉引号的（如果值被引号包裹的话）
-            value_v = cmd
+        if cmd := self.try_get_callexproperand_or_str(self.context, value_v):
+          value_v = cmd
       childnode = ListExprTreeNode(key = (key_str if len(key_str) > 0 else None), value = value_v, location=frontop.location)
       if num_blocks > 1:
         # 应该还有一个列表项，我们读列表项的值
@@ -552,8 +561,8 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
         warnings.append((errcode, msg))
       root.children.append(childnode)
 
-  @classmethod
-  def parse_commandop_as_callexpr(cls, commandop : GeneralCommandOp) -> CallExprOperand:
+  @staticmethod
+  def parse_commandop_as_callexpr(commandop : GeneralCommandOp) -> CallExprOperand:
     # 在命令内的调用表达式
     # 可以再内嵌调用表达式，但是不会有追加的列表、特殊块等参数
     call_name_symbol : CMDValueSymbol = commandop.get_symbol_table('head').get('name')
@@ -565,7 +574,7 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
     posarg_block = commandop.get_region('positional_arg').entry_block
     for op in posarg_block.body:
       assert isinstance(op, CMDPositionalArgOp)
-      opvalue = cls.convert_value(op.value)
+      opvalue = FrontendParserBase.convert_value(op.value)
       positional_args.append(opvalue)
 
     kwargs = collections.OrderedDict()
@@ -573,7 +582,7 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
     for op in kwargs_region:
       assert isinstance(op, CMDValueSymbol)
       name = op.name
-      value = cls.convert_value(op.value)
+      value = FrontendParserBase.convert_value(op.value)
       # 内嵌的调用表达式没有参数别名
       # if name in cmdinfo.parameter_alias_dict:
       #   name = cmdinfo.parameter_alias_dict[name]
@@ -776,17 +785,17 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
           for op in b.body:
             self.visit_op(state, op)
 
-def _try_convert_parameter_list(member_type : type | types.UnionType | typing._GenericAlias, value : typing.Any) -> typing.Any:
+def try_convert_parameter_list(member_type : type | types.UnionType | typing._GenericAlias, value : typing.Any) -> typing.Any:
   result = []
   # 开始搞输入
   if isinstance(value, list):
     for v in value:
-      cur_value = _try_convert_parameter(member_type, v)
+      cur_value = try_convert_parameter(member_type, v)
       if cur_value is None:
         return None
       result.append(cur_value)
   else:
-    cur_value = _try_convert_parameter(member_type, value)
+    cur_value = try_convert_parameter(member_type, value)
     if cur_value is None:
       return None
     result.append(cur_value)
@@ -794,7 +803,7 @@ def _try_convert_parameter_list(member_type : type | types.UnionType | typing._G
 
 # 我们需要访问 typing._GenericAlias, typing._SpecialGenericAlias, 和 <enum>._translate()
 # pylint: disable=protected-access
-def _try_convert_parameter(ty : type | types.UnionType | typing._GenericAlias, value : typing.Any) -> typing.Any:
+def try_convert_parameter(ty : type | types.UnionType | typing._GenericAlias, value : typing.Any) -> typing.Any:
   # 如果类型标注是 typing.List[...] 这种的话，ty 的值会是像 typing._GenericAlias 的东西，这不算 type
   # 如果类型标注是 list[...] 这种的话， ty 的值会是像 types.GenericAlias 的东西，这是 type
   # 如果类型标注是 X | Y | ... 这种的话， ty 的值会是 types.UnionType，这也不是 type
@@ -805,7 +814,7 @@ def _try_convert_parameter(ty : type | types.UnionType | typing._GenericAlias, v
     if len(ty.__args__) != 1:
       # list[str] 可以， list[int | str] 可以， list[int, str] 不行
       raise RuntimeError('List type should have exactly one argument specifying the element type (can be union though)')
-    return _try_convert_parameter_list(ty.__args__[0], value)
+    return try_convert_parameter_list(ty.__args__[0], value)
 
   if ty == list or isinstance(ty, typing._SpecialGenericAlias):
     # 这种情况下标注要么是 list 要么是 typing.List，都没有带成员类型
@@ -813,7 +822,7 @@ def _try_convert_parameter(ty : type | types.UnionType | typing._GenericAlias, v
 
   if isinstance(ty, types.UnionType):
     for candidate_ty in ty.__args__:
-      cur_result = _try_convert_parameter(candidate_ty, value)
+      cur_result = try_convert_parameter(candidate_ty, value)
       if cur_result is not None:
         return cur_result
     return None
@@ -867,6 +876,8 @@ def _try_convert_parameter(ty : type | types.UnionType | typing._GenericAlias, v
     return value_str
   if ty == int:
     return int(value_str)
+  if ty == decimal.Decimal:
+    return decimal.Decimal(value_str)
   if ty == float:
     return float(value_str)
   if ty == CallExprOperand:
