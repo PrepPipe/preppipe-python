@@ -529,6 +529,11 @@ _tr_chdecl_sprite = TR_vnparse.tr("chdecl_sprite",
   zh_cn="立绘",
   zh_hk="立繪",
 )
+_tr_chdecl_sprite_placer = TR_vnparse.tr("chdecl_sprite_placer",
+  en="SpritePlacingConfig",
+  zh_cn="立绘位置设置",
+  zh_hk="立繪位置設置",
+)
 _tr_chdecl_sideimage = TR_vnparse.tr("chdecl_sideimage",
   en="SideImage",
   zh_cn="头像",
@@ -555,6 +560,7 @@ _tr_chdecl_sayalternativename = TR_vnparse.tr("chdecl_say_alternative_name",
   },
 }, lambda: [
   (_tr_chdecl_sprite, [tr_vnutil_vtype_imageexprtree]),
+  (_tr_chdecl_sprite_placer, parse_image_placer_config),
   (_tr_chdecl_sideimage, [tr_vnutil_vtype_imageexprtree]),
   (_tr_chdecl_say, _helper_parse_character_sayinfo),
   (_tr_chdecl_sayalternativename, _helper_parse_character_alternativesay),
@@ -575,13 +581,19 @@ def cmd_character_decl(parser: VNParser, state : VNASTParsingState, commandop : 
     for childnode in ext.data.children:
       k = childnode.key
       if k in _tr_chdecl_sprite.get_all_candidates():
-        # 这里开始是指定场景背景的信息
         entityprefix = _tr_chdecl_sprite.get() + '_' + name
         _helper_parse_image_exprtree(parser, state, childnode, ch.sprites, ImageExprPlaceholderDest.DEST_CHARACTER_SPRITE, entityprefix, commandop.location)
         continue
       if k in _tr_chdecl_sideimage.get_all_candidates():
         entityprefix = _tr_chdecl_sideimage.get() + '_' + name
         _helper_parse_image_exprtree(parser, state, childnode, ch.sideimages, ImageExprPlaceholderDest.DEST_CHARACTER_SIDEIMAGE, entityprefix, commandop.location)
+        continue
+      if k in _tr_chdecl_sprite_placer.get_all_candidates():
+        warnings : list[tuple[str, str]] = []
+        parse_image_placer_config(context=parser.context, placing_expr=childnode, config=ch.placers, presetplace=ch.presetplaces, warnings=warnings)
+        for t in warnings:
+          code, msg = t
+          state.emit_error(code=code, msg=msg, loc=commandop.location)
         continue
       if k in _tr_chdecl_say.get_all_candidates():
         _helper_parse_character_sayinfo(state=state, v=childnode, say=defaultsay, loc=commandop.location)

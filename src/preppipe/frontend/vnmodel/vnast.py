@@ -650,12 +650,65 @@ class VNASTCharacterSayInfoSymbol(Symbol):
   def create(context : Context, name : str, loc : Location | None = None):
     return VNASTCharacterSayInfoSymbol(init_mode=IRObjectInitMode.CONSTRUCT, context=context, name=name, loc=loc)
 
+@IRWrappedStatelessClassJsonName("vnast_image_placer_kind_e")
+class VNASTImagePlacerKind(enum.Enum):
+  # 选取图上一点作为锚点，后续输入时采用绝对坐标。
+  # 配置参数：(固定 2 项，未提供的填默认值)
+  #   - 锚点坐标 (IntTupleLiteral)，默认是 (0,0)
+  #   - 缩放比例 (作为可选输入，默认1.0)
+  # 追加参数：固定 1 项，即锚点对应的绝对坐标 (IntTupleLiteral)
+  ABSOLUTE = enum.auto()
+
+  # 默认的立绘放置方式，由角色信息指定大小、缩放，后续输入时只需 X 位置。
+  # 假设图片宽 X 像素、高 Y 像素，不透明部分从 ymin 到 ymax，xmin 到 xmax
+  # 配置参数：(固定 3 项)
+  #   - 屏底高度: 假设显示立绘时想要的屏幕底部边线在 Y' 像素处，那么此值是 1-(Y'/Y)。此项默认为 0
+  #              比如如果想要让立绘的底部与屏幕底部对齐，那么此值是 0
+  #              如果想要让立绘的正中高度与屏幕底部对齐，那么此值是 0.5
+  #              该项不考虑图片的透明、非透明部分，只考虑图片的整体高度
+  #   - 顶部高度：显示立绘时想要的立绘顶部（包括透明的部分）占屏幕高度的百分比，默认为 1
+  #              比如如果想要让立绘的顶部与屏幕顶部对齐（撑满整个屏幕的高度），那么此值是 1
+  #              如果想要让立绘的顶部与屏幕正中高度对齐（撑半个屏幕），那么此值是 0.5
+  #              （包括透明的部分是为了方便统一立绘高度，如果用户有多个立绘、使用相同的高度但不同的透明区域来区别身高的话，这里可以用同一个顶部高度比）
+  #   - 横向偏移：显示立绘时想要的立绘中心（只考虑非透明的部分）在屏幕中心的横向偏移的百分比，默认是 0 （居中）
+  #              比如如果想要让立绘全部往左偏移半个身位，那么此值是 -1, 一个身位则是 -2, 往右移则取正数
+  #              假设该值是 k, 则图像的横向锚线 X 最终会是 (xmin+xmax)/2 + k*(xmax-xmin)/2
+  # 追加参数：固定 1 项，即 X 位置
+  SPRITE = enum.auto()
+
+@IROperationDataclass
+class VNASTImagePlacerParameterSymbol(Symbol):
+  # 用来表示一套图像放置算法的参数（如何解读具体的位置指示、用户可以怎样指定图像位置）
+  # 使用 VNASTImagePlacerKind 的名称（比如 "ABSOLUTE", "SPRITE"）作为 Symbol 的名称，便于搜索
+  # 一般而言只存配置参数，不存追加参数
+  kind : OpOperand[EnumLiteral[VNASTImagePlacerKind]]
+  parameters : OpOperand[Literal] # 由 kind 决定是什么类型、多少个参数
+
+  @staticmethod
+  def create(context : Context, kind : VNASTImagePlacerKind, parameters : typing.Iterable[Literal], loc : Location | None = None):
+    name = kind.name
+    return VNASTImagePlacerParameterSymbol(init_mode=IRObjectInitMode.CONSTRUCT, context=context, kind=kind, parameters=parameters, name=name, loc=loc)
+
+@IROperationDataclass
+class VNASTImagePresetPlaceSymbol(Symbol):
+  # 用来表示一个预设的位置（具体的位置指示），使得用户可以按名称指定图像位置（比如居中、靠左靠右等）
+  # 名称是像"居中","靠左","靠右"这样的字符串
+  # 配置参数和追加参数都包含，按照上述顺序。（可以在实际使用时覆盖部分或全部配置参数）
+  kind : OpOperand[EnumLiteral[VNASTImagePlacerKind]] # 这套参数是给哪个算法用的
+  parameters : OpOperand[Literal] # 由 kind 决定是什么类型、多少个参数
+
+  @staticmethod
+  def create(context : Context, kind : VNASTImagePlacerKind, parameters : typing.Iterable[Literal], name : str, loc : Location | None = None):
+    return VNASTImagePresetPlaceSymbol(init_mode=IRObjectInitMode.CONSTRUCT, context=context, kind=kind, parameters=parameters, name=name, loc=loc)
+
 @IROperationDataclass
 class VNASTCharacterSymbol(Symbol):
   aliases : OpOperand[StringLiteral]
   sayinfo : SymbolTableRegion[VNASTCharacterSayInfoSymbol] # 所有发言表现的信息
   sprites : SymbolTableRegion[VNASTNamespaceSwitchableValueSymbol] # 名称是所有状态字符串用逗号','串起来的结果
   sideimages : SymbolTableRegion[VNASTNamespaceSwitchableValueSymbol]
+  placers : SymbolTableRegion[VNASTImagePlacerParameterSymbol] # 名称是 VNASTImagePlacerKind 的名称（比如 "ABSOLUTE", "SPRITE"）
+  presetplaces : SymbolTableRegion[VNASTImagePresetPlaceSymbol] # 名称是像"居中","靠左","靠右"这样的字符串
 
   @staticmethod
   def create(context : Context, name : str, loc : Location | None = None):

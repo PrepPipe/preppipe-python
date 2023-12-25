@@ -461,3 +461,363 @@ def parse_transition(context : Context, transition_name : str, transition_args :
       return None
     return (backend_name, expr)
   return None
+
+_tr_vnutil_coordinate = _TR_vn_util.tr("coordinate",
+  en="Coordinate",
+  zh_cn="坐标",
+  zh_hk="坐標",
+)
+_tr_vnutil_invalid_coordinate_expr = _TR_vn_util.tr("invalid_coordinate_expr",
+  en="Not a valid coordinate expression: \"{expr}\". Please use expression like \"Coordinate(640,480)\" or \"(640,480)\".",
+  zh_cn="这不是一个有效的坐标表达式: \"{expr}\"。请使用形如 \"坐标(640,480)\" 或 \"(640,480)\" 这样的表达式。",
+  zh_hk="這不是一個有效的坐標表達式: \"{expr}\"。請使用形如 \"坐標(640,480)\" 或 \"(640,480)\" 這樣的表達式。",
+)
+def parse_coordinate(coord : CallExprOperand | Literal) -> tuple[int, int] | None:
+  # 解析一个坐标表达式，返回 (x, y)
+  # 如果解析失败，返回 None
+  if isinstance(coord, CallExprOperand):
+    if coord.name in _tr_vnutil_coordinate.get_all_candidates():
+      x = None
+      y = None
+      if len(coord.args) > 0:
+        x = try_convert_parameter(int, coord.args[0]) # try_get_int(coord.args[0])
+        if len(coord.args) > 1:
+          y = try_convert_parameter(int, coord.args[1])
+      if len(coord.kwargs) > 0:
+        if "x" in coord.kwargs:
+          x = try_convert_parameter(int, coord.kwargs["x"])
+        if "y" in coord.kwargs:
+          y = try_convert_parameter(int, coord.kwargs["y"])
+      if x is not None and y is not None:
+        return (x, y)
+  elif isinstance(coord, (StringLiteral, TextFragmentLiteral)):
+    coodstr = coord.get_string()
+    if result := re.match(r"""^\s*[\(\uFF08]\s*(?P<x>\d+)\s*[,\uFF0C]\s*(?P<y>\d+)\s*[\)\uFF09]\s*$""", coodstr):
+      return (int(result.group("x")), int(result.group("y")))
+  elif isinstance(coord, IntTupleLiteral):
+    if len(coord.value) == 2:
+      return coord.value
+  return None
+
+_tr_vnutil_placer_absolute = _TR_vn_util.tr("placer_absolute",
+  en="AbsolutePosition",
+  zh_cn="绝对位置",
+  zh_hk="絕對位置",
+)
+_tr_vnutil_placer_absolute_anchor = _TR_vn_util.tr("placer_absolute_anchor",
+  en="Anchor",
+  zh_cn="锚点",
+  zh_hk="錨點",
+)
+_tr_vnutil_placer_absolute_scale = _TR_vn_util.tr("placer_absolute_scale",
+  en="Scale",
+  zh_cn="缩放比例",
+  zh_hk="縮放比例",
+)
+_tr_vnutil_placer_absolute_anchorcoord = _TR_vn_util.tr("placer_absolute_anchorcoord",
+  en="AnchorCoord",
+  zh_cn="锚点坐标",
+  zh_hk="錨點坐標",
+)
+_tr_vnutil_placer_absolute_helptext = _TR_vn_util.tr("placer_absolute_helptext",
+  en="AbsolutePosition(Anchor, Scale, [AnchorCoord])",
+  zh_cn="绝对位置(锚点, 缩放比例 [,锚点坐标])",
+  zh_hk="絕對位置(錨點, 縮放比例 [,錨點坐標])",
+)
+_tr_vnutil_placer_sprite = _TR_vn_util.tr("placer_sprite",
+  en="SpriteDefaultConfig",
+  zh_cn="立绘默认方案",
+  zh_hk="立繪默認方案",
+)
+_tr_vnutil_placer_sprite_baseheight = _TR_vn_util.tr("placer_sprite_baseheight",
+  en="BaseHeight",
+  zh_cn="屏底高度",
+  zh_hk="屏底高度",
+)
+_tr_vnutil_placer_sprite_topheight = _TR_vn_util.tr("placer_sprite_topheight",
+  en="TopHeight",
+  zh_cn="顶部高度",
+  zh_hk="頂部高度",
+)
+_tr_vnutil_placer_sprite_xoffset = _TR_vn_util.tr("placer_sprite_xoffset",
+  en="XOffset",
+  zh_cn="横向偏移",
+  zh_hk="橫向偏移",
+)
+_tr_vnutil_placer_sprite_xpos = _TR_vn_util.tr("placer_sprite_xpos",
+  en="XPos",
+  zh_cn="横向位置",
+  zh_hk="橫向位置",
+)
+_tr_vnutil_placer_sprite_helptext = _TR_vn_util.tr("placer_sprite_helptext",
+  en="SpriteDefaultConfig(BaseHeight, TopHeight, XOffset [,XPos])",
+  zh_cn="立绘默认方案(屏底高度, 顶部高度, 横向偏移 [,横向位置])",
+  zh_hk="立繪默認方案(屏底高度, 頂部高度, 橫向偏移 [,橫向位置])",
+)
+_tr_vnutil_placer_invalid_argument = _TR_vn_util.tr("placer_invalid_argument",
+  en="Invalid argument \"{expr}\" for parameter {param}",
+  zh_cn="参数 {param} 的值 \"{expr}\" 无效",
+  zh_hk="參數 {param} 的值 \"{expr}\" 無效",
+)
+_tr_vnutil_placer_absolute_unexpected_argument = _TR_vn_util.tr("placer_absolute_unexpected_argument",
+  en="Unexpected argument \"{expr}\" in AbsolutePosition expression. Expected arguments include: {args}",
+  zh_cn="绝对位置表达式中不存在参数 \"{expr}\"。需要的参数包括： {args}",
+  zh_hk="絕對位置表達式中不存在參數 \"{expr}\"。需要的參數包括： {args}",
+)
+_tr_vnutil_placer_absolute_too_many_positional_arguments = _TR_vn_util.tr("placer_absolute_too_many_positional_arguments",
+  en="AbsolutePosition expression takes at most one positional argument (for the anchor); {num} provided. The extra argument(s) are ignored.",
+  zh_cn="绝对位置表达式只取最多一个按位参数（锚点），但是现在提供了 {num} 个。多余的参数将被忽略。",
+  zh_hk="絕對位置表達式只取最多一個按位參數（錨點），但是現在提供了 {num} 個。多余的參數將被忽略。",
+)
+def parse_placer_absolute_expr(context : Context, placer : CallExprOperand, warnings : list[tuple[str, str]], initsrc : VNASTImagePlacerParameterSymbol | None = None) -> tuple[Literal | None, ...]:
+  # 该函数用于解析绝对位置表达式
+  # 既包含在声明时（比如定义角色立绘时）的参数，也包含在调用时（比如角色上场时）的参数
+  # 如果这是在调用时，则 initsrc 是之前声明时的参数
+  anchor = (0, 0)
+  scale = decimal.Decimal(1.0)
+  anchorcoord = None
+  if initsrc is not None:
+    assert initsrc.kind.get().value == VNASTImagePlacerKind.ABSOLUTE
+    anchor = initsrc.parameters.get(0).value
+    scale = initsrc.parameters.get(1).value
+    if initsrc.parameters.get_num_operands() > 2:
+      anchorcoord = initsrc.parameters.get(2).value
+  def try_set_anchor(s : Value | CallExprOperand):
+    nonlocal anchor
+    assert isinstance(s, (Literal, CallExprOperand))
+    if result := parse_coordinate(s):
+      anchor = result
+    else:
+      warnings.append(("vnparse-placer-absolute-invalid-argument", _tr_vnutil_invalid_coordinate_expr.format(expr=str(s))))
+  if len(placer.args) > 0:
+    try_set_anchor(placer.args[0])
+  if len(placer.kwargs) > 0:
+    for k, v in placer.kwargs.items():
+      if k in _tr_vnutil_placer_absolute_anchor.get_all_candidates():
+        try_set_anchor(v)
+      elif k in _tr_vnutil_placer_absolute_scale.get_all_candidates():
+        if converted := try_convert_parameter(decimal.Decimal, v):
+          scale = converted
+        else:
+          warnings.append(("vnparse-placer-absolute-invalid-argument", _tr_vnutil_placer_invalid_argument.format(expr=str(v), param=_tr_vnutil_placer_absolute_scale.get())))
+      elif k in _tr_vnutil_placer_absolute_anchorcoord.get_all_candidates():
+        assert isinstance(v, (Literal, CallExprOperand))
+        if result := parse_coordinate(v):
+          anchorcoord = result
+        else:
+          warnings.append(("vnparse-placer-absolute-anchorcoord-invalid-argument", _tr_vnutil_placer_invalid_argument.format(expr=str(v), param=_tr_vnutil_placer_absolute_anchorcoord.get())))
+      else:
+        expected_args = [_tr_vnutil_placer_absolute_anchor.get(), _tr_vnutil_placer_absolute_scale.get(), _tr_vnutil_placer_absolute_anchorcoord.get()]
+        warnings.append(("vnparse-placer-absolute-unexpected-argument", _tr_vnutil_placer_absolute_unexpected_argument.format(expr=str(v), args=str(expected_args))))
+  if len(placer.args) > 1:
+    warnings.append(("vnparse-placer-absolute-too-many-positional-arguments", _tr_vnutil_placer_absolute_too_many_positional_arguments.format(num=str(len(placer.args)))))
+  return (IntTupleLiteral.get(anchor, context),
+          FloatLiteral.get(scale, context),
+          IntTupleLiteral.get(anchorcoord, context) if anchorcoord is not None else None)
+
+_tr_vnutil_placer_sprite_unexpected_argument = _TR_vn_util.tr("placer_sprite_unexpected_argument",
+  en="Unexpected argument \"{expr}\" in SpriteDefaultConfig expression. Expected arguments include: {args}",
+  zh_cn="立绘默认方案表达式中不存在参数 \"{expr}\"。需要的参数包括： {args}",
+  zh_hk="立繪默認方案表達式中不存在參數 \"{expr}\"。需要的參數包括： {args}",
+)
+_tr_vnutil_placer_sprite_too_many_positional_arguments = _TR_vn_util.tr("placer_sprite_too_many_positional_arguments",
+  en="SpriteDefaultConfig expression does not take positional arguments; {num} provided. They are ignored.",
+  zh_cn="立绘默认方案表达式不接受按位参数，但是现在提供了 {num} 个。这些参数将被忽略。",
+  zh_hk="立繪默認方案表達式不接受按位參數，但是現在提供了 {num} 個。這些參數將被忽略。",
+)
+
+def parse_placer_sprite_expr(context : Context, placer : CallExprOperand, warnings : list[tuple[str, str]], initsrc : VNASTImagePlacerParameterSymbol | None = None) -> tuple[Literal | None, ...]:
+  # 该函数用于解析立绘默认方案表达式
+  # 既包含在声明时（比如定义角色立绘时）的参数，也包含在调用时（比如角色上场时）的参数
+  # 如果这是在调用时，则 initsrc 是之前声明时的参数
+  baseheight = decimal.Decimal(0.0)
+  topheight = decimal.Decimal(1.0)
+  xoffset = decimal.Decimal(0.0)
+  xpos = None
+  if initsrc is not None:
+    assert initsrc.kind.get().value == VNASTImagePlacerKind.SPRITE
+    baseheight = initsrc.parameters.get(0).value
+    topheight = initsrc.parameters.get(1).value
+    xoffset = initsrc.parameters.get(2).value
+    if initsrc.parameters.get_num_operands() > 3:
+      xpos = initsrc.parameters.get(3).value
+  if len(placer.kwargs) > 0:
+    for k, v in placer.kwargs.items():
+      if k in _tr_vnutil_placer_sprite_baseheight.get_all_candidates():
+        if converted := try_convert_parameter(decimal.Decimal, v):
+          baseheight = converted
+        else:
+          warnings.append(("vnparse-placer-sprite-invalid-argument", _tr_vnutil_placer_invalid_argument.format(expr=str(v), param=_tr_vnutil_placer_sprite_baseheight.get())))
+      elif k in _tr_vnutil_placer_sprite_topheight.get_all_candidates():
+        if converted := try_convert_parameter(decimal.Decimal, v):
+          topheight = converted
+        else:
+          warnings.append(("vnparse-placer-sprite-invalid-argument", _tr_vnutil_placer_invalid_argument.format(expr=str(v), param=_tr_vnutil_placer_sprite_topheight.get())))
+      elif k in _tr_vnutil_placer_sprite_xoffset.get_all_candidates():
+        if converted := try_convert_parameter(decimal.Decimal, v):
+          xoffset = converted
+        else:
+          warnings.append(("vnparse-placer-sprite-invalid-argument", _tr_vnutil_placer_invalid_argument.format(expr=str(v), param=_tr_vnutil_placer_sprite_xoffset.get())))
+      elif k in _tr_vnutil_placer_sprite_xpos.get_all_candidates():
+        if converted := try_convert_parameter(decimal.Decimal, v):
+          xpos = converted
+        else:
+          warnings.append(("vnparse-placer-sprite-invalid-argument", _tr_vnutil_placer_invalid_argument.format(expr=str(v), param=_tr_vnutil_placer_sprite_xpos.get())))
+      else:
+        expected_args = [_tr_vnutil_placer_sprite_baseheight.get(), _tr_vnutil_placer_sprite_topheight.get(), _tr_vnutil_placer_sprite_xoffset.get(), _tr_vnutil_placer_sprite_xpos.get()]
+        warnings.append(("vnparse-placer-sprite-unexpected-argument", _tr_vnutil_placer_sprite_unexpected_argument.format(expr=str(v), args=str(expected_args))))
+  if len(placer.args) > 0:
+    warnings.append(("vnparse-placer-sprite-too-many-positional-arguments", _tr_vnutil_placer_sprite_too_many_positional_arguments.format(num=str(len(placer.args)))))
+  return (FloatLiteral.get(baseheight, context),
+          FloatLiteral.get(topheight, context),
+          FloatLiteral.get(xoffset, context),
+          FloatLiteral.get(xpos, context) if xpos is not None else None)
+
+_tr_vnutil_placer_missing_argument = _TR_vn_util.tr("placer_missing_argument",
+  en="Missing argument {arg} in placer expression",
+  zh_cn="位置表达式缺少参数 {arg}",
+  zh_hk="位置表達式缺少參數 {arg}",
+)
+_tr_vnutil_placer_invalid_expr = _TR_vn_util.tr("placer_invalid_expr",
+  en="Invalid placer expression: {expr}",
+  zh_cn="无效的位置表达式: {expr}",
+  zh_hk="無效的位置表達式: {expr}",
+)
+
+def resolve_placer_expr(context : Context, expr : ListExprTreeNode, defaultconf : VNASTImagePlacerParameterSymbol | None, presetplace : SymbolTableRegion[VNASTImagePresetPlaceSymbol], warnings : list[tuple[str, str]]) -> tuple[VNASTImagePlacerKind, list[Literal]] | None:
+  # 尝试根据当前的配置解析一个完整的位置表达式
+  # 如果解析失败且没有默认配置就返回 None
+  # 如果解析失败但有默认配置，就根据默认配置补全参数
+  anchorcoord_default_value = (0, 0)
+  xpos_default_value = decimal.Decimal(0.0)
+  def construct_default_position_from_config(defaultconf : VNASTImagePlacerParameterSymbol) -> tuple[VNASTImagePlacerKind, list[Literal]]:
+    match defaultconf.kind.get().value:
+      case VNASTImagePlacerKind.ABSOLUTE:
+        anchor = defaultconf.parameters.get(0).value
+        scale = defaultconf.parameters.get(1).value
+        anchorcoord = defaultconf.parameters.get(2).value if defaultconf.parameters.get_num_operands() > 2 else IntTupleLiteral.get(anchorcoord_default_value, context)
+        return (VNASTImagePlacerKind.ABSOLUTE, [anchor, scale, anchorcoord])
+      case VNASTImagePlacerKind.SPRITE:
+        baseheight = defaultconf.parameters.get(0).value
+        topheight = defaultconf.parameters.get(1).value
+        xoffset = defaultconf.parameters.get(2).value
+        xpos = defaultconf.parameters.get(3).value if defaultconf.parameters.get_num_operands() > 3 else FloatLiteral.get(xpos_default_value, context)
+        return (VNASTImagePlacerKind.SPRITE, [baseheight, topheight, xoffset, xpos])
+      case _:
+        raise PPInternalError("Unknown placer kind")
+  placer = expr.value
+  is_placer_type_expected = False
+  if isinstance(placer, str):
+    is_placer_type_expected = True
+    name = placer
+    if preset := presetplace.get(name):
+      parameters = [u.value for u in preset.parameters.operanduses()]
+      return (preset.kind.get().value, parameters)
+    # 如果有默认配置，尝试给当前项加上调用表达式的前后缀，再尝试解析
+    if defaultconf is not None and len(name) > 0:
+      prefix = ""
+      match defaultconf.kind.get().value:
+        case VNASTImagePlacerKind.ABSOLUTE:
+          prefix = _tr_vnutil_placer_absolute.get()
+        case VNASTImagePlacerKind.SPRITE:
+          prefix = _tr_vnutil_placer_sprite.get()
+        case _:
+          raise PPInternalError("Unknown placer kind")
+      complete_str = prefix + '(' + name + ')'
+      is_converted = False
+      if cmd := FrontendParserBase.try_get_callexproperand_or_str(context, complete_str):
+        if isinstance(cmd, CallExprOperand):
+          placer = cmd
+          is_converted = True
+          # 这里直接过渡到下一段 CallExprOperand 的处理
+      if not is_converted:
+        warnings.append(("vnparse-placer-invalid-expr", _tr_vnutil_placer_invalid_expr.format(expr=name)))
+  if isinstance(placer, CallExprOperand):
+    is_placer_type_expected = True
+    if placer.name in _tr_vnutil_placer_absolute.get_all_candidates():
+      anchor, scale, anchorcoord = parse_placer_absolute_expr(context, placer, warnings, defaultconf)
+      assert anchor is not None and scale is not None
+      if anchorcoord is None:
+        warnings.append(("vnparse-placer-missing-argument", _tr_vnutil_placer_missing_argument.format(arg=_tr_vnutil_placer_absolute_anchorcoord.get())))
+        anchorcoord = IntTupleLiteral.get(anchorcoord_default_value, context)
+      return (VNASTImagePlacerKind.ABSOLUTE, [anchor, scale, anchorcoord])
+    elif placer.name in _tr_vnutil_placer_sprite.get_all_candidates():
+      baseheight, topheight, xoffset, xpos = parse_placer_sprite_expr(context, placer, warnings, defaultconf)
+      assert baseheight is not None and topheight is not None and xoffset is not None
+      if xpos is None:
+        warnings.append(("vnparse-placer-missing-argument", _tr_vnutil_placer_missing_argument.format(arg=_tr_vnutil_placer_sprite_xpos.get())))
+        xpos = FloatLiteral.get(xpos_default_value, context)
+      return (VNASTImagePlacerKind.SPRITE, [baseheight, topheight, xoffset, xpos])
+    else:
+      warnings.append(("vnparse-placer-unknown-placer", _tr_vnutil_placer_unknown_placer.format(expr=placer.name)))
+  # 如果执行到这里，说明解析失败
+  if not is_placer_type_expected:
+    warnings.append(("vnparse-placer-invalid-expr", _tr_vnutil_placer_invalid_expr.format(expr=str(placer))))
+  if defaultconf is not None:
+    # 根据类别补全参数
+    return construct_default_position_from_config(defaultconf)
+  # 没有默认配置就没办法了
+  return None
+
+_tr_vnutil_placer_unknown_placer = _TR_vn_util.tr("placer_unknown_placer",
+  en="Unknown placer: {expr}",
+  zh_cn="未知的位置配置: {expr}",
+  zh_hk="未知的位置配置: {expr}",
+)
+_tr_vnutil_presetplace_missing_name = _TR_vn_util.tr("presetplace_missing_name",
+  en="Missing name for preset place : {expr}",
+  zh_cn="缺少预设位置的名称: {expr}",
+  zh_hk="缺少預設位置的名稱: {expr}",
+)
+_tr_vnutil_placer_invalid_config = _TR_vn_util.tr("placer_invalid_config",
+  en="Invalid placer config: {expr}",
+  zh_cn="无效的位置配置: {expr}",
+  zh_hk="無效的位置配置: {expr}",
+)
+
+def parse_image_placer_config(context : Context, placing_expr : ListExprTreeNode, config : SymbolTableRegion[VNASTImagePlacerParameterSymbol], presetplace : SymbolTableRegion[VNASTImagePresetPlaceSymbol], warnings : list[tuple[str, str]]) -> None:
+  # 这个函数用于处理图片声明时（比如声明角色时）对位置的设置
+  # 绝对位置(锚点=坐标(x,y),缩放比例,<锚点坐标>)
+  # 立绘默认方案(屏底高度,顶部高度,横向偏移,<横向位置>)
+  if not isinstance(placing_expr.value, CallExprOperand):
+    warnings.append(("vnparse-placer-invalid-config", _tr_vnutil_placer_invalid_config.format(expr=str(placing_expr.value))))
+    return
+  placer = placing_expr.value
+  placersymbol = None
+  if placer.name in _tr_vnutil_placer_absolute.get_all_candidates():
+    placerinfo = parse_placer_absolute_expr(context, placer, warnings)
+    if placerinfo is None:
+      return
+    anchor, scale, anchorcoord = placerinfo
+    assert anchor is not None and scale is not None
+    parameters = [anchor, scale]
+    if anchorcoord is not None:
+      parameters.append(anchorcoord)
+    placersymbol = VNASTImagePlacerParameterSymbol.create(context=context, kind=VNASTImagePlacerKind.ABSOLUTE, parameters=parameters, loc = placing_expr.location)
+    config.add(placersymbol)
+  elif placer.name in _tr_vnutil_placer_sprite.get_all_candidates():
+    placerinfo = parse_placer_sprite_expr(context, placer, warnings)
+    if placerinfo is None:
+      return
+    baseheight, topheight, xoffset, xpos = placerinfo
+    assert baseheight is not None and topheight is not None and xoffset is not None
+    parameters = [baseheight, topheight, xoffset]
+    if xpos is not None:
+      parameters.append(xpos)
+    placersymbol = VNASTImagePlacerParameterSymbol.create(context=context, kind=VNASTImagePlacerKind.SPRITE, parameters=parameters, loc = placing_expr.location)
+    config.add(placersymbol)
+  else:
+    warnings.append(("vnparse-placer-unknown-placer", _tr_vnutil_placer_unknown_placer.format(expr=placer.name)))
+  # 现在开始处理预设位置
+  for child in placing_expr.children:
+    if expr := resolve_placer_expr(context=context, expr=child, defaultconf=placersymbol, presetplace=presetplace, warnings=warnings):
+      if child.key is None or len(child.key) == 0:
+        warnings.append(("vnparse-placer-missing-name", _tr_vnutil_presetplace_missing_name.format(expr=str(child))))
+        continue
+      place = VNASTImagePresetPlaceSymbol.create(context=context, name=child.key, kind=expr[0], parameters=expr[1], loc=child.location)
+      presetplace.add(place)
+  # 完成！
+setattr(parse_image_placer_config, "keywords", [
+  _tr_vnutil_placer_absolute_helptext,
+  _tr_vnutil_placer_sprite_helptext,
+])
