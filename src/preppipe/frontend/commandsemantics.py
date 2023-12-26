@@ -353,6 +353,7 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
   #     这部分应该单独放在一个状态对象里，方便进行复制(fork)等操作
   # 第二部分的数据的类型应通过构造函数的 state_type 参数进行声明
 
+  TR_parser = TranslationDomain('frontendparser')
 
   @dataclasses.dataclass
   class CommandInvocationInfo:
@@ -377,7 +378,7 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
     def try_add_parameter(self, param : inspect.Parameter, value : typing.Any) -> typing.Tuple[str, typing.Any] | None:
       # 尝试把给定的值赋予参数
       # 如果有错误的话返回错误
-      target_value = try_convert_parameter(param.annotation, value)
+      target_value = FrontendParserBase.try_convert_parameter(param.annotation, value)
       if target_value is None:
         return ('cmdparser-param-conversion-failed', param.name)
       self.add_parameter(param, target_value)
@@ -785,106 +786,355 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
           for op in b.body:
             self.visit_op(state, op)
 
-def try_convert_parameter_list(member_type : type | types.UnionType | typing._GenericAlias, value : typing.Any) -> typing.Any:
-  result = []
-  # 开始搞输入
-  if isinstance(value, list):
-    for v in value:
-      cur_value = try_convert_parameter(member_type, v)
+  @dataclasses.dataclass
+  class Resolution:
+    resolution : tuple[int, int]
+
+  @dataclasses.dataclass
+  class Coordinate2D:
+    x : int
+    y : int
+
+    def to_tuple(self) -> tuple[int, int]:
+      return (self.x, self.y)
+
+  _tr_coordinate = TR_parser.tr("coordinate",
+    en="Coordinate",
+    zh_cn="坐标",
+    zh_hk="坐標",
+  )
+  tr_unexpected_params = TR_parser.tr(code='cmdparser-unexpected-params',
+    en="Expression \"{exprname}\" does not take parameter \"{paramname}\". The valid ones include: {args}",
+    zh_cn="表达式“{exprname}”不接受参数“{paramname}”。有效的参数包括：{args}",
+    zh_hk="表達式「{exprname}」不接受參數「{paramname}」。有效的參數包括：{args}",
+  )
+  tr_param_override = TR_parser.tr(code='cmdparser-param-override',
+    en="In expression \"{exprname}\": Parameter \"{paramname}\" is already assigned as positional and will be overwritten by the keyword value",
+    zh_cn="在表达式“{exprname}”中：参数“{paramname}”已经被按位参数赋值，将被关键字参数覆盖",
+    zh_hk="在表達式「{exprname}」中：參數「{paramname}」已經被按位參數賦值，將被關鍵字參數覆蓋",
+  )
+  tr_extra_positonalargs = TR_parser.tr(code='cmdparser-extra-positional-args',
+    en="Expression \"{exprname}\" supports {numposarg} positional arguments{posargs}, {numgiven} provided. The extra positional arguments will be ignored",
+    zh_cn="表达式“{exprname}”支持 {numposarg} 个按位参数{posargs}，但是提供了 {numgiven} 个。多余的按位参数将被忽略",
+    zh_hk="表達式「{exprname}」支持 {numposarg} 個按位參數{posargs}，但是提供了 {numgiven} 個。多餘的按位參數將被忽略",
+  )
+  tr_missing_param = TR_parser.tr(code='cmdparser-missing-param',
+    en="Expression \"{exprname}\" is missing necessary parameter: {paramname}",
+    zh_cn="表达式“{exprname}”中缺少必须的参数：{paramname}",
+    zh_hk="表達式「{exprname}」中缺少必須的參數：{paramname}",
+  )
+  _tr_invalid_color_expr = TR_parser.tr("invalid_color_expr",
+    en="Error in parsing parameter \"{paramname}\" for expression \"{exprname}\": not a valid color expression: \"{expr}\". We currently support (1) \"#RRGGBB\" (e.g., #FF0000 for red), (2) keyword colors including \"red\", \"green\", \"blue\", \"white\", \"black\".",
+    zh_cn="解析表达式“{exprname}”的参数\"{paramname}\"时出错：这不是一个有效的颜色表达式： \"{expr}\"。我们目前支持 (1) \"#RRGGBB\" (比如 #FF0000 是红色), (2) 颜色关键词，包括“红色”，“绿色”，“蓝色”，“白色”，“黑色”。",
+    zh_hk="解析表達式「{exprname}」的參數\"{paramname}\"時出錯：這不是一個有效的顏色表達式： \"{expr}\"。我們目前支持 (1) \"#RRGGBB\" (比如 #FF0000 是紅色), (2) 顏色關鍵詞，包括「紅色」，「綠色」，「藍色」，「白色」，「黑色」。",
+  )
+  _tr_invalid_resolution_expr = TR_parser.tr("invalid_resolution_expr",
+    en="Error in parsing parameter \"{paramname}\" for expression \"{exprname}\": not a valid resolution expression: \"{expr}\". Please use expression like, for example, \"1920*1080\" for 1920 pixel in width and 1080 pixels in height.",
+    zh_cn="解析表达式“{exprname}”的参数\"{paramname}\"时出错：这不是一个有效的分辨率表达式: \"{expr}\"。比如如果宽 1920 像素、高 1080 像素，请使用 \"1920*1080\" 这样的表达式。",
+    zh_hk="解析表達式「{exprname}」的參數\"{paramname}\"時出錯：這不是一個有效的分辨率表達式: \"{expr}\"。比如如果寬 1920 像素、高 1080 像素，請使用 \"1920*1080\" 這樣的表達式。",
+  )
+  _tr_invalid_coordinate_expr = TR_parser.tr("invalid_coordinate_expr",
+    en="Error in parsing parameter \"{paramname}\" for expression \"{exprname}\": not a valid coordinate expression: \"{expr}\". Please use expression like \"Coordinate(640,480)\" or \"(640,480)\".",
+    zh_cn="解析表达式“{exprname}”的参数\"{paramname}\"时出错：这不是一个有效的坐标表达式: \"{expr}\"。请使用形如 \"坐标(640,480)\" 或 \"(640,480)\" 这样的表达式。",
+    zh_hk="解析表達式「{exprname}」的參數\"{paramname}\"時出錯：這不是一個有效的坐標表達式: \"{expr}\"。請使用形如 \"坐標(640,480)\" 或 \"(640,480)\" 這樣的表達式。",
+  )
+  _tr_invalid_expr_general = TR_parser.tr("invalid_expr_general",
+    en="Error in parsing parameter \"{paramname}\" for expression \"{exprname}\": \"{expr}\" cannot be resolved as type \"{typename}\".",
+    zh_cn="解析表达式“{exprname}”的参数\"{paramname}\"时出错：\"{expr}\" 无法解析为类型 \"{typename}\"。",
+    zh_hk="解析表達式「{exprname}」的參數\"{paramname}\"時出錯：\"{expr}\" 無法解析為類型 \"{typename}\"。",
+  )
+  tr_typename_int = TR_parser.tr(code='cmdparser-typename-int',
+    en="integer",
+    zh_cn="整数",
+    zh_hk="整數",
+  )
+  tr_typename_float = TR_parser.tr(code='cmdparser-typename-float',
+    en="float",
+    zh_cn="浮点数",
+    zh_hk="浮點數",
+  )
+  tr_unrecognized_exprname = TR_parser.tr(code='cmdparser-unrecognized-exprname',
+    en="Unrecognized expression name: \"{exprname}\", expecting: {exprnamelist}",
+    zh_cn="无法识别的表达式名：\"{exprname}\"，支持的表达式如下：{exprnamelist}",
+    zh_hk="無法識別的表達式名：\"{exprname}\"，支持的表達式如下：{exprnamelist}",
+  )
+
+  @staticmethod
+  def _populate_validargs_str(paramdict : dict[str, Translatable]) -> str:
+    valid_args_list : list[str] = []
+    for _, tr in paramdict.items():
+      valid_args_list.append(tr.get())
+    return ', '.join(valid_args_list)
+
+  # 用于在一系列可选的调用中选择一个回调函数并执行
+  @staticmethod
+  def resolve_call(callexpr : CallExprOperand, candidate_list : list[tuple[Translatable, typing.Callable, dict[str, Translatable]]], warnings : list[tuple[str, str]]) -> typing.Any:
+    for name, cb, paramdict in candidate_list:
+      if callexpr.name in name.get_all_candidates():
+        sig = inspect.signature(cb)
+        valid_args = None
+        # 首先，我们得把按位参数和关键字参数都处理好
+        # 关键字参数直接用名字匹配，按位参数按顺序匹配
+        parsed_params = {}
+        for k, v in callexpr.kwargs.items():
+          is_current_param_found = False
+          for pname, tr in paramdict.items():
+            if k in tr.get_all_candidates():
+              parsed_params[pname] = v
+              is_current_param_found = True
+              break
+          if not is_current_param_found:
+            if valid_args is None:
+              valid_args = FrontendParserBase._populate_validargs_str(paramdict)
+            warnings.append(('cmdparser-unexpected-params', FrontendParserBase.tr_unexpected_params.format(exprname=callexpr.name, paramname=k, args=valid_args)))
+        # 接下来处理按位参数
+        # 我们先查看回调函数支持多少个按位参数，然后再根据这个数量处理 callexpr 中的按位参数
+        num_consumed_positional_params = 0
+        for pname, p in sig.parameters.items():
+          if p.kind == inspect.Parameter.POSITIONAL_ONLY:
+            raise PPInternalError('Positional-only parameter in callback function is not supported')
+          if p.kind == inspect.Parameter.KEYWORD_ONLY:
+            break
+          if p.kind == inspect.Parameter.VAR_POSITIONAL or p.kind == inspect.Parameter.VAR_KEYWORD:
+            # 我们忽略 *args 和 **kwargs
+            continue
+          if p.kind == inspect.Parameter.POSITIONAL_OR_KEYWORD:
+            # 先尝试进行读取
+            if len(callexpr.args) == num_consumed_positional_params:
+              break
+            cur_index = num_consumed_positional_params
+            num_consumed_positional_params += 1
+            if p.name in parsed_params:
+              # 这个参数已经被赋值了，我们不再处理
+              warnings.append(('cmdparser-param-override', FrontendParserBase.tr_param_override.format(exprname=callexpr.name, paramname=paramdict[p.name].get())))
+              continue
+            parsed_params[p.name] = callexpr.args[cur_index]
+            continue
+          raise PPInternalError('Unexpected parameter kind')
+        # 如果还有剩的按位参数，我们也不处理
+        if num_consumed_positional_params < len(callexpr.args):
+          # 我们整理一下所有按位参数的名字
+          valid_positional_args_list : list[str] = []
+          for pname, p in sig.parameters.items():
+            if p.kind == inspect.Parameter.POSITIONAL_OR_KEYWORD:
+              valid_positional_args_list.append(paramdict[p.name].get())
+          if len(valid_positional_args_list) > 0:
+            valid_positional_args = ' (' + ', '.join(valid_positional_args_list) + ')'
+          else:
+            valid_positional_args = ''
+          warnings.append(('cmdparser-extra-positional-args', FrontendParserBase.tr_extra_positonalargs.format(exprname=callexpr.name, numposarg=str(len(valid_positional_args_list)), posargs=valid_positional_args, numgiven=str(len(callexpr.args)))))
+        # 解析完成，开始准备转换参数类型
+        # 如果有某个参数无法转换的话，我们就把 final_params 设为 None 来表示出错
+        final_params = {}
+        for pname, p in sig.parameters.items():
+          if pname not in parsed_params:
+            # 这个参数没有被赋值，我们用默认值
+            if p.default == inspect.Parameter.empty:
+              warnings.append(('cmdparser-missing-param', FrontendParserBase.tr_missing_param.format(exprname=callexpr.name, paramname=paramdict[pname].get())))
+              final_params = None
+              break
+            final_params[pname] = p.default
+            continue
+          rawvalue = parsed_params[pname]
+          if converted := FrontendParserBase.try_convert_parameter(p.annotation, rawvalue):
+            final_params[pname] = converted
+          else:
+            # 给一些有特殊报错消息的类型单独处理
+            if p.annotation == Color:
+              warnings.append(('cmdparser-invalid-color-expr', FrontendParserBase._tr_invalid_color_expr.format(paramname=paramdict[pname].get(), exprname=callexpr.name, expr=str(rawvalue))))
+            elif p.annotation == FrontendParserBase.Resolution:
+              warnings.append(('cmdparser-invalid-resolution-expr', FrontendParserBase._tr_invalid_resolution_expr.format(paramname=paramdict[pname].get(), exprname=callexpr.name, expr=str(rawvalue))))
+            elif p.annotation == FrontendParserBase.Coordinate2D:
+              warnings.append(('cmdparser-invalid-coordinate-expr', FrontendParserBase._tr_invalid_coordinate_expr.format(paramname=paramdict[pname].get(), exprname=callexpr.name, expr=str(rawvalue))))
+            else:
+              if p.annotation == int:
+                typename = FrontendParserBase.tr_typename_int.get()
+              elif p.annotation == float:
+                typename = FrontendParserBase.tr_typename_float.get()
+              else:
+                typename = str(p.annotation)
+              warnings.append(('cmdparser-invalid-expr-general', FrontendParserBase._tr_invalid_expr_general.format(paramname=paramdict[pname].get(), exprname=callexpr.name, expr=str(rawvalue), typename=typename)))
+            # 再尝试使用默认值，如果有的话
+            if p.default == inspect.Parameter.empty:
+              final_params = None
+              break
+            final_params[pname] = p.default
+        if final_params is None:
+          continue
+        return cb(**final_params)
+    # 没有找到匹配的回调函数
+    expr_name_list = []
+    for name, _, _ in candidate_list:
+      expr_name_list.extend(name.get())
+    expr_name_list_str = ', '.join(expr_name_list)
+    warnings.append(('cmdparser-unrecognized-exprname', FrontendParserBase.tr_unrecognized_exprname.format(exprname=callexpr.name, exprnamelist=expr_name_list_str)))
+    return None
+
+  @staticmethod
+  def try_convert_parameter_list(member_type : type | types.UnionType | typing._GenericAlias, value : typing.Any) -> typing.Any:
+    result = []
+    # 开始搞输入
+    if isinstance(value, list):
+      for v in value:
+        cur_value = FrontendParserBase.try_convert_parameter(member_type, v)
+        if cur_value is None:
+          return None
+        result.append(cur_value)
+    else:
+      cur_value = FrontendParserBase.try_convert_parameter(member_type, value)
       if cur_value is None:
         return None
       result.append(cur_value)
-  else:
-    cur_value = try_convert_parameter(member_type, value)
-    if cur_value is None:
+    return result
+
+  @staticmethod
+  def parse_pixel_resolution_str(s : str) -> tuple[int, int] | None:
+    # 解析一个 "Width*Height" 的字符串，返回 [宽,高] 的元组
+    if result := re.match(r"""^(?P<width>\d+)\s*[*xX,]\s*(?P<height>\d+)$""", s):
+      width = int(result.group("width"))
+      height = int(result.group("height"))
+      return (width, height)
+    return None
+
+  @staticmethod
+  def parse_coordinate(coord : CallExprOperand | Literal) -> FrontendParserBase.Coordinate2D | None:
+    # 解析一个坐标表达式，返回 (x, y)
+    # 如果解析失败，返回 None
+    if isinstance(coord, CallExprOperand):
+      # 坐标(640,480),  坐标(x=640,y=480) 这样的调用表达式
+      if coord.name in FrontendParserBase._tr_coordinate.get_all_candidates():
+        x = None
+        y = None
+        if len(coord.args) > 0:
+          x = FrontendParserBase.try_convert_parameter(int, coord.args[0]) # try_get_int(coord.args[0])
+          if len(coord.args) > 1:
+            y = FrontendParserBase.try_convert_parameter(int, coord.args[1])
+        if len(coord.kwargs) > 0:
+          if "x" in coord.kwargs:
+            x = FrontendParserBase.try_convert_parameter(int, coord.kwargs["x"])
+          if "y" in coord.kwargs:
+            y = FrontendParserBase.try_convert_parameter(int, coord.kwargs["y"])
+        if x is not None and y is not None:
+          return FrontendParserBase.Coordinate2D(x=x, y=y)
+    elif isinstance(coord, (StringLiteral, TextFragmentLiteral)):
+      # "(640,480)" 这样的字符串
+      coodstr = coord.get_string()
+      if result := re.match(r"""^\s*[\(\uFF08]\s*(?P<x>\d+)\s*[,\uFF0C]\s*(?P<y>\d+)\s*[\)\uFF09]\s*$""", coodstr):
+        return FrontendParserBase.Coordinate2D(x=int(result.group("x")), y=int(result.group("y")))
+    elif isinstance(coord, IntTupleLiteral):
+      if len(coord.value) == 2:
+        return FrontendParserBase.Coordinate2D(x=coord.value[0], y=coord.value[1])
+    return None
+
+  # 我们需要访问 typing._GenericAlias, typing._SpecialGenericAlias, 和 <enum>._translate()
+  # pylint: disable=protected-access
+  @staticmethod
+  def try_convert_parameter(ty : type | types.UnionType | typing._GenericAlias, value : typing.Any) -> typing.Any:
+    # 如果类型标注是 typing.List[...] 这种的话，ty 的值会是像 typing._GenericAlias 的东西，这不算 type
+    # 如果类型标注是 list[...] 这种的话， ty 的值会是像 types.GenericAlias 的东西，这是 type
+    # 如果类型标注是 X | Y | ... 这种的话， ty 的值会是 types.UnionType，这也不是 type
+    if isinstance(ty, types.GenericAlias) or isinstance(ty, typing._GenericAlias):
+      if ty.__origin__ != list:
+        # 我们只支持 list ，不支持像是 dict 等
+        raise RuntimeError('Generic alias for non-list types not supported')
+      if len(ty.__args__) != 1:
+        # list[str] 可以， list[int | str] 可以， list[int, str] 不行
+        raise RuntimeError('List type should have exactly one argument specifying the element type (can be union though)')
+      return FrontendParserBase.try_convert_parameter_list(ty.__args__[0], value)
+
+    if ty == list or isinstance(ty, typing._SpecialGenericAlias):
+      # 这种情况下标注要么是 list 要么是 typing.List，都没有带成员类型
+      raise RuntimeError('List type should specify the element type (e.g., list[str] or list[str | int])')
+
+    if isinstance(ty, types.UnionType):
+      for candidate_ty in ty.__args__:
+        cur_result = FrontendParserBase.try_convert_parameter(candidate_ty, value)
+        if cur_result is not None:
+          return cur_result
       return None
-    result.append(cur_value)
-  return result
 
-# 我们需要访问 typing._GenericAlias, typing._SpecialGenericAlias, 和 <enum>._translate()
-# pylint: disable=protected-access
-def try_convert_parameter(ty : type | types.UnionType | typing._GenericAlias, value : typing.Any) -> typing.Any:
-  # 如果类型标注是 typing.List[...] 这种的话，ty 的值会是像 typing._GenericAlias 的东西，这不算 type
-  # 如果类型标注是 list[...] 这种的话， ty 的值会是像 types.GenericAlias 的东西，这是 type
-  # 如果类型标注是 X | Y | ... 这种的话， ty 的值会是 types.UnionType，这也不是 type
-  if isinstance(ty, types.GenericAlias) or isinstance(ty, typing._GenericAlias):
-    if ty.__origin__ != list:
-      # 我们只支持 list ，不支持像是 dict 等
-      raise RuntimeError('Generic alias for non-list types not supported')
-    if len(ty.__args__) != 1:
-      # list[str] 可以， list[int | str] 可以， list[int, str] 不行
-      raise RuntimeError('List type should have exactly one argument specifying the element type (can be union though)')
-    return try_convert_parameter_list(ty.__args__[0], value)
+    # 剩余的情况下， ty 都应该是 type
+    # 如果这里报错的话请检查类型标注是否有问题
+    assert isinstance(ty, type)
 
-  if ty == list or isinstance(ty, typing._SpecialGenericAlias):
-    # 这种情况下标注要么是 list 要么是 typing.List，都没有带成员类型
-    raise RuntimeError('List type should specify the element type (e.g., list[str] or list[str | int])')
+    # 参数类型是 list 的情况处理完了，到这应该不会要有复合的输入
+    # 如果现在值是 list ，那么我们预计只有一项内容，我们将它展开
+    if isinstance(value, list):
+      if len(value) != 1:
+        return None
+      value = value[0]
 
-  if isinstance(ty, types.UnionType):
-    for candidate_ty in ty.__args__:
-      cur_result = try_convert_parameter(candidate_ty, value)
-      if cur_result is not None:
-        return cur_result
-    return None
+    if isinstance(value, ty):
+      return value
 
-  # 剩余的情况下， ty 都应该是 type
-  # 如果这里报错的话请检查类型标注是否有问题
-  assert isinstance(ty, type)
-
-  # 参数类型是 list 的情况处理完了，到这应该不会要有复合的输入
-  # 如果现在值是 list ，那么我们预计只有一项内容，我们将它展开
-  if isinstance(value, list):
-    if len(value) != 1:
+    # 忽略 None
+    if ty is types.NoneType:
       return None
-    value = value[0]
 
-  if isinstance(value, ty):
-    return value
+    # 到这里我们现在支持如下类型：
+    # 整数型、浮点数型（仅作为输出，不作为输入）
+    # 枚举类型（仅输出，可由字符串转换得来）
+    # 延伸参数类型与调用表达式（不支持转换为其他类型，调用表达式可由文本、字符串转换得来）
+    # 文本、字符串（可以转换成所有不是延伸参数类型的类型）
 
-  # 到这里我们现在支持如下类型：
-  # 整数型、浮点数型（仅作为输出，不作为输入）
-  # 枚举类型（仅输出，可由字符串转换得来）
-  # 延伸参数类型与调用表达式（不支持转换为其他类型，调用表达式可由文本、字符串转换得来）
-  # 文本、字符串（可以转换成所有不是延伸参数类型的类型）
+    if issubclass(ty, ExtendDataExprBase):
+      # 如果类型不一致的话我们无法转换该类型的值
+      return None
 
-  if issubclass(ty, ExtendDataExprBase):
-    # 如果类型不一致的话我们无法转换该类型的值
-    return None
+    # 在这里对 Coordinate2D 进行特殊处理，这个可以从 CallExprOperand 转化
+    if ty == FrontendParserBase.Coordinate2D:
+      return FrontendParserBase.parse_coordinate(value)
 
-  # 此时如果输入类型是 ExtendDataExprBase 或者 CallExprOperand 的话，我们应该无法对其做转化了
-  if isinstance(value, ExtendDataExprBase) or isinstance(value, CallExprOperand):
-    return None
+    # 此时如果输入类型是 ExtendDataExprBase 或者 CallExprOperand 的话，我们应该无法对其做转化了
+    if isinstance(value, ExtendDataExprBase) or isinstance(value, CallExprOperand):
+      return None
 
-  # 此时输入类型应该只会是纯文本
-  # 输出类型除了文本、字符串、整数、浮点数之外，还可能有调用表达式和枚举类型（需要从字符串转过去）
+    # 此时输入类型应该只会是纯文本
+    # 输出类型除了文本、字符串、整数、浮点数之外，还可能有调用表达式和枚举类型（需要从字符串转过去）
 
-  # 首先把非基本类型的字符串解决了
-  if ty == TextFragmentLiteral and isinstance(value, StringLiteral):
-    context = value.get_context()
-    return TextFragmentLiteral.get(context, value, TextStyleLiteral.get((), context))
+    # 首先把非基本类型的字符串解决了
+    if ty == TextFragmentLiteral and isinstance(value, StringLiteral):
+      context = value.get_context()
+      return TextFragmentLiteral.get(context, value, TextStyleLiteral.get((), context))
 
-  # 其他类型都可以从字符串转换过去，这里先将值转为字符串
-  value_str = ''
-  if isinstance(value, TextFragmentLiteral):
-    value_str = value.get_string()
-  elif isinstance(value, StringLiteral):
-    value_str = value.get_string()
-  else:
-    raise NotImplementedError('Unexpected input value type')
-
-  if ty == str:
-    return value_str
-  if ty == int:
-    return int(value_str)
-  if ty == decimal.Decimal:
-    return decimal.Decimal(value_str)
-  if ty == float:
-    return float(value_str)
-  if ty == CallExprOperand:
-    return CallExprOperand(name = value_str, args = [], kwargs = collections.OrderedDict())
-  if issubclass(ty, enum.Enum):
-    if not hasattr(ty, '_translate'):
-      raise RuntimeError('Enum parameter not registered with @FrontendParamEnum')
-    return ty._translate(value_str)
-
-  raise NotImplementedError('Unexpected output value type')
+    # 其他类型都可以从字符串转换过去，这里先将值转为字符串
+    value_str = ''
+    if isinstance(value, TextFragmentLiteral):
+      value_str = value.get_string()
+    elif isinstance(value, StringLiteral):
+      value_str = value.get_string()
+    else:
+      raise NotImplementedError('Unexpected input value type')
+    if ty == str:
+      return value_str
+    if ty == int:
+      try:
+        return int(value_str)
+      except ValueError:
+        return None
+    if ty == decimal.Decimal:
+      try:
+        return decimal.Decimal(value_str)
+      except decimal.InvalidOperation:
+        return None
+    if ty == float:
+      try:
+        return float(value_str)
+      except ValueError:
+        return None
+    if ty == FrontendParserBase.Resolution:
+      if res := FrontendParserBase.parse_pixel_resolution_str(value_str):
+        return FrontendParserBase.Resolution(res)
+      return None
+    if ty == Color:
+      try:
+        return Color.get(value_str)
+      except ValueError:
+        return None
+    if ty == CallExprOperand:
+      return CallExprOperand(name = value_str, args = [], kwargs = collections.OrderedDict())
+    if issubclass(ty, enum.Enum):
+      if not hasattr(ty, '_translate'):
+        raise RuntimeError('Enum parameter not registered with @FrontendParamEnum')
+      return ty._translate(value_str)
+    raise NotImplementedError('Unexpected output value type')

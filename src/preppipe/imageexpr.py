@@ -41,8 +41,18 @@ class BaseImageLiteralExpr(LiteralExpr):
   @staticmethod
   def _validate_size(size : IntTupleLiteral) -> None:
     assert isinstance(size, IntTupleLiteral)
+    # 有两种情况是允许的：
+    # 1. 两个都是0
+    # 2. 两个都是正数
+    num_zeros = 0
+    num_positives = 0
     for v in size.value:
-      assert v > 0
+      if v == 0:
+        num_zeros += 1
+      elif v > 0:
+        num_positives += 1
+      else:
+        raise ValueError("Image size must be non-negative")
 
 @IRObjectJsonTypeName('image_asset_le')
 class ImageAssetLiteralExpr(BaseImageLiteralExpr):
