@@ -36,7 +36,7 @@ class VNASTImageExprSource(enum.Enum):
   SRC_CHARACTER_SIDEIMAGE = enum.auto() # 人物头像
   SRC_SCENE_BACKGROUND    = enum.auto() # 场景背景
 
-def emit_default_placeholder(context : Context, dest : ImageExprPlaceholderDest, screen_resolution : tuple[int, int] | None = None, description : StringLiteral | None = None) -> PlaceholderImageLiteralExpr:
+def get_default_size_for_placeholders(dest : ImageExprPlaceholderDest, screen_resolution : tuple[int, int] | None = None) -> tuple[int, int]:
   if screen_resolution is None:
     screen_resolution = (1920, 1080)
   finalresolution = screen_resolution
@@ -52,18 +52,13 @@ def emit_default_placeholder(context : Context, dest : ImageExprPlaceholderDest,
       finalresolution = (width_p, width_p)
     case _:
       pass
+  return finalresolution
+
+def emit_default_placeholder(context : Context, dest : ImageExprPlaceholderDest, description : StringLiteral | None = None) -> PlaceholderImageLiteralExpr:
   if description is None:
     description = StringLiteral.get('', context)
-  placeholder = PlaceholderImageLiteralExpr.get(context=context, dest=dest, desc=description, size=IntTupleLiteral.get(finalresolution, context))
+  placeholder = PlaceholderImageLiteralExpr.get(context=context, dest=dest, desc=description, size=IntTupleLiteral.get((0,0), context))
   return placeholder
-
-def parse_pixel_resolution_str(s : str) -> tuple[int, int] | None:
-  # 解析一个 "Width*Height" 的字符串，返回 [宽,高] 的元组
-  if result := re.match(r"""^(?P<width>\d+)\s*[*xX,]\s*(?P<height>\d+)$""", s):
-    width = int(result.group("width"))
-    height = int(result.group("height"))
-    return (width, height)
-  return None
 
 _tr_vn_util_image_open_failed = _TR_vn_util.tr("image_open_failed",
   en="File {path} cannot be opened as image.",
@@ -135,197 +130,47 @@ _tr_color = _TR_vn_util.tr("color",
   zh_cn="颜色",
   zh_hk="顏色",
 )
-
-_tr_invalid_resolution_expr = _TR_vn_util.tr("invalid_resolution_expr",
-  en="Not a valid resolution expression: \"{expr}\". Please use expression like, for example, \"1920*1080\" for 1920 pixel in width and 1080 pixels in height.",
-  zh_cn="这不是一个有效的分辨率表达式: \"{expr}\"。比如如果宽 1920 像素、高 1080 像素，请使用 \"1920*1080\" 这样的表达式。",
-  zh_hk="這不是一個有效的分辨率表達式: \"{expr}\"。比如如果寬 1920 像素、高 1080 像素，請使用 \"1920*1080\" 這樣的表達式。",
-)
-_tr_invalid_color_expr = _TR_vn_util.tr("invalid_color_expr",
-  en="Not a valid color expression: \"{expr}\". We currently support (1) \"#RRGGBB\" (e.g., #FF0000 for red), (2) keyword colors including \"red\", \"green\", \"blue\", \"white\", \"black\".",
-  zh_cn="这不是一个有效的颜色表达式： \"{expr}\"。我们目前支持 (1) \"#RRGGBB\" (比如 #FF0000 是红色), (2) 颜色关键词，包括“红色”，“绿色”，“蓝色”，“白色”，“黑色”。",
-  zh_hk="這不是一個有效的顏色表達式： \"{expr}\"。我們目前支持 (1) \"#RRGGBB\" (比如 #FF0000 是紅色), (2) 顏色關鍵詞，包括「紅色」，「綠色」，「藍色」，「白色」，「黑色」。",
-)
-_tr_placeholderexpr_unexpected_kwarg = _TR_vn_util.tr("placeholderexpr_unexpected_keyword_argument",
-  en="Unexpected keyword argument \"{keyword}\" in the Placeholder image expression. Expected arguments include: {args}",
-  zh_cn="占位图表达式中不存在参数 \"{keyword}\"。需要的参数包括： {args}",
-  zh_hk="占位圖表達式中不存在參數 \"{keyword}\"。需要的參數包括： {args}",
-)
-_tr_placeholderexpr_too_many_positional_arguments = _TR_vn_util.tr("placeholderexpr_too_many_positional_arguments",
-  en="Placeholder image expression takes at most one positional argument (for the resolution); {num} provided. The extra argument(s) are ignored.",
-  zh_cn="占位图表达式只取最多一个按位参数（分辨率），但是现在提供了 {num} 个。多余的参数将被忽略。",
-  zh_hk="占位圖表達式只取最多一個按位參數（分辨率），但是現在提供了 {num} 個。多余的參數將被忽略。",
-)
 _tr_decl = _TR_vn_util.tr("decl",
   en="Decl",
   zh_cn="声明",
   zh_hk="聲明",
-)
-_tr_declexpr_unexpected_kwarg = _TR_vn_util.tr("declexpr_unexpected_keyword_argument",
-  en="Unexpected keyword argument \"{keyword}\" in the image declaration expression. Expected argument(s) include: {args}",
-  zh_cn="图片声明表达式中不存在参数 \"{keyword}\"。需要的参数包括： {args}",
-  zh_hk="圖片聲明表達式中不存在參數 \"{keyword}\"。需要的參數包括： {args}",
-)
-_tr_declexpr_missing_argument = _TR_vn_util.tr("declexpr_missing_argument",
-  en="Missing argument(s) {missing} in the image declaration expression. We will use the default placeholder instead.",
-  zh_cn="图片声明表达式中没有提供参数： {missing}。我们将使用默认占位图。",
-  zh_hk="圖片聲明表達式中沒有提供參數： {missing}。我們將使用默認占位圖。",
-)
-_tr_declexpr_too_many_positional_arguments = _TR_vn_util.tr("declexpr_too_many_positional_arguments",
-  en="Image declaration expression does not allow positional argument (i.e., you need to specify the name of the argument beside the value); {num} provided. The argument(s) are ignored.",
-  zh_cn="图片声明表达式不允许按位参数(换句话说，除了参数值外还需要提供参数的名称)，但是现在提供了 {num} 个按位参数。这些参数将被忽略。",
-  zh_hk="圖片聲明表達式不允許按位參數(換句話說，除了參數值外還需要提供參數的名稱)，但是現在提供了 {num} 個按位參數。這些參數將被忽略。",
 )
 _tr_colorfill = _TR_vn_util.tr("colorfill",
   en=["ColorFill", "ColourFill"],
   zh_cn="纯色填充",
   zh_hk="純色填充",
 )
-_tr_colorfillexpr_unexpected_kwarg = _TR_vn_util.tr("colorfillexpr_unexpected_keyword_argument",
-  en="Unexpected keyword argument \"{keyword}\" in the color fill expression. Expected argument(s) include: {args}",
-  zh_cn="纯色填充表达式中不存在参数 \"{keyword}\"。需要的参数包括： {args}",
-  zh_hk="純色填充表達式中不存在參數 \"{keyword}\"。需要的參數包括： {args}",
-)
-_tr_colorfillexpr_missing_argument = _TR_vn_util.tr("colorfillexpr_missing_argument",
-  en="Missing argument(s) {missing} in the color fill expression. We will use the default placeholder instead.",
-  zh_cn="纯色填充表达式中没有提供参数： {missing}。我们将使用默认占位图。",
-  zh_hk="純色填充表達式中沒有提供參數： {missing}。我們將使用默認占位圖。",
-)
-_tr_colorfillexpr_too_many_positional_arguments = _TR_vn_util.tr("colorfillexpr_too_many_positional_arguments",
-  en="Ccolor fill expression does not allow positional argument (i.e., you need to specify the name of the argument beside the value); {num} provided. The argument(s) are ignored.",
-  zh_cn="纯色填充表达式不允许按位参数(换句话说，除了参数值外还需要提供参数的名称)，但是现在提供了 {num} 个按位参数。这些参数将被忽略。",
-  zh_hk="純色填充表達式不允許按位參數(換句話說，除了參數值外還需要提供參數的名稱)，但是現在提供了 {num} 個按位參數。這些參數將被忽略。",
-)
-def emit_image_expr_from_callexpr(context : Context, call : CallExprOperand, placeholderdest : ImageExprPlaceholderDest, placeholderdesc: str, warnings : list[tuple[str, str]], screen_resolution : tuple[int, int] | None = None) -> BaseImageLiteralExpr | None:
-  # 调用表达式有以下几种可能：
-  # 占位（分辨率=...，描述=...），分辨率和描述均可选，按位参数视为分辨率
-  # 声明（分辨率=...，引用=...）, 分辨率和引用均必需，不允许按位参数
-  # 纯色填充（分辨率=..., 颜色=...），均必须，不允许按位参数
-  # 所有的分辨率都是一个"宽*高"的字符串，比如 "1920*1080"
+def emit_image_expr_from_callexpr(context : Context, call : CallExprOperand, placeholderdest : ImageExprPlaceholderDest, placeholderdesc: str, warnings : list[tuple[str, str]]) -> BaseImageLiteralExpr | None:
+  # 调用表达式有以下几种可能：(所有的分辨率输入均为可选项，解析完成后我们会尝试推导分辨率)
+  # 占位（描述=...，分辨率=...），描述可选，按位参数视为描述
+  # 声明（引用=...，分辨率=...）, 引用必需，按位参数视为引用
+  # 纯色填充（颜色=..., 分辨率=...），均必须，按位参数视为颜色
+  # 所有的分辨率（如果有的话）都是一个"宽*高"的字符串，比如 "1920*1080"
 
-  def handle_resolution_arg(k : str, v : Value) -> tuple[int, int] | None:
-    if isinstance(v, StringLiteral):
-      resolution = parse_pixel_resolution_str(v.get_string())
-      if resolution is not None:
-        return resolution
-    msg = _tr_invalid_resolution_expr.format(expr=str(v))
-    warnings.append(('vnparse-invalid-resolution-expr', msg))
-    return None
+  def handle_placeholder_expr(desc : str = '', *, resolution : FrontendParserBase.Resolution | None = None) -> PlaceholderImageLiteralExpr:
+    resolution_v = resolution.resolution if resolution is not None else (0,0)
+    if len(desc) == 0:
+      desc = placeholderdesc
+    return PlaceholderImageLiteralExpr.get(context=context, dest=placeholderdest, desc=StringLiteral.get(desc, context), size=IntTupleLiteral.get(resolution_v, context))
 
-  def handle_color_arg(k : str, v : Value) -> Color | None:
-    if isinstance(v, StringLiteral):
-      try:
-        return Color.get(v.get_string())
-      except:
-        pass
-    msg = _tr_invalid_color_expr.format(expr=str(v))
-    warnings.append(('vnparse-invalid-color-expr',msg))
-    return None
+  def handle_decl_expr(ref : str, *, resolution : FrontendParserBase.Resolution | None = None) -> DeclaredImageLiteralExpr:
+    resolution_v = resolution.resolution if resolution is not None else (0,0)
+    return DeclaredImageLiteralExpr.get(context=context, decl=StringLiteral.get(ref, context), size=IntTupleLiteral.get(resolution_v, context))
 
-  placeholder_description = StringLiteral.get(placeholderdesc, context)
+  def handle_colorfill_expr(color : Color, *, resolution : FrontendParserBase.Resolution | None = None) -> ColorImageLiteralExpr:
+    resolution_v = resolution.resolution if resolution is not None else (0,0)
+    return ColorImageLiteralExpr.get(context=context, color=ColorLiteral.get(color, context), size=IntTupleLiteral.get(resolution_v, context))
 
-  if _is_image_expr_name_placeholder(call.name):
-    resolution = None
-    description = placeholder_description
-    for k, v in call.kwargs.items():
-      if k in _tr_resolution.get_all_candidates():
-        resolution = handle_resolution_arg(k, v)
-        continue
-      if k in _tr_description.get_all_candidates():
-        if isinstance(v, StringLiteral):
-          description = v
-        else:
-          description = StringLiteral.get(str(v), context)
-        continue
-      # 到这就说明参数读取失败
-      expected_args = [_tr_resolution.get(), _tr_description.get()]
-      msg = _tr_placeholderexpr_unexpected_kwarg.format(keyword=k, args=str(expected_args))
-      warnings.append(('vnparse-placeholderexpr-unexpected-argument', msg))
-    consumed_posargs = 0
-    if resolution is None and len(call.args) > 0:
-      firstarg = call.args[0]
-      consumed_posargs += 1
-      if isinstance(firstarg, StringLiteral):
-        resolution = parse_pixel_resolution_str(firstarg.get_string())
-      if resolution is None:
-        msg = _tr_invalid_resolution_expr.format(expr=str(firstarg))
-        warnings.append(('vnparse-invalid-resolution-expr',msg))
-    if len(call.args) > consumed_posargs:
-      msg = _tr_placeholderexpr_too_many_positional_arguments.format(num=str(len(call.args)))
-      warnings.append(('vnparse-placeholderexpr-too-many-positional-arguments', msg))
-    if resolution is None:
-      resolution = screen_resolution
-      if resolution is None:
-        resolution = (1920, 1080)
-    return PlaceholderImageLiteralExpr.get(context=context, dest=placeholderdest, desc=description, size=IntTupleLiteral.get(resolution, context))
-
-  if call.name in _tr_decl.get_all_candidates():
-    resolution = None
-    ref = None
-    for k, v in call.kwargs.items():
-      if k in _tr_resolution.get_all_candidates():
-        resolution = handle_resolution_arg(k, v)
-        continue
-      if k in _tr_ref.get_all_candidates():
-        if isinstance(v, StringLiteral):
-          ref = v
-        else:
-          ref = StringLiteral.get(str(v), context)
-        continue
-      expected_args = [_tr_resolution.get(), _tr_ref.get()]
-      msg = _tr_declexpr_unexpected_kwarg.format(keyword=k, args=str(expected_args))
-      warnings.append(('vnparse-declexpr-unexpected-argument', msg))
-
-    # 缺了任一参数就用默认的占位表达式
-    if ref is None or resolution is None:
-      missing_args=[]
-      if ref is None:
-        missing_args.append(_tr_ref.get())
-      if resolution is None:
-        missing_args.append(_tr_resolution.get())
-      msg = _tr_declexpr_missing_argument.format(missing=str(missing_args))
-      warnings.append(('vnparse-declexpr-missing-argument',msg))
-      return emit_default_placeholder(context=context, dest=placeholderdest, description=placeholder_description, screen_resolution=screen_resolution)
-
-    if len(call.args) > 0:
-      msg = _tr_declexpr_too_many_positional_arguments.format(num=str(len(call.args)))
-      warnings.append(('vnparse-declexpr-too-many-arguments', msg))
-    return DeclaredImageLiteralExpr.get(context=context, decl=ref, size=IntTupleLiteral.get(resolution, context))
-
-  if call.name in _tr_colorfill.get_all_candidates():
-    resolution = None
-    color = None
-    for k, v in call.kwargs.items():
-      if k in _tr_resolution.get_all_candidates():
-        resolution = handle_resolution_arg(k, v)
-        continue
-      if k in _tr_color.get_all_candidates():
-        color = handle_color_arg(k, v)
-        continue
-      expected_args = [_tr_resolution.get(), _tr_color.get()]
-      msg = _tr_colorfillexpr_unexpected_kwarg.format(keyword=k, args=str(expected_args))
-      warnings.append(('vnparse-colorfillexpr-unexpected-argument', msg))
-
-    if resolution is None or color is None:
-      missing_args = []
-      if color is None:
-        missing_args.append(_tr_color.get())
-      if resolution is None:
-        missing_args.append(_tr_resolution.get())
-      msg = _tr_colorfillexpr_missing_argument.format(missing=str(missing_args))
-      warnings.append(('vnparse-colorfillexpr-missing-argument', msg))
-      return emit_default_placeholder(context=context, dest=placeholderdest, description=placeholder_description, screen_resolution=screen_resolution)
-
-    if len(call.args) > 0:
-      msg = _tr_colorfillexpr_too_many_positional_arguments.format(num=str(len(call.args)))
-      warnings.append(('vnparse-declexpr-too-many-arguments', msg))
-
-    return ColorImageLiteralExpr.get(context=context, color=ColorLiteral.get(color, context), size=IntTupleLiteral.get(resolution, context))
-
-  # 暂不支持的表达式类型
+  imageexpr = FrontendParserBase.resolve_call(call, [
+    (_tr_placeholder, handle_placeholder_expr, {'desc': _tr_description, 'resolution': _tr_resolution}),
+    (_tr_decl, handle_decl_expr, {'ref': _tr_ref, 'resolution': _tr_resolution}),
+    (_tr_colorfill, handle_colorfill_expr, {'color': _tr_color, 'resolution': _tr_resolution}),
+  ], warnings)
+  if imageexpr is not None:
+    return imageexpr
   return None
 
-def emit_image_expr_from_str(context : Context, s : str, basepath : str,  placeholderdest : ImageExprPlaceholderDest, placeholderdesc : str, warnings : list[tuple[str, str]], screen_resolution : tuple[int, int] | None = None) -> BaseImageLiteralExpr | None:
+def emit_image_expr_from_str(context : Context, s : str, basepath : str,  placeholderdest : ImageExprPlaceholderDest, placeholderdesc : str, warnings : list[tuple[str, str]]) -> BaseImageLiteralExpr | None:
   # 不确定字符串是什么形式
   # 先尝试转化成调用表达式，不行的话试试当成路径
   # 都不行的话视为失败
@@ -333,11 +178,11 @@ def emit_image_expr_from_str(context : Context, s : str, basepath : str,  placeh
   # 所以我们需要对这种情况特判
   # （现在仅有占位可以不需要额外参数，所以只需检查占位的情况）
   if _is_image_expr_name_placeholder(s):
-    return emit_default_placeholder(context=context, dest=placeholderdest, description=StringLiteral.get(placeholderdesc, context), screen_resolution=screen_resolution)
+    return emit_default_placeholder(context=context, dest=placeholderdest, description=StringLiteral.get(placeholderdesc, context))
   if cmd := try_parse_value_expr(s, context.null_location):
     if isinstance(cmd, GeneralCommandOp):
       callexpr = FrontendParserBase.parse_commandop_as_callexpr(cmd)
-      return emit_image_expr_from_callexpr(context=context, call=callexpr, placeholderdest=placeholderdest, placeholderdesc=placeholderdesc, warnings=warnings, screen_resolution=screen_resolution)
+      return emit_image_expr_from_callexpr(context=context, call=callexpr, placeholderdest=placeholderdest, placeholderdesc=placeholderdesc, warnings=warnings)
     s = cmd
   if result := emit_image_expr_from_path(context=context, pathexpr=s, basepath=basepath, warnings=warnings):
     return result
@@ -382,16 +227,6 @@ _tr_transition_backend_transition = _TR_vn_util.tr("backend_transition",
   zh_cn="后端转场",
   zh_hk="後端轉場",
 )
-_tr_transition_invalid_valuetype = _TR_vn_util.tr("transition_invalid_valuetype",
-  en="Invalid value type: {vty} (should be a string)",
-  zh_cn="错误的值类型： {vty} (应该是个字符串)",
-  zh_hk="錯誤的值類型： {vty} (應該是個字符串)"
-)
-_tr_transition_backend_extra_positional_args = _TR_vn_util.tr("transition_backend_extra_positional_args",
-  en="Backend transition expression takes at most one positional argument (the expression); extra positional arguments {extra} ignored.",
-  zh_cn="后端转场表达式取最多一个按位参数（表达式内容）；多余的按位参数将被忽略： {extra}",
-  zh_hk="後端轉場表達式取最多一個按位參數（表達式內容）；多余的按位參數將被忽略： {extra}",
-)
 _tr_expr = _TR_vn_util.tr("expr",
   en="expr",
   zh_cn="表达式",
@@ -401,11 +236,6 @@ _tr_backend = _TR_vn_util.tr("backend",
   en="backend",
   zh_cn="后端",
   zh_hk="後端",
-)
-_tr_backend_transition_missing_arguments = _TR_vn_util.tr("backend_transition_missing_arguments",
-  en="Backend transition expression expects both <expr, backend> argument; using default transition",
-  zh_cn="后端转场表达式需要<表达式，后端>两个参数，参数不足；我们将使用默认转场效果。",
-  zh_hk="後端轉場表達式需要<表達式，後端>兩個參數，參數不足；我們將使用默認轉場效果。",
 )
 
 def parse_transition(context : Context, transition_name : str, transition_args : list[Literal], transition_kwargs : dict[str, Literal], warnings : list[tuple[str, str]]) -> Value | tuple[StringLiteral, StringLiteral] | None:
@@ -423,81 +253,14 @@ def parse_transition(context : Context, transition_name : str, transition_args :
   if transition_name in _tr_transition_none.get_all_candidates():
     return VNDefaultTransitionType.DT_NO_TRANSITION.get_enum_literal(context)
 
-  if transition_name in _tr_transition_backend_transition.get_all_candidates():
-    backend_name = None
-    expr = None
-    def try_set_backend(s : Literal):
-      nonlocal backend_name
-      if isinstance(s, StringLiteral):
-        backend_name = s
-      elif isinstance(s, TextFragmentLiteral):
-        backend_name = s.content
-      else:
-        warnings.append(("vncodegen-transition-invalid-argument", _tr_transition_invalid_valuetype.format(vty=type(s).__name__)))
+  def handle_backend_specific_transition(expr : str, *, backend : str) -> tuple[StringLiteral, StringLiteral]:
+    return (StringLiteral.get(backend, context), StringLiteral.get(expr, context))
 
-    def try_set_expr(s : Literal):
-      nonlocal expr
-      if isinstance(s, StringLiteral):
-        expr = s
-      elif isinstance(s, TextFragmentLiteral):
-        expr = s.content
-      else:
-        warnings.append(("vncodegen-transition-invalid-argument", _tr_transition_invalid_valuetype.format(vty=type(s).__name__)))
-
-    if len(transition_args) > 0:
-      if len(transition_args) == 1:
-        try_set_expr(transition_args[0])
-      else:
-        msg = _tr_transition_backend_extra_positional_args.format(extra=','.join([str(v) for v in transition_args[1:]]))
-        warnings.append(("vncodegen-transition-unused-args", msg))
-    for k, v in transition_kwargs.items():
-      if k in _tr_expr.get_all_candidates():
-        try_set_expr(v)
-      elif k in _tr_backend.get_all_candidates():
-        try_set_backend(v)
-    if backend_name is None or expr is None:
-      # 如果任意一项没填，视为默认转场
-      warnings.append(("vncodegen-transition-incomplete-args", _tr_backend_transition_missing_arguments.get()))
-      return None
-    return (backend_name, expr)
-  return None
-
-_tr_vnutil_coordinate = _TR_vn_util.tr("coordinate",
-  en="Coordinate",
-  zh_cn="坐标",
-  zh_hk="坐標",
-)
-_tr_vnutil_invalid_coordinate_expr = _TR_vn_util.tr("invalid_coordinate_expr",
-  en="Not a valid coordinate expression: \"{expr}\". Please use expression like \"Coordinate(640,480)\" or \"(640,480)\".",
-  zh_cn="这不是一个有效的坐标表达式: \"{expr}\"。请使用形如 \"坐标(640,480)\" 或 \"(640,480)\" 这样的表达式。",
-  zh_hk="這不是一個有效的坐標表達式: \"{expr}\"。請使用形如 \"坐標(640,480)\" 或 \"(640,480)\" 這樣的表達式。",
-)
-def parse_coordinate(coord : CallExprOperand | Literal) -> tuple[int, int] | None:
-  # 解析一个坐标表达式，返回 (x, y)
-  # 如果解析失败，返回 None
-  if isinstance(coord, CallExprOperand):
-    if coord.name in _tr_vnutil_coordinate.get_all_candidates():
-      x = None
-      y = None
-      if len(coord.args) > 0:
-        x = try_convert_parameter(int, coord.args[0]) # try_get_int(coord.args[0])
-        if len(coord.args) > 1:
-          y = try_convert_parameter(int, coord.args[1])
-      if len(coord.kwargs) > 0:
-        if "x" in coord.kwargs:
-          x = try_convert_parameter(int, coord.kwargs["x"])
-        if "y" in coord.kwargs:
-          y = try_convert_parameter(int, coord.kwargs["y"])
-      if x is not None and y is not None:
-        return (x, y)
-  elif isinstance(coord, (StringLiteral, TextFragmentLiteral)):
-    coodstr = coord.get_string()
-    if result := re.match(r"""^\s*[\(\uFF08]\s*(?P<x>\d+)\s*[,\uFF0C]\s*(?P<y>\d+)\s*[\)\uFF09]\s*$""", coodstr):
-      return (int(result.group("x")), int(result.group("y")))
-  elif isinstance(coord, IntTupleLiteral):
-    if len(coord.value) == 2:
-      return coord.value
-  return None
+  callexpr = CallExprOperand(transition_name, transition_args, collections.OrderedDict(transition_kwargs))
+  transition_expr = FrontendParserBase.resolve_call(callexpr, [
+    (_tr_transition_backend_transition, handle_backend_specific_transition, {'expr': _tr_expr, 'backend': _tr_backend}),
+  ], warnings)
+  return transition_expr
 
 _tr_vnutil_placer_absolute = _TR_vn_util.tr("placer_absolute",
   en="AbsolutePosition",
@@ -554,135 +317,77 @@ _tr_vnutil_placer_sprite_helptext = _TR_vn_util.tr("placer_sprite_helptext",
   zh_cn="立绘默认方案(屏底高度, 顶部高度, 横向偏移 [,横向位置])",
   zh_hk="立繪默認方案(屏底高度, 頂部高度, 橫向偏移 [,橫向位置])",
 )
-_tr_vnutil_placer_invalid_argument = _TR_vn_util.tr("placer_invalid_argument",
-  en="Invalid argument \"{expr}\" for parameter {param}",
-  zh_cn="参数 {param} 的值 \"{expr}\" 无效",
-  zh_hk="參數 {param} 的值 \"{expr}\" 無效",
-)
-_tr_vnutil_placer_absolute_unexpected_argument = _TR_vn_util.tr("placer_absolute_unexpected_argument",
-  en="Unexpected argument \"{expr}\" in AbsolutePosition expression. Expected arguments include: {args}",
-  zh_cn="绝对位置表达式中不存在参数 \"{expr}\"。需要的参数包括： {args}",
-  zh_hk="絕對位置表達式中不存在參數 \"{expr}\"。需要的參數包括： {args}",
-)
-_tr_vnutil_placer_absolute_too_many_positional_arguments = _TR_vn_util.tr("placer_absolute_too_many_positional_arguments",
-  en="AbsolutePosition expression takes at most one positional argument (for the anchor); {num} provided. The extra argument(s) are ignored.",
-  zh_cn="绝对位置表达式只取最多一个按位参数（锚点），但是现在提供了 {num} 个。多余的参数将被忽略。",
-  zh_hk="絕對位置表達式只取最多一個按位參數（錨點），但是現在提供了 {num} 個。多余的參數將被忽略。",
-)
-def parse_placer_absolute_expr(context : Context, placer : CallExprOperand, warnings : list[tuple[str, str]], initsrc : VNASTImagePlacerParameterSymbol | None = None) -> tuple[Literal | None, ...]:
-  # 该函数用于解析绝对位置表达式
-  # 既包含在声明时（比如定义角色立绘时）的参数，也包含在调用时（比如角色上场时）的参数
-  # 如果这是在调用时，则 initsrc 是之前声明时的参数
-  anchor = (0, 0)
-  scale = decimal.Decimal(1.0)
-  anchorcoord = None
-  if initsrc is not None:
-    assert initsrc.kind.get().value == VNASTImagePlacerKind.ABSOLUTE
-    anchor = initsrc.parameters.get(0).value
-    scale = initsrc.parameters.get(1).value
-    if initsrc.parameters.get_num_operands() > 2:
-      anchorcoord = initsrc.parameters.get(2).value
-  def try_set_anchor(s : Value | CallExprOperand):
-    nonlocal anchor
-    assert isinstance(s, (Literal, CallExprOperand))
-    if result := parse_coordinate(s):
-      anchor = result
-    else:
-      warnings.append(("vnparse-placer-absolute-invalid-argument", _tr_vnutil_invalid_coordinate_expr.format(expr=str(s))))
-  if len(placer.args) > 0:
-    try_set_anchor(placer.args[0])
-  if len(placer.kwargs) > 0:
-    for k, v in placer.kwargs.items():
-      if k in _tr_vnutil_placer_absolute_anchor.get_all_candidates():
-        try_set_anchor(v)
-      elif k in _tr_vnutil_placer_absolute_scale.get_all_candidates():
-        if converted := try_convert_parameter(decimal.Decimal, v):
-          scale = converted
-        else:
-          warnings.append(("vnparse-placer-absolute-invalid-argument", _tr_vnutil_placer_invalid_argument.format(expr=str(v), param=_tr_vnutil_placer_absolute_scale.get())))
-      elif k in _tr_vnutil_placer_absolute_anchorcoord.get_all_candidates():
-        assert isinstance(v, (Literal, CallExprOperand))
-        if result := parse_coordinate(v):
-          anchorcoord = result
-        else:
-          warnings.append(("vnparse-placer-absolute-anchorcoord-invalid-argument", _tr_vnutil_placer_invalid_argument.format(expr=str(v), param=_tr_vnutil_placer_absolute_anchorcoord.get())))
-      else:
-        expected_args = [_tr_vnutil_placer_absolute_anchor.get(), _tr_vnutil_placer_absolute_scale.get(), _tr_vnutil_placer_absolute_anchorcoord.get()]
-        warnings.append(("vnparse-placer-absolute-unexpected-argument", _tr_vnutil_placer_absolute_unexpected_argument.format(expr=str(v), args=str(expected_args))))
-  if len(placer.args) > 1:
-    warnings.append(("vnparse-placer-absolute-too-many-positional-arguments", _tr_vnutil_placer_absolute_too_many_positional_arguments.format(num=str(len(placer.args)))))
-  return (IntTupleLiteral.get(anchor, context),
-          FloatLiteral.get(scale, context),
-          IntTupleLiteral.get(anchorcoord, context) if anchorcoord is not None else None)
 
-_tr_vnutil_placer_sprite_unexpected_argument = _TR_vn_util.tr("placer_sprite_unexpected_argument",
-  en="Unexpected argument \"{expr}\" in SpriteDefaultConfig expression. Expected arguments include: {args}",
-  zh_cn="立绘默认方案表达式中不存在参数 \"{expr}\"。需要的参数包括： {args}",
-  zh_hk="立繪默認方案表達式中不存在參數 \"{expr}\"。需要的參數包括： {args}",
-)
-_tr_vnutil_placer_sprite_too_many_positional_arguments = _TR_vn_util.tr("placer_sprite_too_many_positional_arguments",
-  en="SpriteDefaultConfig expression does not take positional arguments; {num} provided. They are ignored.",
-  zh_cn="立绘默认方案表达式不接受按位参数，但是现在提供了 {num} 个。这些参数将被忽略。",
-  zh_hk="立繪默認方案表達式不接受按位參數，但是現在提供了 {num} 個。這些參數將被忽略。",
-)
-
-def parse_placer_sprite_expr(context : Context, placer : CallExprOperand, warnings : list[tuple[str, str]], initsrc : VNASTImagePlacerParameterSymbol | None = None) -> tuple[Literal | None, ...]:
-  # 该函数用于解析立绘默认方案表达式
-  # 既包含在声明时（比如定义角色立绘时）的参数，也包含在调用时（比如角色上场时）的参数
-  # 如果这是在调用时，则 initsrc 是之前声明时的参数
-  baseheight = decimal.Decimal(0.0)
-  topheight = decimal.Decimal(1.0)
-  xoffset = decimal.Decimal(0.0)
-  xpos = None
-  if initsrc is not None:
-    assert initsrc.kind.get().value == VNASTImagePlacerKind.SPRITE
-    baseheight = initsrc.parameters.get(0).value
-    topheight = initsrc.parameters.get(1).value
-    xoffset = initsrc.parameters.get(2).value
-    if initsrc.parameters.get_num_operands() > 3:
-      xpos = initsrc.parameters.get(3).value
-  if len(placer.kwargs) > 0:
-    for k, v in placer.kwargs.items():
-      if k in _tr_vnutil_placer_sprite_baseheight.get_all_candidates():
-        if converted := try_convert_parameter(decimal.Decimal, v):
-          baseheight = converted
-        else:
-          warnings.append(("vnparse-placer-sprite-invalid-argument", _tr_vnutil_placer_invalid_argument.format(expr=str(v), param=_tr_vnutil_placer_sprite_baseheight.get())))
-      elif k in _tr_vnutil_placer_sprite_topheight.get_all_candidates():
-        if converted := try_convert_parameter(decimal.Decimal, v):
-          topheight = converted
-        else:
-          warnings.append(("vnparse-placer-sprite-invalid-argument", _tr_vnutil_placer_invalid_argument.format(expr=str(v), param=_tr_vnutil_placer_sprite_topheight.get())))
-      elif k in _tr_vnutil_placer_sprite_xoffset.get_all_candidates():
-        if converted := try_convert_parameter(decimal.Decimal, v):
-          xoffset = converted
-        else:
-          warnings.append(("vnparse-placer-sprite-invalid-argument", _tr_vnutil_placer_invalid_argument.format(expr=str(v), param=_tr_vnutil_placer_sprite_xoffset.get())))
-      elif k in _tr_vnutil_placer_sprite_xpos.get_all_candidates():
-        if converted := try_convert_parameter(decimal.Decimal, v):
-          xpos = converted
-        else:
-          warnings.append(("vnparse-placer-sprite-invalid-argument", _tr_vnutil_placer_invalid_argument.format(expr=str(v), param=_tr_vnutil_placer_sprite_xpos.get())))
-      else:
-        expected_args = [_tr_vnutil_placer_sprite_baseheight.get(), _tr_vnutil_placer_sprite_topheight.get(), _tr_vnutil_placer_sprite_xoffset.get(), _tr_vnutil_placer_sprite_xpos.get()]
-        warnings.append(("vnparse-placer-sprite-unexpected-argument", _tr_vnutil_placer_sprite_unexpected_argument.format(expr=str(v), args=str(expected_args))))
-  if len(placer.args) > 0:
-    warnings.append(("vnparse-placer-sprite-too-many-positional-arguments", _tr_vnutil_placer_sprite_too_many_positional_arguments.format(num=str(len(placer.args)))))
-  return (FloatLiteral.get(baseheight, context),
-          FloatLiteral.get(topheight, context),
-          FloatLiteral.get(xoffset, context),
-          FloatLiteral.get(xpos, context) if xpos is not None else None)
-
-_tr_vnutil_placer_missing_argument = _TR_vn_util.tr("placer_missing_argument",
-  en="Missing argument {arg} in placer expression",
-  zh_cn="位置表达式缺少参数 {arg}",
-  zh_hk="位置表達式缺少參數 {arg}",
-)
 _tr_vnutil_placer_invalid_expr = _TR_vn_util.tr("placer_invalid_expr",
   en="Invalid placer expression: {expr}",
   zh_cn="无效的位置表达式: {expr}",
   zh_hk="無效的位置表達式: {expr}",
 )
+
+def resolve_placer_callexpr(context : Context, placer : CallExprOperand, defaultconf : VNASTImagePlacerParameterSymbol | None, warnings : list[tuple[str, str]], is_fillall : bool, callback : typing.Callable[[VNASTImagePlacerKind, list[Literal]], typing.Any]) -> typing.Any | None:
+  def handle_placer_absolute(anchor : FrontendParserBase.Coordinate2D | None = None,
+                             scale : decimal.Decimal | None = None,
+                             anchorcoord : FrontendParserBase.Coordinate2D | None = None) -> typing.Any:
+    if anchor is not None:
+      result_anchor = anchor.to_tuple()
+    elif defaultconf is not None:
+      result_anchor = defaultconf.parameters.get(0).value
+    else:
+      result_anchor = (0,0)
+    if scale is not None:
+      result_scale = scale
+    elif defaultconf is not None:
+      result_scale = defaultconf.parameters.get(1).value
+    else:
+      result_scale = decimal.Decimal(1.0)
+    if anchorcoord is not None:
+      result_anchorcoord = anchorcoord.to_tuple()
+    elif defaultconf is not None:
+      result_anchorcoord = defaultconf.parameters.get(2).value if defaultconf.parameters.get_num_operands() > 2 else None
+    else:
+      result_anchorcoord = (0,0) if is_fillall else None
+    params = [IntTupleLiteral.get(result_anchor, context), FloatLiteral.get(result_scale, context)]
+    if result_anchorcoord is not None:
+      params.append(IntTupleLiteral.get(result_anchorcoord, context))
+    return callback(VNASTImagePlacerKind.ABSOLUTE, params)
+
+  def handle_placer_sprite(baseheight : decimal.Decimal | None = None,
+                            topheight : decimal.Decimal | None = None,
+                            xoffset : decimal.Decimal | None = None,
+                            xpos : decimal.Decimal | None = None) -> typing.Any:
+    if baseheight is not None:
+      result_baseheight = baseheight
+    elif defaultconf is not None:
+      result_baseheight = defaultconf.parameters.get(0).value
+    else:
+      result_baseheight = decimal.Decimal(0.0)
+    if topheight is not None:
+      result_topheight = topheight
+    elif defaultconf is not None:
+      result_topheight = defaultconf.parameters.get(1).value
+    else:
+      result_topheight = decimal.Decimal(1.0)
+    if xoffset is not None:
+      result_xoffset = xoffset
+    elif defaultconf is not None:
+      result_xoffset = defaultconf.parameters.get(2).value
+    else:
+      result_xoffset = decimal.Decimal(0.0)
+    if xpos is not None:
+      result_xpos = xpos
+    elif defaultconf is not None:
+      result_xpos = defaultconf.parameters.get(3).value if defaultconf.parameters.get_num_operands() > 3 else None
+    else:
+      result_xpos = decimal.Decimal(0.0) if is_fillall else None
+    params : list[Literal] = [FloatLiteral.get(result_baseheight, context), FloatLiteral.get(result_topheight, context), FloatLiteral.get(result_xoffset, context)]
+    if result_xpos is not None:
+      params.append(FloatLiteral.get(result_xpos, context))
+    return callback(VNASTImagePlacerKind.SPRITE, params)
+
+  return FrontendParserBase.resolve_call(placer, [
+    (_tr_vnutil_placer_absolute, handle_placer_absolute, {'anchor': _tr_vnutil_placer_absolute_anchor, 'scale': _tr_vnutil_placer_absolute_scale, 'anchorcoord': _tr_vnutil_placer_absolute_anchorcoord}),
+    (_tr_vnutil_placer_sprite, handle_placer_sprite, {'baseheight': _tr_vnutil_placer_sprite_baseheight, 'topheight': _tr_vnutil_placer_sprite_topheight, 'xoffset': _tr_vnutil_placer_sprite_xoffset, 'xpos': _tr_vnutil_placer_sprite_xpos}),
+  ], warnings)
 
 def resolve_placer_expr(context : Context, expr : ListExprTreeNode, defaultconf : VNASTImagePlacerParameterSymbol | None, presetplace : SymbolTableRegion[VNASTImagePresetPlaceSymbol], warnings : list[tuple[str, str]]) -> tuple[VNASTImagePlacerKind, list[Literal]] | None:
   # 尝试根据当前的配置解析一个完整的位置表达式
@@ -734,22 +439,8 @@ def resolve_placer_expr(context : Context, expr : ListExprTreeNode, defaultconf 
         warnings.append(("vnparse-placer-invalid-expr", _tr_vnutil_placer_invalid_expr.format(expr=name)))
   if isinstance(placer, CallExprOperand):
     is_placer_type_expected = True
-    if placer.name in _tr_vnutil_placer_absolute.get_all_candidates():
-      anchor, scale, anchorcoord = parse_placer_absolute_expr(context, placer, warnings, defaultconf)
-      assert anchor is not None and scale is not None
-      if anchorcoord is None:
-        warnings.append(("vnparse-placer-missing-argument", _tr_vnutil_placer_missing_argument.format(arg=_tr_vnutil_placer_absolute_anchorcoord.get())))
-        anchorcoord = IntTupleLiteral.get(anchorcoord_default_value, context)
-      return (VNASTImagePlacerKind.ABSOLUTE, [anchor, scale, anchorcoord])
-    elif placer.name in _tr_vnutil_placer_sprite.get_all_candidates():
-      baseheight, topheight, xoffset, xpos = parse_placer_sprite_expr(context, placer, warnings, defaultconf)
-      assert baseheight is not None and topheight is not None and xoffset is not None
-      if xpos is None:
-        warnings.append(("vnparse-placer-missing-argument", _tr_vnutil_placer_missing_argument.format(arg=_tr_vnutil_placer_sprite_xpos.get())))
-        xpos = FloatLiteral.get(xpos_default_value, context)
-      return (VNASTImagePlacerKind.SPRITE, [baseheight, topheight, xoffset, xpos])
-    else:
-      warnings.append(("vnparse-placer-unknown-placer", _tr_vnutil_placer_unknown_placer.format(expr=placer.name)))
+    if result := resolve_placer_callexpr(context=context, placer=placer, defaultconf=defaultconf, warnings=warnings, is_fillall=True, callback=lambda kind, parameters: (kind, parameters)):
+      return result
   # 如果执行到这里，说明解析失败
   if not is_placer_type_expected:
     warnings.append(("vnparse-placer-invalid-expr", _tr_vnutil_placer_invalid_expr.format(expr=str(placer))))
@@ -759,11 +450,6 @@ def resolve_placer_expr(context : Context, expr : ListExprTreeNode, defaultconf 
   # 没有默认配置就没办法了
   return None
 
-_tr_vnutil_placer_unknown_placer = _TR_vn_util.tr("placer_unknown_placer",
-  en="Unknown placer: {expr}",
-  zh_cn="未知的位置配置: {expr}",
-  zh_hk="未知的位置配置: {expr}",
-)
 _tr_vnutil_presetplace_missing_name = _TR_vn_util.tr("presetplace_missing_name",
   en="Missing name for preset place : {expr}",
   zh_cn="缺少预设位置的名称: {expr}",
@@ -783,31 +469,10 @@ def parse_image_placer_config(context : Context, placing_expr : ListExprTreeNode
     warnings.append(("vnparse-placer-invalid-config", _tr_vnutil_placer_invalid_config.format(expr=str(placing_expr.value))))
     return
   placer = placing_expr.value
-  placersymbol = None
-  if placer.name in _tr_vnutil_placer_absolute.get_all_candidates():
-    placerinfo = parse_placer_absolute_expr(context, placer, warnings)
-    if placerinfo is None:
-      return
-    anchor, scale, anchorcoord = placerinfo
-    assert anchor is not None and scale is not None
-    parameters = [anchor, scale]
-    if anchorcoord is not None:
-      parameters.append(anchorcoord)
-    placersymbol = VNASTImagePlacerParameterSymbol.create(context=context, kind=VNASTImagePlacerKind.ABSOLUTE, parameters=parameters, loc = placing_expr.location)
-    config.add(placersymbol)
-  elif placer.name in _tr_vnutil_placer_sprite.get_all_candidates():
-    placerinfo = parse_placer_sprite_expr(context, placer, warnings)
-    if placerinfo is None:
-      return
-    baseheight, topheight, xoffset, xpos = placerinfo
-    assert baseheight is not None and topheight is not None and xoffset is not None
-    parameters = [baseheight, topheight, xoffset]
-    if xpos is not None:
-      parameters.append(xpos)
-    placersymbol = VNASTImagePlacerParameterSymbol.create(context=context, kind=VNASTImagePlacerKind.SPRITE, parameters=parameters, loc = placing_expr.location)
-    config.add(placersymbol)
-  else:
-    warnings.append(("vnparse-placer-unknown-placer", _tr_vnutil_placer_unknown_placer.format(expr=placer.name)))
+  placersymbol = resolve_placer_callexpr(context=context, placer=placer, defaultconf=None, warnings=warnings, is_fillall=False, callback=lambda kind, parameters: VNASTImagePlacerParameterSymbol.create(context=context, kind=kind, parameters=parameters, loc = placing_expr.location))
+  if placersymbol is None:
+    return
+  config.add(placersymbol)
   # 现在开始处理预设位置
   for child in placing_expr.children:
     if expr := resolve_placer_expr(context=context, expr=child, defaultconf=placersymbol, presetplace=presetplace, warnings=warnings):
