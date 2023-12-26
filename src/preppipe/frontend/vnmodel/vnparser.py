@@ -469,7 +469,7 @@ def cmd_image_decl_path(parser : VNParser, state : VNASTParsingState, commandop 
 @CommandDecl(vn_command_ns, _imports, 'DeclImage')
 def cmd_image_decl_src(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str, source : CallExprOperand):
   wlist : list[tuple[str, str]] = []
-  img = emit_image_expr_from_callexpr(context=state.context, call=source, placeholderdest=ImageExprPlaceholderDest.DEST_UNKNOWN, placeholderdesc=name, warnings=wlist, screen_resolution=parser.resolution)
+  img = emit_image_expr_from_callexpr(context=state.context, call=source, placeholderdest=ImageExprPlaceholderDest.DEST_UNKNOWN, placeholderdesc=name, warnings=wlist)
   if img is None:
     state.emit_error('vnparse-imageexpr-invalid', str(source), loc=commandop.location)
     return
@@ -802,13 +802,13 @@ def _helper_parse_image_exprtree(parser : VNParser, state : VNASTParsingState, v
       if isinstance(node.value, ImageAssetData):
         expr = node.value
       elif isinstance(node.value, CallExprOperand):
-        expr = emit_image_expr_from_callexpr(context=state.context, call=node.value, placeholderdest=placeholderdest, placeholderdesc=placeholderdesc, warnings=warnings, screen_resolution=parser.resolution)
+        expr = emit_image_expr_from_callexpr(context=state.context, call=node.value, placeholderdest=placeholderdest, placeholderdesc=placeholderdesc, warnings=warnings)
       elif isinstance(node.value, str):
-        expr = emit_image_expr_from_str(context=state.context, s=node.value, basepath=state.input_file_path, placeholderdest=placeholderdest, placeholderdesc=placeholderdesc, warnings=warnings, screen_resolution=parser.resolution)
+        expr = emit_image_expr_from_str(context=state.context, s=node.value, basepath=state.input_file_path, placeholderdest=placeholderdest, placeholderdesc=placeholderdesc, warnings=warnings)
       else:
         raise PPInternalError('Unexpected node value type: ' + str(type(node.value)))
       if expr is None:
-        expr = emit_default_placeholder(context=state.context, dest=placeholderdest, screen_resolution=parser.resolution, description=_get_placeholder_desc_for_missing_img(state.context, str(node.value)))
+        expr = emit_default_placeholder(context=state.context, dest=placeholderdest, description=_get_placeholder_desc_for_missing_img(state.context, str(node.value)))
         msg = _tr_image_notfound_help.format(dest=placeholderdesc, expr=node.value)
         state.emit_error(code='vnparse-invalid-imageexpr', msg=msg, loc=loc)
         state.emit_assetnotfound(loc=loc)

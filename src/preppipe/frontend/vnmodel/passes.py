@@ -7,7 +7,6 @@ from .vnast import *
 from ...pipeline import *
 from ...irbase import *
 from .vncodegen import VNCodeGen
-from .vnutil import parse_pixel_resolution_str
 from .vnparser import VNParser
 from ...vnmodel import VNModel
 
@@ -36,7 +35,7 @@ class VNParseTransform(TransformBase):
     if len(args.vn_name) > 0:
       VNParseTransform.name = args.vn_name
     if len(args.vn_resolution) > 0:
-      if t := parse_pixel_resolution_str(args.vn_resolution):
+      if t := VNParser.parse_pixel_resolution_str(args.vn_resolution):
         VNParseTransform.resolution = t
       else:
         raise ValueError('Not a valid resolution string: "' + args.vn_resolution + '"')
