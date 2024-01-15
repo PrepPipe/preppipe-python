@@ -9,6 +9,7 @@ import typing
 from typing import Any
 
 from preppipe.frontend.vnmodel.vnast import VNASTASMNode, VNASTChangeDefaultDeviceNode, VNASTCharacterTempSayAttrNode, VNASTNodeBase, VNASTSayModeChangeNode, VNASTTempAliasNode
+from preppipe.frontend.vnmodel.vncodegen_placer import VNCodeGen_PlacementInfoBase
 
 from ...irbase import *
 from ...vnmodel import *
@@ -19,6 +20,7 @@ from .vnutil import *
 from ...renpy.ast import RenPyASMNode
 from ...language import TranslationDomain
 from ...exceptions import *
+from .vncodegen_placer import *
 
 class _PartialStateMatcher:
   # 当切换角色、场景状态时，状态字符串很可能不全
@@ -459,6 +461,9 @@ class VNCodeGen:
       return None
     return scene
 
+  def get_character_astnode(self, character : VNCharacterSymbol | None) -> VNASTCharacterSymbol | None:
+    return self._char_parent_map.get(character)
+
   def get_or_create_ns(self, namespace : tuple[str, ...]) -> VNNamespace:
     if node := self.resolver.get_namespace_node(namespace):
       if not isinstance(node, VNNamespace):
@@ -693,7 +698,7 @@ class VNCodeGen:
     raise PPInternalError
 
   @dataclasses.dataclass
-  class SceneContext:
+  class SceneContext(VNCodeGen_SceneContextPlacerInterface):
     # 记录当前场景的一切状态，包括：
     # * 现在是什么背景、什么状态
     # * 现在有哪些角色在场、各自的状态各是什么
@@ -720,20 +725,39 @@ class VNCodeGen:
       identity : VNCharacterSymbol
       state : tuple[str,...]
       sprite_handle : Value | None = None
+      # 只有在 sprite_handle 不为 None 时才有意义，表示立绘的位置
+      # sprite_handle 实时更新， position 只在处理完入场、出场、移动事件后更新
+      # （只有切换场景、全部退场时会直接更新，其他情况都由上述事件处理过程更新）
+      position : VNCodeGen_PlacementInfoBase | None = None
 
       def copy(self):
-        return VNCodeGen.SceneContext.CharacterState(index=self.index, sayname=self.sayname, identity=self.identity, state=self.state, sprite_handle=self.sprite_handle)
+        return VNCodeGen.SceneContext.CharacterState(
+          index=self.index,
+          sayname=self.sayname,
+          identity=self.identity,
+          state=self.state,
+          sprite_handle=self.sprite_handle,
+          position=self.position.copy() if self.position is not None else None,
+        )
 
     @dataclasses.dataclass
     class AssetState:
-      # 对于每个在台上的资源（包括背景音乐、音效、图片等），我们用这个结构体来保存信息
+      # 对于每个在台上的资源（包括背景音乐、音效、图片等）（不包含角色立绘），我们用这个结构体来保存信息
       dev : VNDeviceSymbol
       search_names : list[str]
       data : Value # AssetData | AssetDecl | AssetPlaceholder
       output_handle : Value | None = None
+      # position 只在处理完入场、出场、移动事件后更新
+      position : VNCodeGen_PlacementInfoBase | None = None
 
       def copy(self):
-        return VNCodeGen.SceneContext.AssetState(dev=self.dev, search_names=self.search_names.copy(), data=self.data, output_handle=self.output_handle)
+        return VNCodeGen.SceneContext.AssetState(
+          dev=self.dev,
+          search_names=self.search_names.copy(),
+          data=self.data,
+          output_handle=self.output_handle,
+          position=self.position.copy() if self.position is not None else None,
+        )
 
     # SceneContext 下的角色信息
     character_dict : dict[tuple[str, VNCharacterSymbol], int] = dataclasses.field(default_factory=dict) # (发言名, 身份) --> 状态索引
@@ -770,7 +794,7 @@ class VNCodeGen:
         statetuple = codegen._char_state_matcher[character].get_default_state()
       else:
         statetuple = ()
-      newstate = VNCodeGen.SceneContext.CharacterState(index=index, sayname=sayname, identity=character, state=statetuple, sprite_handle=None)
+      newstate = VNCodeGen.SceneContext.CharacterState(index=index, sayname=sayname, identity=character, state=statetuple, sprite_handle=None, position=None)
       self.character_states[index] = newstate
       self.character_dict[searchtuple] = index
       return newstate
@@ -819,6 +843,33 @@ class VNCodeGen:
       # 理论上是应该把当前的所有句柄都清理掉
       # 现在先不做，试试看有没有这个需要
       pass
+
+    # 以下是 VNCodeGen_SceneContextPlacerInterface 的实现
+    def get_character_position(self, handle: VNCodeGen.SceneContext.CharacterState) -> VNCodeGen_PlacementInfoBase | None:
+      assert isinstance(handle, VNCodeGen.SceneContext.CharacterState)
+      return handle.position
+
+    def set_character_position(self, handle: VNCodeGen.SceneContext.CharacterState, pos: VNCodeGen_PlacementInfoBase) -> None:
+      assert isinstance(handle, VNCodeGen.SceneContext.CharacterState)
+      handle.position = pos
+
+    def get_asset_position(self, handle: VNCodeGen.SceneContext.AssetState) -> VNCodeGen_PlacementInfoBase | None:
+      assert isinstance(handle, VNCodeGen.SceneContext.AssetState)
+      return handle.position
+
+    def set_asset_position(self, handle: VNCodeGen.SceneContext.AssetState, pos: VNCodeGen_PlacementInfoBase) -> None:
+      assert isinstance(handle, VNCodeGen.SceneContext.AssetState)
+      handle.position = pos
+
+    def populate_active_scene_contents(self, characters : list[VNCodeGen.SceneContext.CharacterState], assets : list[VNCodeGen.SceneContext.AssetState]) -> None:
+      assert isinstance(characters, list) and len(characters) == 0
+      assert isinstance(assets, list) and len(assets) == 0
+      for ch in self.character_states.values():
+        if ch.sprite_handle is not None:
+          characters.append(ch)
+      for info in self.asset_info:
+        if info.output_handle is not None:
+          assets.append(info)
 
     @staticmethod
     def forkfrom(parent):
@@ -913,6 +964,9 @@ class VNCodeGen:
     # 如果是 None,  则父转场结点没有提供转场
     parent_transition : Value | tuple[StringLiteral, StringLiteral] | None = None
     transition_child_finishtimes : list[Value] = dataclasses.field(default_factory=list)
+    # 用于决定立绘、图像位置的算法
+    # 要修改用哪个算法，修改这个变量的初始化即可
+    placer : VNCodeGen_PlacerBase = dataclasses.field(default_factory=VNCodeGen_Placer)
 
     # 当前是否已经有终指令
     cur_terminator : VNTerminatorInstBase | None = None
@@ -1152,8 +1206,7 @@ class VNCodeGen:
       return node
 
     def get_character_sprite(self, character : VNCharacterSymbol, state : tuple[str,...]) -> Value | None:
-      if character in self.codegen._char_parent_map:
-        srccharacter = self.codegen._char_parent_map[character]
+      if srccharacter := self.codegen.get_character_astnode(character):
         sprite = srccharacter.sprites.get(','.join(state))
         if isinstance(sprite, VNASTNamespaceSwitchableValueSymbol):
           sprite = sprite.get_value(self.namespace_tuple)
@@ -1164,8 +1217,7 @@ class VNCodeGen:
       # state 如果有的话就是一个经过了状态匹配的完整状态
       # 由于我们认为立绘的状态是所有可能的状态的集合，而侧边头像状态是立绘状态的子集，
       # 我们这里会在找不到选项时尝试把状态串缩短来找到最佳的匹配项
-      if character in self.codegen._char_parent_map:
-        srcsayer = self.codegen._char_parent_map[character]
+      if srcsayer := self.codegen.get_character_astnode(character):
         if len(srcsayer.sideimages) > 0:
           if state is None:
             state = ()
@@ -1240,6 +1292,7 @@ class VNCodeGen:
         if sprite is None:
           raise PPAssertionError("matched state should correspond to a sprite")
         handleout = VNModifyInst.create(context=self.context, start_time=self.starttime, handlein=charstate.sprite_handle, content=sprite, device=self.parsecontext.dev_foreground, loc=loc)
+        handleout.copy_position_from(charstate.sprite_handle) # type: ignore
         # 改变状态导致的立绘变更应该不需要转场效果
         if not self.is_in_transition:
           self.starttime=handleout.get_finish_time()
@@ -1336,7 +1389,7 @@ class VNCodeGen:
         saynode.body.push_back(vnode)
       # 其次，如果有侧边头像，就把侧边头像也加上
       # 我们从角色状态中取头像信息
-      if character is not None and character in self.codegen._char_parent_map:
+      if character is not None:
         if img := self.get_character_sideimage(character, sayerstatetuple):
           inode = VNPutInst.create(context=self.context, start_time=self.starttime, content=img, device=self.parsecontext.dev_say_sideimage, loc=node.location)
           saynode.body.push_back(inode)
@@ -1469,6 +1522,7 @@ class VNCodeGen:
         self.handle_transition_and_finishtime(cnode)
         info.sprite_handle = cnode
         self.destblock.push_back(cnode)
+        self.placer.add_character_event(info, self.codegen.get_character_astnode(info.identity), sprite=sprite, instr=cnode, destexpr=node)
       # 完成
       return None
 
@@ -1501,6 +1555,7 @@ class VNCodeGen:
           self.handle_transition_and_finishtime(rm)
           self.destblock.push_back(rm)
           info.sprite_handle = None
+          self.placer.add_character_event(info, self.codegen.get_character_astnode(info.identity), sprite=None, instr=rm, destexpr=node)
         else:
           # 角色不在场上
           msg = self._tr_character_exit_character_not_onstage.format(sayname=sayname)
@@ -1558,6 +1613,7 @@ class VNCodeGen:
               self.handle_transition_and_finishtime(cnode)
               info = VNCodeGen.SceneContext.AssetState(dev=self.parsecontext.dev_foreground, search_names=description, data=assetdata, output_handle=cnode)
               self.scenecontext.asset_info.append(info)
+              self.placer.add_image_event(handle=info, content=assetdata, instr=cnode, destexpr=node)
             case VNASTAssetIntendedOperation.OP_REMOVE:
               infolist = self.scenecontext.search_asset_inuse(dev=self.parsecontext.dev_foreground, searchname=assetexpr_name, data=assetdata)
               if len(infolist) == 0:
@@ -1575,6 +1631,7 @@ class VNCodeGen:
                   self.handle_transition_and_finishtime(rnode)
                   self.destblock.push_back(rnode)
                   self.scenecontext.asset_info.remove(info)
+                  self.placer.add_image_event(handle=info, content=info.output_handle, instr=rnode, destexpr=node)
             case VNASTAssetIntendedOperation.OP_PUT:
               # 当前不应该出现这种情况
               raise NotImplementedError()
@@ -1736,6 +1793,7 @@ class VNCodeGen:
           switchnode.body.push_back(rm)
           rmtimes.append(rm.get_finish_time())
           characterinfo.sprite_handle = None
+          characterinfo.position = None
       # 再把之前的场景的背景下了，换新的背景
       # 如果之前没背景、现在有背景，我们用 create
       # 如果之前有、现在没，我们用 remove
@@ -1766,7 +1824,7 @@ class VNCodeGen:
         self.scenecontext.scene_bg = VNCodeGen.SceneContext.AssetState(dev=self.parsecontext.dev_background, search_names=[], data=scene_background, output_handle=cnode)
         best_finish_time = cnode.get_finish_time()
         switchnode.body.push_back(cnode)
-
+      self.placer.reset(self.scenecontext)
       # 如果这次转场什么都没干就不添加结点了
       if len(switchnode.body.body) > 0:
         self.destblock.push_back(switchnode)
@@ -1916,6 +1974,7 @@ class VNCodeGen:
         call = VNCallInst.create(context=self.context, start_time=self.starttime, target=func, destroyed_handle_list=handle_list, name=node.name, loc=node.location)
         self.destblock.push_back(call)
         self.scenecontext.mark_after_call()
+        self.placer.reset(self.scenecontext)
         return None
 
     def move_to_new_block(self, destblock : Block):
@@ -1947,15 +2006,18 @@ class VNCodeGen:
     def codegen_mainloop(self):
       if self.cur_terminator is not None:
         raise PPAssertionError
+      self.placer.reset(self.scenecontext)
       for op in self.srcregion.body.body:
         if isinstance(op, VNASTNodeBase):
           #is_originally_inblock = False
           #if self.cur_terminator is None:
           #  is_originally_inblock = True
           if new_terminator := self.visit(op):
+            if self.placer.has_event_pending():
+              raise PPInternalError("Terminating AST node should not create any enter/exit/move events")
             self.cur_terminator = new_terminator
-          #if self.cur_terminator is not None and is_originally_inblock:
-          #  pass
+          if self.placer.has_event_pending():
+            self.placer.handle_pending_events()
         elif isinstance(op, MetadataOp):
           cloned = op.clone()
           if self.cur_terminator is None:

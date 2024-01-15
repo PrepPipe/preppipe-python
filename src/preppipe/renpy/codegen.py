@@ -604,6 +604,26 @@ class _RenPyCodeGenHelper:
       node.with_.set_operand(0, withnode)
       node.body.push_back(withnode)
 
+  def _get_screen2d_position(self, position : VNPositionSymbol) -> RenPyASMExpr:
+    # TODO 我们给每个位置都生成一个有名称的 Transform 并放在顶层
+    # 现在就只把位置做好
+    pos = position.position.get()
+    if not isinstance(pos, VNScreen2DPositionLiteralExpr):
+      raise PPNotImplementedError("Only supporting screen2d position")
+    x = pos.x_abs.value
+    y = pos.y_abs.value
+    xr = pos.x_ratio.value
+    yr = pos.y_ratio.value
+    w = pos.width.value
+    h = pos.height.value
+    if (xr > 0 or x == 0) and (yr > 0 or y == 0):
+      # 如果有比例的位置，用比例
+      expr = "screen2d_rel(" + str(xr) + ", " + str(yr)
+    else:
+      expr = "screen2d_abs(" + str(x) + ", " + str(y)
+    expr = expr + ',' + str(w) + ',' + str(h) + ')'
+    return RenPyASMExpr.create(self.context, asm=StringLiteral.get(expr, self.context))
+
   def gen_create_put(self, instrs : list[VNInstruction], insert_before : RenPyNode) -> RenPyNode:
     # VNCreateInst/VNPutInst
     assert len(instrs) == 1
@@ -620,7 +640,10 @@ class _RenPyCodeGenHelper:
       case VNStandardDeviceKind.O_FOREGROUND_DISPLAY:
         # 放置在前景，用 show
         imspec = self.get_impsec(content, user_hint=devkind)
-        show = RenPyShowNode.create(context=self.context, imspec=imspec)
+        showat = None
+        if position := instr.placeat.get(VNPositionSymbol.NAME_SCREEN2D):
+          showat = self._get_screen2d_position(position)
+        show = RenPyShowNode.create(context=self.context, imspec=imspec, showat=showat)
         if transition := instr.transition.try_get_value():
           self._add_image_transition(transition, show)
         show.insert_before(insert_before)
