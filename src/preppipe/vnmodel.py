@@ -12,7 +12,7 @@ from enum import Enum
 
 import PIL.Image
 
-from preppipe.irbase import Value
+from preppipe.irbase import AssetData, Literal, Value, ValueType
 
 from .commontypes import *
 from .irbase import *
@@ -199,6 +199,13 @@ class VNScreenCoordinate2DType(StatelessType):
   # 根据使用场景，坐标有可能被当做大小、偏移量，或是其他值来使用
   def __str__(self) -> str:
     return "屏幕坐标类型"
+
+@IRObjectJsonTypeName("vn_pos_t")
+@dataclasses.dataclass(init=False, slots=True, frozen=True)
+class VNPositionType(StatelessType):
+  # 用以描述 VNPlacement 的位置属性，一般是图片、视频等在屏幕上的位置，不过也可能是其他值类型的抽象位置概念
+  def __str__(self) -> str:
+    return "位置类型"
 
 @IRObjectJsonTypeName("vn_sefunc_t")
 @dataclasses.dataclass(init=False, slots=True, frozen=True)
@@ -950,11 +957,75 @@ class VNWaitInstruction(VNInstruction):
   def create(context : Context, start_time : Value, name: str = '', loc: Location | None = None):
     return VNWaitInstruction(init_mode=IRObjectInitMode.CONSTRUCT, context=context, start_time=start_time, name=name, loc=loc)
 
+class VNScreen2DPositionLiteralExpr(LiteralExpr):
+  # 用于描述图片、视频等在2D屏幕中的位置和大小。
+  # 锚点固定在图片、视频内容的左上角
+  # 由于用户输入可能是比例，也可能是绝对值，所以我们同时使用两者来描述
+  # 绝对值一定有，比例值有且非零时优先，否则使用绝对值
+  # 参数如下：
+  # x_abs, y_abs : 绝对坐标，指定左上角的位置，单位为像素
+  # width, height : 指定内容的宽度和高度，单位为像素
+  # x_ratio, y_ratio : 指定绝对坐标的比例，值在0和1之间
+
+  def construct_init(self, *, context : Context, value_tuple: tuple[IntLiteral, IntLiteral, IntLiteral, IntLiteral, FloatLiteral, FloatLiteral], **kwargs) -> None:
+    ty = VNPositionType.get(context)
+    assert len(value_tuple) == 6
+    assert isinstance(value_tuple[0], IntLiteral) and isinstance(value_tuple[1], IntLiteral)
+    assert isinstance(value_tuple[2], IntLiteral) and isinstance(value_tuple[3], IntLiteral)
+    assert isinstance(value_tuple[4], FloatLiteral) and isinstance(value_tuple[5], FloatLiteral)
+    return super().construct_init(ty=ty, value_tuple=value_tuple, **kwargs)
+
+  def x_abs(self) -> IntLiteral:
+    return self.get_operand(0)
+
+  def y_abs(self) -> IntLiteral:
+    return self.get_operand(1)
+
+  def width(self) -> IntLiteral:
+    return self.get_operand(2)
+
+  def height(self) -> IntLiteral:
+    return self.get_operand(3)
+
+  def x_ratio(self) -> FloatLiteral:
+    return self.get_operand(4)
+
+  def y_ratio(self) -> FloatLiteral:
+    return self.get_operand(5)
+
+  @staticmethod
+  def get_fixed_value_type():
+    return VNPositionType
+
+  @staticmethod
+  def get(context : Context, x_abs : IntLiteral | int, y_abs : IntLiteral | int, width : IntLiteral | int, height : IntLiteral | int, x_ratio : FloatLiteral | None = None, y_ratio : FloatLiteral | None = None) -> VNScreen2DPositionLiteralExpr:
+    if isinstance(x_abs, int):
+      x_abs = IntLiteral.get(x_abs, context)
+    if isinstance(y_abs, int):
+      y_abs = IntLiteral.get(y_abs, context)
+    if isinstance(width, int):
+      width = IntLiteral.get(width, context)
+    if isinstance(height, int):
+      height = IntLiteral.get(height, context)
+    if x_ratio is not None:
+      assert isinstance(x_ratio, FloatLiteral)
+    if y_ratio is not None:
+      assert isinstance(y_ratio, FloatLiteral)
+    return VNScreen2DPositionLiteralExpr._get_literalexpr_impl((x_abs, y_abs, width, height, x_ratio, y_ratio), context)
+
+@IROperationDataclassWithValue(VoidType)
+@IRObjectJsonTypeName("vn_position_symbol_op")
+class VNPositionSymbol(VNSymbol):
+  # 用于描述内容在设备中位置的符号基类
+  # 对于每种内容在每种设备中的位置都应该有一个固定的规范，详情见子类中的注释
+  NAME_SCREEN2D : typing.ClassVar[str] = "screen2d"
+  position : OpOperand[Value] # 应该是一个 VNPositionType 的值
+
 @IROperationDataclass
 class VNPlacementInstBase(VNInstruction):
   content : OpOperand[Value]
   device : OpOperand[VNDeviceSymbol]
-  placeat : SymbolTableRegion
+  placeat : SymbolTableRegion[VNPositionSymbol]
   transition : OpOperand[Value]
 
 @IROperationDataclass
@@ -996,6 +1067,11 @@ class VNModifyInst(VNInstruction, Value):
   device : OpOperand[VNDeviceSymbol]
   placeat : SymbolTableRegion
   transition : OpOperand[Value]
+
+  def copy_position_from(self, src : VNModifyInst | VNPlacementInstBase):
+    assert isinstance(src, VNModifyInst) or isinstance(src, VNPlacementInstBase)
+    for s in src.placeat:
+      self.placeat.add(s.clone())
 
   @staticmethod
   def create(context : Context, start_time: Value, handlein : Value, content : Value, device : VNDeviceSymbol, name: str = '', loc: Location | None = None) -> VNModifyInst:

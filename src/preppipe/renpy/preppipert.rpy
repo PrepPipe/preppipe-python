@@ -18,5 +18,13 @@ define preppipe_error_sayer_en = preppipe_error_sayer
 define preppipe_error_sayer_zh_cn = Character("语涵编译器错误", kind=preppipe_error_sayer)
 define preppipe_error_sayer_zh_hk = Character("語涵編譯器錯誤", kind=preppipe_error_sayer)
 
+transform screen2d_abs(x,y,w,h):
+  pos (x,y)
+  xysize (w, h)
+
+transform screen2d_rel(xr,yr,w,h):
+  pos (x,y)
+  xysize (w, h)
+
 label __preppipe_ending__(ending_name=''):
   $ MainMenu(confirm=False)
