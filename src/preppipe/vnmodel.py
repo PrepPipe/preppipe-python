@@ -1021,6 +1021,10 @@ class VNPositionSymbol(VNSymbol):
   NAME_SCREEN2D : typing.ClassVar[str] = "screen2d"
   position : OpOperand[Value] # 应该是一个 VNPositionType 的值
 
+  @staticmethod
+  def create(context : Context, name : str, position : Value | None = None, loc : Location | None = None):
+    return VNPositionSymbol(init_mode=IRObjectInitMode.CONSTRUCT, context=context, name=name, position=position, loc=loc)
+
 @IROperationDataclass
 class VNPlacementInstBase(VNInstruction):
   content : OpOperand[Value]
