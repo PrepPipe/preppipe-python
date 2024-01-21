@@ -333,19 +333,19 @@ def resolve_placer_callexpr(context : Context, placer : CallExprOperand, default
     elif defaultconf is not None:
       result_anchor = defaultconf.parameters.get(0).value
     else:
-      result_anchor = (0,0)
+      result_anchor = VNASTImagePlacerKind.get_fixed_default_params(VNASTImagePlacerKind.ABSOLUTE)[0]
     if scale is not None:
       result_scale = scale
     elif defaultconf is not None:
       result_scale = defaultconf.parameters.get(1).value
     else:
-      result_scale = decimal.Decimal(1.0)
+      result_scale = VNASTImagePlacerKind.get_fixed_default_params(VNASTImagePlacerKind.ABSOLUTE)[1]
     if anchorcoord is not None:
       result_anchorcoord = anchorcoord.to_tuple()
     elif defaultconf is not None:
       result_anchorcoord = defaultconf.parameters.get(2).value if defaultconf.parameters.get_num_operands() > 2 else None
     else:
-      result_anchorcoord = (0,0) if is_fillall else None
+      result_anchorcoord = VNASTImagePlacerKind.get_additional_default_params(VNASTImagePlacerKind.ABSOLUTE) if is_fillall else None
     params = [IntTupleLiteral.get(result_anchor, context), FloatLiteral.get(result_scale, context)]
     if result_anchorcoord is not None:
       params.append(IntTupleLiteral.get(result_anchorcoord, context))
@@ -360,25 +360,27 @@ def resolve_placer_callexpr(context : Context, placer : CallExprOperand, default
     elif defaultconf is not None:
       result_baseheight = defaultconf.parameters.get(0).value
     else:
-      result_baseheight = decimal.Decimal(0.0)
+      result_baseheight = VNASTImagePlacerKind.get_fixed_default_params(VNASTImagePlacerKind.SPRITE)[0]
     if topheight is not None:
       result_topheight = topheight
     elif defaultconf is not None:
       result_topheight = defaultconf.parameters.get(1).value
     else:
-      result_topheight = decimal.Decimal(1.0)
+      result_topheight = VNASTImagePlacerKind.get_fixed_default_params(VNASTImagePlacerKind.SPRITE)[1]
     if xoffset is not None:
       result_xoffset = xoffset
     elif defaultconf is not None:
       result_xoffset = defaultconf.parameters.get(2).value
     else:
-      result_xoffset = decimal.Decimal(0.0)
+      result_xoffset = VNASTImagePlacerKind.get_fixed_default_params(VNASTImagePlacerKind.SPRITE)[2]
     if xpos is not None:
       result_xpos = xpos
     elif defaultconf is not None:
       result_xpos = defaultconf.parameters.get(3).value if defaultconf.parameters.get_num_operands() > 3 else None
     else:
-      result_xpos = decimal.Decimal(0.0) if is_fillall else None
+      result_xpos = VNASTImagePlacerKind.get_additional_default_params(VNASTImagePlacerKind.SPRITE) if is_fillall else None
+      if result_xpos is not None:
+        assert isinstance(result_xpos, decimal.Decimal)
     params : list[Literal] = [FloatLiteral.get(result_baseheight, context), FloatLiteral.get(result_topheight, context), FloatLiteral.get(result_xoffset, context)]
     if result_xpos is not None:
       params.append(FloatLiteral.get(result_xpos, context))
@@ -393,8 +395,9 @@ def resolve_placer_expr(context : Context, expr : ListExprTreeNode, defaultconf 
   # 尝试根据当前的配置解析一个完整的位置表达式
   # 如果解析失败且没有默认配置就返回 None
   # 如果解析失败但有默认配置，就根据默认配置补全参数
-  anchorcoord_default_value = (0, 0)
-  xpos_default_value = decimal.Decimal(0.0)
+  anchorcoord_default_value = VNASTImagePlacerKind.get_additional_default_params(VNASTImagePlacerKind.ABSOLUTE)
+  xpos_default_value = VNASTImagePlacerKind.get_additional_default_params(VNASTImagePlacerKind.SPRITE)
+  assert isinstance(anchorcoord_default_value, tuple) and isinstance(xpos_default_value, decimal.Decimal)
   def construct_default_position_from_config(defaultconf : VNASTImagePlacerParameterSymbol) -> tuple[VNASTImagePlacerKind, list[Literal]]:
     match defaultconf.kind.get().value:
       case VNASTImagePlacerKind.ABSOLUTE:

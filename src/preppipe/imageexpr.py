@@ -54,6 +54,13 @@ class BaseImageLiteralExpr(LiteralExpr):
       else:
         raise ValueError("Image size must be non-negative")
 
+  def get_bbox(self) -> tuple[int,int,int,int]:
+    # 计算图片非透明部分的 <左, 上, 右, 下> 边界
+    # 如果图片完全透明，返回 <0, 0, 0, 0>
+    # 如果图片完全不透明，返回 <0, 0, w, h>
+    width, height = self.size.value
+    return (0, 0, width, height)
+
 @IRObjectJsonTypeName('image_asset_le')
 class ImageAssetLiteralExpr(BaseImageLiteralExpr):
   # 该图片是由 ImageAssetData 而来的
@@ -70,6 +77,11 @@ class ImageAssetLiteralExpr(BaseImageLiteralExpr):
   def __str__(self) -> str:
     width, height = self.size.value
     return '[' + str(width) + '*' + str(height) + ']' + str(self.image)
+
+  def get_bbox(self) -> tuple[int, int, int, int]:
+    if bbox := self.image.load().getbbox():
+      return bbox
+    return (0, 0, 0, 0)
 
 @IRObjectJsonTypeName('color_image_le')
 class ColorImageLiteralExpr(BaseImageLiteralExpr):

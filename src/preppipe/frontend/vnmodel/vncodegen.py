@@ -955,6 +955,10 @@ class VNCodeGen:
     srcregion : VNASTCodegenRegion
     destblock : Block
     starttime : Value
+
+    # 用于决定立绘、图像位置的算法
+    placer : VNCodeGen_PlacerBase
+
     convergeblock : Block # 如果在函数内，这是 None; 如果这是在某个控制流结构下，这是输入块自然结束时的跳转目标
     loopexitblock : Block | None = None # 如果在循环内的话，这是最内侧循环的出口块
     # 如果现在正在解析 VNASTTransitionNode 下的内容的话，这里应该是解析好的转场效果
@@ -964,9 +968,6 @@ class VNCodeGen:
     # 如果是 None,  则父转场结点没有提供转场
     parent_transition : Value | tuple[StringLiteral, StringLiteral] | None = None
     transition_child_finishtimes : list[Value] = dataclasses.field(default_factory=list)
-    # 用于决定立绘、图像位置的算法
-    # 要修改用哪个算法，修改这个变量的初始化即可
-    placer : VNCodeGen_PlacerBase = dataclasses.field(default_factory=VNCodeGen_Placer)
 
     # 当前是否已经有终指令
     cur_terminator : VNTerminatorInstBase | None = None
@@ -1687,6 +1688,76 @@ class VNCodeGen:
       self.transition_child_finishtimes.clear()
       return None
 
+    def _get_info_from_handle(self, handle : Value) -> tuple[Value, VNDeviceSymbol]:
+      if isinstance(handle, VNPlacementInstBase):
+        return (handle.content.get(), handle.device.get())
+      if isinstance(handle, VNModifyInst):
+        return (handle.content.get(), handle.device.get())
+      raise PPInternalError("Unexpected handle type: " + type(handle).__name__)
+
+    def handle_placer_requested_movements(self, requests : list[tuple[typing.Any, Value, VNInstruction | None]]) -> None:
+      # 把请求分成两组，一组在当前事件发生前、指令需要放在插入点，另一组在所有事件发生后、指令需要放在基本块末尾
+      # 每组的开始时间和结束时间都统一
+      pre_starttime : Value | None = None
+      pre_insertbefore : VNInstruction | None = None
+      pre_instrs : list[VNInstruction] = []
+      post_instrs : list[VNInstruction] = []
+      for handle, pos, insertpt in requests:
+        # 首先决定起始时间
+        if insertpt is None:
+          starttime = self.starttime
+        else:
+          starttime = insertpt.get_start_time()
+        # 然后生成指令
+        # 暂时不考虑转场衔接，直接移动
+        cur_instr : VNInstruction | None = None
+        if isinstance(handle, VNCodeGen.SceneContext.CharacterState):
+          if handle.sprite_handle is None:
+            raise PPAssertionError("Requesting position change for character sprites not on stage")
+          prev_content, prev_device = self._get_info_from_handle(handle.sprite_handle)
+          cur_instr = VNModifyInst.create(context=self.context, start_time=starttime, handlein=handle.sprite_handle, content=prev_content, device=prev_device)
+        elif isinstance(handle, VNCodeGen.SceneContext.AssetState):
+          if handle.output_handle is None:
+            raise PPAssertionError("Requesting position change for images not on stage")
+          prev_content, prev_device = self._get_info_from_handle(handle.output_handle)
+          cur_instr = VNModifyInst.create(context=self.context, start_time=starttime, handlein=handle.output_handle, content=prev_content, device=prev_device)
+        else:
+          raise PPInternalError("Unexpected handle type: " + type(handle).__name__)
+        # 加上位置信息
+        pos_symb = VNPositionSymbol.create(context=self.context, name=VNPositionSymbol.NAME_SCREEN2D, position=pos)
+        cur_instr.placeat.add(pos_symb)
+        # 然后决定放在哪里
+        if insertpt is None:
+          post_instrs.append(cur_instr)
+        else:
+          if pre_starttime is None:
+            pre_starttime = starttime
+            pre_insertbefore = insertpt
+          elif pre_starttime != starttime:
+            raise PPInternalError("Requesting position change for multiple handles with different start times")
+          pre_instrs.append(cur_instr)
+      # 最后把指令放上去
+      if self.is_in_transition:
+        raise PPInternalError("Handling placer requested movements in transition?")
+      if pre_starttime is not None:
+        for instr in pre_instrs:
+          instr.insert_before(pre_insertbefore)
+        finishtime = pre_instrs[-1].get_finish_time()
+        # 修改后续所有指令的起始时间，如果它们的起始时间是 pre_starttime，就改成 finishtime
+        # 跳过注释等非 VNInstruction 的指令
+        while pre_insertbefore is not None:
+          if isinstance(pre_insertbefore, VNInstruction):
+            if pre_insertbefore.get_start_time() == pre_starttime:
+              pre_insertbefore.set_start_time(finishtime)
+          pre_insertbefore = pre_insertbefore.get_next_node()
+      if len(post_instrs) > 0:
+        if isinstance(self.destblock.body.back, VNTerminatorInstBase):
+          raise PPInternalError("Destination block already has a terminator")
+        for instr in post_instrs:
+          self.destblock.push_back(instr)
+        self.starttime = post_instrs[-1].get_finish_time()
+      # 完成
+
     def _resolve_audio_reference(self, audio : VNASTPendingAssetReference, loc : Location | None) -> AudioAssetData | None:
       args = []
       kwargs = {}
@@ -2006,6 +2077,8 @@ class VNCodeGen:
     def codegen_mainloop(self):
       if self.cur_terminator is not None:
         raise PPAssertionError
+      width, height = self.codegen.ast.screen_size.get().value
+      self.placer.set_screen_size(width, height)
       self.placer.reset(self.scenecontext)
       for op in self.srcregion.body.body:
         if isinstance(op, VNASTNodeBase):
@@ -2017,7 +2090,8 @@ class VNCodeGen:
               raise PPInternalError("Terminating AST node should not create any enter/exit/move events")
             self.cur_terminator = new_terminator
           if self.placer.has_event_pending():
-            self.placer.handle_pending_events()
+            if requests := self.placer.handle_pending_events():
+              self.handle_placer_requested_movements(requests)
         elif isinstance(op, MetadataOp):
           cloned = op.clone()
           if self.cur_terminator is None:
@@ -2037,7 +2111,21 @@ class VNCodeGen:
       scenecontext = VNCodeGen.SceneContext.forkfrom(basescenecontext) if basescenecontext is not None else VNCodeGen.SceneContext()
       if not isinstance(deststarttime.valuetype, VNTimeOrderType):
         raise PPAssertionError
-      helper = VNCodeGen._FunctionCodegenHelper(codegen=codegen, namespace_tuple=namespace_tuple, basepath=basepath, parsecontext=parsecontext, srcregion=srcregion, warningdest=dest, destblock=dest, convergeblock=convergeblock, loopexitblock=loopexitblock, scenecontext=scenecontext, functioncontext=functioncontext, starttime=deststarttime)
+      helper = VNCodeGen._FunctionCodegenHelper(
+        codegen=codegen,
+        namespace_tuple=namespace_tuple,
+        basepath=basepath,
+        parsecontext=parsecontext,
+        srcregion=srcregion,
+        warningdest=dest,
+        destblock=dest,
+        convergeblock=convergeblock,
+        loopexitblock=loopexitblock,
+        scenecontext=scenecontext,
+        functioncontext=functioncontext,
+        starttime=deststarttime,
+        placer=VNCodeGen_Placer(codegen.context),
+      )
       helper.codegen_mainloop()
 
   _tr_dangling_block = TR_vn_codegen.tr("dangling_block",
