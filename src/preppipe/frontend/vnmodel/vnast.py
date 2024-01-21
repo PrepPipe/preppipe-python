@@ -666,7 +666,7 @@ class VNASTImagePlacerKind(enum.Enum):
   #              比如如果想要让立绘的底部与屏幕底部对齐，那么此值是 0
   #              如果想要让立绘的正中高度与屏幕底部对齐，那么此值是 0.5
   #              该项不考虑图片的透明、非透明部分，只考虑图片的整体高度
-  #   - 顶部高度：显示立绘时想要的立绘顶部（包括透明的部分）占屏幕高度的百分比，默认为 1
+  #   - 顶部高度：显示立绘时想要的立绘顶部（包括透明的部分）占屏幕高度的百分比，默认值见 get_fixed_default_params() （需调节）
   #              比如如果想要让立绘的顶部与屏幕顶部对齐（撑满整个屏幕的高度），那么此值是 1
   #              如果想要让立绘的顶部与屏幕正中高度对齐（撑半个屏幕），那么此值是 0.5
   #              （包括透明的部分是为了方便统一立绘高度，如果用户有多个立绘、使用相同的高度但不同的透明区域来区别身高的话，这里可以用同一个顶部高度比）
@@ -675,6 +675,26 @@ class VNASTImagePlacerKind(enum.Enum):
   #              假设该值是 k, 则图像的横向锚线 X 最终会是 (xmin+xmax)/2 + k*(xmax-xmin)/2
   # 追加参数：固定 1 项，即 X 位置
   SPRITE = enum.auto()
+
+  @staticmethod
+  def get_fixed_default_params(kind : 'VNASTImagePlacerKind') -> tuple[typing.Any,...]:
+    match kind:
+      case VNASTImagePlacerKind.ABSOLUTE:
+        return ((0, 0), decimal.Decimal(1))
+      case VNASTImagePlacerKind.SPRITE:
+        return (decimal.Decimal(0), decimal.Decimal('0.8'), decimal.Decimal(0))
+      case _:
+        raise PPInternalError('Unhandled VNASTImagePlacerKind')
+
+  @staticmethod
+  def get_additional_default_params(kind : 'VNASTImagePlacerKind') -> tuple[typing.Any,...] | typing.Any:
+    match kind:
+      case VNASTImagePlacerKind.ABSOLUTE:
+        return (0, 0)
+      case VNASTImagePlacerKind.SPRITE:
+        return decimal.Decimal(0)
+      case _:
+        raise PPInternalError('Unhandled VNASTImagePlacerKind')
 
 @IROperationDataclass
 class VNASTImagePlacerParameterSymbol(Symbol):
