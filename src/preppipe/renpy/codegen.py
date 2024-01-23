@@ -612,16 +612,9 @@ class _RenPyCodeGenHelper:
       raise PPNotImplementedError("Only supporting screen2d position")
     x = pos.x_abs.value
     y = pos.y_abs.value
-    xr = pos.x_ratio.value
-    yr = pos.y_ratio.value
     w = pos.width.value
     h = pos.height.value
-    if (xr > 0 or x == 0) and (yr > 0 or y == 0):
-      # 如果有比例的位置，用比例
-      expr = "screen2d_rel(" + str(xr) + ", " + str(yr)
-    else:
-      expr = "screen2d_abs(" + str(x) + ", " + str(y)
-    expr = expr + ',' + str(w) + ',' + str(h) + ')'
+    expr = "screen2d_abs(" + str(x) + ", " + str(y) + ',' + str(w) + ',' + str(h) + ')'
     return RenPyASMExpr.create(self.context, asm=StringLiteral.get(expr, self.context))
 
   def gen_create_put(self, instrs : list[VNInstruction], insert_before : RenPyNode) -> RenPyNode:
@@ -683,7 +676,10 @@ class _RenPyCodeGenHelper:
         remove_imspec = self.get_impsec(modifyvalue, devkind)
         newvalue = instr.content.get()
         new_imspec = self.get_impsec(newvalue, devkind)
-        show = RenPyShowNode.create(context=self.context, imspec=new_imspec)
+        showat = None
+        if position := instr.placeat.get(VNPositionSymbol.NAME_SCREEN2D):
+          showat = self._get_screen2d_position(position)
+        show = RenPyShowNode.create(context=self.context, imspec=new_imspec, showat=showat)
         show.insert_before(insert_before)
         if transition := instr.transition.try_get_value():
           self._add_image_transition(transition, show)
