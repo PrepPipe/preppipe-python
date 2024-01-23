@@ -56,7 +56,7 @@ class TestZHDocsRenPyExport(unittest.TestCase):
               with open(expected_path, "w", encoding="utf-8") as f:
                 f.write(strdump)
               expected_content = strdump
-            self.assertListEqual(strdump.splitlines(), expected_content.splitlines())
+            self.assertListEqual(expected_content.splitlines(), strdump.splitlines())
         if ext == ".odt":
           # 找到了个样例
           handle_input("--odf")
