@@ -4,6 +4,7 @@
 import io
 
 from preppipe.renpy.ast import RenPyASMNode, RenPyScriptFileOp
+from preppipe.renpy.transform import *
 from .ast import *
 from ..util import versioning
 
@@ -543,6 +544,8 @@ def export_renpy(m : RenPyModel, out_path : str, template_dir : str = '') -> Non
       dst.write(all)
 
   # step 2: start walking all script files
+  # apply the default transform to make output nicer
+  apply_default_renpy_transform(m)
   for script in m.scripts():
     scriptpath = os.path.join(out_path, script.name + '.rpy')
     parentdir = os.path.dirname(scriptpath)
@@ -561,3 +564,6 @@ def export_renpy(m : RenPyModel, out_path : str, template_dir : str = '') -> Non
     assetdata.export(filepath)
 
   # done for now
+
+def apply_default_renpy_transform(m : RenPyModel):
+  duplicated_showat_removal(m)

@@ -113,7 +113,7 @@ class VNCodeGen_PlacerBase:
   _image_bboxes : typing.ClassVar[dict[BaseImageLiteralExpr, tuple[int, int, int, int]]] = {}
   @staticmethod
   def get_opaque_boundingbox(image : BaseImageLiteralExpr) -> tuple[int, int, int, int]:
-    # 计算图片非透明部分的 <左, 上, 右, 下> 边界，同 BaseImageLiteralExpr.get_bbox()
+    """计算图片非透明部分的 <左, 上, 右, 下> 边界，同 BaseImageLiteralExpr.get_bbox()"""
     # 为了避免重复计算，我们会缓存结果
     if not isinstance(image, BaseImageLiteralExpr):
       raise PPInternalError("image is not BaseImageLiteralExpr")
@@ -143,6 +143,17 @@ class VNCodeGen_PlacementInfo(VNCodeGen_PlacementInfoBase):
       raise PPInternalError("Position not initialized")
     return VNScreen2DPositionLiteralExpr.get(context=context, x_abs=self.x, y_abs=self.y, width=self.w, height=self.h)
 
+  def copy(self) -> VNCodeGen_PlacementInfo:
+    return VNCodeGen_PlacementInfo(
+      policy=self.policy,
+      w=self.w,
+      h=self.h,
+      bbox_x=self.bbox_x,
+      x=self.x,
+      y=self.y,
+      manual_pos=self.manual_pos,
+    )
+
 class VNCodeGen_Placer(VNCodeGen_PlacerBase):
   # 实现放置算法的类
   # 对于新添加的对象（角色立绘或图片），我们会尝试根据对象声明时的约束条件来决定位置
@@ -156,18 +167,30 @@ class VNCodeGen_Placer(VNCodeGen_PlacerBase):
   # 2. 将退场的对象去除后，我们通过(1)现有的顺序，(2)不可变的X轴值，给所有剩下的对象定义一个从左到右的顺序
   # 3. 我们给每个 X 轴可变的对象决定一个最终的目标位置。
 
+  class HandleType(enum.Enum):
+    CHARACTER = enum.auto()
+    IMAGE = enum.auto()
+
   @dataclasses.dataclass
   class ObjectInfo:
     # 描述一个当前在场上或者即将上场的对象
     handle : typing.Any
+    ty : VNCodeGen_Placer.HandleType
     pos : VNCodeGen_PlacementInfo
     # 如果该对象有新的事件，就放在这里
     event : 'VNCodeGen_Placer.EventInfo | None' = None
+
+    def __hash__(self) -> int:
+      return hash(id(self))
+
+    def __eq__(self, __value: object) -> bool:
+      return __value is self
 
   @dataclasses.dataclass
   class EventInfo:
     # 描述一个事件
     handle : typing.Any
+    ty : VNCodeGen_Placer.HandleType
     instr : VNPlacementInstBase | VNModifyInst | VNRemoveInst
     destexpr : VNASTNodeBase
     initpos : VNCodeGen_PlacementInfo | None # 初始推荐出场位置(只有退场事件会是 None)
@@ -213,26 +236,80 @@ class VNCodeGen_Placer(VNCodeGen_PlacerBase):
         raise PPInternalError("Character is not in current scene")
       if not isinstance(pos, VNCodeGen_PlacementInfo):
         raise PPInternalError("Character position is not VNCodeGen_PlacementInfo")
-      self._scene_objects.append(self.ObjectInfo(handle=ch, pos=pos))
+      self._scene_objects.append(self.ObjectInfo(handle=ch, ty=VNCodeGen_Placer.HandleType.CHARACTER, pos=pos))
     for asset in assets:
       pos = self._cur_scene.get_asset_position(asset)
       if pos is None:
         raise PPInternalError("Asset is not in current scene")
       if not isinstance(pos, VNCodeGen_PlacementInfo):
         raise PPInternalError("Asset position is not VNCodeGen_PlacementInfo")
-      self._scene_objects.append(self.ObjectInfo(handle=asset, pos=pos))
+      self._scene_objects.append(self.ObjectInfo(handle=asset, ty=VNCodeGen_Placer.HandleType.IMAGE, pos=pos))
+
+  def compute_initial_position_for_character(self, character: VNASTCharacterSymbol, sprite: Value, destexpr : VNASTNodeBase) -> VNCodeGen_PlacementInfo:
+    if not isinstance(sprite, BaseImageLiteralExpr):
+      raise PPInternalError("Unhandled sprite type")
+    width, height = sprite.size.value
+    left, top, right, bot = self.get_opaque_boundingbox(sprite)
+    # 如果用户已经指定了位置，我们直接使用该位置
+    # 不过目前暂不支持从用户输入中读取位置，所以跳过这里
+    # 如果用户没有指定位置，我们根据角色声明时的约束条件来决定位置
+    def handle_sprite_default_pos(baseheight : decimal.Decimal, topheight : decimal.Decimal, xoffset : decimal.Decimal, xpos : decimal.Decimal) -> VNCodeGen_PlacementInfo:
+      if not isinstance(baseheight, decimal.Decimal) or not isinstance(topheight, decimal.Decimal) or not isinstance(xoffset, decimal.Decimal) or not isinstance(xpos, decimal.Decimal):
+        raise PPInternalError("Sprite parameters are not decimal")
+      y = int(self._screen_height*(1-topheight))
+      scaledheight = (self._screen_height - y) * (1-baseheight)
+      scale = scaledheight / height
+      scaledwidth = width * scale
+      scaledwidth_i = int(scaledwidth)
+      scaledheight_i = int(scaledheight)
+      scaledleft = int(left * scale)
+      scaledright = int(right * scale)
+      solidwidth = scaledright - scaledleft
+      xadjust = xoffset * solidwidth
+      x = int(self._screen_width*(xpos+1)/2 - decimal.Decimal(solidwidth/2) - scaledleft + xadjust)
+      return VNCodeGen_PlacementInfo(policy=VNCodeGen_PlacementPolicy.AUTO, w=scaledwidth_i, h=scaledheight_i, bbox_x=(scaledleft, scaledright), x=x, y=y)
+    if spritedefault := character.placers.get(VNASTImagePlacerKind.SPRITE.name):
+      baseheight = spritedefault.parameters.get_operand(0).value
+      topheight = spritedefault.parameters.get_operand(1).value
+      xoffset = spritedefault.parameters.get_operand(2).value
+      xpos = decimal.Decimal(0)
+      if spritedefault.parameters.get_num_operands() > 3:
+        xpos = spritedefault.parameters.get_operand(3).value
+      return handle_sprite_default_pos(baseheight=baseheight, topheight=topheight, xoffset=xoffset, xpos=xpos)
+    if absolute := character.placers.get(VNASTImagePlacerKind.ABSOLUTE.name):
+      x, y = absolute.parameters.get_operand(0).value
+      scale = absolute.parameters.get_operand(1).value
+      if not isinstance(x, int) or not isinstance(y, int) or not isinstance(scale, decimal.Decimal):
+        raise PPInternalError("Absolute parameters type mismatch")
+      scaledleft = int(left * scale)
+      scaledright = int(right * scale)
+      scaledwidth = int(width * scale)
+      scaledheight = int(height * scale)
+      return VNCodeGen_PlacementInfo(policy=VNCodeGen_PlacementPolicy.MANUAL, w=scaledwidth, h=scaledheight, bbox_x=(scaledleft, scaledright), x=int(x), y=int(y))
+    # 没有约束条件，使用默认值
+    baseheight, topheight, xoffset = VNASTImagePlacerKind.get_fixed_default_params(VNASTImagePlacerKind.SPRITE) # pylint: disable=unbalanced-tuple-unpacking
+    xpos = VNASTImagePlacerKind.get_additional_default_params(VNASTImagePlacerKind.SPRITE)
+    if not isinstance(xpos, decimal.Decimal):
+      raise PPInternalError("Sprite xpos is not decimal")
+    return handle_sprite_default_pos(baseheight=baseheight, topheight=topheight, xoffset=xoffset, xpos=xpos)
 
   def add_character_event(self, handle: Any, character: VNASTCharacterSymbol, sprite: Value | None, instr: VNPlacementInstBase | VNModifyInst | VNRemoveInst, destexpr: VNASTNodeBase) -> None:
     if len(self._pending_events) == 0:
       self._query_current_scene()
-    # TODO 添加事件并决定初始位置
-    raise PPNotImplementedError("add_character_event")
+    # 添加事件并决定初始位置
+    event = self.EventInfo(handle=handle, ty=self.HandleType.CHARACTER, instr=instr, destexpr=destexpr, initpos=None)
+    if isinstance(instr, (VNPlacementInstBase, VNModifyInst)):
+      if sprite is None:
+        raise PPInternalError("Sprite missing for character enter/move event")
+      initpos = self.compute_initial_position_for_character(character=character, sprite=sprite, destexpr=destexpr)
+      event.initpos = initpos
+    self._pending_events.append(event)
 
   def add_image_event(self, handle: Any, content: Value, instr: VNPlacementInstBase | VNModifyInst | VNRemoveInst, destexpr: VNASTNodeBase) -> None:
     if len(self._pending_events) == 0:
       self._query_current_scene()
     # 添加事件并决定初始位置
-    event = self.EventInfo(handle=handle, instr=instr, destexpr=destexpr, initpos=None)
+    event = self.EventInfo(handle=handle, ty=self.HandleType.IMAGE, instr=instr, destexpr=destexpr, initpos=None)
     if isinstance(instr, (VNPlacementInstBase, VNModifyInst)):
       # 该事件是入场或移动事件，我们需要给其添加位置信息
       # 目前暂时不支持读取手动输入的位置，我们固定把对象放在屏幕正中偏上的位置
@@ -244,7 +321,7 @@ class VNCodeGen_Placer(VNCodeGen_PlacerBase):
       total_width = 0
       total_height = 0
       if isinstance(content, BaseImageLiteralExpr):
-        l, t, r, b = content.get_bbox()
+        l, t, r, b = self.get_opaque_boundingbox(content)
         bbox_xmin = l
         bbox_xmax = r
         bbox_ymin = t
@@ -273,14 +350,14 @@ class VNCodeGen_Placer(VNCodeGen_PlacerBase):
     for i in range(len(self._scene_objects)):
       existing_obj_orders[self._scene_objects[i]] = i
     # 第一步：整理所有事件，找出现在场上到底有哪些对象
-    handle_to_obj : dict[typing.Any, VNCodeGen_Placer.ObjectInfo] = {}
+    handle_to_obj : dict[int, VNCodeGen_Placer.ObjectInfo] = {}
     for obj in self._scene_objects:
-      handle_to_obj[obj.handle] = obj
+      handle_to_obj[id(obj.handle)] = obj
     # 遍历已储存的事件，更新场上对象信息
-    event_to_obj_ordered : collections.OrderedDict[VNCodeGen_Placer.EventInfo, VNCodeGen_Placer.ObjectInfo] = collections.OrderedDict()
+    # event_to_obj_ordered : collections.OrderedDict[VNCodeGen_Placer.EventInfo, VNCodeGen_Placer.ObjectInfo] = collections.OrderedDict()
     scene_objects_new : list[VNCodeGen_Placer.ObjectInfo] = []
     for event in self._pending_events:
-      if obj := handle_to_obj.get(event.handle):
+      if obj := handle_to_obj.get(id(event.handle)):
         # 该对象已经在场上了
         obj.event = event
         if event.initpos is not None:
@@ -289,10 +366,10 @@ class VNCodeGen_Placer(VNCodeGen_PlacerBase):
         # 该对象是新上场的
         if event.initpos is None:
           raise PPInternalError("New object has no initpos")
-        obj = VNCodeGen_Placer.ObjectInfo(handle=event.handle, pos=event.initpos, event=event)
-        handle_to_obj[obj.handle] = obj
+        obj = VNCodeGen_Placer.ObjectInfo(handle=event.handle, ty=event.ty, pos=event.initpos, event=event)
+        handle_to_obj[id(obj.handle)] = obj
         scene_objects_new.append(obj)
-      event_to_obj_ordered[event] = obj
+      # event_to_obj_ordered[event] = obj
     # 把退场的对象去除
     cur_scene_objects : list[VNCodeGen_Placer.ObjectInfo] = [obj for obj in self._scene_objects if obj.event is None or not isinstance(obj.event.instr, VNRemoveInst)]
     # 第二步：给对象安排一个从左到右的顺序
@@ -411,8 +488,8 @@ class VNCodeGen_Placer(VNCodeGen_PlacerBase):
     startx = 0
     starthw = 0
     interval_start = 0
-    boundary_ratio = (3 - math.sqrt(5)) / 2
-    assert boundary_ratio > 0 and boundary_ratio < 0.5
+    boundary_ratio = ((3 - math.sqrt(5)) / 2) / 4 # (1-0.618)/4
+    assert boundary_ratio >= 0 and boundary_ratio < 0.5
     for i in range(0, len(scene_objects_sorted)): # pylint: disable=consider-using-enumerate
       obj = scene_objects_sorted[i]
       if obj.pos.manual_pos is not None:
@@ -443,7 +520,16 @@ class VNCodeGen_Placer(VNCodeGen_PlacerBase):
     new_instr_info : list[tuple[typing.Any, Value, VNInstruction | None]] = []
     # 只有(1)没有涉及事件，(2)自动计算的位置也与原来不同，才不需要新指令或设置新的位置
     # 其他情况都需要新指令或设置新的位置
+    if self._cur_scene is None:
+      raise PPInternalError("Current scene is not set")
     for obj in scene_objects_sorted:
+      match obj.ty:
+        case VNCodeGen_Placer.HandleType.CHARACTER:
+          self._cur_scene.set_character_position(obj.handle, obj.pos)
+        case VNCodeGen_Placer.HandleType.IMAGE:
+          self._cur_scene.set_asset_position(obj.handle, obj.pos)
+        case _:
+          raise PPInternalError("Unhandled object type")
       if obj.event is not None:
         # 该对象有事件，我们需要给事件添加位置信息
         if isinstance(obj.event.instr, (VNPlacementInstBase, VNModifyInst)):

@@ -23,6 +23,22 @@ class RenPyNode(Operation):
   def accept(self, visitor):
     return getattr(visitor, "visit" + self.__class__.__name__)(self)
 
+  @classmethod
+  def is_controlflow_instruction(cls) -> bool:
+    # 是否是控制流指令
+    # 一般而言这些指令之后的场景状态会被清空
+    return False
+
+  @classmethod
+  def has_child_block(cls) -> bool:
+    # 是否有子块，有的话应该可以用 get_child_blocks() 获取
+    # 仅当我们有含 RenPyNode 的子块时才需要返回 True，如果只有 RenPyASMNode 这样的子块则返回 False
+    return False
+
+  def get_child_blocks(self) -> typing.Iterable[Block]:
+    # 如果有的话，返回所有子块
+    return ()
+
 @irdataop.IROperationDataclassWithValue(VoidType)
 class RenPyASMNode(RenPyNode, Value):
   # 可以多行的 ASM
@@ -179,6 +195,13 @@ class RenPyInitNode(RenPyNode):
       result.body.push_back(pythoncode)
     return result
 
+  @classmethod
+  def has_child_block(cls) -> bool:
+    return True
+
+  def get_child_blocks(self) -> typing.Iterable[Block]:
+    return (self.body,)
+
 @irdataop.IROperationDataclass
 class RenPyLabelNode(RenPyNode):
   # 主文章：RenPy Labels & Control Flow
@@ -193,6 +216,13 @@ class RenPyLabelNode(RenPyNode):
   @staticmethod
   def create(context : Context, codename : StringLiteral | str) -> RenPyLabelNode:
     return RenPyLabelNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, codename=codename)
+
+  @classmethod
+  def has_child_block(cls) -> bool:
+    return True
+
+  def get_child_blocks(self) -> typing.Iterable[Block]:
+    return (self.body,)
 
 @irdataop.IROperationDataclass
 class RenPyPythonNode(RenPyNode):
@@ -210,6 +240,11 @@ class RenPyPythonNode(RenPyNode):
     result = RenPyPythonNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, code=code, hide=hide, store=store)
     result.body.push_back(code)
     return result
+
+  @classmethod
+  def is_controlflow_instruction(cls) -> bool:
+    # 返回一个保守的结果
+    return True
 
 @irdataop.IROperationDataclass
 class RenPyEarlyPythonNode(RenPyPythonNode):
@@ -380,6 +415,10 @@ class RenPyCallNode(RenPyNode):
   def create(context : Context, label : StringLiteral | str, is_expr : BoolLiteral | bool | None = None, arguments : typing.Iterable[StringLiteral] | StringLiteral | str | None = None):
     return RenPyCallNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, label=label, is_expr=is_expr, arguments=arguments)
 
+  @classmethod
+  def is_controlflow_instruction(cls) -> bool:
+    return True
+
 @irdataop.IROperationDataclass
 class RenPyReturnNode(RenPyNode):
   # expr : str
@@ -392,6 +431,10 @@ class RenPyReturnNode(RenPyNode):
     if expr is not None:
       result.body.push_back(expr)
     return result
+
+  @classmethod
+  def is_controlflow_instruction(cls) -> bool:
+    return True
 
 @irdataop.IROperationDataclass
 class RenPyMenuItemNode(RenPyNode):
@@ -413,6 +456,13 @@ class RenPyMenuItemNode(RenPyNode):
       result.optionblock.push_back(arguments)
     return result
 
+  @classmethod
+  def has_child_block(cls) -> bool:
+    return True
+
+  def get_child_blocks(self) -> typing.Iterable[Block]:
+    return (self.body,)
+
 @irdataop.IROperationDataclass
 class RenPyMenuNode(RenPyNode):
   # https://www.renpy.org/doc/html/menus.html
@@ -433,6 +483,17 @@ class RenPyMenuNode(RenPyNode):
       result.optionblock.push_back(arguments)
     return result
 
+  @classmethod
+  def is_controlflow_instruction(cls) -> bool:
+    return True
+
+  @classmethod
+  def has_child_block(cls) -> bool:
+    return True
+
+  def get_child_blocks(self) -> typing.Iterable[Block]:
+    return (self.items,)
+
 @irdataop.IROperationDataclass
 class RenPyJumpNode(RenPyNode):
   # target : str
@@ -443,6 +504,10 @@ class RenPyJumpNode(RenPyNode):
   @staticmethod
   def create(context : Context, target : StringLiteral | str, is_expr : BoolLiteral | bool | None = None):
     return RenPyJumpNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, target=target, is_expr=is_expr)
+
+  @classmethod
+  def is_controlflow_instruction(cls) -> bool:
+    return True
 
 @irdataop.IROperationDataclass
 class RenPyPassNode(RenPyNode):
@@ -459,6 +524,13 @@ class RenPyCondBodyPair(RenPyNode):
 
   # 不应直接创建，没有 create()
 
+  @classmethod
+  def has_child_block(cls) -> bool:
+    return True
+
+  def get_child_blocks(self) -> typing.Iterable[Block]:
+    return (self.body,)
+
 @irdataop.IROperationDataclass
 class RenPyWhileNode(RenPyCondBodyPair):
   # condition : bool expr
@@ -470,6 +542,10 @@ class RenPyWhileNode(RenPyCondBodyPair):
     result = RenPyWhileNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, condition=condition)
     result.optionblock.push_back(condition)
     return result
+
+  @classmethod
+  def is_controlflow_instruction(cls) -> bool:
+    return True
 
 @irdataop.IROperationDataclass
 class RenPyIfNode(RenPyNode):
@@ -487,6 +563,17 @@ class RenPyIfNode(RenPyNode):
   @staticmethod
   def create(context : Context):
     return RenPyIfNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context)
+
+  @classmethod
+  def is_controlflow_instruction(cls) -> bool:
+    return True
+
+  @classmethod
+  def has_child_block(cls) -> bool:
+    return True
+
+  def get_child_blocks(self) -> typing.Iterable[Block]:
+    return (self.entries,)
 
 @irdataop.IROperationDataclass
 class RenPyFileAssetOp(Symbol):

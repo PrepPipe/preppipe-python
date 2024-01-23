@@ -962,43 +962,40 @@ class VNScreen2DPositionLiteralExpr(LiteralExpr):
   # 锚点固定在图片、视频内容的左上角
   # 由于用户输入可能是比例，也可能是绝对值，所以我们同时使用两者来描述
   # 绝对值一定有，比例值有且非零时优先，否则使用绝对值
+  # 呃。。现在使用比例值的体系还没做好，这里只有绝对值
   # 参数如下：
   # x_abs, y_abs : 绝对坐标，指定左上角的位置，单位为像素
   # width, height : 指定内容的宽度和高度，单位为像素
-  # x_ratio, y_ratio : 指定绝对坐标的比例，值在0和1之间
 
-  def construct_init(self, *, context : Context, value_tuple: tuple[IntLiteral, IntLiteral, IntLiteral, IntLiteral, FloatLiteral, FloatLiteral], **kwargs) -> None:
+  def construct_init(self, *, context : Context, value_tuple: tuple[IntLiteral, IntLiteral, IntLiteral, IntLiteral], **kwargs) -> None:
     ty = VNPositionType.get(context)
-    assert len(value_tuple) == 6
+    assert len(value_tuple) == 4
     assert isinstance(value_tuple[0], IntLiteral) and isinstance(value_tuple[1], IntLiteral)
     assert isinstance(value_tuple[2], IntLiteral) and isinstance(value_tuple[3], IntLiteral)
-    assert isinstance(value_tuple[4], FloatLiteral) and isinstance(value_tuple[5], FloatLiteral)
     return super().construct_init(ty=ty, value_tuple=value_tuple, **kwargs)
 
+  @property
   def x_abs(self) -> IntLiteral:
     return self.get_operand(0)
 
+  @property
   def y_abs(self) -> IntLiteral:
     return self.get_operand(1)
 
+  @property
   def width(self) -> IntLiteral:
     return self.get_operand(2)
 
+  @property
   def height(self) -> IntLiteral:
     return self.get_operand(3)
-
-  def x_ratio(self) -> FloatLiteral:
-    return self.get_operand(4)
-
-  def y_ratio(self) -> FloatLiteral:
-    return self.get_operand(5)
 
   @staticmethod
   def get_fixed_value_type():
     return VNPositionType
 
   @staticmethod
-  def get(context : Context, x_abs : IntLiteral | int, y_abs : IntLiteral | int, width : IntLiteral | int, height : IntLiteral | int, x_ratio : FloatLiteral | None = None, y_ratio : FloatLiteral | None = None) -> VNScreen2DPositionLiteralExpr:
+  def get(context : Context, x_abs : IntLiteral | int, y_abs : IntLiteral | int, width : IntLiteral | int, height : IntLiteral | int) -> VNScreen2DPositionLiteralExpr:
     if isinstance(x_abs, int):
       x_abs = IntLiteral.get(x_abs, context)
     if isinstance(y_abs, int):
@@ -1007,11 +1004,7 @@ class VNScreen2DPositionLiteralExpr(LiteralExpr):
       width = IntLiteral.get(width, context)
     if isinstance(height, int):
       height = IntLiteral.get(height, context)
-    if x_ratio is not None:
-      assert isinstance(x_ratio, FloatLiteral)
-    if y_ratio is not None:
-      assert isinstance(y_ratio, FloatLiteral)
-    return VNScreen2DPositionLiteralExpr._get_literalexpr_impl((x_abs, y_abs, width, height, x_ratio, y_ratio), context)
+    return VNScreen2DPositionLiteralExpr._get_literalexpr_impl((x_abs, y_abs, width, height), context)
 
 @IROperationDataclassWithValue(VoidType)
 @IRObjectJsonTypeName("vn_position_symbol_op")

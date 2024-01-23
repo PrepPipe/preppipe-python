@@ -1518,12 +1518,14 @@ class VNCodeGen:
       if sprite := self.get_character_sprite(ch, finalstate):
         if not isinstance(sprite.valuetype, ImageType):
           raise PPAssertionError("We only support image types for now")
+
         cnode = VNCreateInst.create(context=self.context, start_time=self.starttime, content=sprite, ty=VNHandleType.get(sprite.valuetype), device=self.parsecontext.dev_foreground, loc=node.location)
         cnode.transition.set_operand(0, VNDefaultTransitionType.DT_SPRITE_SHOW.get_enum_literal(self.context))
         self.handle_transition_and_finishtime(cnode)
+        # 在更新 info.sprite_handle 之前就把事件加上去，这样可以使调用 placer 时能记录事件发生前的状态
+        self.placer.add_character_event(info, self.codegen.get_character_astnode(info.identity), sprite=sprite, instr=cnode, destexpr=node)
         info.sprite_handle = cnode
         self.destblock.push_back(cnode)
-        self.placer.add_character_event(info, self.codegen.get_character_astnode(info.identity), sprite=sprite, instr=cnode, destexpr=node)
       # 完成
       return None
 
@@ -1555,13 +1557,18 @@ class VNCodeGen:
           rm.transition.set_operand(0, VNDefaultTransitionType.DT_SPRITE_HIDE.get_enum_literal(self.context))
           self.handle_transition_and_finishtime(rm)
           self.destblock.push_back(rm)
-          info.sprite_handle = None
           self.placer.add_character_event(info, self.codegen.get_character_astnode(info.identity), sprite=None, instr=rm, destexpr=node)
+          info.sprite_handle = None
         else:
           # 角色不在场上
           msg = self._tr_character_exit_character_not_onstage.format(sayname=sayname)
           self.codegen.emit_error(code='vncodegen-character-stateerror', msg=msg, loc=node.location, dest=self.destblock)
       return None
+
+    def _create_image_expr(self, v : ImageAssetData) -> ImageAssetLiteralExpr:
+      size = v.load().size
+      sizetuple = IntTupleLiteral.get(value=size, context=self.context)
+      return ImageAssetLiteralExpr.get(context=self.context, image=v, size=sizetuple)
 
     _tr_assetref_asset_not_inuse = TR_vn_codegen.tr("assetref_asset_not_inuse",
       en="The asset is not in use and its removal is ignored: {asset}",
@@ -1607,18 +1614,21 @@ class VNCodeGen:
             case VNASTAssetIntendedOperation.OP_CREATE:
               if not isinstance(assetdata, ImageAssetData):
                 raise PPAssertionError
-              cnode = VNCreateInst.create(context=self.context, start_time=self.starttime, content=assetdata, ty=VNHandleType.get(assetdata.valuetype), device=self.parsecontext.dev_foreground, name=node.name, loc=node.location)
+              content = self._create_image_expr(assetdata)
+              cnode = VNCreateInst.create(context=self.context, start_time=self.starttime, content=content, ty=VNHandleType.get(assetdata.valuetype), device=self.parsecontext.dev_foreground, name=node.name, loc=node.location)
               if transition := node.transition.try_get_value():
                 cnode.transition.set_operand(0, transition)
               self.destblock.push_back(cnode)
               self.handle_transition_and_finishtime(cnode)
-              info = VNCodeGen.SceneContext.AssetState(dev=self.parsecontext.dev_foreground, search_names=description, data=assetdata, output_handle=cnode)
+              info = VNCodeGen.SceneContext.AssetState(dev=self.parsecontext.dev_foreground, search_names=description, data=content, output_handle=cnode)
+              # 在更新 info.sprite_handle 之前就把事件加上去，这样可以使调用 placer 时能记录事件发生前的状态
+              self.placer.add_image_event(handle=info, content=content, instr=cnode, destexpr=node)
               self.scenecontext.asset_info.append(info)
-              self.placer.add_image_event(handle=info, content=assetdata, instr=cnode, destexpr=node)
             case VNASTAssetIntendedOperation.OP_REMOVE:
-              infolist = self.scenecontext.search_asset_inuse(dev=self.parsecontext.dev_foreground, searchname=assetexpr_name, data=assetdata)
+              content = self._create_image_expr(assetdata) if assetdata is not None else None
+              infolist = self.scenecontext.search_asset_inuse(dev=self.parsecontext.dev_foreground, searchname=assetexpr_name, data=content)
               if len(infolist) == 0:
-                assetstr = (assetexpr_name if assetexpr_name is not None and len(assetexpr_name) > 0 else str(assetdata))
+                assetstr = (assetexpr_name if assetexpr_name is not None and len(assetexpr_name) > 0 else str(content))
                 msg = self._tr_assetref_asset_not_inuse.format(asset=assetstr)
                 self.codegen.emit_error(code='vncodegen-active-asset-not-found', msg=msg, loc=node.location, dest=self.destblock)
               else:
@@ -1631,8 +1641,8 @@ class VNCodeGen:
                     rnode.transition.set_operand(0, transition)
                   self.handle_transition_and_finishtime(rnode)
                   self.destblock.push_back(rnode)
-                  self.scenecontext.asset_info.remove(info)
                   self.placer.add_image_event(handle=info, content=info.output_handle, instr=rnode, destexpr=node)
+                  self.scenecontext.asset_info.remove(info)
             case VNASTAssetIntendedOperation.OP_PUT:
               # 当前不应该出现这种情况
               raise NotImplementedError()
@@ -2077,7 +2087,7 @@ class VNCodeGen:
     def codegen_mainloop(self):
       if self.cur_terminator is not None:
         raise PPAssertionError
-      width, height = self.codegen.ast.screen_size.get().value
+      width, height = self.codegen.ast.screen_resolution.get().value
       self.placer.set_screen_size(width, height)
       self.placer.reset(self.scenecontext)
       for op in self.srcregion.body.body:
