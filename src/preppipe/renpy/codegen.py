@@ -156,7 +156,11 @@ class _RenPyCodeGenHelper:
       self.func_dict[func] = _FunctionCodeGenHelper(codename = codename_l)
 
   def handle_asset(self, asset : VNConstExprAsSymbol):
-    raise NotImplementedError("TODO")
+    codename = asset.name
+    if not self.check_identifier(codename):
+      codename = self.get_unique_global_name(codename)
+    image = asset.get_value()
+    self.try_set_imspec_for_asset(image, (codename,))
 
   def _populate_imspec_from_assetdecl(self, basename : str, symbolname : str, prefix : str | None = None):
     imspec_list = [nameconvert.str2identifier(v) for v in symbolname.split(',') if len(v) > 0]
@@ -1159,10 +1163,10 @@ class _RenPyCodeGenHelper:
       self.label_all_functions()
       self.handle_all_values()
 
-      for a in n.assets:
-        self.handle_asset(a)
       for c in n.characters:
         self.handle_character(c)
+      for a in n.assets:
+        self.handle_asset(a)
       for s in n.scenes:
         self.handle_scene(s)
       for f in n.functions:
