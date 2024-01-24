@@ -68,15 +68,16 @@ class VNCodeGen_PlacerBase:
     # 是否有事件等待处理，如果有的话，后续会调用 handle_pending_events()
     return False
 
-  def handle_pending_events(self) -> list[tuple[typing.Any, Value, VNInstruction | None]] | None:
+  def handle_pending_events(self, cb : typing.Callable[[list[tuple[typing.Any, Value, VNInstruction | None]]], None]) -> None:
     # 处理等待处理的事件，职责包括：
     # 1. 给每个事件对应的指令添加位置信息
     # 2. 若有需要，调整其他内容的位置(既需要直接调用 scene 对象中改变当前位置的函数，也需要返回构建新指令的信息)
-    # 返回值中每一项是一个三元组，分别是：
+    # 传递进的回调函数取一个列表，每一项是一个三元组，分别是：
     # 1. 事件对应的 handle
     # 2. 内容的最终位置
     # 3. 新指令插入的位置（插入到该指令前），如果是 None 则表示插入到最后
-    # 如果不需要任何新指令，返回 None
+    # 如果不需要任何新指令，则不用调用该回调函数
+    # (使用回调函数来创建新指令而不是返回用于回调的参数，这样更方便调试，我们能在回调函数处设置断点并检查正在处理的事件)
     pass
 
   def reset(self, scene : VNCodeGen_SceneContextPlacerInterface) -> None:
@@ -257,7 +258,7 @@ class VNCodeGen_Placer(VNCodeGen_PlacerBase):
       if not isinstance(baseheight, decimal.Decimal) or not isinstance(topheight, decimal.Decimal) or not isinstance(xoffset, decimal.Decimal) or not isinstance(xpos, decimal.Decimal):
         raise PPInternalError("Sprite parameters are not decimal")
       y = int(self._screen_height*(1-topheight))
-      scaledheight = (self._screen_height - y) * (1-baseheight)
+      scaledheight = (self._screen_height - y) / (1-baseheight)
       scale = scaledheight / height
       scaledwidth = width * scale
       scaledwidth_i = int(scaledwidth)
@@ -342,7 +343,7 @@ class VNCodeGen_Placer(VNCodeGen_PlacerBase):
       event.initpos = pos
     self._pending_events.append(event)
 
-  def handle_pending_events(self) -> list[tuple[typing.Any, Value, VNInstruction | None]] | None:
+  def handle_pending_events(self, cb : typing.Callable[[list[tuple[typing.Any, Value, VNInstruction | None]]], None]) -> None:
     # 在开始前，整理已在场上的对象的（从左到右）的相对顺序，以此指导事件发生后的相对顺序
     # 我们以对象的中轴线的 X 坐标作为排序依据
     self._scene_objects.sort(key=lambda obj: (obj.pos.bbox_x[0]+obj.pos.bbox_x[1]/2) + (obj.pos.x if obj.pos.x is not None else 0)) # obj.pos.x 应该不会是 None，只是让语法检查通过
@@ -544,7 +545,11 @@ class VNCodeGen_Placer(VNCodeGen_PlacerBase):
       if obj in objs_with_position_changed:
         # 该对象的位置发生了变化，我们需要添加新指令
         new_instr_info.append((obj.handle, obj.pos.get_position_value(context=self.context), insertpos))
+
+    # 使用回调函数来创建新指令
+    if len(new_instr_info) > 0:
+      cb(new_instr_info)
+
     # 重置状态
     self._scene_objects.clear()
     self._pending_events.clear()
-    return new_instr_info if len(new_instr_info) > 0 else None
