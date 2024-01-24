@@ -2172,6 +2172,9 @@ class Literal(Value):
   def get_context(self) -> Context:
     return super().valuetype.context
 
+  def __str__(self) -> str:
+    return self.__class__.__name__ + '(' + str(self._value) + ')'
+
   @staticmethod
   def _get_literal_impl(literal_cls : type, value : typing.Any, context : Context) -> typing.Any:
     return context.get_literal_uniquing_dict(literal_cls).get_or_create(value, lambda : literal_cls(init_mode = IRObjectInitMode.CONSTRUCT, context = context, value = value))
@@ -3072,6 +3075,9 @@ class LiteralExpr(Literal, User):
 
   def get_value_tuple(self) -> tuple[Literal | AssetData, ...]:
     return self.value
+
+  def __str__(self) -> str:
+    return self.__class__.__name__ + '[' + ','.join([str(v) for v in self.value]) + ']'
 
   @classmethod
   def _get_literalexpr_impl(cls : typing.Type[_LiteralExprTV], value_tuple, context) -> _LiteralExprTV:

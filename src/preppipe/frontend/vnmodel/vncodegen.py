@@ -1624,6 +1624,11 @@ class VNCodeGen:
               # 在更新 info.sprite_handle 之前就把事件加上去，这样可以使调用 placer 时能记录事件发生前的状态
               self.placer.add_image_event(handle=info, content=content, instr=cnode, destexpr=node)
               self.scenecontext.asset_info.append(info)
+              # 如果有描述的话，我们在 VNModel 中创建一个 Asset，把名字记下来
+              if len(description) > 0:
+                name = "undeclared_" + '_'.join(description)
+                symb = VNConstExprAsSymbol.create(context=self.context, value=content, name=name, loc=node.location)
+                self.codegen.get_or_create_ns(self.namespace_tuple).add_asset(symb)
             case VNASTAssetIntendedOperation.OP_REMOVE:
               content = self._create_image_expr(assetdata) if assetdata is not None else None
               infolist = self.scenecontext.search_asset_inuse(dev=self.parsecontext.dev_foreground, searchname=assetexpr_name, data=content)
@@ -1720,17 +1725,20 @@ class VNCodeGen:
           starttime = insertpt.get_start_time()
         # 然后生成指令
         # 暂时不考虑转场衔接，直接移动
+        # 创建新指令时要更新 handle，这样保证后续的立绘改变可以复制正确的当前位置
         cur_instr : VNInstruction | None = None
         if isinstance(handle, VNCodeGen.SceneContext.CharacterState):
           if handle.sprite_handle is None:
             raise PPAssertionError("Requesting position change for character sprites not on stage")
           prev_content, prev_device = self._get_info_from_handle(handle.sprite_handle)
           cur_instr = VNModifyInst.create(context=self.context, start_time=starttime, handlein=handle.sprite_handle, content=prev_content, device=prev_device)
+          handle.sprite_handle = cur_instr
         elif isinstance(handle, VNCodeGen.SceneContext.AssetState):
           if handle.output_handle is None:
             raise PPAssertionError("Requesting position change for images not on stage")
           prev_content, prev_device = self._get_info_from_handle(handle.output_handle)
           cur_instr = VNModifyInst.create(context=self.context, start_time=starttime, handlein=handle.output_handle, content=prev_content, device=prev_device)
+          handle.output_handle = cur_instr
         else:
           raise PPInternalError("Unexpected handle type: " + type(handle).__name__)
         # 加上位置信息
@@ -2100,8 +2108,7 @@ class VNCodeGen:
               raise PPInternalError("Terminating AST node should not create any enter/exit/move events")
             self.cur_terminator = new_terminator
           if self.placer.has_event_pending():
-            if requests := self.placer.handle_pending_events():
-              self.handle_placer_requested_movements(requests)
+            self.placer.handle_pending_events(self.handle_placer_requested_movements)
         elif isinstance(op, MetadataOp):
           cloned = op.clone()
           if self.cur_terminator is None:

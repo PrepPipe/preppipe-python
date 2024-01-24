@@ -4,18 +4,18 @@
 import pypinyin
 import re
 
-def _fallback_handling(c : str) -> str:
-  if c.isascii():
-    if c.isalnum():
-      return c
-    result_str = ''
-    for ch in c:
+def _fallback_handling(s : str) -> str:
+  result_str = ''
+  for ch in s:
+    if ch.isascii():
       if ch.isalnum():
         result_str += ch
       else:
-        result_str += '_'
-    return result_str
-  return hex(ord(c))
+        if len(result_str) == 0 or result_str[-1] != '_':
+          result_str += '_'
+    else:
+      result_str += hex(ord(ch))
+  return result_str
 
 def str2identifier(name : str) -> str:
   assert isinstance(name, str)
