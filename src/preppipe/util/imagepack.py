@@ -20,7 +20,9 @@ from ..exceptions import *
 from ..commontypes import Color
 from ..language import *
 from ..tooldecl import ToolClassDecl
+from ..assets.assetclassdecl import AssetClassDecl
 
+@AssetClassDecl("imagepack")
 @ToolClassDecl("imagepack")
 class ImagePack:
   TR_imagepack = TranslationDomain("imagepack")
@@ -91,6 +93,15 @@ class ImagePack:
     def __hash__(self) -> int:
       return hash((self.offset_x, self.offset_y, tuple(np.average(self.patch_ndarray, (0,1)))))
 
+  class CompositeInfo:
+    # 保存时每个差分的信息
+    basename : str
+    layers : list[int]
+
+    def __init__(self, layers : typing.Iterable[int], basename : str = '') -> None:
+      self.layers = list(layers)
+      self.basename = basename
+
   # 当 imagepack 初始化完成后，里面的所有内容都被视作 immutable, 所有的修改操作都得换新值
   # mask 是一些可以作用于 base （基底图）上的修饰
   # 正常生成最终图片时我们不使用 mask
@@ -103,29 +114,19 @@ class ImagePack:
 
   masks : list[MaskInfo]
   layers : list[LayerInfo]
-  stacks : list[list[int]]
+  composites : list[CompositeInfo]
 
-  # 与 Translatable 对接的按名存储部分
-  packname : Translatable | None # 如果语言部分未加载则此项为 None
-  masknames : list[Translatable]
-  stacknames : list[Translatable]
+  # 其他不用于核心功能的元信息，例如：作者，描述等
+  # 某些元信息可能会被用于其他辅助功能，比如生成预览图、头像图等
+  opaque_metadata : dict[str, typing.Any]
 
   def __init__(self, width : int, height : int) -> None:
     self.width = width
     self.height = height
     self.masks = []
     self.layers = []
-    self.stacks = []
-    self.packname = None
-    self.masknames = []
-    self.stacknames = []
-
-  def import_names(self, TR : TranslationDomain, packname : str, packname_trs : dict, stack_codenames : list[str], stack_trs : list[dict], mask_codenames : list[str], mask_trs : list[dict]):
-    self.packname = TR.tr(code=packname, **packname_trs)
-    for codename, trdict in zip(stack_codenames, stack_trs):
-      self.stacknames.append(TR.tr(code=codename, **trdict))
-    for codename, trdict in zip(mask_codenames, mask_trs):
-      self.masknames.append(TR.tr(code=codename, **trdict))
+    self.composites = []
+    self.opaque_metadata = {}
 
   @staticmethod
   def _write_image_to_zip(image : PIL.Image.Image, path : str, z : zipfile.ZipFile):
@@ -193,7 +194,24 @@ class ImagePack:
         self._write_image_to_zip(l.patch, filename, z)
       return result
     jsonout["layers"] = collect_layer_group("l", self.layers)
-    jsonout["stacks"] = self.stacks
+
+    # composites
+    if len(self.composites) > 0:
+      json_composites = []
+      comp_index = 0
+      for c in self.composites:
+        comp_index += 1
+        basename = c.basename
+        if len(basename) == 0:
+          basename = 'c' + str(comp_index)
+        jsonobj = {"l" : c.layers, "n" : basename}
+        json_composites.append(jsonobj)
+      jsonout["composites"] = json_composites
+
+    # metadata
+    if len(self.opaque_metadata) > 0:
+      jsonout["metadata"] = self.opaque_metadata
+
     manifest = json.dumps(jsonout, ensure_ascii=False,indent=None,separators=(',', ':'))
     z.writestr("manifest.json", manifest)
     z.close()
@@ -259,13 +277,17 @@ class ImagePack:
 
     self.layers = read_layer_group("l", "layers")
 
-    # Read stacks
-    self.stacks = manifest.get("stacks", [])
+    # Read composites
+    if "composites" in manifest:
+      composites = []
+      for comp_info in manifest["composites"]:
+        composites.append(ImagePack.CompositeInfo(layers=comp_info["l"], basename=comp_info["n"]))
+      self.composites = composites
 
   def get_composed_image(self, index : int) -> PIL.Image.Image:
     if not self.is_imagedata_loaded():
       raise PPInternalError("Cannot compose images without loading the data")
-    layer_indices = self.stacks[index].copy()
+    layer_indices = self.composites[index].layers
     if len(layer_indices) == 0:
       raise PPInternalError("Empty composition? some thing is probably wrong")
 
@@ -386,9 +408,7 @@ class ImagePack:
     resultpack = ImagePack(self.width, self.height)
 
     # 除了 mask 和 layers, 其他都照搬
-    resultpack.stacks = self.stacks
-    resultpack.packname = self.packname
-    resultpack.stacknames = self.stacknames
+    resultpack.composites = self.composites
 
     # 开始搬运 layers
     for layerindex in range(len(self.layers)): # pylint: disable=consider-using-enumerate
@@ -598,7 +618,7 @@ class ImagePack:
     # kernel = np.ones((kernel_size, kernel_size), dtype=np.uint8)
 
     for img in images:
-      ImagePack.printstatus("handling image " + str(len(result_pack.stacks)))
+      ImagePack.printstatus("handling image " + str(len(result_pack.composites)))
       if img.width != width:
         raise PPInternalError()
       if img.height != height:
@@ -608,7 +628,7 @@ class ImagePack:
       ImagePack.printstatus("invcomp done")
       if patch_image is None:
         # 该图就是基底图
-        result_pack.stacks.append([0])
+        result_pack.composites.append(ImagePack.CompositeInfo([0]))
         continue
 
       # patch_image 是全图的 Patch, np array, RGBA
@@ -648,7 +668,7 @@ class ImagePack:
         patch_array[(rowarray, colarray)] = patch_image_trunc[indices]
         layer = get_layer_index(patch_base_x + int(col_min), patch_base_y + int(row_min), patch_array)
         stack.append(layer)
-      result_pack.stacks.append(stack)
+      result_pack.composites.append(ImagePack.CompositeInfo(stack))
     return result_pack
 
   def optimize_masks(self):
@@ -702,10 +722,15 @@ class ImagePack:
     zh_cn="选区",
     zh_hk="選區",
   )
-  TR_imagepack_yamlparse_stacks = TR_imagepack.tr("stacks",
-    en="stacks",
+  TR_imagepack_yamlparse_composites = TR_imagepack.tr("composites",
+    en="composites",
     zh_cn="组合",
     zh_hk="組合",
+  )
+  TR_imagepack_yamlparse_metadata = TR_imagepack.tr("metadata",
+    en="metadata",
+    zh_cn="元数据",
+    zh_hk="元數據",
   )
   TR_imagepack_yamlparse_flags = TR_imagepack.tr("flags",
     en="flags",
@@ -776,26 +801,30 @@ class ImagePack:
     return PIL.Image.fromarray(ra, "L").convert("1", dither=PIL.Image.Dither.NONE)
 
   @staticmethod
-  def build_image_pack_from_yaml(yamlpath : str, named_stack_entries : list[str]):
+  def build_image_pack_from_yaml(yamlpath : str):
     basepath = os.path.dirname(os.path.abspath(yamlpath))
     with open(yamlpath, "r", encoding="utf-8") as f:
       yamlobj = yaml.safe_load(f)
       result = ImagePack(0, 0)
       layers = None
       masks = None
-      stacks = None
+      composites = None
+      metadata = None
       for k in yamlobj.keys():
         if k in ImagePack.TR_imagepack_yamlparse_layers.get_all_candidates():
           layers = yamlobj[k]
         elif k in ImagePack.TR_imagepack_yamlparse_masks.get_all_candidates():
           masks = yamlobj[k]
-        elif k in ImagePack.TR_imagepack_yamlparse_stacks.get_all_candidates():
-          stacks = yamlobj[k]
+        elif k in ImagePack.TR_imagepack_yamlparse_composites.get_all_candidates():
+          composites = yamlobj[k]
+        elif k in ImagePack.TR_imagepack_yamlparse_metadata.get_all_candidates():
+          metadata = yamlobj[k]
         else:
           raise PPInternalError("Unknown key: " + k + "(supported keys: "
                                 + str(ImagePack.TR_imagepack_yamlparse_layers.get_all_candidates()) + ", "
                                 + str(ImagePack.TR_imagepack_yamlparse_masks.get_all_candidates()) + ", "
-                                + str(ImagePack.TR_imagepack_yamlparse_stacks.get_all_candidates()) + ")")
+                                + str(ImagePack.TR_imagepack_yamlparse_composites.get_all_candidates()) + ", "
+                                + str(ImagePack.TR_imagepack_yamlparse_metadata.get_all_candidates()) + ")")
       if layers is None:
         raise PPInternalError("No layers in " + yamlpath)
       layer_dict : dict[str, int] = {}
@@ -843,19 +872,17 @@ class ImagePack:
           img = img.crop(bbox)
         newlayer = ImagePack.LayerInfo(img, offset_x=offset_x, offset_y=offset_y, base=flag_base, toggle=flag_toggle, basename=imgpathbase)
         result.layers.append(newlayer)
-      if stacks is None:
-        for i in range(len(result.layers)):
-          result.stacks.append([i])
-          named_stack_entries.append(result.layers[i].basename)
+      if composites is None:
+        for i, layer in enumerate(result.layers):
+          result.composites.append(ImagePack.CompositeInfo([i], layer.basename))
       else:
-        for stack_name, stack_list in stacks.items():
+        for stack_name, stack_list in composites.items():
           stack = []
           if stack_list is None:
             stack.append(layer_dict[stack_name])
           elif isinstance(stack_list, list):
             stack = [layer_dict[s] for s in stack_list]
-          result.stacks.append(stack)
-          named_stack_entries.append(stack_name)
+          result.composites.append(ImagePack.CompositeInfo(stack, stack_name))
 
       if masks is not None:
         for imgpathbase, maskinfo in masks.items():
@@ -931,8 +958,53 @@ class ImagePack:
             maskimg = maskimg.crop(bbox)
           newmask = ImagePack.MaskInfo(mask=maskimg, mask_color=maskcolor, offset_x=offset_x, offset_y=offset_y, projective_vertices=projective_vertices_result, basename=imgpathbase, applyon=applyon)
           result.masks.append(newmask)
+
+      if metadata is not None:
+        if not isinstance(metadata, dict):
+          raise PPInternalError("Invalid metadata in " + yamlpath + ": expecting a dict but got " + str(metadata))
+        result.opaque_metadata.update(metadata)
+
       result.optimize_masks()
       return result
+
+  # 以下是提供给外部使用的接口
+
+  @staticmethod
+  def create_from_asset_archive(path : str):
+    return ImagePack.create_from_zip(path)
+
+  @staticmethod
+  def build_asset_archive(destpath : str, yamlpath : str) -> None:
+    pack = ImagePack.build_image_pack_from_yaml(yamlpath)
+    pack.write_zip(destpath)
+
+  def dump_asset_info_json(self) -> dict:
+    # 给 AssetManager 用的，返回一个适用于 JSON 的 dict 对象
+    result : dict[str, typing.Any] = {
+      "width": self.width,
+      "height": self.height,
+    }
+    # 如果有选区，就把所有选区的名称和支持的方式都放进去
+    if len(self.masks) > 0:
+      masks : list[dict] = []
+      for m in self.masks:
+        mask : dict[str, typing.Any] = {
+          "name": m.basename,
+        }
+        if m.projective_vertices is not None:
+          mask["projection"] = True
+        masks.append(mask)
+      result["masks"] = masks
+    # 如果有组合，就把所有组合的名称放进去
+    if len(self.composites) > 0:
+      composites : list[str] = []
+      for c in self.composites:
+        composites.append(c.basename)
+      result["composites"] = composites
+    # 如果有元数据，就把所有元数据放进去
+    if len(self.opaque_metadata) > 0:
+      result["metadata"] = self.opaque_metadata
+    return result
 
   @staticmethod
   def tool_main(args : list[str] | None = None):
@@ -962,12 +1034,11 @@ class ImagePack:
     ImagePack.printstatus("start pipeline")
 
     current_pack = None
-    named_stack_entries : list[str] = []
     if parsed_args.create is not None:
       ImagePack.printstatus("executing --create")
       # 创建一个新的 imagepack
       # 从 yaml 中读取
-      current_pack = ImagePack.build_image_pack_from_yaml(parsed_args.create, named_stack_entries)
+      current_pack = ImagePack.build_image_pack_from_yaml(parsed_args.create)
     elif parsed_args.load is not None:
       # 从 zip 中读取
       ImagePack.printstatus("executing --load")
@@ -1003,8 +1074,8 @@ class ImagePack:
       if current_pack is None:
         raise PPInternalError("Cannot export without input")
       pathlib.Path(parsed_args.export).mkdir(parents=True, exist_ok=True)
-      for i in range(len(current_pack.stacks)):
-        outputname = named_stack_entries[i] + '.png'
+      for i, comp in enumerate(current_pack.composites):
+        outputname = comp.basename + '.png'
         img = current_pack.get_composed_image(i)
         img.save(os.path.join(parsed_args.export, outputname), format="PNG")
 
