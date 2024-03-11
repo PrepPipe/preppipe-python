@@ -21,6 +21,7 @@ from ..commontypes import Color
 from ..language import *
 from ..tooldecl import ToolClassDecl
 from ..assets.assetclassdecl import AssetClassDecl
+from ..assets.assetmanager import AssetManager
 
 @AssetClassDecl("imagepack")
 @ToolClassDecl("imagepack")
@@ -1008,13 +1009,14 @@ class ImagePack:
 
   @staticmethod
   def tool_main(args : list[str] | None = None):
-    # 创建一个有以下参数的 argument parser: [--debug] [--create <yml> | --load <zip>] [--save <zip>] [--fork [args]] [--export <dir>]
+    # 创建一个有以下参数的 argument parser: [--debug] [--create <yml> | --load <zip> | --asset <name>] [--save <zip>] [--fork [args]] [--export <dir>]
     Translatable._init_lang_list()
     parser = argparse.ArgumentParser(description="ImagePack tool")
     Translatable._language_install_arguments(parser) # pylint: disable=protected-access
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
     parser.add_argument("--create", metavar="<yml>", help="Create a new image pack from a yaml file")
     parser.add_argument("--load", metavar="<zip>", help="Load an existing image pack from a zip file")
+    parser.add_argument("--asset", metavar="<name>", help="Load an existing image pack from embedded assets")
     parser.add_argument("--save", metavar="<zip>", help="Save the image pack to a zip file")
     parser.add_argument("--fork", nargs="*", metavar="[args]", help="Fork the image pack with the given arguments")
     parser.add_argument("--export", metavar="<dir>", help="Export the image pack to a directory")
@@ -1026,10 +1028,17 @@ class ImagePack:
       ImagePack._debug = True
     Translatable._language_handle_arguments(parsed_args, ImagePack._debug) # pylint: disable=protected-access
 
-    if parsed_args.create is None and parsed_args.load is None:
+    num_input_spec = 0
+    if parsed_args.create is not None:
+      num_input_spec += 1
+    if parsed_args.load is not None:
+      num_input_spec += 1
+    if parsed_args.asset is not None:
+      num_input_spec += 1
+    if num_input_spec > 1:
+      raise PPInternalError("Cannot specify more than one input")
+    if num_input_spec == 0:
       raise PPInternalError("No input specified")
-    if parsed_args.create is not None and parsed_args.load is not None:
-      raise PPInternalError("Cannot specify both --create and --load")
 
     ImagePack.printstatus("start pipeline")
 
@@ -1042,8 +1051,16 @@ class ImagePack:
     elif parsed_args.load is not None:
       # 从 zip 中读取
       ImagePack.printstatus("executing --load")
-      # TODO
-      raise PPNotImplementedError()
+      current_pack = ImagePack.create_from_zip(parsed_args.load)
+    elif parsed_args.asset is not None:
+      # 从 asset 中读取
+      ImagePack.printstatus("executing --asset")
+      manager = AssetManager.get_instance()
+      current_pack = manager.get_asset(parsed_args.asset)
+      if current_pack is None:
+        raise PPInternalError("Asset not found: " + parsed_args.asset)
+      if not isinstance(current_pack, ImagePack):
+        raise PPInternalError("Asset is not an image pack: " + parsed_args.asset)
 
     if parsed_args.save is not None:
       # 保存到 zip 中

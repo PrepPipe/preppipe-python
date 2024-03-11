@@ -84,6 +84,11 @@ class AssetManager:
       result_dict["MISSING"] = missing_assets_list
     return result_dict
 
+  def get_asset(self, name : str) -> typing.Any | None:
+    if info := self._assets.get(name, None):
+      return info.handle
+    return None
+
   @staticmethod
   def get_instance() -> "AssetManager":
     # 获取 AssetManager 的单例
