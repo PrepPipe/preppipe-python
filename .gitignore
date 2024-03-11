@@ -153,3 +153,7 @@ docs/doxygen_build/
 # antlr generated files
 .antlr
 _antlr_generated
+
+# generated asset packs
+src/preppipe/assets/_install
+

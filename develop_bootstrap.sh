@@ -12,6 +12,9 @@ sudo python3 -m pip install antlr4-python3-runtime>=4.10
 # do a build to generate src/preppipe/_version.py
 python3 -m build
 
+# add the gitconfig
+git config --local include.path $PWD/gitconfig
+
 # To create pyinstaller package, run:
 # pyinstaller --collect-data preppipe -F preppipe_cli.py
 # (Add --paths <venv>/lib/python3.10/site-packages/ if using virtual environment)
