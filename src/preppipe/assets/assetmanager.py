@@ -51,7 +51,7 @@ class AssetManager:
 
   @dataclasses.dataclass
   class AssetPackInfo:
-    installpath : str # 在 _install 目录中的相对路径
+    relpath : str # 在 _install 目录中的相对路径
     handle_class : type # 应该是一个由 AssetClassDecl 修饰的类
     handle : typing.Any | None # 应该是 handle_class 的一个实例
 
@@ -59,18 +59,24 @@ class AssetManager:
 
   def __init__(self) -> None:
     self._assets = {}
-    installpath = AssetManager.get_asset_install_path()
     for relpath in AssetManager.ASSET_MANIFEST.keys():
       classid = relpath.split("-")[0]
       name = os.path.splitext(relpath)[0]
       handle_class = _registered_asset_classes.get(classid, None)
       if handle_class is None:
         raise PPInternalError(f"Asset class {classid} not found")
-      handle = None
-      asset_srcpath = os.path.join(installpath, relpath)
+      self._assets[name] = AssetManager.AssetPackInfo(relpath=relpath, handle_class=handle_class, handle=None)
+
+  def _load_asset(self, info : AssetPackInfo):
+    if info.handle is None:
+      asset_srcpath = os.path.join(AssetManager.get_asset_install_path(), info.relpath)
       if os.path.exists(asset_srcpath):
-        handle = handle_class.create_from_asset_archive(asset_srcpath)
-      self._assets[name] = AssetManager.AssetPackInfo(installpath=relpath, handle_class=handle_class, handle=handle)
+        info.handle = info.handle_class.create_from_asset_archive(asset_srcpath)
+
+  def load_all_assets(self):
+    for name, info in self._assets.items():
+      if info.handle is None:
+        self._load_asset(info)
 
   def get_assets_json(self) -> dict:
     result_dict = {}
@@ -79,13 +85,15 @@ class AssetManager:
       if info.handle is not None:
         result_dict[name] = info.handle.dump_asset_info_json()
       else:
-        missing_assets_list.append(info.installpath)
+        missing_assets_list.append(info.relpath)
     if len(missing_assets_list) > 0:
       result_dict["MISSING"] = missing_assets_list
     return result_dict
 
   def get_asset(self, name : str) -> typing.Any | None:
     if info := self._assets.get(name, None):
+      if info.handle is None:
+        self._load_asset(info)
       return info.handle
     return None
 
@@ -149,6 +157,7 @@ class AssetManager:
       AssetManager.build_assets(parsed_args.build)
     if parsed_args.dump_json:
       inst = AssetManager.get_instance()
+      inst.load_all_assets()
       print(json.dumps(inst.get_assets_json(), ensure_ascii=False, indent=2))
 
 if __name__ == "__main__":
