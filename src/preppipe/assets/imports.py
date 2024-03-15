@@ -6,3 +6,4 @@
 
 from .assetmanager import AssetManager
 from ..util.imagepack import ImagePack
+from .fileasset import FileAssetPack

@@ -47,6 +47,9 @@ class AssetManager:
     "imagepack-template-background-exterior-Koala.zip" : {
       "yamlpath" : "{srcpath}/imagepack/background/A0-考拉Koala/T2-室外/config.yml",
     },
+    "file-font-SourceHanSerif-thirdparty-Adobe" : {
+      "copyfrom" : "{srcpath}/thirdparty/fonts/source-han-serif",
+    }
   }
 
   @dataclasses.dataclass
