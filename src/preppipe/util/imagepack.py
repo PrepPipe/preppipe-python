@@ -8,8 +8,10 @@ import pathlib
 import sys
 import time
 import colorsys
-
+import math
 import PIL.Image
+import PIL.ImageDraw
+import PIL.ImageFont
 import numpy as np
 import scipy as sp
 import matplotlib
@@ -22,6 +24,7 @@ from ..language import *
 from ..tooldecl import ToolClassDecl
 from ..assets.assetclassdecl import AssetClassDecl
 from ..assets.assetmanager import AssetManager
+from ..assets.fileasset import FileAssetPack
 
 @AssetClassDecl("imagepack")
 @ToolClassDecl("imagepack")
@@ -119,6 +122,11 @@ class ImagePack:
 
   # 其他不用于核心功能的元信息，例如：作者，描述等
   # 某些元信息可能会被用于其他辅助功能，比如生成预览图、头像图等
+  # 目前有以下元信息：
+  #   "author": str, 作者
+  #   "license": str, 发布许可（没有的话就是仅限内部使用）
+  #     - "cc0": CC0 1.0 Universal
+  #   "overview_scale" : float, 用于生成预览图的缩放比例
   opaque_metadata : dict[str, typing.Any]
 
   def __init__(self, width : int, height : int) -> None:
@@ -284,6 +292,10 @@ class ImagePack:
       for comp_info in manifest["composites"]:
         composites.append(ImagePack.CompositeInfo(layers=comp_info["l"], basename=comp_info["n"]))
       self.composites = composites
+
+    # metadata
+    if "metadata" in manifest:
+      self.opaque_metadata = manifest["metadata"]
 
   def get_composed_image(self, index : int) -> PIL.Image.Image:
     if not self.is_imagedata_loaded():
@@ -713,6 +725,90 @@ class ImagePack:
         m.mask = None
         m.basename = "None"
 
+  def get_summary_no_variations(self) -> 'ImagePackSummary':
+    # 在该图片组没有使用基底图变体时生成 ImagePackSummary
+    # 我们需要以以下算法决定基底图成图和差分图：
+    # 1. 遍历每个差分组合，找到它们的基底图部分
+    # 2. 如果这个基底图的组合已经出现过了，那么这就作为差分图
+    # 3. 如果这个基底图的组合没有出现过，那么这就作为基底图
+    # base_index_map 用来检查基底图组合是否出现过
+    base_index_map : dict[tuple[int, ...], int] = {}
+    bases = []
+    basenames = []
+    diffs = []
+    diffnames = []
+    for i, info in enumerate(self.composites):
+      name = info.basename
+      indices = info.layers
+      base_indices = tuple([x for x in indices if self.layers[x].base])
+      if base_indices in base_index_map:
+        # 这是一个差分图
+        image = self.get_composed_image(i)
+        if croprect := self.opaque_metadata["diff_croprect"]:
+          box = tuple(croprect)
+          if len(box) != 4:
+            raise PPInternalError("Invalid croprect")
+          image = image.crop(box)
+        diffs.append(image)
+        diffnames.append(name)
+      else:
+        # 这是一个基底图
+        base_index_map[base_indices] = i
+        image = self.get_composed_image(i)
+        bases.append(image)
+        basenames.append(name)
+    # 最后生成 ImagePackSummary
+    result = ImagePackSummary()
+    overview_scale = self.opaque_metadata.get("overview_scale", None)
+    if overview_scale is not None:
+      if not isinstance(overview_scale, (int, float)) or overview_scale <= 0 or overview_scale > 1:
+        raise PPInternalError("Invalid overview_scale")
+    for image, name in zip(bases, basenames):
+      if overview_scale is not None:
+        image = image.resize((int(image.width * overview_scale), int(image.height * overview_scale)), PIL.Image.Resampling.LANCZOS)
+      result.add_base(image, name)
+    for image, name in zip(diffs, diffnames):
+      if overview_scale is not None:
+        image = image.resize((int(image.width * overview_scale), int(image.height * overview_scale)), PIL.Image.Resampling.LANCZOS)
+      result.add_diff(image, name)
+    return result
+
+  TR_imagepack_overview_author = TR_imagepack.tr("overview_author",
+    en="Author: {name}. This image is created by the PrepPipe compiler.",
+    zh_cn="作者：{name}。 本图由语涵编译器生成。",
+    zh_hk="作者：{name}。 本圖由語涵編譯器生成。",
+  )
+  TR_imagepack_overview_distributenote_internal = TR_imagepack.tr("overview_distributenote_internal",
+    en="This image pack is distributed only for internal use. Do not distribute or use it outside of its intended purpose.",
+    zh_cn="本图包仅供内部使用。请勿扩散或是用在与原用途不符的地方。",
+    zh_hk="本圖包僅供內部使用。請勿擴散或是用在與原用途不符的地方。",
+  )
+  TR_imagepack_overview_distributenote_cc0 = TR_imagepack.tr("overview_distributenote_cc0",
+    en="This image pack is distributed under the CC0 1.0 Universal (CC0 1.0) Public Domain Dedication.",
+    zh_cn="本图包以 CC0 1.0 通用 (CC0 1.0) 公共领域贡献方式分发。",
+    zh_hk="本圖包以 CC0 1.0 通用 (CC0 1.0) 公共領域貢獻方式分發。",
+  )
+
+  def write_overview_image(self, path : str):
+    # 生成一个预览图
+    # 先使用辅助函数生成 ImagePackSummary
+    summary = self.get_summary_no_variations()
+    # 再把元数据加上
+    # 作者信息
+    if author := self.opaque_metadata.get("author", None):
+      author_comment = self.TR_imagepack_overview_author.format(name=author)
+      summary.comments.append(author_comment)
+    # 许可信息
+    # 没写许可就是内部使用
+    license_tr = self.TR_imagepack_overview_distributenote_internal
+    if license := self.opaque_metadata.get("license", None):
+      if license == "cc0":
+        license_tr = self.TR_imagepack_overview_distributenote_cc0
+      else:
+        raise PPInternalError("Unknown license: " + license)
+    summary.comments.append(license_tr.get())
+    summary.write(pngpath=path)
+
   TR_imagepack_yamlparse_layers = TR_imagepack.tr("layers",
     en="layers",
     zh_cn="图层",
@@ -1020,6 +1116,7 @@ class ImagePack:
     parser.add_argument("--save", metavar="<zip>", help="Save the image pack to a zip file")
     parser.add_argument("--fork", nargs="*", metavar="[args]", help="Fork the image pack with the given arguments")
     parser.add_argument("--export", metavar="<dir>", help="Export the image pack to a directory")
+    parser.add_argument("--export-overview", metavar="<path>", help="Export a single overview image to the specified path")
     if args is None:
       args = sys.argv[1:]
     parsed_args = parser.parse_args(args)
@@ -1096,6 +1193,12 @@ class ImagePack:
         img = current_pack.get_composed_image(i)
         img.save(os.path.join(parsed_args.export, outputname), format="PNG")
 
+    if parsed_args.export_overview is not None:
+      ImagePack.printstatus("executing --export-overview")
+      if current_pack is None:
+        raise PPInternalError("Cannot export overview without input")
+      current_pack.write_overview_image(parsed_args.export_overview)
+
   _starttime = time.time()
   _debug = False
 
@@ -1106,6 +1209,343 @@ class ImagePack:
     curtime = time.time()
     timestr = "[{:.6f}] ".format(curtime - ImagePack._starttime)
     print(timestr + s, flush=True)
+
+class ImagePackSummary:
+  # 用于绘制概览图的类
+  # 概览图主要由两部分组成，左侧是纵向排列的基底图，右侧是先横向再纵向排列的局部差分图
+  # 基底图和局部差分图都伴随文字注释，置于图像下方
+  # 概览图底部有文字注释
+  title : str # 概览图的标题
+  bases : list[PIL.Image.Image] # 纵向排列的基底图
+  basenames : list[str] # 基底图的名称、注释
+  diffs : list[PIL.Image.Image] # 局部差分
+  diffnames : list[str]
+  comments : list[str] # 概览图下方的注释，每行是一个字符串
+  fontsize : int # 所有名称文本的字号
+  commentfontsize : int # 注释文本的字号（一般会比名称小一点）
+  columnsep : int # 图像之间的横向间隔，既包括中间基底图与局部差分图之间的间隔，也包括右侧局部差分图之间的间隔
+  rowsep : int # 图像之间的纵向间隔
+  imagescale : float | None # 如果非空的话，所有的图片需要按照这个比例缩小 （应该是一个小于1的值）
+  layout_base_transpose : bool # 基底图是否先横向填充（先行后列）
+  layout_diff_transpose : bool # 局部差分图是否先纵向填充（先列后行）
+  fontcache : typing.ClassVar[dict[int, PIL.ImageFont.ImageFont | PIL.ImageFont.FreeTypeFont]] = {} # 字体缓存
+
+  def __init__(self):
+    self.title = "ImagePackSummary"
+    self.bases = []
+    self.basenames = []
+    self.diffs = []
+    self.diffnames = []
+    self.comments = []
+    self.fontsize = 24
+    self.commentfontsize = 16
+    self.columnsep = 4
+    self.rowsep = 4
+    self.imagescale = None
+    self.layout_base_transpose = False
+    self.layout_diff_transpose = False
+
+  def add_base(self, img : PIL.Image.Image, name : str):
+    self.bases.append(img)
+    self.basenames.append(name)
+
+  def add_diff(self, img : PIL.Image.Image, name : str):
+    self.diffs.append(img)
+    self.diffnames.append(name)
+
+  @staticmethod
+  def get_font_for_imagedrawing_nocache(fontsize : int) -> PIL.ImageFont.ImageFont | PIL.ImageFont.FreeTypeFont:
+    inst = AssetManager.get_instance()
+    if SourceHanSerif := inst.get_asset("file-font-SourceHanSerif-thirdparty-Adobe"):
+      fontpath = os.path.join(SourceHanSerif.path, "SourceHanSerif-Regular.ttc")
+      return PIL.ImageFont.truetype(fontpath, fontsize)
+    return PIL.ImageFont.load_default()
+
+  def get_font_for_imagedrawing(self, fontsize : int) -> PIL.ImageFont.ImageFont | PIL.ImageFont.FreeTypeFont:
+    font = self.fontcache.get(fontsize)
+    if font is not None:
+      return font
+    font = ImagePackSummary.get_font_for_imagedrawing_nocache(fontsize)
+    self.fontcache[fontsize] = font
+    return font
+
+  def get_text_image(self, text : str, fontsize : int) -> PIL.Image.Image:
+    # 首先估算大概需要多大的画布，然后画上去，最后把多算的部分去掉
+    font = self.get_font_for_imagedrawing(fontsize)
+    textheight = fontsize * 4 // 3
+    textwidth = len(text) * 2 * fontsize
+    padding = 10
+    image = PIL.Image.new("RGBA", (textwidth + padding * 2, textheight + padding * 2), (255, 255, 255, 0))
+    draw = PIL.ImageDraw.Draw(image)
+    textcolor = (0, 0, 0, 255) # 黑色
+    draw.text((padding, padding), text, font=font, fill=textcolor)
+    bbox = image.getbbox()
+    if bbox is None:
+      return PIL.Image.new("RGBA", (1, 1), (255, 255, 255, 0))
+    left, upper, right, lower = bbox
+    leftreduce = max(left, padding)
+    topreduce = max(upper, padding)
+    leftextra = left - leftreduce
+    topextra = upper - topreduce
+    newright = right + leftextra
+    newlower = lower + topextra
+    return image.crop((leftreduce, topreduce, newright, newlower))
+
+  def get_image_from_text(self, text : str, preferred_font_size : int, maxwidth : int) -> PIL.Image.Image:
+    if len(text) == 0:
+      return PIL.Image.new("RGBA", (1, 1), (255, 255, 255, 0))
+    image = self.get_text_image(text, preferred_font_size)
+    if image.width <= maxwidth:
+      return image
+    # 如果文字太长，我们按比例缩小字号
+    while image.width > maxwidth and preferred_font_size > 1:
+      cur_font_size = image.width * preferred_font_size // maxwidth
+      if cur_font_size >= preferred_font_size:
+        cur_font_size = preferred_font_size - 1
+      elif cur_font_size < 1:
+        cur_font_size = 1
+      preferred_font_size = cur_font_size
+      image = self.get_text_image(text, preferred_font_size)
+    return image
+
+  def write(self, pngpath : str | None = None, htmlpath : str | None = None):
+    # 绘制概览图
+    # 为了方便使用，除了传统的 PNG 图像，我们还可以生成一个 HTML 文件，用户可以通过文本查找来快速定位
+    # 首先取基底图和局部差分图的高度和宽度
+    # 决定布局时我们都按最大值来
+    # 为了避免在没有基底图或是没有局部差分图的情况下出现除以0的情况，我们先初始化为1
+    base_height = 1
+    base_width = 1
+    for img in self.bases:
+      base_height = max(base_height, img.height)
+      base_width = max(base_width, img.width)
+    diff_height = 1
+    diff_width = 1
+    for img in self.diffs:
+      diff_height = max(diff_height, img.height)
+      diff_width = max(diff_width, img.width)
+    # 然后把所有的文本全都转换为图片，便于计算整个概览图的大小
+    # 如果文字太长，我们按比例缩小字号
+    basename_images = []
+    diffname_images = []
+    basename_maxheight = 1
+    diffname_maxheight = 1
+    for basename in self.basenames:
+      image = self.get_image_from_text(basename, self.fontsize, base_width)
+      basename_images.append(image)
+      basename_maxheight = max(basename_maxheight, image.height)
+    for diffname in self.diffnames:
+      image = self.get_image_from_text(diffname, self.fontsize, diff_width)
+      diffname_images.append(image)
+      diffname_maxheight = max(diffname_maxheight, image.height)
+    # 接下来我们开始决定概览图的布局
+    # 首先，左侧的基底图部分，如果有多张基底图，那么可以单列、双列或者更多列，直到基底图部分的宽度超过了高度
+    # 对于每一种布局，我们都计算一下整个概览图的长宽是多少
+    # 对于任意一个基底图部分的长宽，我们使用如下方式来计算局部差分部分的布局：
+    # 1. 把基底图部分的长宽转化为“多出来”的局部差分的行数和列数，这样我们只考虑一种矩形的长宽（局部差分）
+    # 2. 根据目标的屏幕长宽比，选择一个最接近的布局，计算出局部差分的行数和列数
+    # 3. 根据局部差分的行数和列数，计算出整个概览图的长宽
+    # 我们希望选取一种最接近屏幕长宽比的布局，暂定为 16:9
+    best_numbasecolumns = 1
+    best_numbaserows = 1
+    best_numdiffrows = 1
+    best_numdiffcols = 1
+    best_equivalentdiffs = (1, 1)
+    best_aspect_ratio = None
+    target_aspect_ratio = 16 / 9
+    grid_height = diff_height+ diffname_maxheight + self.rowsep
+    grid_width = diff_width + self.columnsep
+    numdiffs = len(self.diffs)
+    # 从单列开始，逐渐增加列数，直到基底图的高度超过宽度
+    for numbasecolumns in range(1, len(self.bases) + 1):
+      # 先算基底图部分的大小
+      basecolumnwidth = base_width * numbasecolumns + self.columnsep * (numbasecolumns - 1)
+      numbaserows = (len(self.bases) + numbasecolumns - 1) // numbasecolumns
+      basecolumnheight = (base_height + basename_maxheight) * numbaserows + self.rowsep * (numbaserows - 1)
+      # 再算局部差分图部分的大小
+      equivalentdiff_numrows = (basecolumnheight + grid_height - 1) // grid_height
+      equivalentdiff_numcols = (basecolumnwidth + grid_width - 1) // grid_width
+      equivnumdiffs = equivalentdiff_numrows * equivalentdiff_numcols + numdiffs
+      # 根据目标的屏幕长宽比，选择一个最接近的布局
+      column_row_ratio = target_aspect_ratio * (grid_height / grid_width)
+      numdiffrows = int(math.sqrt(equivnumdiffs / column_row_ratio) + 0.5)
+      if numdiffrows < equivalentdiff_numrows:
+        numdiffrows = equivalentdiff_numrows
+      numdiffcols = (equivnumdiffs + numdiffrows - 1) // numdiffrows
+      # 根据局部差分的行数和列数，计算出整个概览图的长宽
+      cur_aspect_ratio = (numdiffcols * grid_width) / (numdiffrows * grid_height)
+      if best_aspect_ratio is None or abs(cur_aspect_ratio - target_aspect_ratio) < abs(best_aspect_ratio - target_aspect_ratio):
+        best_aspect_ratio = cur_aspect_ratio
+        best_numbasecolumns = numbasecolumns
+        best_numbaserows = numbaserows
+        best_numdiffrows = numdiffrows
+        best_numdiffcols = numdiffcols
+        best_equivalentdiffs = (equivalentdiff_numrows, equivalentdiff_numcols)
+      # 如果基底图部分的宽度超过高度，那么我们就不再继续增加列数了
+      if basecolumnheight < basecolumnwidth:
+        break
+    base_consumed_equivalent_diff_rows, base_consumed_equivalent_diff_cols = best_equivalentdiffs
+    # 在这里决定图的顺序
+    # 每个二维数组都以行号列号为索引，值为图的索引
+    # 对于局部差分和基底图的对齐方式，我们有两种排版：
+    # 1. 如果局部差分的总行数与基底图所占的行数相等或是只大1且可以缺基底图所占的列数（即局部差分部分不需要使用基底图下方的区域），那么我们使用简单排版，
+    #     两块都是完整的矩形，相当于各自的大图组装完后再粘一块，中间只留 self.columnsep 的间隔
+    # 2. 如果局部差分的总行数大于基底图所占的行数（即我们需要把一些局部差分放在基底图下方），那么我们使用复杂排版，
+    #     相当于整体使用局部差分的格子，但是把左上角的一部分用基底图填充
+    # 不管是哪种情况，差分的前 base_consumed_equivalent_diff_rows （有时+1） 行都会少 base_consumed_equivalent_diff_cols 列，预留给基底图
+    # 即使是第一种排版也是这样
+    base_order : list[list[int | None]] = []
+    diff_order : list[list[int | None]] = []
+    # 先定基底图的排版
+    if len(self.bases) > 0:
+      for i in range(best_numbaserows):
+        base_order.append([None] * best_numbasecolumns)
+      for i in range(len(self.bases)):
+        if self.layout_base_transpose:
+          # 先行后列
+          row = i // best_numbasecolumns
+          col = i % best_numbasecolumns
+          base_order[row][col] = i
+        else:
+          # 先列后行
+          row = i % best_numbaserows
+          col = i // best_numbaserows
+          base_order[row][col] = i
+    # 再定局部差分图的排版
+    if len(self.diffs) > 0:
+      for i in range(best_numdiffrows):
+        diff_order.append([None] * best_numdiffcols)
+      # 我们把要排版的部分分为两块：
+      # 1. 在基底图右侧的矩形部分，每行都会少 base_consumed_equivalent_diff_cols 列
+      # 2. 在基底图下方的矩形部分，每行都是完整的
+      equiv_columns = best_numdiffcols - base_consumed_equivalent_diff_cols
+      equiv_rows = (base_consumed_equivalent_diff_rows+1)
+      max_diffs_in_right_side = (base_consumed_equivalent_diff_rows+1) * equiv_columns
+      if len(self.diffs) > max_diffs_in_right_side:
+        # 我们需要把一些局部差分放在基底图下方
+        # 得重算 max_diffs_in_right_side， 行数减一
+        equiv_rows = base_consumed_equivalent_diff_rows
+        max_diffs_in_right_side = base_consumed_equivalent_diff_rows * equiv_columns
+      # 先把右侧的填满
+      for i in range(max_diffs_in_right_side):
+        if self.layout_diff_transpose:
+          # 先列后行
+          row = i % equiv_rows
+          col = i // equiv_rows
+          diff_order[row][col + base_consumed_equivalent_diff_cols] = i
+        else:
+          # 先行后列
+          row = i // equiv_columns
+          col = i % equiv_columns
+          diff_order[row][col + base_consumed_equivalent_diff_cols] = i
+      # 再把下方的填满
+      bottom_rows = best_numdiffrows - equiv_rows
+      for i in range(max_diffs_in_right_side, len(self.diffs)):
+        equiv_index = i - max_diffs_in_right_side
+        if self.layout_diff_transpose:
+          # 先列后行
+          row = equiv_index % bottom_rows
+          col = equiv_index // bottom_rows
+          diff_order[row + base_consumed_equivalent_diff_rows][col] = i
+        else:
+          # 先行后列
+          row = equiv_index // best_numdiffcols
+          col = equiv_index % best_numdiffcols
+          diff_order[row + base_consumed_equivalent_diff_rows][col] = i
+    # 开始根据以上布局来绘制概览图
+    # 首先我们计算整个概览图的长宽（不含注释）
+    overview_width = 0
+    overview_height = 0
+    comment_start_y = 0
+    is_simple_layout = len(self.diffs) == 0 or len(self.diffs) <= max_diffs_in_right_side
+    if is_simple_layout:
+      overview_width = basecolumnwidth + (best_numdiffcols - base_consumed_equivalent_diff_cols) * grid_width
+      overview_height = max(basecolumnheight, best_numdiffrows * grid_height - self.rowsep)
+    else:
+      overview_width = best_numdiffcols * grid_width - self.columnsep
+      overview_height = basecolumnheight + bottom_rows * grid_height
+    # 到这里我们把注释也转化为图片，并把注释所占的空间也加上
+    comment_images = []
+    comment_maxheight = 0
+    if len(self.comments) > 0:
+      for comment in self.comments:
+        image = self.get_image_from_text(comment, self.commentfontsize, overview_width)
+        comment_images.append(image)
+        comment_maxheight = max(comment_maxheight, image.height)
+      comment_start_y = overview_height + self.rowsep
+      overview_height += (self.rowsep + comment_maxheight) * len(self.comments)
+    # 创建画布
+    overview = PIL.Image.new("RGBA", (overview_width, overview_height), (255, 255, 255, 255))
+    # 开始绘制
+    # 记录一下每个图的绝对位置 <x, y, width, height>
+    base_image_coordinates : list[tuple[int,int,int,int] | None] = [None] * len(self.bases)
+    diff_image_coordinates : list[tuple[int,int,int,int] | None] = [None] * len(self.diffs)
+    # 首先绘制基底图
+    if len(self.bases) > 0:
+      y = 0
+      for i, row in enumerate(base_order):
+        x = 0
+        for j, index in enumerate(row):
+          if index is not None:
+            # 如果基底图的大小不到 <base_width, base_height>，我们把它放在中间
+            img = self.bases[index]
+            imgwidth = img.width
+            imgheight = img.height
+            xoffset = 0
+            yoffset = 0
+            if imgwidth < base_width:
+              xoffset = (base_width - imgwidth) // 2
+            if imgheight < base_height:
+              yoffset = (base_height - imgheight) // 2
+            overview.alpha_composite(img, (x + xoffset, y + yoffset))
+            base_image_coordinates[index] = (x + xoffset, y + yoffset, imgwidth, imgheight)
+            # 如果名称的大小不到 <base_width, basename_maxheight>，我们使他顶部居中（即调整 x 但不调整 y）
+            img = basename_images[index]
+            xoffset = 0
+            if img.width < base_width:
+              xoffset = (base_width - img.width) // 2
+            overview.alpha_composite(img, (x + xoffset, y + base_height))
+          x += base_width + self.columnsep
+        y += base_height + basename_maxheight + self.rowsep
+    # 再绘制局部差分图
+    xstart = 0
+    if is_simple_layout:
+      xstart = basecolumnwidth + self.columnsep - base_consumed_equivalent_diff_cols * grid_width
+    if len(self.diffs) > 0:
+      y = 0
+      for i, row in enumerate(diff_order):
+        x = xstart
+        for j, index in enumerate(row):
+          if index is not None:
+            img = self.diffs[index]
+            overview.alpha_composite(img, (x, y))
+            # 如果名称的大小不到 <diff_width, diffname_maxheight>，我们使他顶部居中（即调整 x 但不调整 y）
+            img = diffname_images[index]
+            xoffset = 0
+            if img.width < diff_width:
+              xoffset = (diff_width - img.width) // 2
+            overview.alpha_composite(img, (x + xoffset, y + diff_height))
+            diff_image_coordinates[index] = (x + xoffset, y, img.width, img.height)
+          x += diff_width + self.columnsep
+        y += diff_height + diffname_maxheight + self.rowsep
+    # 最后绘制注释
+    if len(self.comments) > 0:
+      y = comment_start_y
+      for comment in comment_images:
+        overview.alpha_composite(comment, (0, y))
+        y += comment.height + self.rowsep
+    # 保存
+    if pngpath is not None:
+      overview.save(pngpath, format="PNG")
+    # 如果有 htmlpath，我们还要生成 HTML 文件
+    # 为了避免使用太多的小图片，生成的 html 也会使用上面生成的 PNG 图像，使用 CSS 来截取一个个小图片
+    if htmlpath is not None:
+      # 先把概览图也存过去，把后缀名替换为 .png
+      basename = os.path.splitext(htmlpath)[0]
+      overview.save(basename + ".png", format="PNG")
+      # 然后生成 HTML 文件
+      # TODO
+      raise PPNotImplementedError()
 
 def _test_main():
   srcdir = pathlib.Path(sys.argv[1])
