@@ -127,6 +127,7 @@ class ImagePack:
   #   "license": str, 发布许可（没有的话就是仅限内部使用）
   #     - "cc0": CC0 1.0 Universal
   #   "overview_scale" : float, 用于生成预览图的缩放比例
+  #   "diff_croprect": tuple[int,int,int,int], 用于生成差分图的裁剪矩形
   opaque_metadata : dict[str, typing.Any]
 
   def __init__(self, width : int, height : int) -> None:
@@ -1463,7 +1464,7 @@ class ImagePackSummary:
       overview_height = max(basecolumnheight, best_numdiffrows * grid_height - self.rowsep)
     else:
       overview_width = best_numdiffcols * grid_width - self.columnsep
-      overview_height = basecolumnheight + bottom_rows * grid_height
+      overview_height = best_numdiffrows * grid_height - self.rowsep
     # 到这里我们把注释也转化为图片，并把注释所占的空间也加上
     comment_images = []
     comment_maxheight = 0
