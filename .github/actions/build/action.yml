@@ -29,5 +29,8 @@ runs:
     - name: install
       run: pip install dist/*.whl
       shell: bash
+    - name: build assets
+      run: python3 -X utf8 ./build_assets.py
+      shell: bash
 
 

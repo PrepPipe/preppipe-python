@@ -1,9 +1,13 @@
 name: "ci"
 
+env:
+  BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+
 on:
   push:
     branches:
       - "main"
+      - "develop"
 jobs:
   pre-release:
     name: "Pre Release"
@@ -25,26 +29,24 @@ jobs:
         run: python3 ./versionfile_gen.py
       - name: run pyinstaller
         run: |
-          pyinstaller --collect-data preppipe --icon=preppipe.ico --version-file=versionfile.txt -n preppipe_cli-windows-x64 -F preppipe_cli.py
           pyinstaller --collect-data preppipe --icon=preppipe.ico --version-file=versionfile.txt -n preppipe_cli -D preppipe_cli.py
           cd dist/preppipe_cli && 7z.exe a -t7z -mx=9 ../preppipe_cli-windows-x64.7z *
       - uses: "marvinpinto/action-automatic-releases@latest"
         with:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
-          automatic_release_tag: "latest"
+          automatic_release_tag: "latest-${{ env.BRANCH_NAME }}"
           prerelease: true
-          title: "${{ steps.vars.outputs.version_tag }} 最新版本 (Latest build)"
+          title: "${{ steps.vars.outputs.version_tag }} 最新版本 (Latest build) - ${{ env.BRANCH_NAME }}"
           files: |
-            dist/preppipe_cli-windows-x64.exe
             dist/preppipe_cli-windows-x64.7z
             dist/*.whl
 
-      - name: Repository Dispatch
-        uses: peter-evans/repository-dispatch@v2
-        with:
-          token: ${{ secrets.PREPPIPE_ALL_IN_ONE_PAT }}
-          repository: PrepPipe/preppipe-latest-all-in-one
-          event-type: update-request
+      #- name: Repository Dispatch
+      #  uses: peter-evans/repository-dispatch@v2
+      #  with:
+      #    token: ${{ secrets.PREPPIPE_ALL_IN_ONE_PAT }}
+      #    repository: PrepPipe/preppipe-latest-all-in-one
+      #    event-type: update-request
 
   #sync2gitee:
   #  name: "Sync to Gitee"
