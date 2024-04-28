@@ -9,7 +9,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows]
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: ./.github/actions/test
       - name: install pyinstaller
         run: pip install pyinstaller
