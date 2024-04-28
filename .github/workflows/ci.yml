@@ -40,13 +40,13 @@ jobs:
           files: |
             dist/preppipe_cli-windows-x64.7z
             dist/*.whl
-
-      #- name: Repository Dispatch
-      #  uses: peter-evans/repository-dispatch@v2
-      #  with:
-      #    token: ${{ secrets.PREPPIPE_ALL_IN_ONE_PAT }}
-      #    repository: PrepPipe/preppipe-latest-all-in-one
-      #    event-type: update-request
+      - name: Repository Dispatch
+        if: github.ref == 'refs/heads/main'
+        uses: peter-evans/repository-dispatch@v2
+        with:
+          token: ${{ secrets.PREPPIPE_ALL_IN_ONE_PAT }}
+          repository: PrepPipe/preppipe-latest-all-in-one
+          event-type: update-request
 
   #sync2gitee:
   #  name: "Sync to Gitee"
