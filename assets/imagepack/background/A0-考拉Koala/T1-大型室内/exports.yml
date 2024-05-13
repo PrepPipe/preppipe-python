@@ -1,0 +1,6 @@
+inherit: "../exports_template.yml"
+tr_prefix: "imagepack-background-A0-T1"
+reference:
+  en: "Interior-Public"
+  zh_cn: "大型室内"
+  zh_hk: "大型室內"

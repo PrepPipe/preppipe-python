@@ -1,0 +1,6 @@
+inherit: "../exports_template.yml"
+tr_prefix: "imagepack-background-A0-T2"
+reference:
+  en: "Exterior"
+  zh_cn: "室外"
+  zh_hk: "室外"

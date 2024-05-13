@@ -23,6 +23,7 @@ import time
 import typing
 import json
 import dataclasses
+import pickle
 from ..language import *
 from ..exceptions import *
 from ..tooldecl import ToolClassDecl
@@ -51,6 +52,8 @@ class AssetManager:
       "copyfrom" : "{srcpath}/thirdparty/fonts/source-han-serif",
     }
   }
+  # 素材包的清单文件名，如果有什么信息需要在没有素材时也能获取（比如程序的另一个部分如何引用这些素材），则在这个文件中保存
+  MANIFEST_NAME : typing.ClassVar[str] = "manifest.pickle"
 
   @dataclasses.dataclass
   class AssetPackInfo:
@@ -69,6 +72,17 @@ class AssetManager:
       if handle_class is None:
         raise PPInternalError(f"Asset class {classid} not found")
       self._assets[name] = AssetManager.AssetPackInfo(relpath=relpath, handle_class=handle_class, handle=None)
+    manifest_filepath = os.path.join(AssetManager.get_asset_install_path(), AssetManager.MANIFEST_NAME)
+    if os.path.exists(manifest_filepath):
+      with open(manifest_filepath, "rb") as f:
+        manifest = pickle.load(f)
+        for classid, manifest_list in manifest.items():
+          handle_class = _registered_asset_classes.get(classid, None)
+          if handle_class is None:
+            raise PPInternalError(f"Asset class {classid} not found")
+          if not hasattr(handle_class, "load_manifest"):
+            raise PPInternalError(f"Asset class {classid} does not have a load_manifest method while loading manifest")
+          handle_class.load_manifest(manifest_list)
 
   def _load_asset(self, info : AssetPackInfo):
     if info.handle is None:
@@ -123,6 +137,7 @@ class AssetManager:
     install_base = AssetManager.get_asset_install_path()
     num_total_assets = len(AssetManager.ASSET_MANIFEST)
     asset_index = 0
+    manifest : dict[str, list[typing.Any]] = {}
     for relpath, buildargs in AssetManager.ASSET_MANIFEST.items():
       classid = relpath.split("-")[0]
       handle_class = _registered_asset_classes.get(classid, None)
@@ -137,8 +152,18 @@ class AssetManager:
       installpath = os.path.join(install_base, relpath)
       asset_index += 1
       print_progress(f"[{asset_index}/{num_total_assets}] Building asset {installpath}")
-      handle_class.build_asset_archive(destpath=installpath, **converted_args)
+      manifest_obj = handle_class.build_asset_archive(destpath=installpath, **converted_args)
+      if manifest_obj is not None:
+        if classid not in manifest:
+          manifest[classid] = []
+        manifest[classid].append(manifest_obj)
+        if not hasattr(handle_class, "load_manifest"):
+          raise PPInternalError(f"Asset class {classid} does not have a load_manifest method while returning a manifest object")
     print_progress("All assets built")
+    if len(manifest) > 0:
+      manifestpath = os.path.join(install_base, AssetManager.MANIFEST_NAME)
+      with open(manifestpath, "wb") as f:
+        pickle.dump(manifest, f, protocol=pickle.HIGHEST_PROTOCOL)
 
   @staticmethod
   def tool_main(args : list[str] | None = None):
