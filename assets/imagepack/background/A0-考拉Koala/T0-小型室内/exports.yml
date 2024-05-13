@@ -1,0 +1,6 @@
+inherit: "../exports_template.yml"
+tr_prefix: "imagepack-background-A0-T0"
+reference:
+  en: "Interior-Private"
+  zh_cn: "小型室内"
+  zh_hk: "小型室內"

@@ -17,18 +17,19 @@ import scipy as sp
 import matplotlib
 import cv2
 import yaml
+import dataclasses
 
 from ..exceptions import *
 from ..commontypes import Color
 from ..language import *
 from ..tooldecl import ToolClassDecl
-from ..assets.assetclassdecl import AssetClassDecl
+from ..assets.assetclassdecl import AssetClassDecl, NamedAssetClassBase
 from ..assets.assetmanager import AssetManager
 from ..assets.fileasset import FileAssetPack
 
 @AssetClassDecl("imagepack")
 @ToolClassDecl("imagepack")
-class ImagePack:
+class ImagePack(NamedAssetClassBase):
   TR_imagepack = TranslationDomain("imagepack")
 
   class MaskInfo:
@@ -1072,9 +1073,10 @@ class ImagePack:
     return ImagePack.create_from_zip(path)
 
   @staticmethod
-  def build_asset_archive(destpath : str, yamlpath : str) -> None:
+  def build_asset_archive(destpath : str, yamlpath : str):
     pack = ImagePack.build_image_pack_from_yaml(yamlpath)
     pack.write_zip(destpath)
+    return ImagePackDescriptor(pack, yamlpath)
 
   def dump_asset_info_json(self) -> dict:
     # 给 AssetManager 用的，返回一个适用于 JSON 的 dict 对象
@@ -1547,6 +1549,12 @@ class ImagePackSummary:
       # 然后生成 HTML 文件
       # TODO
       raise PPNotImplementedError()
+
+@ImagePack._descriptor
+@dataclasses.dataclass
+class ImagePackDescriptor:
+  def __init__(self, pack : ImagePack, yamlpath : str):
+    pass
 
 def _test_main():
   srcdir = pathlib.Path(sys.argv[1])

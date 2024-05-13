@@ -98,7 +98,8 @@ def emit_image_expr_from_path(context : Context, pathexpr : str, basepath : str,
     asset = context.get_or_create_image_asset_data_external(path, fmt)
     data = asset.load()
     assert data is not None
-    return ImageAssetLiteralExpr.get(context, image=asset, size=IntTupleLiteral.get(data.size, context))
+    bbox = ImageAssetLiteralExpr.prepare_bbox(context=context, imagedata=data)
+    return ImageAssetLiteralExpr.get(context, image=asset, size=IntTupleLiteral.get(data.size, context), bbox=bbox)
   return None
 
 _tr_placeholder = _TR_vn_util.tr("placeholder",
