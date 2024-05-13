@@ -324,3 +324,37 @@ TR_preppipe.tr("not_implemented",
   zh_cn="所需的功能还没有完成，程序无法继续执行。请联系开发者来解决这个问题。",
   zh_hk="所需的功能還沒有完成，程序無法繼續執行。請聯系開發者來解決這個問題。",
 )
+
+ValueType = typing.TypeVar("ValueType") # pylint: disable=invalid-name
+class TranslatableDict(typing.Generic[ValueType]):
+  # 如果需要用 Translatable 中的可选字符串作为 key，可以用这个类
+  # 现在还没有添加对 Translatable 热修改的支持（说不定以后会有）
+  _data : dict[int, ValueType] # Translatable 的 id -> 实际数据
+  _trlist : list[Translatable]
+  _cache : dict[str, ValueType] | None
+
+  def __init__(self) -> None:
+    super().__init__()
+    self._data = {}
+    self._trlist = []
+    self._cache = None
+
+  def register_data(self, tr : Translatable, data : ValueType):
+    idx = id(tr)
+    if idx in self._data:
+      raise RuntimeError("TranslatableDict: Duplicate registration")
+    self._data[idx] = data
+    self._trlist.append(tr)
+
+  def get(self, key : str) -> ValueType | None:
+    if self._cache is None:
+      # 重建缓存
+      self._cache = {}
+      for tr in self._trlist:
+        curdata = self._data[id(tr)]
+        for e in tr.get_all_candidates():
+          self._cache[e] = curdata
+    return self._cache.get(key, None)
+
+  def values(self):
+    return self._data.values()

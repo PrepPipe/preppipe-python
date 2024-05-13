@@ -29,14 +29,25 @@ TR_imageexpr = TranslationDomain("imageexpr")
 class BaseImageLiteralExpr(LiteralExpr):
   # 图片表达式的抽象基类
 
+  # 从此下标开始的数据属于派生类
+  DERIVED_DATA_START = 2
+
   def construct_init(self, *, context : Context, value_tuple: tuple[Literal, ...], **kwargs) -> None:
-    # 值 0 是大小，其余的值由子类决定意义
+    # 值 0 是大小，1 是 bbox，其余的值由子类决定意义
+    # bbox 是图片非透明部分的 <左, 上, 右, 下> 边界
+    # 如果图片完全透明，则为 <0, 0, 0, 0>
+    # 如果图片完全不透明，则为 <0, 0, w, h>
     assert isinstance(value_tuple[0], IntTupleLiteral)
+    assert isinstance(value_tuple[1], IntTupleLiteral)
     return super().construct_init(ty=ImageType.get(context), value_tuple=value_tuple, **kwargs)
 
   @property
   def size(self) -> IntTupleLiteral:
     return self.get_value_tuple()[0] # type: ignore
+
+  @property
+  def bbox(self) -> IntTupleLiteral:
+    return self.get_value_tuple()[1] # type: ignore
 
   @staticmethod
   def _validate_size(size : IntTupleLiteral) -> None:
@@ -55,40 +66,39 @@ class BaseImageLiteralExpr(LiteralExpr):
         raise ValueError("Image size must be non-negative")
 
   def get_bbox(self) -> tuple[int,int,int,int]:
-    # 计算图片非透明部分的 <左, 上, 右, 下> 边界
-    # 如果图片完全透明，返回 <0, 0, 0, 0>
-    # 如果图片完全不透明，返回 <0, 0, w, h>
-    width, height = self.size.value
-    return (0, 0, width, height)
+    left, top, right, bottom = self.bbox.value
+    return (left, top, right, bottom)
 
 @IRObjectJsonTypeName('image_asset_le')
 class ImageAssetLiteralExpr(BaseImageLiteralExpr):
   # 该图片是由 ImageAssetData 而来的
   @property
   def image(self) -> ImageAssetData:
-    return self.get_value_tuple()[1] # type: ignore
+    return self.get_value_tuple()[BaseImageLiteralExpr.DERIVED_DATA_START] # type: ignore
 
   @staticmethod
-  def get(context : Context, image : ImageAssetData, size : IntTupleLiteral) -> ImageAssetLiteralExpr:
+  def get(context : Context, image : ImageAssetData, size : IntTupleLiteral, bbox : IntTupleLiteral) -> ImageAssetLiteralExpr:
     assert isinstance(image, ImageAssetData)
     BaseImageLiteralExpr._validate_size(size)
-    return ImageAssetLiteralExpr._get_literalexpr_impl((size, image), context)
+    return ImageAssetLiteralExpr._get_literalexpr_impl((size, bbox, image), context)
+
+  @staticmethod
+  def prepare_bbox(context : Context, imagedata : PIL.Image.Image) -> IntTupleLiteral:
+    bbox = imagedata.getbbox()
+    if bbox is None:
+      return IntTupleLiteral.get((0, 0, 0, 0), context=context)
+    return IntTupleLiteral.get(bbox, context=context)
 
   def __str__(self) -> str:
     width, height = self.size.value
     return '[' + str(width) + '*' + str(height) + ']' + str(self.image)
-
-  def get_bbox(self) -> tuple[int, int, int, int]:
-    if bbox := self.image.load().getbbox():
-      return bbox
-    return (0, 0, 0, 0)
 
 @IRObjectJsonTypeName('color_image_le')
 class ColorImageLiteralExpr(BaseImageLiteralExpr):
   # 该图片是个纯色图片
   @property
   def color(self) -> ColorLiteral:
-    return self.get_value_tuple()[1] # type: ignore
+    return self.get_value_tuple()[BaseImageLiteralExpr.DERIVED_DATA_START] # type: ignore
 
   def __str__(self) -> str:
     width, height = self.size.value
@@ -98,7 +108,9 @@ class ColorImageLiteralExpr(BaseImageLiteralExpr):
   def get(context : Context, color : ColorLiteral, size : IntTupleLiteral) -> ColorImageLiteralExpr:
     assert isinstance(color, ColorLiteral)
     BaseImageLiteralExpr._validate_size(size)
-    return ColorImageLiteralExpr._get_literalexpr_impl((size, color), context)
+    width, height = size.value
+    bbox = IntTupleLiteral.get((0, 0, width, height), context=context)
+    return ColorImageLiteralExpr._get_literalexpr_impl((size, bbox, color), context)
 
 @IRObjectJsonTypeName('decl_image_le')
 class DeclaredImageLiteralExpr(BaseImageLiteralExpr, AssetDeclarationTrait):
@@ -106,7 +118,7 @@ class DeclaredImageLiteralExpr(BaseImageLiteralExpr, AssetDeclarationTrait):
   # 该图片的定义已存在，不能生成定义
   @property
   def declaration(self) -> StringLiteral:
-    return self.get_value_tuple()[1] # type: ignore
+    return self.get_value_tuple()[BaseImageLiteralExpr.DERIVED_DATA_START] # type: ignore
 
   def __str__(self) -> str:
     width, height = self.size.value
@@ -116,7 +128,9 @@ class DeclaredImageLiteralExpr(BaseImageLiteralExpr, AssetDeclarationTrait):
   def get(context : Context, decl : StringLiteral, size : IntTupleLiteral) -> DeclaredImageLiteralExpr:
     assert isinstance(decl, StringLiteral)
     BaseImageLiteralExpr._validate_size(size)
-    return DeclaredImageLiteralExpr._get_literalexpr_impl((size, decl), context)
+    width, height = size.value
+    bbox = IntTupleLiteral.get((0, 0, width, height), context=context)
+    return DeclaredImageLiteralExpr._get_literalexpr_impl((size, bbox, decl), context)
 
 @IRWrappedStatelessClassJsonName("image_placeholder_dest_e")
 class ImageExprPlaceholderDest(enum.Enum):
@@ -132,11 +146,11 @@ class PlaceholderImageLiteralExpr(BaseImageLiteralExpr, AssetPlaceholderTrait):
   # 该图片代表一个没有定义、需要生成的图片
   @property
   def description(self) -> StringLiteral:
-    return self.get_value_tuple()[2] # type: ignore
+    return self.get_value_tuple()[BaseImageLiteralExpr.DERIVED_DATA_START + 1] # type: ignore
 
   @property
   def dest(self) -> ImageExprPlaceholderDest:
-    return self.get_value_tuple()[1].value
+    return self.get_value_tuple()[BaseImageLiteralExpr.DERIVED_DATA_START].value
 
   _tr_placeholder_name = TR_imageexpr.tr("placeholder_name",
     en="Placeholder",
@@ -154,4 +168,6 @@ class PlaceholderImageLiteralExpr(BaseImageLiteralExpr, AssetPlaceholderTrait):
     assert isinstance(desc, StringLiteral)
     BaseImageLiteralExpr._validate_size(size)
     destliteral = EnumLiteral.get(context=context, value=dest)
-    return PlaceholderImageLiteralExpr._get_literalexpr_impl((size, destliteral, desc), context)
+    width, height = size.value
+    bbox = IntTupleLiteral.get((0, 0, width, height), context=context)
+    return PlaceholderImageLiteralExpr._get_literalexpr_impl((size, bbox, destliteral, desc), context)

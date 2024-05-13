@@ -110,20 +110,6 @@ class VNCodeGen_PlacerBase:
     op = CommentOp.create(comment=s, loc=instr.location)
     op.insert_before(instr)
 
-  # 以下是用于子类的辅助函数
-  _image_bboxes : typing.ClassVar[dict[BaseImageLiteralExpr, tuple[int, int, int, int]]] = {}
-  @staticmethod
-  def get_opaque_boundingbox(image : BaseImageLiteralExpr) -> tuple[int, int, int, int]:
-    """计算图片非透明部分的 <左, 上, 右, 下> 边界，同 BaseImageLiteralExpr.get_bbox()"""
-    # 为了避免重复计算，我们会缓存结果
-    if not isinstance(image, BaseImageLiteralExpr):
-      raise PPInternalError("image is not BaseImageLiteralExpr")
-    if bbox := VNCodeGen_PlacerBase._image_bboxes.get(image):
-      return bbox
-    bbox = image.get_bbox()
-    VNCodeGen_PlacerBase._image_bboxes[image] = bbox
-    return bbox
-
 @dataclasses.dataclass
 class VNCodeGen_PlacementInfo(VNCodeGen_PlacementInfoBase):
   # 以下是用于计算位置的信息，None 表示还没定
@@ -250,7 +236,7 @@ class VNCodeGen_Placer(VNCodeGen_PlacerBase):
     if not isinstance(sprite, BaseImageLiteralExpr):
       raise PPInternalError("Unhandled sprite type")
     width, height = sprite.size.value
-    left, top, right, bot = self.get_opaque_boundingbox(sprite)
+    left, top, right, bot = sprite.bbox.value
     # 如果用户已经指定了位置，我们直接使用该位置
     # 不过目前暂不支持从用户输入中读取位置，所以跳过这里
     # 如果用户没有指定位置，我们根据角色声明时的约束条件来决定位置
@@ -322,7 +308,7 @@ class VNCodeGen_Placer(VNCodeGen_PlacerBase):
       total_width = 0
       total_height = 0
       if isinstance(content, BaseImageLiteralExpr):
-        l, t, r, b = self.get_opaque_boundingbox(content)
+        l, t, r, b = content.bbox.value
         bbox_xmin = l
         bbox_xmax = r
         bbox_ymin = t

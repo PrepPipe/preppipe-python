@@ -1566,9 +1566,11 @@ class VNCodeGen:
       return None
 
     def _create_image_expr(self, v : ImageAssetData) -> ImageAssetLiteralExpr:
-      size = v.load().size
+      data = v.load()
+      size = data.size
+      bbox = ImageAssetLiteralExpr.prepare_bbox(context=self.context, imagedata=data)
       sizetuple = IntTupleLiteral.get(value=size, context=self.context)
-      return ImageAssetLiteralExpr.get(context=self.context, image=v, size=sizetuple)
+      return ImageAssetLiteralExpr.get(context=self.context, image=v, size=sizetuple, bbox=bbox)
 
     _tr_assetref_asset_not_inuse = TR_vn_codegen.tr("assetref_asset_not_inuse",
       en="The asset is not in use and its removal is ignored: {asset}",
