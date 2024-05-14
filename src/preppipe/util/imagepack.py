@@ -18,6 +18,7 @@ import matplotlib
 import cv2
 import yaml
 import dataclasses
+import enum
 
 from ..exceptions import *
 from ..commontypes import Color
@@ -1553,8 +1554,37 @@ class ImagePackSummary:
 @ImagePack._descriptor
 @dataclasses.dataclass
 class ImagePackDescriptor:
+  class MaskType(enum.Enum):
+    SCREEN = enum.auto()
+    COLOR_BACKGROUND_1 = enum.auto()
+    COLOR_CHARACTER_1 = enum.auto()
+    COLOR_CHARACTER_2 = enum.auto()
+
+  def get_mask_list(self) -> list[ImagePack.MaskInfo]:
+    # 获取该图片组所有的选区
+    # 由于要结合前端的参数读取，我们这里使用 enum 来表示选区的类型
+    raise PPNotImplementedError()
+
+  def get_named_exports(self) -> dict[str, str]:
+    # 获取该图片组所有有在 Translatable 定义名称的组合
+    # 返回的 dict 的 key 是（当前语言下）组合的名称，value 是组合的编号
+    raise PPNotImplementedError()
+
+  def get_exports(self) -> list[str]:
+    # 获取该图片组所有的组合
+    # 返回的 list 是组合的编号
+    raise PPNotImplementedError()
+
+  def get_size(self) -> tuple[int, int]:
+    # 获取图片组的整体大小
+    raise PPNotImplementedError()
+
+  def get_bbox(self) -> tuple[int, int, int, int]:
+    # 获取图片组的边界框(bbox)
+    raise PPNotImplementedError()
+
   def __init__(self, pack : ImagePack, yamlpath : str):
-    pass
+    raise PPNotImplementedError()
 
 def _test_main():
   srcdir = pathlib.Path(sys.argv[1])

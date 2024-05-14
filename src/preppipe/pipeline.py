@@ -16,6 +16,7 @@ from ._version import __version__
 from .language import TranslationDomain, Translatable
 from .exceptions import *
 from .tooldecl import _registered_tools
+from .assets.assetmanager import AssetManager
 
 # 这里提供一个类似 clang cc1 的界面，我们在这里支持详细的命令行设定
 # driver 以后就提供一个更简单易用的界面
@@ -675,6 +676,7 @@ class _PipelineManager:
   @staticmethod
   def pipeline_main(args : typing.List[str] | None = None):
     Translatable._init_lang_list()
+    AssetManager.init()
     # 先尝试读取插件
     _PipelineManager._load_plugins()
     # args 应该是不带 sys.argv[0] 的
