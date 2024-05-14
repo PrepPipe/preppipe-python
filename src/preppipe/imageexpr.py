@@ -4,6 +4,7 @@
 from __future__ import annotations
 from .irbase import *
 from .language import TranslationDomain
+from .util.imagepack import ImagePack, ImagePackDescriptor
 
 # 此文件定义了一系列对于图片的操作以及能满足后端演出等实际需求的图片结点类型
 # IRBase 中所有的素材(AssetData)都被要求不带除格式之外的元数据，在这里我们的类型将以 LiteralExpr/ConstExpr 的形式引用它们并添加元数据
@@ -112,6 +113,40 @@ class ColorImageLiteralExpr(BaseImageLiteralExpr):
     bbox = IntTupleLiteral.get((0, 0, width, height), context=context)
     return ColorImageLiteralExpr._get_literalexpr_impl((size, bbox, color), context)
 
+@IRObjectJsonTypeName('text_image_le')
+class TextImageLiteralExpr(BaseImageLiteralExpr):
+  # 该图片是一个文本图片，仅由文本内容和字体样式构成
+  @property
+  def font(self) -> StringLiteral | None:
+    return self.get_value_tuple()[BaseImageLiteralExpr.DERIVED_DATA_START]
+
+  def get_string(self) -> str:
+    strlist = []
+    for i in range(BaseImageLiteralExpr.DERIVED_DATA_START + 1, len(self.get_value_tuple())):
+      strlist.append(self.get_value_tuple()[i].get_string())
+    return ''.join(strlist)
+
+  @staticmethod
+  def get(context : Context, font : StringLiteral | None, text : TextFragmentLiteral | StringLiteral | str | typing.Iterable[TextFragmentLiteral | StringLiteral | str], size : IntTupleLiteral) -> TextImageLiteralExpr:
+    textlist = []
+    if isinstance(text, (TextFragmentLiteral, StringLiteral, str)):
+      if isinstance(text, str):
+        text = StringLiteral.get(text, context=context)
+      textlist.append(text)
+    else:
+      for t in text:
+        if isinstance(t, str):
+          textlist.append(StringLiteral.get(t, context=context))
+        else:
+          textlist.append(t)
+    BaseImageLiteralExpr._validate_size(size)
+    if font is not None:
+      if not isinstance(font, StringLiteral):
+        raise ValueError("Invalid font value")
+    width, height = size.value
+    bbox = IntTupleLiteral.get((0, 0, width, height), context=context)
+    return TextImageLiteralExpr._get_literalexpr_impl((size, bbox, font, *textlist), context)
+
 @IRObjectJsonTypeName('decl_image_le')
 class DeclaredImageLiteralExpr(BaseImageLiteralExpr, AssetDeclarationTrait):
   # 该图片代表一个没有定义只有声明的图片
@@ -171,3 +206,87 @@ class PlaceholderImageLiteralExpr(BaseImageLiteralExpr, AssetPlaceholderTrait):
     width, height = size.value
     bbox = IntTupleLiteral.get((0, 0, width, height), context=context)
     return PlaceholderImageLiteralExpr._get_literalexpr_impl((size, bbox, destliteral, desc), context)
+
+@IRObjectJsonTypeName('imagepack_image_le')
+class ImagePackElementLiteralExpr(BaseImageLiteralExpr, AssetDeclarationTrait):
+  # 该图片是一个图片包中的一个组合
+  # 除了基础的图片信息外，还有以下参数：
+  # 1. 图片包的名称
+  # 2. 图片包中的组合名称
+  # 3. 0-N 个选区参数（图片或颜色，若是颜色则为字符串）
+  @property
+  def pack(self) -> StringLiteral:
+    return self.get_value_tuple()[BaseImageLiteralExpr.DERIVED_DATA_START]
+
+  @property
+  def composite_name(self) -> StringLiteral:
+    return self.get_value_tuple()[BaseImageLiteralExpr.DERIVED_DATA_START + 1]
+
+  def get_num_mask_operands(self) -> int:
+    descriptor = ImagePack.get_descriptor(self.pack.get_string())
+    if descriptor is None:
+      raise PPInternalError("Invalid Imagepack reference: " + self.pack.get_string())
+    if not isinstance(descriptor, ImagePackDescriptor):
+      raise PPInternalError("Invalid Imagepack descriptor: " + self.pack.get_string())
+    return len(descriptor.get_masks())
+
+  @staticmethod
+  def get(context : Context, pack : str, element : str, size : IntTupleLiteral | None = None, bbox : IntTupleLiteral | None = None, mask_operands : typing.Iterable[BaseImageLiteralExpr | StringLiteral] | None = None):
+    # 先检查图片包的基础信息
+    descriptor = ImagePack.get_descriptor(pack)
+    if descriptor is None:
+      raise PPInternalError("Invalid Imagepack reference: " + pack)
+    if not isinstance(descriptor, ImagePackDescriptor):
+      raise PPInternalError("Invalid Imagepack descriptor: " + pack + " (type: " + str(type(descriptor)) + ")")
+    if not descriptor.is_valid_combination(element):
+      raise PPInternalError("Invalid Imagepack element: " + element)
+    # 再处理选区参数
+    # 选区参数可以少（用 None 填充）但是不能多
+    cur_operands = []
+    masks = descriptor.get_masks()
+    if mask_operands is not None:
+      for operand in mask_operands:
+        index = len(cur_operands)
+        if index >= len(masks):
+          raise PPInternalError("Too many mask operands")
+        if masks[index].is_screen():
+          if not isinstance(operand, (BaseImageLiteralExpr, StringLiteral)) or isinstance(operand, (AssetDeclarationTrait, AssetPlaceholderTrait)):
+            raise PPInternalError("Invalid mask operand type: " + str(type(operand)))
+        else:
+          if not isinstance(operand, StringLiteral):
+            raise PPInternalError("Invalid mask operand type: " + str(type(operand)))
+        cur_operands.append(operand)
+    while len(cur_operands) < len(masks):
+      cur_operands.append(None)
+    # 最后处理大小和 bbox
+    # 描述对象中会有基础的大小和 bbox 信息，但是这里可以覆盖
+    # 当用户指定了一个不一样的大小时，我们认为用户是想缩放图片，最后导出时要按指定尺寸导出
+    # 当用户指定 bbox 时，我们认为用户并不是想对图片做什么，只是调整其在屏幕上的位置。
+    std_size : tuple[int, int] = descriptor.get_size()
+    std_bbox = descriptor.get_bbox()
+    if size is not None:
+      BaseImageLiteralExpr._validate_size(size)
+    else:
+      size = IntTupleLiteral.get(std_size, context=context)
+    if bbox is not None:
+      if not isinstance(bbox, IntTupleLiteral) or len(bbox.value) != 4:
+        raise ValueError("Invalid bbox value")
+    else:
+      # 我们需要自行计算 bbox
+      # 如果图片被缩放，那么我们也要根据原来的 bbox 把缩放后的 bbox 计算出来
+      if size.value == std_size:
+        bbox = IntTupleLiteral.get(std_bbox, context=context)
+      else:
+        if std_bbox == (0, 0, 0, 0):
+          bbox = IntTupleLiteral.get((0, 0, 0, 0), context=context)
+        elif std_bbox == (0, 0, std_size[0], std_size[1]):
+          bbox = IntTupleLiteral.get((0, 0, size.value[0], size.value[1]), context=context)
+        else:
+          x_scale = size.value[0] / std_size[0]
+          y_scale = size.value[1] / std_size[1]
+          left, top, right, bottom = std_bbox
+          bbox = IntTupleLiteral.get((int(left * x_scale), int(top * y_scale), int(right * x_scale), int(bottom * y_scale)), context=context)
+    pack_str = StringLiteral.get(pack, context=context)
+    element_str = StringLiteral.get(element, context=context)
+    return ImagePackElementLiteralExpr._get_literalexpr_impl((size, bbox, pack_str, element_str, *cur_operands), context)
+

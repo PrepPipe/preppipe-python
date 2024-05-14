@@ -166,9 +166,14 @@ class AssetManager:
         pickle.dump(manifest, f, protocol=pickle.HIGHEST_PROTOCOL)
 
   @staticmethod
+  def init():
+    AssetManager.get_instance()
+
+  @staticmethod
   def tool_main(args : list[str] | None = None):
     # 创建一个有以下参数的 argument parser: [--debug] [--create <yml> | --load <zip>] [--save <zip>] [--fork [args]] [--export <dir>]
     Translatable._init_lang_list()
+    AssetManager.init()
     parser = argparse.ArgumentParser(description="Asset Management Tool")
     Translatable._language_install_arguments(parser) # pylint: disable=protected-access
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")

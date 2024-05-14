@@ -2757,11 +2757,16 @@ class AudioAssetData(AssetData[pydub.AudioSegment, str]):
 @IRWrappedStatelessClassJsonName('asset_placeholder_trait')
 class AssetPlaceholderTrait:
   # 如果某个值表示占位资源，则应继承自该类来告诉其余代码
+  # 占位资源在编译时没有固定的值，在后端进行生成时也不一定会有确定的值
+  # 优化时可以替换掉占位资源
   pass
 
 @IRWrappedStatelessClassJsonName('asset_decl_trait')
 class AssetDeclarationTrait:
   # 如果某个值表示声明的资源（即内容暂缺的外部资源），则应继承自该类来告诉其余代码
+  # 声明资源在编译时没有固定的值，但是在后端进行生成时一定会有确定的值
+  # 此属性同样适用于内嵌模板的实例（比如对内嵌模板的引用）
+  # 优化时不可以替换掉声明资源
   pass
 
 # ------------------------------------------------------------------------------
