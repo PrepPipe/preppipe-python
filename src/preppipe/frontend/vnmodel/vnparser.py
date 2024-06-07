@@ -148,7 +148,10 @@ class VNParser(FrontendParserBase[VNASTParsingState]):
       if scanresult.expression is not None:
         expr = [StringLiteral.get(v.text, self.context) for v in scanresult.expression]
       for piece in scanresult.content:
-        finalcontent.extend(pu.extract_str_from_interval(piece.start, piece.end))
+        content_list = pu.extract_str_from_interval(piece.start, piece.end)
+        if piece.flag_append_space:
+          content_list.append(StringLiteral.get(' ', self.context))
+        finalcontent.extend(content_list)
       nodetype = VNASTSayNodeType.TYPE_FULL
       if sayer is None:
         nodetype = VNASTSayNodeType.TYPE_QUOTED if scanresult.is_content_quoted else VNASTSayNodeType.TYPE_NARRATE
