@@ -20,6 +20,8 @@ import yaml
 import dataclasses
 import enum
 
+from preppipe.irbase import IRValueMapper, Location, Operation
+
 from ..exceptions import *
 from ..commontypes import Color
 from ..language import *
@@ -27,6 +29,9 @@ from ..tooldecl import ToolClassDecl
 from ..assets.assetclassdecl import AssetClassDecl, NamedAssetClassBase
 from ..assets.assetmanager import AssetManager
 from ..assets.fileasset import FileAssetPack
+from ..irbase import *
+from ..exportcache import CacheableOperationSymbol
+from ..imageexpr import *
 
 @AssetClassDecl("imagepack")
 @ToolClassDecl("imagepack")
@@ -1560,19 +1565,26 @@ class ImagePackDescriptor:
     COLOR_CHARACTER_1 = enum.auto()
     COLOR_CHARACTER_2 = enum.auto()
 
-  def get_mask_list(self) -> list[ImagePack.MaskInfo]:
+    def is_screen(self) -> bool:
+      return self == ImagePackDescriptor.MaskType.SCREEN
+
+  def get_masks(self) -> tuple[ImagePack.MaskInfo, ...]:
     # 获取该图片组所有的选区
     # 由于要结合前端的参数读取，我们这里使用 enum 来表示选区的类型
     raise PPNotImplementedError()
 
-  def get_named_exports(self) -> dict[str, str]:
+  def get_named_combinations(self) -> dict[str, str]:
     # 获取该图片组所有有在 Translatable 定义名称的组合
     # 返回的 dict 的 key 是（当前语言下）组合的名称，value 是组合的编号
     raise PPNotImplementedError()
 
-  def get_exports(self) -> list[str]:
+  def get_combinations(self) -> list[str]:
     # 获取该图片组所有的组合
     # 返回的 list 是组合的编号
+    raise PPNotImplementedError()
+
+  def is_valid_combination(self, name : str) -> bool:
+    # 检查一个组合是否有效
     raise PPNotImplementedError()
 
   def get_size(self) -> tuple[int, int]:
@@ -1585,6 +1597,121 @@ class ImagePackDescriptor:
 
   def __init__(self, pack : ImagePack, yamlpath : str):
     raise PPNotImplementedError()
+
+@IRObjectJsonTypeName("imagepack_export_op_symbol")
+class ImagePackExportOpSymbol(CacheableOperationSymbol):
+  # 所有对图片包的导出操作都会使用这个操作符
+  _imagepack : OpOperand[StringLiteral]
+  _fork_params : OpOperand # 可能是图片也可能是字符串等等
+  # 以下两项用于描述图层导出的内容，两项的数量应该一致
+  _layers_export_indices : OpOperand[IntLiteral] # 导出的图层的下标
+  _layers_export_paths : OpOperand[StringLiteral] # 导出的路径
+  # 以下两项用于描述图层组合的导出，两项的数量应该一致
+  _composites_export_indices : OpOperand[IntLiteral] # 导出的图层组合的下标
+  _composites_export_paths : OpOperand[StringLiteral] # 导出的路径
+
+  def construct_init(self, *, imagepack : StringLiteral, name: str = '', loc: Location | None = None, **kwargs) -> None:
+    super().construct_init(name=name, loc=loc, **kwargs)
+    self._imagepack = self._add_operand_with_value("imagepack", imagepack)
+    self._fork_params = self._add_operand("fork_params")
+    self._layers_export_indices = self._add_operand("layers_export_indices")
+    self._layers_export_paths = self._add_operand("layers_export_paths")
+    self._composites_export_indices = self._add_operand("composites_export_indices")
+    self._composites_export_paths = self._add_operand("composites_export_paths")
+
+  def post_init(self) -> None:
+    self._imagepack = self.get_operand_inst("imagepack")
+    self._fork_params = self.get_operand_inst("fork_params")
+    self._layers_export_indices = self.get_operand_inst("layers_export_indices")
+    self._layers_export_paths = self.get_operand_inst("layers_export_paths")
+    self._composites_export_indices = self.get_operand_inst("composites_export_indices")
+    self._composites_export_paths = self.get_operand_inst("composites_export_paths")
+
+  def add_fork_param(self, param : Value) -> None:
+    self._fork_params.add_operand(param)
+
+  def add_layer_export(self, index : IntLiteral, path : StringLiteral) -> None:
+    self._layers_export_indices.add_operand(index)
+    self._layers_export_paths.add_operand(path)
+
+  def add_composite_export(self, index : IntLiteral, path : StringLiteral) -> None:
+    self._composites_export_indices.add_operand(index)
+    self._composites_export_paths.add_operand(path)
+
+  def finish_init(self) -> None:
+    # 根据现有的参数，计算一个用于缓存输出的可读的字符串来作为这个操作符的名称
+    resultname = "ImagePackExportOpSymbol[" + self._imagepack.get().get_string() + "]"
+    if self._fork_params.get_num_operands() > 0:
+      resultname += "<" + ",".join([str(use.value) for use in self._fork_params.operanduses()]) + ">" # 用于 fork 的参数
+    resultname += "{"
+    for i in range(0, min(self._layers_export_indices.get_num_operands(), self._layers_export_paths.get_num_operands())):
+      resultname += str(self._layers_export_indices.get_operand(i).value) + ":" + self._layers_export_paths.get_operand(i).get_string() + ","
+    resultname += "}{"
+    for i in range(0, min(self._composites_export_indices.get_num_operands(), self._composites_export_paths.get_num_operands())):
+      resultname += str(self._composites_export_indices.get_operand(i).value) + ":" + self._composites_export_paths.get_operand(i).get_string() + ","
+    resultname += "}"
+    self._name = resultname
+
+  def get_export_file_list(self) -> list[str]:
+    # 返回这个操作导出的文件列表，只需要基于输出根目录的相对路径
+    return [use.value.get_string() for uselist in [self._layers_export_paths.operanduses(), self._composites_export_paths.operanduses()] for use in uselist]
+
+  def run_export(self, output_rootdir : str) -> None:
+    # 执行这个操作的导出，output_rootdir 是输出根目录
+    # 一般会在一个新的线程中执行这个操作
+    imagepack = AssetManager.get_instance().get_asset(self._imagepack.get().get_string())
+    if imagepack is None:
+      # 如果图片包不存在，我们就不用继续了
+      return
+    if not isinstance(imagepack, ImagePack):
+      raise PPInternalError("Asset is not an image pack: " + self._imagepack.get().get_string())
+    # 如果需要 fork 操作，我们就执行 fork 操作
+    if self._fork_params.get_num_operands() > 0:
+      args : list[Color | PIL.Image.Image | None] = []
+      for use in self._fork_params.operanduses():
+        value = use.value
+        if isinstance(value, StringLiteral):
+          text = value.get_string()
+          if len(text) == 0:
+            args.append(None)
+          else:
+            # TODO
+            args.append(None)
+        elif isinstance(value, ColorLiteral):
+          args.append(value.value)
+        elif isinstance(value, ImageAssetLiteralExpr):
+          image = value.image.load()
+          args.append(image)
+        elif isinstance(value, ColorImageLiteralExpr):
+          color = value.color.value
+          args.append(color)
+        else:
+          raise PPInternalError("Unsupported fork parameter type: " + str(value))
+          args.append(None)
+      if len(args) < len(imagepack.masks):
+        args += [None] * (len(imagepack.masks) - len(args))
+      imagepack = imagepack.fork_applying_mask(args)
+    num_composites_export = min(self._composites_export_indices.get_num_operands(), self._composites_export_paths.get_num_operands())
+    for i in range(0, num_composites_export):
+      index = self._composites_export_indices.get_operand(i).value
+      path = self._composites_export_paths.get_operand(i).get_string()
+      image = imagepack.get_composed_image(index)
+      image.save(os.path.join(output_rootdir, path))
+    num_layers_export = min(self._layers_export_indices.get_num_operands(), self._layers_export_paths.get_num_operands())
+    for i in range(0, num_layers_export):
+      index = self._layers_export_indices.get_operand(i).value
+      path = self._layers_export_paths.get_operand(i).get_string()
+      image = imagepack.layers[index].patch
+      image.save(os.path.join(output_rootdir, path))
+    # 完成
+
+  def get_workload_cpu_usage_estimate(self) -> float:
+    # 返回这个操作的 CPU 使用量估计(1: CPU 密集型；0: I/O 密集型)，用于计算线程池的大小和计算调度
+    if self._fork_params.get_num_operands() > 0 or self._composites_export_indices.get_num_operands() > 0:
+      # 在这两种情况下我们都需要执行图片组合或是 fork 操作，所以是 CPU 密集型
+      return 1.0
+    # 否则是 I/O 密集型，只需要输出现有的图片
+    return 0.25
 
 def _test_main():
   srcdir = pathlib.Path(sys.argv[1])
