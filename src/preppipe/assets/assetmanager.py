@@ -114,6 +114,12 @@ class AssetManager:
       return info.handle
     return None
 
+  def get_asset_noload(self, name : str) -> typing.Any | None:
+    # 获取素材，但不加载；用于在多线程环境下获取素材的句柄
+    if info := self._assets.get(name, None):
+      return info.handle
+    return None
+
   @staticmethod
   def get_instance() -> "AssetManager":
     # 获取 AssetManager 的单例
