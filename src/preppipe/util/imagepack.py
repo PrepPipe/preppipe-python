@@ -437,7 +437,7 @@ class ImagePack(NamedAssetClassBase):
     return PIL.ImageFont.load_default()
 
   @staticmethod
-  def create_text_image_for_mask(text : str, color : Color | None, start_points : int, size : tuple[int, int]) -> PIL.Image.Image:
+  def create_text_image_for_mask(text : str, color : Color | None, start_points : int, size : tuple[int, int], background_color : Color | None) -> PIL.Image.Image:
     def _is_character_fullwidth(ch : str):
       # https://stackoverflow.com/questions/23058564/checking-a-character-is-fullwidth-or-halfwidth-in-python
       return unicodedata.east_asian_width(ch) in ('F', 'W', 'A')
@@ -460,7 +460,8 @@ class ImagePack(NamedAssetClassBase):
         return None
 
       font = ImagePack.get_font_for_text_image(font_size)
-      image = PIL.Image.new("RGBA", size, (255, 255, 255, 0))
+      color_tuple = (255, 255, 255, 0) if background_color is None else (background_color.r, background_color.g, background_color.b, 255)
+      image = PIL.Image.new("RGBA", size, color_tuple)
       draw = PIL.ImageDraw.Draw(image)
       y_text = max(0, (size[1] - text_height) // 2)
       for line in lines:
@@ -558,7 +559,7 @@ class ImagePack(NamedAssetClassBase):
               text = arg
             elif isinstance(arg, tuple):
               text, color = arg
-            arg = ImagePack.create_text_image_for_mask(text, color, start_point_size, text_image_size)
+            arg = ImagePack.create_text_image_for_mask(text, color, start_point_size, text_image_size, m.mask_color)
           converted_arg = np.full((self.height, self.width, 3), m.mask_color.to_float_tuple_rgb(), dtype=np.float32)
           srcpoints = np.matrix([[0, 0], [arg.width-1, 0], [0, arg.height-1], [arg.width-1, arg.height-1]], dtype=np.float32)
           dstpoints = np.matrix(m.projective_vertices, dtype=np.float32)
