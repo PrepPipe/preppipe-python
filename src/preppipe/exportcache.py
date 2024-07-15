@@ -15,6 +15,7 @@ from .irbase import *
 from .irdataop import *
 from .commontypes import *
 from .exceptions import *
+from .assets.assetmanager import AssetManager
 
 @IRObjectJsonTypeName("cacheable_op_symbol")
 class CacheableOperationSymbol(Symbol):
@@ -43,6 +44,11 @@ class CacheableOperationSymbol(Symbol):
     # 一般会在一个新的线程中执行这个操作
     raise NotImplementedError("Should be implemented by subclass")
 
+  def get_depended_assets(self) -> list[str]:
+    # 返回这个操作依赖的资源文件列表
+    # 所有需要的资源都会在导出前预加载，这样资源使用时就不用管加载时的 race condition 问题
+    return []
+
   def get_workload_cpu_usage_estimate(self) -> float:
     # 返回这个操作的 CPU 使用量估计(1: CPU 密集型；0: I/O 密集型)，用于计算线程池的大小和计算调度
     return 0.5
@@ -66,8 +72,12 @@ class CacheableOperationSymbol(Symbol):
       else:
         is_cache_require_change = True
 
+    # 准备预加载资源
+    asset_manager = AssetManager.get_instance()
+
     all_ops : list[str] = []
     todo_ops : list[tuple[CacheableOperationSymbol, float]] = [] # (op, cpu_usage_estimate)
+    loaded_assets : set[str] = set()
     cpu_usage_sum = 0.0
     cpu_usage_minimum = 0.2
     for elem in ops:
@@ -82,6 +92,19 @@ class CacheableOperationSymbol(Symbol):
             break
         if all_files_exist:
           continue
+      is_asset_preload_failed = False
+      for asset in elem.get_depended_assets():
+        if asset in loaded_assets:
+          continue
+        handle = asset_manager.get_asset(asset)
+        if handle is None:
+          # 无法加载资源的话就跳过这个操作
+          is_asset_preload_failed = True
+          break
+        loaded_assets.add(asset)
+      if is_asset_preload_failed:
+        continue
+      # 我们确认这个操作需要且可以执行
       cpu_usage_estimate = elem.get_workload_cpu_usage_estimate()
       if cpu_usage_estimate < 0 or cpu_usage_estimate > 1:
         raise ValueError("Invalid CPU usage estimate")

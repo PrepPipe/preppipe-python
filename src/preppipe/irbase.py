@@ -2979,6 +2979,12 @@ class TextStyleLiteral(Literal):
   def value(self) -> tuple[tuple[TextAttribute, typing.Any]]:
     return super().value
 
+  def get_color(self) -> Color | None:
+    for attr, v in self.value:
+      if attr == TextAttribute.TextColor:
+        return v
+    return None
+
   @staticmethod
   def get(value : tuple[tuple[TextAttribute, typing.Any],...] | dict[TextAttribute, typing.Any], context : Context) -> TextStyleLiteral:
     if isinstance(value, dict):

@@ -15,10 +15,13 @@ import PIL.ImageFont
 import numpy as np
 import scipy as sp
 import matplotlib
+import matplotlib.colors
 import cv2
 import yaml
 import dataclasses
 import enum
+import unicodedata
+import textwrap
 
 from preppipe.irbase import IRValueMapper, Location, Operation
 
@@ -29,9 +32,6 @@ from ..tooldecl import ToolClassDecl
 from ..assets.assetclassdecl import AssetClassDecl, NamedAssetClassBase
 from ..assets.assetmanager import AssetManager
 from ..assets.fileasset import FileAssetPack
-from ..irbase import *
-from ..exportcache import CacheableOperationSymbol
-from ..imageexpr import *
 
 @AssetClassDecl("imagepack")
 @ToolClassDecl("imagepack")
@@ -311,6 +311,11 @@ class ImagePack(NamedAssetClassBase):
     layer_indices = self.composites[index].layers
     if len(layer_indices) == 0:
       raise PPInternalError("Empty composition? some thing is probably wrong")
+    if len(layer_indices) == 1:
+      curlayer = self.layers[layer_indices[0]]
+      # 如果该图层正好覆盖整个图像，则直接返回
+      if curlayer.offset_x == 0 and curlayer.offset_y == 0 and curlayer.patch.width == self.width and curlayer.patch.height == self.height:
+        return curlayer.patch.copy()
 
     result = PIL.Image.new("RGBA", (self.width, self.height))
 
@@ -420,7 +425,83 @@ class ImagePack(NamedAssetClassBase):
 
     return base_data
 
-  def fork_applying_mask(self, args : list[Color | PIL.Image.Image | None]):
+  TEXT_IMAGE_FONT_ASSET : typing.ClassVar[str] = "file-font-SourceHanSerif-thirdparty-Adobe"
+  TEXT_IMAGE_FONT_PATH : typing.ClassVar[str] = "SourceHanSerif-Regular.ttc"
+
+  @staticmethod
+  def get_font_for_text_image(fontsize : int) -> PIL.ImageFont.ImageFont | PIL.ImageFont.FreeTypeFont:
+    inst = AssetManager.get_instance()
+    if SourceHanSerif := inst.get_asset(ImagePack.TEXT_IMAGE_FONT_ASSET):
+      fontpath = os.path.join(SourceHanSerif.path, ImagePack.TEXT_IMAGE_FONT_PATH)
+      return PIL.ImageFont.truetype(fontpath, fontsize)
+    return PIL.ImageFont.load_default()
+
+  @staticmethod
+  def create_text_image_for_mask(text : str, color : Color | None, start_points : int, size : tuple[int, int]) -> PIL.Image.Image:
+    def _is_character_fullwidth(ch : str):
+      # https://stackoverflow.com/questions/23058564/checking-a-character-is-fullwidth-or-halfwidth-in-python
+      return unicodedata.east_asian_width(ch) in ('F', 'W', 'A')
+    text_height_multiplier = 1.1
+    text_width_multiplier = 0.55
+    min_text_size = 12
+    for ch in text:
+      if _is_character_fullwidth(ch):
+        text_width_multiplier = 1.1
+        break
+
+    paragraphs = text.splitlines()
+    def create_image_with_text(font_size: int, force_draw : bool = False):
+      max_charcnt = max(1, int(math.floor(size[0] / (font_size * text_width_multiplier))))
+      lines = []
+      for p in paragraphs:
+        lines.extend(textwrap.wrap(p, width=max_charcnt))
+      text_height = font_size * len(lines) * text_height_multiplier
+      if not force_draw and text_height > size[1]:  # If text height exceeds image height, return None
+        return None
+
+      font = ImagePack.get_font_for_text_image(font_size)
+      image = PIL.Image.new("RGBA", size, (255, 255, 255, 0))
+      draw = PIL.ImageDraw.Draw(image)
+      y_text = max(0, (size[1] - text_height) // 2)
+      for line in lines:
+        text_width = draw.textlength(line, font=font)
+        text_height = font_size * text_height_multiplier
+        x_text = max(0, (size[0] - text_width) // 2)
+        draw.text((x_text, y_text), line, font=font, fill=(color.r, color.g, color.b, 255) if color else (0, 0, 0, 255))
+        y_text += text_height
+
+      return image
+
+    font_size = start_points
+    image = create_image_with_text(font_size)
+    while image is None and font_size > min_text_size:
+      font_size -= max(2, int(font_size/8))
+      if font_size < min_text_size:
+        font_size = min_text_size
+      image = create_image_with_text(font_size)
+
+    if image is None:
+      image = create_image_with_text(font_size, force_draw = True)
+    return image
+
+  @staticmethod
+  def get_starting_font_point_size(width : int, height : int) -> int:
+    # 如果我们需要在选区图中加文字，此函数计算我们尝试的初始字体大小
+    # 如果字太多的话会将字号缩小，所以这里是我们尝试的最大字号
+    # 对于一个 16*9 的图，每行应该可以填大概30字
+    # 不管对于任何分辨率，至少 24 点的字体是合适的
+    return max(24, int(width/30*0.75))
+
+  @staticmethod
+  def get_projective_rectangular_size_for_text(vertices : tuple[tuple[int,int],tuple[int,int],tuple[int,int],tuple[int,int]]) -> tuple[int,int]:
+    # 从四个顶点中计算出一个矩形的大小
+    # 顶点是左上，右上，左下，右下
+    # 返回的是宽和高
+    xdiffmin = min(vertices[1][0] - vertices[0][0], vertices[3][0] - vertices[2][0])
+    ydiffmin = min(vertices[2][1] - vertices[0][1], vertices[3][1] - vertices[1][1])
+    return (xdiffmin, ydiffmin)
+
+  def fork_applying_mask(self, args : list[Color | PIL.Image.Image | str | tuple[str, Color] | None]):
     # 创建一个新的 imagepack, 将 mask 所影响的部分替换掉
     if not self.is_imagedata_loaded():
       raise PPInternalError("Cannot fork_applying_mask() without data")
@@ -468,6 +549,16 @@ class ImagePack(NamedAssetClassBase):
         else:
           # 之前应该检查过了
           assert m.projective_vertices is not None
+          if not isinstance(arg, PIL.Image.Image):
+            start_point_size = ImagePack.get_starting_font_point_size(self.width, self.height)
+            text_image_size = ImagePack.get_projective_rectangular_size_for_text(m.projective_vertices)
+            text = ''
+            color = None
+            if isinstance(arg, str):
+              text = arg
+            elif isinstance(arg, tuple):
+              text, color = arg
+            arg = ImagePack.create_text_image_for_mask(text, color, start_point_size, text_image_size)
           converted_arg = np.full((self.height, self.width, 3), m.mask_color.to_float_tuple_rgb(), dtype=np.float32)
           srcpoints = np.matrix([[0, 0], [arg.width-1, 0], [0, arg.height-1], [arg.width-1, arg.height-1]], dtype=np.float32)
           dstpoints = np.matrix(m.projective_vertices, dtype=np.float32)
@@ -1184,12 +1275,24 @@ class ImagePack(NamedAssetClassBase):
         raise PPInternalError("Mask arguments not match: " + str(len(current_pack.masks)) + " expected, " + str(len(parsed_args.fork)) + " provided")
       processed_args = []
       for rawarg in parsed_args.fork:
+        # 如果是 "None"，实际参数就是 None
+        # 如果是 "#RRGGBB"，实际参数就是 Color.get("#RRGGBB")
+        # 如果是 "<#RRGGBB>ABCD"，实际参数就是 ("ABCD", Color.get("#RRGGBB"))
+        # 如果是文件路径，实际参数就是 PIL.Image.open(文件路径)
+        # 其他情况下，实际参数就是原字符串
         if rawarg == "None":
           processed_args.append(None)
         elif rawarg.startswith("#"):
           processed_args.append(Color.get(rawarg))
+        elif rawarg.startswith("<#") and len(rawarg) > 8 and rawarg[8] == ">":
+          colorpart = rawarg[1:8]
+          textpart = rawarg[9:]
+          processed_args.append((textpart, Color.get(colorpart)))
         else:
-          processed_args.append(PIL.Image.open(rawarg))
+          if os.path.exists(rawarg):
+            processed_args.append(PIL.Image.open(rawarg))
+          else:
+            processed_args.append(rawarg)
       current_pack = current_pack.fork_applying_mask(processed_args)
 
     if parsed_args.export is not None:
@@ -1262,19 +1365,11 @@ class ImagePackSummary:
     self.diffs.append(img)
     self.diffnames.append(name)
 
-  @staticmethod
-  def get_font_for_imagedrawing_nocache(fontsize : int) -> PIL.ImageFont.ImageFont | PIL.ImageFont.FreeTypeFont:
-    inst = AssetManager.get_instance()
-    if SourceHanSerif := inst.get_asset("file-font-SourceHanSerif-thirdparty-Adobe"):
-      fontpath = os.path.join(SourceHanSerif.path, "SourceHanSerif-Regular.ttc")
-      return PIL.ImageFont.truetype(fontpath, fontsize)
-    return PIL.ImageFont.load_default()
-
   def get_font_for_imagedrawing(self, fontsize : int) -> PIL.ImageFont.ImageFont | PIL.ImageFont.FreeTypeFont:
     font = self.fontcache.get(fontsize)
     if font is not None:
       return font
-    font = ImagePackSummary.get_font_for_imagedrawing_nocache(fontsize)
+    font = ImagePack.get_font_for_text_image(fontsize)
     self.fontcache[fontsize] = font
     return font
 
@@ -1497,7 +1592,7 @@ class ImagePackSummary:
         for j, index in enumerate(row):
           if index is not None:
             # 如果基底图的大小不到 <base_width, base_height>，我们把它放在中间
-            img = self.bases[index]
+            img = self.bases[index].convert("RGBA")
             imgwidth = img.width
             imgheight = img.height
             xoffset = 0
@@ -1526,7 +1621,7 @@ class ImagePackSummary:
         x = xstart
         for j, index in enumerate(row):
           if index is not None:
-            img = self.diffs[index]
+            img = self.diffs[index].convert("RGBA")
             overview.alpha_composite(img, (x, y))
             # 如果名称的大小不到 <diff_width, diffname_maxheight>，我们使他顶部居中（即调整 x 但不调整 y）
             img = diffname_images[index]
@@ -1597,121 +1692,6 @@ class ImagePackDescriptor:
 
   def __init__(self, pack : ImagePack, yamlpath : str):
     raise PPNotImplementedError()
-
-@IRObjectJsonTypeName("imagepack_export_op_symbol")
-class ImagePackExportOpSymbol(CacheableOperationSymbol):
-  # 所有对图片包的导出操作都会使用这个操作符
-  _imagepack : OpOperand[StringLiteral]
-  _fork_params : OpOperand # 可能是图片也可能是字符串等等
-  # 以下两项用于描述图层导出的内容，两项的数量应该一致
-  _layers_export_indices : OpOperand[IntLiteral] # 导出的图层的下标
-  _layers_export_paths : OpOperand[StringLiteral] # 导出的路径
-  # 以下两项用于描述图层组合的导出，两项的数量应该一致
-  _composites_export_indices : OpOperand[IntLiteral] # 导出的图层组合的下标
-  _composites_export_paths : OpOperand[StringLiteral] # 导出的路径
-
-  def construct_init(self, *, imagepack : StringLiteral, name: str = '', loc: Location | None = None, **kwargs) -> None:
-    super().construct_init(name=name, loc=loc, **kwargs)
-    self._imagepack = self._add_operand_with_value("imagepack", imagepack)
-    self._fork_params = self._add_operand("fork_params")
-    self._layers_export_indices = self._add_operand("layers_export_indices")
-    self._layers_export_paths = self._add_operand("layers_export_paths")
-    self._composites_export_indices = self._add_operand("composites_export_indices")
-    self._composites_export_paths = self._add_operand("composites_export_paths")
-
-  def post_init(self) -> None:
-    self._imagepack = self.get_operand_inst("imagepack")
-    self._fork_params = self.get_operand_inst("fork_params")
-    self._layers_export_indices = self.get_operand_inst("layers_export_indices")
-    self._layers_export_paths = self.get_operand_inst("layers_export_paths")
-    self._composites_export_indices = self.get_operand_inst("composites_export_indices")
-    self._composites_export_paths = self.get_operand_inst("composites_export_paths")
-
-  def add_fork_param(self, param : Value) -> None:
-    self._fork_params.add_operand(param)
-
-  def add_layer_export(self, index : IntLiteral, path : StringLiteral) -> None:
-    self._layers_export_indices.add_operand(index)
-    self._layers_export_paths.add_operand(path)
-
-  def add_composite_export(self, index : IntLiteral, path : StringLiteral) -> None:
-    self._composites_export_indices.add_operand(index)
-    self._composites_export_paths.add_operand(path)
-
-  def finish_init(self) -> None:
-    # 根据现有的参数，计算一个用于缓存输出的可读的字符串来作为这个操作符的名称
-    resultname = "ImagePackExportOpSymbol[" + self._imagepack.get().get_string() + "]"
-    if self._fork_params.get_num_operands() > 0:
-      resultname += "<" + ",".join([str(use.value) for use in self._fork_params.operanduses()]) + ">" # 用于 fork 的参数
-    resultname += "{"
-    for i in range(0, min(self._layers_export_indices.get_num_operands(), self._layers_export_paths.get_num_operands())):
-      resultname += str(self._layers_export_indices.get_operand(i).value) + ":" + self._layers_export_paths.get_operand(i).get_string() + ","
-    resultname += "}{"
-    for i in range(0, min(self._composites_export_indices.get_num_operands(), self._composites_export_paths.get_num_operands())):
-      resultname += str(self._composites_export_indices.get_operand(i).value) + ":" + self._composites_export_paths.get_operand(i).get_string() + ","
-    resultname += "}"
-    self._name = resultname
-
-  def get_export_file_list(self) -> list[str]:
-    # 返回这个操作导出的文件列表，只需要基于输出根目录的相对路径
-    return [use.value.get_string() for uselist in [self._layers_export_paths.operanduses(), self._composites_export_paths.operanduses()] for use in uselist]
-
-  def run_export(self, output_rootdir : str) -> None:
-    # 执行这个操作的导出，output_rootdir 是输出根目录
-    # 一般会在一个新的线程中执行这个操作
-    imagepack = AssetManager.get_instance().get_asset(self._imagepack.get().get_string())
-    if imagepack is None:
-      # 如果图片包不存在，我们就不用继续了
-      return
-    if not isinstance(imagepack, ImagePack):
-      raise PPInternalError("Asset is not an image pack: " + self._imagepack.get().get_string())
-    # 如果需要 fork 操作，我们就执行 fork 操作
-    if self._fork_params.get_num_operands() > 0:
-      args : list[Color | PIL.Image.Image | None] = []
-      for use in self._fork_params.operanduses():
-        value = use.value
-        if isinstance(value, StringLiteral):
-          text = value.get_string()
-          if len(text) == 0:
-            args.append(None)
-          else:
-            # TODO
-            args.append(None)
-        elif isinstance(value, ColorLiteral):
-          args.append(value.value)
-        elif isinstance(value, ImageAssetLiteralExpr):
-          image = value.image.load()
-          args.append(image)
-        elif isinstance(value, ColorImageLiteralExpr):
-          color = value.color.value
-          args.append(color)
-        else:
-          raise PPInternalError("Unsupported fork parameter type: " + str(value))
-          args.append(None)
-      if len(args) < len(imagepack.masks):
-        args += [None] * (len(imagepack.masks) - len(args))
-      imagepack = imagepack.fork_applying_mask(args)
-    num_composites_export = min(self._composites_export_indices.get_num_operands(), self._composites_export_paths.get_num_operands())
-    for i in range(0, num_composites_export):
-      index = self._composites_export_indices.get_operand(i).value
-      path = self._composites_export_paths.get_operand(i).get_string()
-      image = imagepack.get_composed_image(index)
-      image.save(os.path.join(output_rootdir, path))
-    num_layers_export = min(self._layers_export_indices.get_num_operands(), self._layers_export_paths.get_num_operands())
-    for i in range(0, num_layers_export):
-      index = self._layers_export_indices.get_operand(i).value
-      path = self._layers_export_paths.get_operand(i).get_string()
-      image = imagepack.layers[index].patch
-      image.save(os.path.join(output_rootdir, path))
-    # 完成
-
-  def get_workload_cpu_usage_estimate(self) -> float:
-    # 返回这个操作的 CPU 使用量估计(1: CPU 密集型；0: I/O 密集型)，用于计算线程池的大小和计算调度
-    if self._fork_params.get_num_operands() > 0 or self._composites_export_indices.get_num_operands() > 0:
-      # 在这两种情况下我们都需要执行图片组合或是 fork 操作，所以是 CPU 密集型
-      return 1.0
-    # 否则是 I/O 密集型，只需要输出现有的图片
-    return 0.25
 
 def _test_main():
   srcdir = pathlib.Path(sys.argv[1])
