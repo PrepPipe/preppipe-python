@@ -213,7 +213,7 @@ class ImagePackElementLiteralExpr(BaseImageLiteralExpr, AssetDeclarationTrait):
   # 除了基础的图片信息外，还有以下参数：
   # 1. 图片包的名称
   # 2. 图片包中的组合名称
-  # 3. 0-N 个选区参数（图片或颜色，若是颜色则为字符串）
+  # 3. 0-N 个选区参数（图片、颜色或是字符串文本）
   @property
   def pack(self) -> StringLiteral:
     return self.get_value_tuple()[BaseImageLiteralExpr.DERIVED_DATA_START]
@@ -231,7 +231,7 @@ class ImagePackElementLiteralExpr(BaseImageLiteralExpr, AssetDeclarationTrait):
     return len(descriptor.get_masks())
 
   @staticmethod
-  def get(context : Context, pack : str, element : str, size : IntTupleLiteral | None = None, bbox : IntTupleLiteral | None = None, mask_operands : typing.Iterable[BaseImageLiteralExpr | StringLiteral] | None = None):
+  def get(context : Context, pack : str, element : str, size : IntTupleLiteral | None = None, bbox : IntTupleLiteral | None = None, mask_operands : typing.Iterable[ImageAssetLiteralExpr | ColorLiteral | StringLiteral] | None = None):
     # 先检查图片包的基础信息
     descriptor = ImagePack.get_descriptor(pack)
     if descriptor is None:
@@ -250,10 +250,10 @@ class ImagePackElementLiteralExpr(BaseImageLiteralExpr, AssetDeclarationTrait):
         if index >= len(masks):
           raise PPInternalError("Too many mask operands")
         if masks[index].is_screen():
-          if not isinstance(operand, (BaseImageLiteralExpr, StringLiteral)) or isinstance(operand, (AssetDeclarationTrait, AssetPlaceholderTrait)):
+          if not isinstance(operand, (ImageAssetLiteralExpr, ColorLiteral, StringLiteral)):
             raise PPInternalError("Invalid mask operand type: " + str(type(operand)))
         else:
-          if not isinstance(operand, StringLiteral):
+          if not isinstance(operand, ColorLiteral):
             raise PPInternalError("Invalid mask operand type: " + str(type(operand)))
         cur_operands.append(operand)
     while len(cur_operands) < len(masks):
