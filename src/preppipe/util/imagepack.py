@@ -1171,10 +1171,21 @@ class ImagePack(NamedAssetClassBase):
     return ImagePack.create_from_zip(path)
 
   @staticmethod
-  def build_asset_archive(destpath : str, yamlpath : str):
+  def build_asset_archive(destpath : str, yamlpath : str, references_filename : str = "references.yml"):
     pack = ImagePack.build_image_pack_from_yaml(yamlpath)
     pack.write_zip(destpath)
-    return ImagePackDescriptor(pack, yamlpath)
+    basepath = os.path.dirname(os.path.abspath(yamlpath))
+    references_path = os.path.join(basepath, references_filename)
+    if os.path.exists(references_path):
+      return ImagePackDescriptor(pack, references_path)
+    return None
+
+  @classmethod
+  def add_descriptor(cls, descriptor : "ImagePackDescriptor") -> None:
+    if not isinstance(descriptor, ImagePackDescriptor):
+      raise PPInternalError("Invalid descriptor")
+    super().add_descriptor(descriptor)
+    descriptor.register_translatables()
 
   def dump_asset_info_json(self) -> dict:
     # 给 AssetManager 用的，返回一个适用于 JSON 的 dict 对象
@@ -1655,14 +1666,21 @@ class ImagePackSummary:
 @ImagePack._descriptor
 @dataclasses.dataclass
 class ImagePackDescriptor:
-  class MaskType(enum.Enum):
-    SCREEN = enum.auto()
-    COLOR_BACKGROUND_1 = enum.auto()
-    COLOR_CHARACTER_1 = enum.auto()
-    COLOR_CHARACTER_2 = enum.auto()
+  class MaskParamType(enum.Enum):
+    IMAGE = enum.auto() # 图片选区
+    COLOR = enum.auto() # 颜色选区
 
-    def is_screen(self) -> bool:
-      return self == ImagePackDescriptor.MaskType.SCREEN
+  class MaskType(enum.Enum):
+    BACKGROUND_SCREEN = enum.auto() # 屏幕
+    BACKGROUND_COLOR_1 = enum.auto() # 指示色
+    CHARACTER_COLOR_1 = enum.auto() # 衣服颜色
+    CHARACTER_COLOR_2 = enum.auto() # 发色
+    CHARACTER_COLOR_3 = enum.auto() # 装饰色
+
+    def get_param_type(self) -> "ImagePackDescriptor.MaskParamType":
+      if self == ImagePackDescriptor.MaskType.BACKGROUND_SCREEN:
+        return ImagePackDescriptor.MaskParamType.IMAGE
+      return ImagePackDescriptor.MaskParamType.COLOR
 
   def get_masks(self) -> tuple[ImagePack.MaskInfo, ...]:
     # 获取该图片组所有的选区
@@ -1691,7 +1709,10 @@ class ImagePackDescriptor:
     # 获取图片组的边界框(bbox)
     raise PPNotImplementedError()
 
-  def __init__(self, pack : ImagePack, yamlpath : str):
+  def register_translatables(self):
+    raise PPNotImplementedError()
+
+  def __init__(self, pack : ImagePack, references_path : str):
     raise PPNotImplementedError()
 
 def _test_main():

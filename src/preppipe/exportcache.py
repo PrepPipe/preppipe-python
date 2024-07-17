@@ -54,7 +54,8 @@ class CacheableOperationSymbol(Symbol):
     return 0.5
 
   @staticmethod
-  def run_export_all(ops: "SymbolTableRegion[CacheableOperationSymbol]", output_rootdir : str) -> None:
+  def run_export_all(ops: "typing.Iterable[CacheableOperationSymbol]", output_rootdir : str) -> None:
+    # 执行所有的操作; ops 一般应该是 SymbolTableRegion[CacheableOperationSymbol]
     cache_file_path = os.path.join(output_rootdir, CacheableOperationSymbol.CACHE_FILE_NAME)
 
     # 读取已执行过的操作

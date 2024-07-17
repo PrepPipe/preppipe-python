@@ -7,6 +7,7 @@ from preppipe.renpy.ast import RenPyASMNode, RenPyScriptFileOp
 from preppipe.renpy.transform import *
 from .ast import *
 from ..util import versioning
+from ..exportcache import CacheableOperationSymbol
 
 class RenPyExportVisitor(RenPyASTVisitor):
   indent_level : int
@@ -562,6 +563,10 @@ def export_renpy(m : RenPyModel, out_path : str, template_dir : str = '') -> Non
     parentdir = os.path.dirname(filepath)
     os.makedirs(parentdir, exist_ok=True)
     assetdata.export(filepath)
+
+  # step 4: cacheable exports
+  if len(m._cacheable_export_region) > 0:
+    CacheableOperationSymbol.run_export_all(m._cacheable_export_region, out_path)
 
   # done for now
 

@@ -6,6 +6,7 @@ from __future__ import annotations
 from ..irbase import *
 from .. import irdataop
 from ..language import TranslationDomain, Translatable
+from ..util.imagepackexportop import ImagePackExportOpSymbol
 
 # 在此我们定义 RenPy 语法的一个子集，以供我们对 Renpy 进行生成
 # （有朝一日应该也能把读取 Renpy 的功能做进来吧。。）
@@ -681,6 +682,7 @@ class RenPyASTVisitor:
 class RenPyModel(Operation):
   _script_region : SymbolTableRegion = irdataop.symtable_field(lookup_name="script") # RenPyScriptFileOp
   _asset_region : SymbolTableRegion = irdataop.symtable_field(lookup_name="asset") # RenPyAsset
+  _cacheable_export_region : SymbolTableRegion = irdataop.symtable_field(lookup_name="cacheable_export") # ImagePackExportOpSymbol
 
   def get_script(self, scriptname : str) -> RenPyScriptFileOp:
     return self._script_region.get(scriptname)
@@ -694,11 +696,17 @@ class RenPyModel(Operation):
   def add_asset(self, asset : RenPyFileAssetOp):
     self._asset_region.add(asset)
 
+  def add_cacheable_export(self, export : ImagePackExportOpSymbol):
+    self._cacheable_export_region.add(export)
+
   def scripts(self) -> typing.Iterable[RenPyScriptFileOp]:
     return self._script_region
 
   def assets(self) -> typing.Iterable[RenPyFileAssetOp]:
     return self._asset_region
+
+  def cacheable_exports(self) -> typing.Iterable[ImagePackExportOpSymbol]:
+    return self._cacheable_export_region
 
   @staticmethod
   def create(context : Context) -> RenPyModel:
