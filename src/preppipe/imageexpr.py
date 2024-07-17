@@ -249,12 +249,15 @@ class ImagePackElementLiteralExpr(BaseImageLiteralExpr, AssetDeclarationTrait):
         index = len(cur_operands)
         if index >= len(masks):
           raise PPInternalError("Too many mask operands")
-        if masks[index].is_screen():
-          if not isinstance(operand, (ImageAssetLiteralExpr, ColorLiteral, StringLiteral)):
-            raise PPInternalError("Invalid mask operand type: " + str(type(operand)))
-        else:
-          if not isinstance(operand, ColorLiteral):
-            raise PPInternalError("Invalid mask operand type: " + str(type(operand)))
+        match masks[index].get_param_type():
+          case ImagePackDescriptor.MaskParamType.IMAGE:
+            if not isinstance(operand, (ImageAssetLiteralExpr, ColorLiteral, StringLiteral)):
+              raise PPInternalError("Invalid mask operand type: " + str(type(operand)))
+          case ImagePackDescriptor.MaskParamType.COLOR:
+            if not isinstance(operand, ColorLiteral):
+              raise PPInternalError("Invalid mask operand type: " + str(type(operand)))
+          case _:
+            raise PPInternalError("Invalid mask param type")
         cur_operands.append(operand)
     while len(cur_operands) < len(masks):
       cur_operands.append(None)

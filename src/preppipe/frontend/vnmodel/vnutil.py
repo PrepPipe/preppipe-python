@@ -141,11 +141,58 @@ _tr_colorfill = _TR_vn_util.tr("colorfill",
   zh_cn="纯色填充",
   zh_hk="純色填充",
 )
-def emit_image_expr_from_callexpr(context : Context, call : CallExprOperand, placeholderdest : ImageExprPlaceholderDest, placeholderdesc: str, warnings : list[tuple[str, str]]) -> BaseImageLiteralExpr | None:
+_tr_imagepreset_background = _TR_vn_util.tr("imagepreset_background",
+  en="BackgroundPreset",
+  zh_cn="预设背景",
+  zh_hk="預設背景",
+)
+_tr_template = _TR_vn_util.tr("template",
+  en="Template",
+  zh_cn="模板",
+  zh_hk="模板",
+)
+_tr_composite_name = _TR_vn_util.tr("composite_name",
+  en="Composite",
+  zh_cn="差分组合",
+  zh_hk="差分組合",
+)
+_tr_screen = _TR_vn_util.tr("screen",
+  en="Screen",
+  zh_cn="屏幕",
+  zh_hk="屏幕",
+)
+_tr_color_indicator = _TR_vn_util.tr("color_indicator",
+  en="IndicatorColor",
+  zh_cn="指示色",
+  zh_hk="指示色",
+)
+_tr_imagepreset_character = _TR_vn_util.tr("imagepreset_character",
+  en="CharacterPreset",
+  zh_cn="预设角色",
+  zh_hk="預設角色",
+)
+_tr_color_cloth = _TR_vn_util.tr("color_cloth",
+  en="ClothColor",
+  zh_cn="衣服颜色",
+  zh_hk="衣服顏色",
+)
+_tr_color_hair = _TR_vn_util.tr("color_hair",
+  en="HairColor",
+  zh_cn="发色",
+  zh_hk="髮色",
+)
+_tr_color_decorate = _TR_vn_util.tr("color_decorate",
+  en="DecorateColor",
+  zh_cn="装饰色",
+  zh_hk="裝飾色",
+)
+def emit_image_expr_from_callexpr(context : Context, call : CallExprOperand, placeholderdest : ImageExprPlaceholderDest, placeholderdesc: str, warnings : list[tuple[str, str]], children_out : list[tuple[list[str], BaseImageLiteralExpr]] | None = None) -> BaseImageLiteralExpr | None:
   # 调用表达式有以下几种可能：(所有的分辨率输入均为可选项，解析完成后我们会尝试推导分辨率)
   # 占位（描述=...，分辨率=...），描述可选，按位参数视为描述
   # 声明（引用=...，分辨率=...）, 引用必需，按位参数视为引用
   # 纯色填充（颜色=..., 分辨率=...），均必须，按位参数视为颜色
+  # 预设背景（模板=...，差分组合=..., 屏幕=..., 指示色=..., 分辨率=...），只有模板必需，按位参数视为模板
+  # 预设角色（模板=...，差分组合=..., 衣服颜色=..., 发色=..., 装饰色=..., 分辨率=...），只有模板必需，按位参数视为模板
   # 所有的分辨率（如果有的话）都是一个"宽*高"的字符串，比如 "1920*1080"
 
   def handle_placeholder_expr(desc : str = '', *, resolution : FrontendParserBase.Resolution | None = None) -> PlaceholderImageLiteralExpr:
@@ -162,16 +209,29 @@ def emit_image_expr_from_callexpr(context : Context, call : CallExprOperand, pla
     resolution_v = resolution.resolution if resolution is not None else (0,0)
     return ColorImageLiteralExpr.get(context=context, color=ColorLiteral.get(color, context), size=IntTupleLiteral.get(resolution_v, context))
 
+  def handle_imagepreset_background_expr(template : str, *, composite : str = '', screen : str = '', indicator : Color | None = None, resolution : FrontendParserBase.Resolution | None = None) -> ImagePackElementLiteralExpr:
+    raise PPNotImplementedError("Image preset background is not implemented yet")
+
+  def handle_imagepreset_character_expr(template : str, *, composite : str = '', cloth : Color | None = None, hair : Color | None = None, decorate : Color | None = None, resolution : FrontendParserBase.Resolution | None = None) -> ImagePackElementLiteralExpr:
+    raise PPNotImplementedError("Image preset character is not implemented yet")
+
+  candidates_from_preset = []
+  if placeholderdest == ImageExprPlaceholderDest.DEST_SCENE_BACKGROUND:
+    candidates_from_preset.append((_tr_imagepreset_background, handle_imagepreset_background_expr, {'template': _tr_template, 'composite': _tr_composite_name, 'screen': _tr_screen, 'indicator': _tr_color_indicator, 'resolution': _tr_resolution}))
+  elif placeholderdest == ImageExprPlaceholderDest.DEST_CHARACTER_SPRITE:
+    candidates_from_preset.append((_tr_imagepreset_character, handle_imagepreset_character_expr, {'template': _tr_template, 'composite': _tr_composite_name, 'cloth': _tr_color_cloth, 'hair': _tr_color_hair, 'decorate': _tr_color_decorate, 'resolution': _tr_resolution}))
+
   imageexpr = FrontendParserBase.resolve_call(call, [
     (_tr_placeholder, handle_placeholder_expr, {'desc': _tr_description, 'resolution': _tr_resolution}),
     (_tr_decl, handle_decl_expr, {'ref': _tr_ref, 'resolution': _tr_resolution}),
     (_tr_colorfill, handle_colorfill_expr, {'color': _tr_color, 'resolution': _tr_resolution}),
+    *candidates_from_preset,
   ], warnings)
   if imageexpr is not None:
     return imageexpr
   return None
 
-def emit_image_expr_from_str(context : Context, s : str, basepath : str,  placeholderdest : ImageExprPlaceholderDest, placeholderdesc : str, warnings : list[tuple[str, str]]) -> BaseImageLiteralExpr | None:
+def emit_image_expr_from_str(context : Context, s : str, basepath : str,  placeholderdest : ImageExprPlaceholderDest, placeholderdesc : str, warnings : list[tuple[str, str]], children_out : list[tuple[list[str], BaseImageLiteralExpr]] | None = None) -> BaseImageLiteralExpr | None:
   # 不确定字符串是什么形式
   # 先尝试转化成调用表达式，不行的话试试当成路径
   # 都不行的话视为失败
@@ -183,7 +243,7 @@ def emit_image_expr_from_str(context : Context, s : str, basepath : str,  placeh
   if cmd := try_parse_value_expr(s, context.null_location):
     if isinstance(cmd, GeneralCommandOp):
       callexpr = FrontendParserBase.parse_commandop_as_callexpr(cmd)
-      return emit_image_expr_from_callexpr(context=context, call=callexpr, placeholderdest=placeholderdest, placeholderdesc=placeholderdesc, warnings=warnings)
+      return emit_image_expr_from_callexpr(context=context, call=callexpr, placeholderdest=placeholderdest, placeholderdesc=placeholderdesc, warnings=warnings, children_out=children_out)
     s = cmd
   if result := emit_image_expr_from_path(context=context, pathexpr=s, basepath=basepath, warnings=warnings):
     return result

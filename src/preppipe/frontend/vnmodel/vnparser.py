@@ -802,12 +802,13 @@ def _helper_parse_image_exprtree(parser : VNParser, state : VNASTParsingState, v
       # 尝试根据目前项的值来更新图片列表
       statestr = ','.join(statestack)
       placeholderdesc = entityprefix + ':' + statestr
+      children : list[tuple[list[str], BaseImageLiteralExpr]] = []
       if isinstance(node.value, ImageAssetData):
         expr = node.value
       elif isinstance(node.value, CallExprOperand):
-        expr = emit_image_expr_from_callexpr(context=state.context, call=node.value, placeholderdest=placeholderdest, placeholderdesc=placeholderdesc, warnings=warnings)
+        expr = emit_image_expr_from_callexpr(context=state.context, call=node.value, placeholderdest=placeholderdest, placeholderdesc=placeholderdesc, warnings=warnings, children_out=children)
       elif isinstance(node.value, str):
-        expr = emit_image_expr_from_str(context=state.context, s=node.value, basepath=state.input_file_path, placeholderdest=placeholderdest, placeholderdesc=placeholderdesc, warnings=warnings)
+        expr = emit_image_expr_from_str(context=state.context, s=node.value, basepath=state.input_file_path, placeholderdest=placeholderdest, placeholderdesc=placeholderdesc, warnings=warnings, children_out=children)
       else:
         raise PPInternalError('Unexpected node value type: ' + str(type(node.value)))
       if expr is None:
@@ -816,6 +817,11 @@ def _helper_parse_image_exprtree(parser : VNParser, state : VNASTParsingState, v
         state.emit_error(code='vnparse-invalid-imageexpr', msg=msg, loc=loc)
         state.emit_assetnotfound(loc=loc)
       submit_expr(statestr, expr)
+      if len(children) > 0:
+        # 如果有子结点，我们需要把子结点的所有差分组合都加到状态树里
+        for childstates, childexpr in children:
+          childstatestr = ','.join(statestack + childstates)
+          submit_expr(childstatestr, childexpr)
     # 开始读取子结点
     for child in node.children:
       # 如果子结点没有键，就报错
