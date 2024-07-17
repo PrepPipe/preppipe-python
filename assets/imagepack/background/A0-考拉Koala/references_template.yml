@@ -1,6 +1,6 @@
 masks:
-  - image
-  - color1
+  - BACKGROUND_SCREEN
+  - BACKGROUND_COLOR_1
 composites:
   - L0:
     en: "Daytime"
