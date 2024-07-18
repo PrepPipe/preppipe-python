@@ -41,6 +41,9 @@ class TranslationDomain:
     self.name = name
     self.elements = {}
 
+  def __getstate__(self):
+    raise RuntimeError("Cannot pickle TranslationDomain")
+
   def tr(self, code : str,
     en : str | list[str] | tuple[str], # 英语
     zh_cn : str | list[str] | tuple[str] | None = None, # 简中
@@ -70,6 +73,11 @@ class TranslationDomain:
 
   def get(self, code : str) -> Translatable:
     return self.elements[code]
+
+  def add_unpickled_translatable(self, t : Translatable):
+    assert t.parent is self
+    assert t.code not in self.elements
+    self.elements[t.code] = t
 
   @staticmethod
   def json_dict_export(domain_filter : str | None = None, name_filter : str | None = None) -> collections.OrderedDict[str, collections.OrderedDict[str, dict[str, list[str]]]]:
@@ -143,8 +151,8 @@ class Translatable:
   code : str
 
   # 这些是临时数据
-  cached_str : str | None = None
-  cached_allcandidates : tuple[str, ...] | None = None
+  cached_str : str | None
+  cached_allcandidates : tuple[str, ...] | None
   cached_ver : int # 最后一次更新 cached_str 时 PREFERRED_LANG_VER 的值
 
   # 以下是程序初始化时设定的
@@ -157,7 +165,20 @@ class Translatable:
     self.parent = parent
     self.code = code
     self.cached_str = None
+    self.cached_allcandidates = None
     self.cached_ver = 0
+
+  def __getstate__(self):
+    return {"candidates": self.candidates, "parent": self.parent.name, "code": self.code}
+
+  def __setstate__(self, state):
+    self.candidates = state["candidates"]
+    self.parent = TranslationDomain.ALL_DOMAINS[state["parent"]]
+    self.code = state["code"]
+    self.cached_str = None
+    self.cached_allcandidates = None
+    self.cached_ver = 0
+    self.parent.add_unpickled_translatable(self)
 
   def get(self) -> str:
     if self.cached_str is not None and self.cached_ver == self.PREFERRED_LANG_VER:
@@ -191,6 +212,9 @@ class Translatable:
         resultset.add(v)
     self.cached_allcandidates = tuple(resultset)
     return self.cached_allcandidates
+
+  def __contains__(self, item : str) -> bool:
+    return any(item in v for v in self.candidates.values())
 
   def get_current_candidates(self) -> list[str]:
     # 该函数目前只有导出文档时使用，不需要缓存
@@ -328,33 +352,39 @@ TR_preppipe.tr("not_implemented",
 ValueType = typing.TypeVar("ValueType") # pylint: disable=invalid-name
 class TranslatableDict(typing.Generic[ValueType]):
   # 如果需要用 Translatable 中的可选字符串作为 key，可以用这个类
-  # 现在还没有添加对 Translatable 热修改的支持（说不定以后会有）
   _data : dict[int, ValueType] # Translatable 的 id -> 实际数据
   _trlist : list[Translatable]
-  _cache : dict[str, ValueType] | None
 
   def __init__(self) -> None:
     super().__init__()
     self._data = {}
     self._trlist = []
-    self._cache = None
 
-  def register_data(self, tr : Translatable, data : ValueType):
-    idx = id(tr)
+  def __contains__(self, key : Translatable | str) -> bool:
+    if isinstance(key, Translatable):
+      return id(key) in self._data
+    return any(key in tr.get_all_candidates() for tr in self._trlist)
+
+  def __getitem__(self, key : Translatable | str) -> ValueType:
+    if isinstance(key, Translatable):
+      return self._data[id(key)]
+    for tr in self._trlist:
+      if key in tr.get_all_candidates():
+        return self._data[id(tr)]
+    raise KeyError("TranslatableDict: Key not found")
+
+  def get_or_create(self, key : Translatable, ctor : typing.Callable[[], ValueType]) -> ValueType:
+    idx = id(key)
+    if idx in self._data:
+      return self._data[idx]
+    self._trlist.append(key)
+    self._data[idx] = ctor()
+    return self._data[idx]
+
+  def __setitem__(self, key : Translatable, value : ValueType):
+    idx = id(key)
     if idx in self._data:
       raise RuntimeError("TranslatableDict: Duplicate registration")
-    self._data[idx] = data
-    self._trlist.append(tr)
+    self._data[idx] = value
+    self._trlist.append(key)
 
-  def get(self, key : str) -> ValueType | None:
-    if self._cache is None:
-      # 重建缓存
-      self._cache = {}
-      for tr in self._trlist:
-        curdata = self._data[id(tr)]
-        for e in tr.get_all_candidates():
-          self._cache[e] = curdata
-    return self._cache.get(key, None)
-
-  def values(self):
-    return self._data.values()

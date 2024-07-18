@@ -45,27 +45,62 @@ def AssetClassDecl(name : str): # pylint: disable=invalid-name
 class NamedAssetClassBase:
   # 继承的类需要定义以下成员：
   DESCRIPTOR_TYPE : typing.ClassVar[type] # 描述对象(记录素材使用方式和名称等信息的对象)的实际类型
-  MANIFEST : typing.ClassVar[list[typing.Any]] # 用于保存描述对象的列表
-  DESCRIPTOR_DICT : typing.ClassVar[TranslatableDict[typing.Any]] # 用于保存描述对象的字典，键为描述对象的名称
+  MANIFEST : typing.ClassVar[dict[str, typing.Any]] # 用于保存描述对象 (ID -> 描述对象)
+  DESCRIPTOR_DICT : typing.ClassVar[TranslatableDict[list[typing.Any]]] # 用于保存描述对象的字典，键为描述对象的名称
+  DESCRIPTOR_DICT_STRONLY : typing.ClassVar[dict[str, list[typing.Any]]] # 如果一些资源只使用固定名称、没有 Translatable 作为名称，则使用这个字典
 
   @classmethod
-  def get_candidate_name(cls, descriptor : typing.Any) -> Translatable:
+  def get_candidate_name(cls, descriptor : typing.Any) -> Translatable | str:
     # 从描述对象中获取素材的候选名称
+    raise PPNotImplementedError()
+
+  @classmethod
+  def get_candidate_id(cls, descriptor : typing.Any) -> str:
+    # 从描述对象中获取素材的 ID, 此项不允许有重名
     raise PPNotImplementedError()
 
   @classmethod
   def add_descriptor(cls, descriptor : typing.Any) -> None:
     name = cls.get_candidate_name(descriptor)
-    cls.DESCRIPTOR_DICT.register_data(name, descriptor)
-    cls.MANIFEST.append(descriptor)
+    identifier = cls.get_candidate_id(descriptor)
+    if identifier in cls.MANIFEST:
+      raise PPInternalError(f"Duplicate descriptor ID {identifier}")
+    cls.MANIFEST[identifier] = descriptor
+    if isinstance(name, Translatable):
+      cls.DESCRIPTOR_DICT.get_or_create(name, list).append(descriptor)
+    elif isinstance(name, str):
+      if name not in cls.DESCRIPTOR_DICT_STRONLY:
+        cls.DESCRIPTOR_DICT_STRONLY[name] = [descriptor]
+      else:
+        cls.DESCRIPTOR_DICT_STRONLY[name].append(descriptor)
+    else:
+      raise PPInternalError(f"Invalid name type {type(name)}")
+
+  @classmethod
+  def get_descriptor_candidates(cls, name : str) -> list[typing.Any]:
+    candidates = []
+    if name in cls.DESCRIPTOR_DICT:
+      candidates.extend(cls.DESCRIPTOR_DICT[name])
+    if name in cls.DESCRIPTOR_DICT_STRONLY:
+      candidates.extend(cls.DESCRIPTOR_DICT_STRONLY[name])
+    return candidates
 
   @classmethod
   def get_descriptor(cls, name : str) -> typing.Any | None:
-    return cls.DESCRIPTOR_DICT.get(name)
+    # 返回唯一的结果，如果不止一个则也视为没找到
+    candidates = cls.get_descriptor_candidates(name)
+    if len(candidates) == 1:
+      return candidates[0]
+    return None
+
+  @classmethod
+  def get_descriptor_by_id(cls, identifier : str) -> typing.Any | None:
+    return cls.MANIFEST.get(identifier, None)
 
   @classmethod
   def get_candidate_names(cls) -> list[str]:
-    return [cls.get_candidate_name(d).get() for d in cls.MANIFEST]
+    f = lambda x : x.get() if isinstance(x, Translatable) else x
+    return [f(cls.get_candidate_name(d)) for d in cls.MANIFEST.values()]
 
   @classmethod
   def load_manifest(cls, manifest: list[typing.Any]) -> None:
@@ -79,6 +114,7 @@ class NamedAssetClassBase:
     # 大部分时候，我们想把描述对象的代码放在注册类的定义后面，但是这样会导致描述对象的类型无法在注册类定义时确定
     # 为了解决这个问题，我们提供了这个函数，可以用作加到描述对象类型上面的修饰符
     cls.DESCRIPTOR_TYPE = descriptor_type
-    cls.MANIFEST = []
+    cls.MANIFEST = {}
     cls.DESCRIPTOR_DICT = TranslatableDict()
+    cls.DESCRIPTOR_DICT_STRONLY = {}
     return descriptor_type
