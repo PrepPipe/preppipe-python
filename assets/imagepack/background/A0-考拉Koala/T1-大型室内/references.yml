@@ -1,5 +1,5 @@
-inherit: "../exports_template.yml"
-tr_prefix: "imagepack-background-A0-T1"
+include: "../exports_template.yml"
+id: "background-A0-T1"
 reference:
   en: "Interior-Public"
   zh_cn: "大型室内"

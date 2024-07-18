@@ -1176,16 +1176,15 @@ class ImagePack(NamedAssetClassBase):
     pack.write_zip(destpath)
     basepath = os.path.dirname(os.path.abspath(yamlpath))
     references_path = os.path.join(basepath, references_filename)
-    if os.path.exists(references_path):
-      return ImagePackDescriptor(pack, references_path)
-    return None
+    descriptor = ImagePackDescriptor(pack, references_path)
+    ImagePack.add_descriptor(descriptor)
+    return descriptor
 
   @classmethod
-  def add_descriptor(cls, descriptor : "ImagePackDescriptor") -> None:
+  def get_candidate_name(cls, descriptor : "ImagePackDescriptor") -> Translatable | str:
     if not isinstance(descriptor, ImagePackDescriptor):
-      raise PPInternalError("Invalid descriptor")
-    super().add_descriptor(descriptor)
-    descriptor.register_translatables()
+      raise PPInternalError("Unexpected descriptor type: " + str(type(descriptor)))
+    return descriptor.get_name()
 
   def dump_asset_info_json(self) -> dict:
     # 给 AssetManager 用的，返回一个适用于 JSON 的 dict 对象
@@ -1664,8 +1663,13 @@ class ImagePackSummary:
       raise PPNotImplementedError()
 
 @ImagePack._descriptor
-@dataclasses.dataclass
 class ImagePackDescriptor:
+  TR_ref = TranslationDomain("imagepack-reference")
+
+  class ImagePackType(enum.Enum):
+    BACKGROUND = enum.auto() # 背景
+    CHARACTER = enum.auto() # 角色立绘
+
   class MaskParamType(enum.Enum):
     IMAGE = enum.auto() # 图片选区
     COLOR = enum.auto() # 颜色选区
@@ -1682,38 +1686,105 @@ class ImagePackDescriptor:
         return ImagePackDescriptor.MaskParamType.IMAGE
       return ImagePackDescriptor.MaskParamType.COLOR
 
-  def get_masks(self) -> tuple[ImagePack.MaskInfo, ...]:
+  # 对于以下大部分使用 Translatable | str 的参数来说，如果有 references.yml 文件，我们会从中读取并使用 Translatable
+  # 否则就只用 str 存现有的推导出来的值
+  pack_id : str # 图片组的 ID
+  topref : Translatable | str # 所对应资源的名称
+  authortags : tuple[str, ...] # 作者标签，如果有多个作者同时提供了相同名称的素材，可以用这个来区分
+  packtype : ImagePackType # 图片组的类型
+  masktypes : tuple[MaskType, ...] # 有几个选区、各自的类型
+  composites_code : list[str] # 各个差分组合的编号（字母数字组合）
+  composites_references : dict[str, Translatable] # 如果某些差分组合有（非编号的）名称，那么它们的名称存在这里
+  size : tuple[int, int] # 整体大小
+  bbox : tuple[int, int, int, int] # 边界框
+
+  def get_pack_id(self) -> str:
+    return self.pack_id
+
+  def get_name(self) -> Translatable | str:
+    return self.topref
+
+  def get_author_tags(self) -> tuple[str, ...]:
+    return self.authortags
+
+  def get_image_pack_type(self) -> ImagePackType:
+    return self.packtype
+
+  def get_masks(self) -> tuple[MaskType, ...]:
     # 获取该图片组所有的选区
     # 由于要结合前端的参数读取，我们这里使用 enum 来表示选区的类型
-    raise PPNotImplementedError()
+    return self.masktypes
 
-  def get_named_combinations(self) -> dict[str, str]:
+  #def get_named_combinations(self) -> dict[str, str]:
     # 获取该图片组所有有在 Translatable 定义名称的组合
     # 返回的 dict 的 key 是（当前语言下）组合的名称，value 是组合的编号
-    raise PPNotImplementedError()
+  #  raise PPNotImplementedError()
 
-  def get_combinations(self) -> list[str]:
+  #def get_combinations(self) -> list[str]:
     # 获取该图片组所有的组合
     # 返回的 list 是组合的编号
-    raise PPNotImplementedError()
+  #  raise PPNotImplementedError()
 
-  def is_valid_combination(self, name : str) -> bool:
+  def get_all_composites(self) -> typing.Iterable[str]:
+    # 获取该图片组所有的组合
+    return self.composites_code
+
+  def get_default_composite(self) -> str:
+    # 获取默认的组合
+    return self.composites_code[0]
+
+  def try_get_composite_name(self, code : str) -> Translatable | None:
+    return self.composites_references.get(code)
+
+  def is_valid_composite(self, code : str) -> bool:
     # 检查一个组合是否有效
-    raise PPNotImplementedError()
+    return code in self.composites_code
+
+  def get_composite_code_from_name(self, name : str) -> str | None:
+    if name in self.composites_code:
+      return name
+    for code, tr in self.composites_references.items():
+      if name in tr:
+        return code
+    return None
 
   def get_size(self) -> tuple[int, int]:
     # 获取图片组的整体大小
-    raise PPNotImplementedError()
+    return self.size
 
   def get_bbox(self) -> tuple[int, int, int, int]:
     # 获取图片组的边界框(bbox)
-    raise PPNotImplementedError()
-
-  def register_translatables(self):
-    raise PPNotImplementedError()
+    return self.bbox
 
   def __init__(self, pack : ImagePack, references_path : str):
+    if os.path.exists(references_path):
+      with open(references_path, "r", encoding="utf-8") as f:
+        references = yaml.safe_load(f)
+        if not isinstance(references, dict):
+          raise PPInternalError("Invalid references file: " + references_path)
+        # TODO: 读取 references 文件
     raise PPNotImplementedError()
+
+  @staticmethod
+  def lookup(name : str, requested_type : ImagePackType | None = None) -> "ImagePackDescriptor":
+    if candidate := ImagePack.get_descriptor_by_id(name):
+      if requested_type is None or candidate.packtype == requested_type:
+        return candidate
+    # 尝试按名称搜索
+    # 我们支持将作者名称加在素材名称前，以'/'分隔
+    authortag : str = ''
+    purename : str = ''
+    splitresult = name.split('/')
+    if len(splitresult) == 2:
+      authortag, purename = splitresult
+    else:
+      purename = name
+    candidates = ImagePack.get_descriptor_candidates(purename)
+    for d in candidates:
+      if requested_type is None or d.packtype == requested_type:
+        if len(authortag) == 0 or authortag in d.authortags:
+          return d
+    return None
 
 def _test_main():
   srcdir = pathlib.Path(sys.argv[1])

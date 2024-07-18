@@ -868,9 +868,11 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
 
   # 用于在一系列可选的调用中选择一个回调函数并执行
   @staticmethod
-  def resolve_call(callexpr : CallExprOperand, candidate_list : list[tuple[Translatable, typing.Callable, dict[str, Translatable]]], warnings : list[tuple[str, str]]) -> typing.Any:
+  def resolve_call(callexpr : CallExprOperand, candidate_list : list[tuple[Translatable | list[Translatable], typing.Callable, dict[str, Translatable]]], warnings : list[tuple[str, str]]) -> typing.Any:
     for name, cb, paramdict in candidate_list:
-      if callexpr.name in name.get_all_candidates():
+      # name 可以是单个 Translatable 也可以是一个列表，为了方便一个名称有多个别名的情况
+      # （比如预设背景和预设角色在没有歧义的情况下都可以使用“预设”作为简称）
+      if (callexpr.name in name.get_all_candidates() if isinstance(name, Translatable) else any(callexpr.name in n.get_all_candidates() for n in name)):
         sig = inspect.signature(cb)
         valid_args = None
         # 首先，我们得把按位参数和关键字参数都处理好
@@ -965,7 +967,11 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
     # 没有找到匹配的回调函数
     expr_name_list = []
     for name, _, _ in candidate_list:
-      expr_name_list.extend(name.get())
+      if isinstance(name, Translatable):
+        expr_name_list.append(name.get())
+      else:
+        for n in name:
+          expr_name_list.append(n.get())
     expr_name_list_str = ', '.join(expr_name_list)
     warnings.append(('cmdparser-unrecognized-exprname', FrontendParserBase.tr_unrecognized_exprname.format(exprname=callexpr.name, exprnamelist=expr_name_list_str)))
     return None
