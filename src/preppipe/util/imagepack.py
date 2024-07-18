@@ -22,6 +22,7 @@ import dataclasses
 import enum
 import unicodedata
 import textwrap
+import re
 
 from preppipe.irbase import IRValueMapper, Location, Operation
 
@@ -1176,7 +1177,7 @@ class ImagePack(NamedAssetClassBase):
     pack.write_zip(destpath)
     basepath = os.path.dirname(os.path.abspath(yamlpath))
     references_path = os.path.join(basepath, references_filename)
-    descriptor = ImagePackDescriptor(pack, references_path)
+    descriptor = ImagePackDescriptor(pack, references_path, destpath)
     ImagePack.add_descriptor(descriptor)
     return descriptor
 
@@ -1698,6 +1699,33 @@ class ImagePackDescriptor:
   size : tuple[int, int] # 整体大小
   bbox : tuple[int, int, int, int] # 边界框
 
+  def __getstate__(self):
+    return {
+      'pack_id': self.pack_id,
+      'topref': self.topref,
+      'authortags': self.authortags,
+      'packtype': self.packtype,
+      'masktypes': self.masktypes,
+      'composites_code': self.composites_code,
+      'composites_references': self.composites_references,
+      'size': self.size,
+      'bbox': self.bbox
+    }
+
+  def __setstate__(self, state):
+    self.pack_id = state['pack_id']
+    self.topref = state['topref']
+    self.authortags = state['authortags']
+    self.packtype = state['packtype']
+    self.masktypes = state['masktypes']
+    self.composites_code = state['composites_code']
+    self.composites_references = state['composites_references']
+    self.size = state['size']
+    self.bbox = state['bbox']
+
+  # 以下作为缓存的信息，不存文件
+  composites_code_set : set[str] | None = None
+
   def get_pack_id(self) -> str:
     return self.pack_id
 
@@ -1715,16 +1743,6 @@ class ImagePackDescriptor:
     # 由于要结合前端的参数读取，我们这里使用 enum 来表示选区的类型
     return self.masktypes
 
-  #def get_named_combinations(self) -> dict[str, str]:
-    # 获取该图片组所有有在 Translatable 定义名称的组合
-    # 返回的 dict 的 key 是（当前语言下）组合的名称，value 是组合的编号
-  #  raise PPNotImplementedError()
-
-  #def get_combinations(self) -> list[str]:
-    # 获取该图片组所有的组合
-    # 返回的 list 是组合的编号
-  #  raise PPNotImplementedError()
-
   def get_all_composites(self) -> typing.Iterable[str]:
     # 获取该图片组所有的组合
     return self.composites_code
@@ -1738,10 +1756,12 @@ class ImagePackDescriptor:
 
   def is_valid_composite(self, code : str) -> bool:
     # 检查一个组合是否有效
-    return code in self.composites_code
+    if self.composites_code_set is None:
+      self.composites_code_set = set(self.composites_code)
+    return code in self.composites_code_set
 
   def get_composite_code_from_name(self, name : str) -> str | None:
-    if name in self.composites_code:
+    if self.is_valid_composite(name):
       return name
     for code, tr in self.composites_references.items():
       if name in tr:
@@ -1756,14 +1776,151 @@ class ImagePackDescriptor:
     # 获取图片组的边界框(bbox)
     return self.bbox
 
-  def __init__(self, pack : ImagePack, references_path : str):
+  def __init__(self, pack : ImagePack, references_path : str, pack_path : str):
+    # 首先在读取 references.yml 之前，尝试从图片包本体中读取信息并初始化所有成员
+    self.pack_id = os.path.splitext(os.path.basename(pack_path))[0].lower()
+    self.topref = self.pack_id
+    # 尝试从图片包中找到作者信息
+    if "author" in pack.opaque_metadata:
+      self.authortags = tuple(pack.opaque_metadata["author"])
+    else:
+      self.authortags = tuple()
+    # 关于判断图片包类型，我们目前假设有图片选区的都是背景，没有的都是角色立绘
+    is_screen_found = False
+    for mask in pack.masks:
+      if mask.projective_vertices is not None:
+        is_screen_found = True
+        break
+    masktypelist = []
+    if is_screen_found:
+      self.packtype = ImagePackDescriptor.ImagePackType.BACKGROUND
+      for mask in pack.masks:
+        if mask.projective_vertices is not None:
+          masktypelist.append(ImagePackDescriptor.MaskType.BACKGROUND_SCREEN)
+        else:
+          masktypelist.append(ImagePackDescriptor.MaskType.BACKGROUND_COLOR_1)
+    else:
+      self.packtype = ImagePackDescriptor.ImagePackType.CHARACTER
+      for mask in pack.masks:
+        match len(masktypelist):
+          case 0:
+            masktypelist.append(ImagePackDescriptor.MaskType.CHARACTER_COLOR_1)
+          case 1:
+            masktypelist.append(ImagePackDescriptor.MaskType.CHARACTER_COLOR_2)
+          case _:
+            masktypelist.append(ImagePackDescriptor.MaskType.CHARACTER_COLOR_3)
+    self.masktypes = tuple(masktypelist)
+    # 从图片包组合的名称中提取编号
+    regex_pattern = re.compile(r'^(?P<code>[A-Z0-9]+)(?:-.+)?$')
+    def get_code_from_composite_name(name : str) -> str:
+      # 名称要么是纯编号，要么是"<编号>-<描述>"
+      # 编号是只由大写字母和数字组成的字符串，我们不管其他的内容
+      if result := re.match(regex_pattern, name):
+        return result.group("code")
+      raise PPInternalError("Cannot extract code from composite name: " + name)
+    self.composites_code = [get_code_from_composite_name(composite.basename) for composite in pack.composites]
+    self.composites_references = {}
+    self.size = (pack.width, pack.height)
+    # 计算 bbox，取所有基底图的并集
+    xmin = pack.width
+    ymin = pack.height
+    xmax = 0
+    ymax = 0
+    for l in pack.layers:
+      if not l.base:
+        continue
+      if bbox := l.patch.getbbox():
+        xmin = min(xmin, bbox[0])
+        ymin = min(ymin, bbox[1])
+        xmax = max(xmax, bbox[2])
+        ymax = max(ymax, bbox[3])
+        if xmin == 0 and ymin == 0 and xmax == pack.width and ymax == pack.height:
+          break
+    self.bbox = (xmin, ymin, xmax, ymax)
+
+    # 默认的初始化完毕，开始读取 references.yml
+    def handle_include_resursive(include_path : str, cur_path : str) -> dict[str, typing.Any]:
+      if not os.path.isabs(include_path):
+        include_path = os.path.join(os.path.dirname(cur_path), include_path)
+      if not os.path.exists(include_path):
+        raise PPInternalError("Cannot find included file: " + include_path)
+      with open(include_path, "r", encoding="utf-8") as f:
+        result = yaml.safe_load(f)
+        if "include" in result:
+          next_include_path = result["include"]
+          child = handle_include_resursive(next_include_path, include_path)
+          child.update(result)
+          result = child
+        return result
+    references = {}
     if os.path.exists(references_path):
       with open(references_path, "r", encoding="utf-8") as f:
         references = yaml.safe_load(f)
         if not isinstance(references, dict):
           raise PPInternalError("Invalid references file: " + references_path)
-        # TODO: 读取 references 文件
-    raise PPNotImplementedError()
+        if "include" in references:
+          child = handle_include_resursive(references["include"], references_path)
+          child.update(references)
+          references = child
+    if len(references) == 0:
+      return
+    # 为检查是否有没用上的项
+    used_keys = set()
+    used_keys.add("include")
+    if "id" in references:
+      used_keys.add("id")
+      self.pack_id = references["id"]
+    if "reference" in references:
+      used_keys.add("reference")
+      refvalue = references["reference"]
+      if isinstance(refvalue, dict):
+        tr_id = self.pack_id + "-reference"
+        tr_obj = ImagePackDescriptor.TR_ref.tr(code=tr_id, **refvalue)
+        self.topref = tr_obj
+      elif isinstance(refvalue, str):
+        self.topref = refvalue
+      else:
+        raise PPInternalError("Invalid reference value: " + str(refvalue))
+    if "author_tags" in references:
+      used_keys.add("author_tags")
+      tags = references["author_tags"]
+      if not isinstance(tags, list):
+        raise PPInternalError("Invalid author tags: " + str(tags))
+      for t in tags:
+        if not isinstance(t, str):
+          raise PPInternalError("Invalid author tag: " + str(t))
+      self.authortags = tuple(tags)
+    if "kind" in references:
+      used_keys.add("kind")
+      kind_str = references["kind"]
+      self.packtype = ImagePackDescriptor.ImagePackType[kind_str]
+    if "masks" in references:
+      used_keys.add("masks")
+      masks = references["masks"]
+      if not isinstance(masks, list):
+        raise PPInternalError("Invalid masks: " + str(masks))
+      masktypelist = []
+      for m in masks:
+        if not isinstance(m, str):
+          raise PPInternalError("Invalid mask type: " + str(m))
+        masktypelist.append(ImagePackDescriptor.MaskType[m])
+      self.masktypes = tuple(masktypelist)
+    if "composites" in references:
+      used_keys.add("composites")
+      valid_composites = set(self.composites_code)
+      for code, d in references["composites"].items():
+        if code not in valid_composites:
+          raise PPInternalError("Invalid composite code: " + code)
+        if not isinstance(d, dict):
+          raise PPInternalError("Invalid composite translatable arguments: " + str(d))
+        tr_id = self.pack_id + "-composite-" + code
+        tr_obj = ImagePackDescriptor.TR_ref.tr(code=tr_id, **d)
+        self.composites_references[code] = tr_obj
+    # 暂时没有其他参数了
+    for keys in references.keys():
+      if keys not in used_keys:
+        raise PPInternalError("Unknown key in references: " + keys)
+    # 完成
 
   @staticmethod
   def lookup(name : str, requested_type : ImagePackType | None = None) -> "ImagePackDescriptor":
