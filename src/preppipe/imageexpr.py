@@ -211,34 +211,32 @@ class PlaceholderImageLiteralExpr(BaseImageLiteralExpr, AssetPlaceholderTrait):
 class ImagePackElementLiteralExpr(BaseImageLiteralExpr, AssetDeclarationTrait):
   # 该图片是一个图片包中的一个组合
   # 除了基础的图片信息外，还有以下参数：
-  # 1. 图片包的名称
+  # 1. 图片包的名称(ID)
   # 2. 图片包中的组合名称
   # 3. 0-N 个选区参数（图片、颜色或是字符串文本）
   @property
-  def pack(self) -> StringLiteral:
+  def pack_id(self) -> StringLiteral:
     return self.get_value_tuple()[BaseImageLiteralExpr.DERIVED_DATA_START]
 
   @property
   def composite_name(self) -> StringLiteral:
     return self.get_value_tuple()[BaseImageLiteralExpr.DERIVED_DATA_START + 1]
 
-  def get_num_mask_operands(self) -> int:
-    descriptor = ImagePack.get_descriptor(self.pack.get_string())
-    if descriptor is None:
-      raise PPInternalError("Invalid Imagepack reference: " + self.pack.get_string())
-    if not isinstance(descriptor, ImagePackDescriptor):
-      raise PPInternalError("Invalid Imagepack descriptor: " + self.pack.get_string())
-    return len(descriptor.get_masks())
+  def get_fork_operands(self) -> tuple[ImageAssetData | ColorLiteral | StringLiteral, ...] | None:
+    num_operands = len(self.get_value_tuple()) - BaseImageLiteralExpr.DERIVED_DATA_START - 2
+    if num_operands == 0:
+      return None
+    return self.get_value_tuple()[BaseImageLiteralExpr.DERIVED_DATA_START + 2:] # type: ignore
 
   @staticmethod
-  def get(context : Context, pack : str, element : str, size : IntTupleLiteral | None = None, bbox : IntTupleLiteral | None = None, mask_operands : typing.Iterable[ImageAssetLiteralExpr | ColorLiteral | StringLiteral] | None = None):
+  def get(context : Context, pack : str, element : str, size : IntTupleLiteral | None = None, bbox : IntTupleLiteral | None = None, mask_operands : typing.Iterable[ImageAssetData | ColorLiteral | StringLiteral] | None = None):
     # 先检查图片包的基础信息
-    descriptor = ImagePack.get_descriptor(pack)
+    descriptor = ImagePack.get_descriptor_by_id(pack)
     if descriptor is None:
       raise PPInternalError("Invalid Imagepack reference: " + pack)
     if not isinstance(descriptor, ImagePackDescriptor):
       raise PPInternalError("Invalid Imagepack descriptor: " + pack + " (type: " + str(type(descriptor)) + ")")
-    if not descriptor.is_valid_combination(element):
+    if not descriptor.is_valid_composite(element):
       raise PPInternalError("Invalid Imagepack element: " + element)
     # 再处理选区参数
     # 选区参数可以少（用 None 填充）但是不能多
@@ -251,7 +249,7 @@ class ImagePackElementLiteralExpr(BaseImageLiteralExpr, AssetDeclarationTrait):
           raise PPInternalError("Too many mask operands")
         match masks[index].get_param_type():
           case ImagePackDescriptor.MaskParamType.IMAGE:
-            if not isinstance(operand, (ImageAssetLiteralExpr, ColorLiteral, StringLiteral)):
+            if not isinstance(operand, (ImageAssetData, ColorLiteral, StringLiteral)):
               raise PPInternalError("Invalid mask operand type: " + str(type(operand)))
           case ImagePackDescriptor.MaskParamType.COLOR:
             if not isinstance(operand, ColorLiteral):

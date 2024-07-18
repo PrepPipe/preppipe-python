@@ -63,7 +63,7 @@ class AssetManager:
 
   _assets : dict[str, AssetPackInfo]
 
-  def __init__(self) -> None:
+  def __init__(self, load_manifest : bool = True) -> None:
     self._assets = {}
     for relpath in AssetManager.ASSET_MANIFEST.keys():
       classid = relpath.split("-")[0]
@@ -72,6 +72,10 @@ class AssetManager:
       if handle_class is None:
         raise PPInternalError(f"Asset class {classid} not found")
       self._assets[name] = AssetManager.AssetPackInfo(relpath=relpath, handle_class=handle_class, handle=None)
+    if load_manifest:
+      self.try_load_manifest()
+
+  def try_load_manifest(self):
     manifest_filepath = os.path.join(AssetManager.get_asset_install_path(), AssetManager.MANIFEST_NAME)
     if os.path.exists(manifest_filepath):
       with open(manifest_filepath, "rb") as f:
@@ -176,10 +180,17 @@ class AssetManager:
     AssetManager.get_instance()
 
   @staticmethod
+  def init_nomanifest():
+    # 我们使用 AssetManager 的工具入口时，不能加载 manifest，
+    # 万一要构建资源包的话 manifest 的构建过程可能会与已载入的产生冲突
+    assert AssetManager._instance is None
+    AssetManager._instance = AssetManager(load_manifest=False)
+
+  @staticmethod
   def tool_main(args : list[str] | None = None):
     # 创建一个有以下参数的 argument parser: [--debug] [--create <yml> | --load <zip>] [--save <zip>] [--fork [args]] [--export <dir>]
     Translatable._init_lang_list()
-    AssetManager.init()
+    AssetManager.init_nomanifest()
     parser = argparse.ArgumentParser(description="Asset Management Tool")
     Translatable._language_install_arguments(parser) # pylint: disable=protected-access
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
@@ -194,6 +205,8 @@ class AssetManager:
     Translatable._language_handle_arguments(parsed_args, AssetManager._debug) # pylint: disable=protected-access
     if parsed_args.build is not None:
       AssetManager.build_assets(parsed_args.build)
+    else:
+      AssetManager.get_instance().try_load_manifest()
     if parsed_args.dump_json:
       inst = AssetManager.get_instance()
       inst.load_all_assets()
