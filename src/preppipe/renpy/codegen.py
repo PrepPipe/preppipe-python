@@ -8,6 +8,7 @@ import typing
 from .ast import *
 from ..vnmodel import *
 from ..imageexpr import *
+from ..util.imagepackexportop import *
 from ..util import nameconvert
 
 @dataclasses.dataclass
@@ -85,6 +86,7 @@ class _RenPyCodeGenHelper:
   audiospec_dict : collections.OrderedDict[Value, StringLiteral]
   anon_asset_index_dict : collections.OrderedDict[str, int] # parent dir -> anon index
   numeric_image_index : int
+  imagepack_handler : ImagePackExportDataBuilder
 
   # 辅助信息
   CODEGEN_MATCH_TREE : typing.ClassVar[dict] = {}
@@ -104,6 +106,7 @@ class _RenPyCodeGenHelper:
     self.audiospec_dict = collections.OrderedDict()
     self.anon_asset_index_dict = collections.OrderedDict()
     self.numeric_image_index = 0
+    self.imagepack_handler = ImagePackExportDataBuilder()
 
     if len(_RenPyCodeGenHelper.CODEGEN_MATCH_TREE) == 0:
       _RenPyCodeGenHelper.init_matchtable()
@@ -1065,9 +1068,17 @@ class _RenPyCodeGenHelper:
       return 'Placeholder(base=' + kind + ', text="' + v.description.get_string() + '")'
     if isinstance(v, ImageAssetLiteralExpr):
       return '"' + self._handle_assetdata(v.image, user_hint) + '"'
+    if isinstance(v, ImagePackElementLiteralExpr):
+      ref = self.imagepack_handler.add_value(v)
+      if isinstance(ref, str):
+        return '"' + ref + '"'
+      elif isinstance(ref, ImagePackExportDataBuilder.ImagePackElementReferenceInfo):
+        return '"' + ref.instance_id + ' ' + ref.composite_code + '"'
+      else:
+        raise PPInternalError('Unknown image pack reference type')
     raise NotImplementedError('Unsupported value type for asmexpr generation: ' + str(type(v)))
 
-  def get_impsec(self, v : Value, user_hint : VNStandardDeviceKind | None = None) -> tuple[StringLiteral]:
+  def get_impsec(self, v : Value, user_hint : VNStandardDeviceKind | None = None) -> tuple[StringLiteral, ...]:
     if result := self.imspec_dict.get(v, None):
       return result
 
@@ -1077,6 +1088,18 @@ class _RenPyCodeGenHelper:
       basename = os.path.basename(path)
       base = os.path.splitext(basename)[0]
       spec = tuple([StringLiteral.get(v, self.context) for v in base.split()])
+      self.imspec_dict[v] = spec
+      return spec
+
+    # 有图片包的话同理
+    if isinstance(v, ImagePackElementLiteralExpr):
+      ref = self.imagepack_handler.add_value(v)
+      if isinstance(ref, str):
+        spec = (StringLiteral.get(ref, self.context),)
+      elif isinstance(ref, ImagePackExportDataBuilder.ImagePackElementReferenceInfo):
+        spec = (StringLiteral.get(ref.instance_id, self.context), StringLiteral.get(ref.composite_code, self.context))
+      else:
+        raise PPInternalError('Unknown image pack reference type')
       self.imspec_dict[v] = spec
       return spec
 
@@ -1150,6 +1173,31 @@ class _RenPyCodeGenHelper:
     self.result.add_script(self.cur_mainscript)
     return self.cur_mainscript
 
+  def write_imagepack_instances(self, imagepacks : dict[str, ImagePackExportDataBuilder.InstanceExportInfo]):
+    # 对于每个图片包实例，我们：
+    # 1. 生成一个 layeredimage, 把所有的图层都塞里面 （假设实例名是 A）
+    # 2. 对每一个差分组合，生成一个 image 结点，把差分组合名称到 A 中图层的关系给写上
+    # (比如如果差分组合"M1E1" 由 L1, L2 两个图层组成，那我们写： image A M1E1 = "A L1 L2")
+    for pack_id, info in imagepacks.items():
+      lines = []
+      header = "layeredimage " + pack_id + ":"
+      lines.append(header)
+      for layerinfo in info.layer_exports:
+        if not isinstance(layerinfo, ImagePackExportDataBuilder.LayerExportInfo):
+          raise PPInternalError('Unexpected layer export info type')
+        attrdecl = "    attribute RL" + str(layerinfo.index) + ":"
+        attrbody = "        \"" + layerinfo.path + "\""
+        if layerinfo.offset_x != 0 or layerinfo.offset_y != 0:
+          attrbody += " pos (" + str(layerinfo.offset_x) + ", " + str(layerinfo.offset_y) + ")"
+        lines.append(attrdecl)
+        lines.append(attrbody)
+      for code, layers in info.composites.items():
+        composite = "image " + pack_id + " " + code + " = \"" + pack_id + " " + ' '.join(["RL" + str(v) for v in layers]) + "\""
+        lines.append(composite)
+      asm = StringListLiteral.get(self.context, [StringLiteral.get(v, self.context) for v in lines])
+      asmnode = RenPyASMNode.create(self.context, asm=asm, name=pack_id)
+      self.insert_at_top(asmnode)
+
   def run(self) -> RenPyModel:
     # 所有在 / 命名空间下的资源都会组织在根目录下，其他命名空间的资源会在 dlc/<命名空间路径> 下
     # 我们需要按排好序的名称进行生成，这样可以保证子命名空间在父命名空间之后生成
@@ -1171,6 +1219,11 @@ class _RenPyCodeGenHelper:
         self.handle_scene(s)
       for f in n.functions:
         self.handle_function(f)
+
+    imagepacks = self.imagepack_handler.finalize(self.result._cacheable_export_region) # pylint: disable=protected-access
+    if len(imagepacks) > 0:
+      self.write_imagepack_instances(imagepacks)
+
     return self.result
 
 def codegen_renpy(m : VNModel) -> RenPyModel:
