@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: 2024 PrepPipe's Contributors
 # SPDX-License-Identifier: Apache-2.0
 
+import typing
 from ..irbase import *
 from ..exportcache import CacheableOperationSymbol
 from .imagepack import *
@@ -152,3 +153,64 @@ class ImagePackExportOpSymbol(CacheableOperationSymbol):
       return 1.0
     # 否则是 I/O 密集型，只需要输出现有的图片
     return 0.25
+
+class ImagePackExportDataBuilder:
+  # 我们使用该类在将 VNModel 转化为后端 IR/AST 时对图片包的引用进行整理
+  # 并在后端 IR/AST 中生成对应的 ImagePackExportOpSymbol
+  # 如果任意部分需要定制，后端可以继承这个类并实现对应的方法
+
+  # 以下需要子类提供实现(也可以用这里的默认实现)
+  # ---------------------------------------------------------------------
+  def get_instance_id(self, pack_id : str, fork_params : tuple, pack_instance_index : int) -> str:
+    # 通过图片包 ID、fork 参数和图片包实例的索引来获取一个唯一的 ID
+    return pack_id + "_" + str(pack_instance_index)
+
+  def place_imagepack_instance(self, instance_id : str, pack_id : str) -> str:
+    # 当我们需要创建图片包实例时，我们应该把图片包放在哪
+    # 图片包中的图层将保存在这个目录下，文件名由编号决定。
+    # 此类会尝试将不同图片包实例中能共享的部分进行合并，同一图层可能被多个实例引用。
+    return os.path.join("images", pack_id)
+
+  def get_imagepack_layer_filename(self, pack_id : str, layer_index : int) -> str:
+    # 保存图片包实例时，各个图层应该以什么文件名保存。这个函数也决定图片保存的格式
+    # 路径已经由 place_imagepack_instance() 决定，这里只需要返回文件名即可
+    return pack_id + "_L" + str(layer_index) + ".png"
+
+  def place_imagepack_composite(self, instance_id : str, pack_id : str, composite_code : str) -> str:
+    # 组合的图片应该放在哪
+    return os.path.join("images", pack_id, 'E' + instance_id + '_' + composite_code + ".png")
+
+  # 以下是提供给子类使用者的接口
+  # ---------------------------------------------------------------------
+
+  @dataclasses.dataclass
+  class ImagePackElementReferenceInfo:
+    # 如果对图片的引用可以不用独立的图片，而是用差分的方式来表示，那么这个类可以用来表示这个差分
+    # 我们要求后端能够使用 instance_id + composite_code 来生成引用
+    # 如果实际上需要用其他方式表示（比如差分不能直接用 composite_code 字符串、必须用纯数字编号）那么后端需要自己构建这样的转换
+    instance_id : str
+    composite_code : str
+
+  def add_value(self, value : ImagePackElementLiteralExpr, is_require_merged_image : bool = False) -> ImagePackElementReferenceInfo | str:
+    # 添加一个图片包元素到 builder 中
+    # 如果 is_require_merged_image 为 True，那么我们生成时会保证生成一个单独的图片，路径是返回值
+    # 否则我们会尝试使用差分的方式来表示这个图片，返回值是 ImagePackElementReferenceInfo
+    raise NotImplementedError()
+
+  @dataclasses.dataclass
+  class LayerExportInfo:
+    index : int
+    offset_x : int
+    offset_y : int
+    path : str
+
+  @dataclasses.dataclass
+  class InstanceExportInfo:
+    layer_exports : list # list[LayerExportInfo]
+    composites : dict[str, tuple[int, ...]] # 差分组合的编码 -> 各个组成图层的编号
+
+  def finalize(self, dest : SymbolTableRegion[ImagePackExportOpSymbol]) -> dict[str, InstanceExportInfo]:
+    # 完成添加图片包元素的操作，生成 ImagePackExportOpSymbol 并整理所有的图片包实例信息
+    # 我们生成的导出操作中会包含单个文件的输出操作，但是这个函数的返回值只包含图片包实例的信息
+    # 在 RenPy 中，我们会使用此函数的返回值来生成 layeredimage 语句，而单个文件可以直接使用文件名、不需要额外的处理
+    raise NotImplementedError()
