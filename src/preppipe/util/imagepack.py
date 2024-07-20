@@ -1195,12 +1195,12 @@ class ImagePack(NamedAssetClassBase):
     return ImagePack.create_from_zip(path)
 
   @staticmethod
-  def build_asset_archive(destpath : str, yamlpath : str, references_filename : str = "references.yml"):
+  def build_asset_archive(name : str, destpath : str, yamlpath : str, references_filename : str = "references.yml"):
     pack = ImagePack.build_image_pack_from_yaml(yamlpath)
     pack.write_zip(destpath)
     basepath = os.path.dirname(os.path.abspath(yamlpath))
     references_path = os.path.join(basepath, references_filename)
-    descriptor = ImagePackDescriptor(pack, references_path, destpath)
+    descriptor = ImagePackDescriptor(pack, name, references_path, destpath)
     ImagePack.add_descriptor(descriptor)
     return descriptor
 
@@ -1841,9 +1841,9 @@ class ImagePackDescriptor:
     # 获取图片组的边界框(bbox)
     return self.bbox
 
-  def __init__(self, pack : ImagePack, references_path : str, pack_path : str):
+  def __init__(self, pack : ImagePack, pack_name : str, references_path : str, pack_path : str):
     # 首先在读取 references.yml 之前，尝试从图片包本体中读取信息并初始化所有成员
-    self.pack_id = os.path.splitext(os.path.basename(pack_path))[0].lower()
+    self.pack_id = pack_name
     self.topref = self.pack_id
     # 尝试从图片包中找到作者信息
     if "author" in pack.opaque_metadata:
@@ -1937,9 +1937,6 @@ class ImagePackDescriptor:
     # 为检查是否有没用上的项
     used_keys = set()
     used_keys.add("include")
-    if "id" in references:
-      used_keys.add("id")
-      self.pack_id = references["id"]
     if "reference" in references:
       used_keys.add("reference")
       refvalue = references["reference"]

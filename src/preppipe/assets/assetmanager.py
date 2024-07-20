@@ -55,6 +55,13 @@ class AssetManager:
   # 素材包的清单文件名，如果有什么信息需要在没有素材时也能获取（比如程序的另一个部分如何引用这些素材），则在这个文件中保存
   MANIFEST_NAME : typing.ClassVar[str] = "manifest.pickle"
 
+  @staticmethod
+  def decompose_asset_relpath(relpath : str) -> tuple[str, str]:
+    # 每个 ASSET_MANIFEST 的键都应该是一个符合该函数逻辑的相对路径
+    classid = relpath.split("-")[0] # 素材处理类的名字
+    name = os.path.splitext(relpath)[0] # 素材的名字
+    return (classid, name)
+
   @dataclasses.dataclass
   class AssetPackInfo:
     relpath : str # 在 _install 目录中的相对路径
@@ -66,8 +73,7 @@ class AssetManager:
   def __init__(self, load_manifest : bool = True) -> None:
     self._assets = {}
     for relpath in AssetManager.ASSET_MANIFEST.keys():
-      classid = relpath.split("-")[0]
-      name = os.path.splitext(relpath)[0]
+      classid, name = AssetManager.decompose_asset_relpath(relpath)
       handle_class = _registered_asset_classes.get(classid, None)
       if handle_class is None:
         raise PPInternalError(f"Asset class {classid} not found")
@@ -149,7 +155,7 @@ class AssetManager:
     asset_index = 0
     manifest : dict[str, list[typing.Any]] = {}
     for relpath, buildargs in AssetManager.ASSET_MANIFEST.items():
-      classid = relpath.split("-")[0]
+      classid, name = AssetManager.decompose_asset_relpath(relpath)
       handle_class = _registered_asset_classes.get(classid, None)
       if handle_class is None:
         raise PPInternalError(f"Asset class {classid} not found")
@@ -162,7 +168,7 @@ class AssetManager:
       installpath = os.path.join(install_base, relpath)
       asset_index += 1
       print_progress(f"[{asset_index}/{num_total_assets}] Building asset {installpath}")
-      manifest_obj = handle_class.build_asset_archive(destpath=installpath, **converted_args)
+      manifest_obj = handle_class.build_asset_archive(name=name, destpath=installpath, **converted_args)
       if manifest_obj is not None:
         if classid not in manifest:
           manifest[classid] = []

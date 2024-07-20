@@ -1,5 +1,4 @@
 include: "../references_template.yml"
-id: "background-A0-T1"
 reference:
   en: "Interior-Public"
   zh_cn: "大型室内"
