@@ -14,7 +14,7 @@ from ..exceptions import *
 # 注册的类应该有以下成员：
 # 1.  一个静态方法 create_from_asset_archive(path : str) -> AssetClass
 #     该方法用于从素材包中创建一个素材处理类的实例
-# 2.  一个静态方法 build_asset_archive(destpath : str, **kwargs) -> typing.Any
+# 2.  一个静态方法 build_asset_archive(name : str, destpath : str, **kwargs) -> typing.Any
 #     该方法用于构建一个素材包，kwargs 可以是任意的构建参数，这些参数会保存在 AssetManager 的 Manifest 中
 #     如果该类需要类似 Manifest 的内容（比如用于在其他部分引用这些资源），则可返回一个任意可以 pickle 的对象
 # 3.  一个成员函数 dump_asset_info_json(self) -> dict
@@ -30,8 +30,8 @@ def AssetClassDecl(name : str): # pylint: disable=invalid-name
     assert name not in _registered_asset_classes, f"Duplicate asset class name {name}"
     # 确认该类有一个叫 create_from_asset_archive(path : str) 的静态方法，用于从素材包中创建一个素材处理类的实例
     assert hasattr(cls, "create_from_asset_archive"), f"Asset class {name} must have a static method create_from_asset_archive(path : str)"
-    # 确认该类有一个叫 build_asset_archive(destpath : str, **kwargs) 的静态方法，用于创建素材包
-    assert hasattr(cls, "build_asset_archive"), f"Asset class {name} must have a static method build_asset_archive(destpath : str, **kwargs)"
+    # 确认该类有一个叫 build_asset_archive(name : str, destpath : str, **kwargs) 的静态方法，用于创建素材包
+    assert hasattr(cls, "build_asset_archive"), f"Asset class {name} must have a static method build_asset_archive(name : str, destpath : str, **kwargs)"
     # 确认该类有一个叫 dump_asset_info_json(self) 的成员方法，可以从素材处理类中获取详细信息
     assert hasattr(cls, "dump_asset_info_json"), f"Asset class {name} must have a member method dump_asset_info_json(self)"
     _registered_asset_classes[name] = cls

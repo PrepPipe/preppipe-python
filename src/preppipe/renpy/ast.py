@@ -346,15 +346,28 @@ class RenPySceneNode(RenPyNode):
   # 'atl',
   imspec : OpOperand[StringLiteral]
   #layer : OpOperand[StringLiteral]
-  #atl : OpOperand[RenPyASMExpr]
+  atl : OpOperand[RenPyASMNode]
   with_ : OpOperand[RenPyWithNode]
   body : Block # only for ATL
 
   @staticmethod
-  def create(context : Context, imspec : typing.Iterable[StringLiteral | str] | StringLiteral | str, with_ : RenPyWithNode | None = None):
+  def create(context : Context, imspec : typing.Iterable[StringLiteral | str] | StringLiteral | str, with_ : RenPyWithNode | None = None, atl : StringListLiteral | typing.Iterable[StringLiteral] | StringLiteral | str | None = None):
     result = RenPySceneNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, imspec=imspec, with_=with_)
     if with_ is not None:
       result.body.push_back(with_)
+    if atl is not None:
+      converted_atl = None
+      if isinstance(atl, str):
+        converted_atl = StringLiteral.get(atl, context)
+      elif isinstance(atl, StringLiteral):
+        converted_atl = atl
+      elif isinstance(atl, StringListLiteral):
+        converted_atl = atl
+      else:
+        converted_atl = StringListLiteral.get(context, atl)
+      atl_node = RenPyASMNode.create(context, converted_atl)
+      result.atl.set_operand(0, atl_node)
+      result.body.push_back(atl_node)
     return result
 
 @irdataop.IROperationDataclass

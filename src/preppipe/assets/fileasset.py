@@ -17,7 +17,7 @@ class FileAssetPack:
     return FileAssetPack(path)
 
   @staticmethod
-  def build_asset_archive(destpath : str, copyfrom : str):
+  def build_asset_archive(name : str, destpath : str, copyfrom : str):
     if os.path.isdir(copyfrom):
       os.makedirs(destpath, exist_ok=True)
       shutil.copytree(copyfrom, destpath, dirs_exist_ok=True, ignore_dangling_symlinks=True)

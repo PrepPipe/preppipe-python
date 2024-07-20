@@ -514,6 +514,7 @@ class _RenPyCodeGenHelper:
     assert isinstance(sceneswitch, VNSceneSwitchInstructionGroup)
     imspec = ''
     transition = None
+    is_require_resizing = True
     # 我们需要做这些：
     # 1. 找到向背景设备写入的create/put，生成背景的 impsec
     # 2. 对所有剩下的创建类的指令，对它们单独做生成
@@ -526,7 +527,8 @@ class _RenPyCodeGenHelper:
         dev = op.device.get()
         if dev.get_std_device_kind() == VNStandardDeviceKind.O_BACKGROUND_DISPLAY:
           is_handled = True
-          imspec = self.get_impsec(op.content.get(), user_hint=VNStandardDeviceKind.O_BACKGROUND_DISPLAY)
+          image_content = op.content.get()
+          imspec = self.get_impsec(image_content, user_hint=VNStandardDeviceKind.O_BACKGROUND_DISPLAY)
           transition = op.transition.try_get_value()
       elif isinstance(op, VNRemoveInst):
         # 如果是前景、背景内容的话就不需要额外操作了，包含在 scene 命令里了
@@ -545,7 +547,10 @@ class _RenPyCodeGenHelper:
         genresult = match_result(self, [op], insert_before)
         if top_insert_place is None:
           top_insert_place = genresult
-    result = RenPySceneNode.create(self.context, imspec=imspec)
+    atl = None
+    if is_require_resizing:
+      atl = "xysize (1.0, 1.0)"
+    result = RenPySceneNode.create(self.context, imspec=imspec, atl=atl)
     if transition is not None:
       if img_transition := self.resolve_displayable_transition(transition):
         withnode = RenPyWithNode.create(self.context, expr=img_transition)

@@ -2,10 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import typing
+import os
 from ..irbase import *
 from ..exportcache import CacheableOperationSymbol
 from .imagepack import *
 from ..imageexpr import *
+from ..commontypes import *
 
 @IRObjectJsonTypeName("imagepack_export_op_symbol")
 class ImagePackExportOpSymbol(CacheableOperationSymbol):
@@ -19,6 +21,12 @@ class ImagePackExportOpSymbol(CacheableOperationSymbol):
   _composites_export_indices : OpOperand[IntLiteral] # 导出的图层组合的下标
   _composites_export_paths : OpOperand[StringLiteral] # 导出的路径
   _composites_target_sizes : OpOperand[IntTupleLiteral] # 如果要缩放大小的话，这里存放目标大小（如果不缩放的话应该和原图大小一致）
+
+  _tr_imagepack_not_found = ImagePack.TR_imagepack.tr("export_op_imagepack_not_found",
+    en="Image pack not found: {imagepack}",
+    zh_cn="图片包未找到：{imagepack}",
+    zh_hk="圖片包未找到：{imagepack}"
+  )
 
   def construct_init(self, *, imagepack : StringLiteral, name: str = '', loc: Location | None = None, **kwargs) -> None:
     super().construct_init(name=name, loc=loc, **kwargs)
@@ -40,11 +48,11 @@ class ImagePackExportOpSymbol(CacheableOperationSymbol):
     self._composites_target_sizes = self.get_operand_inst("composites_target_sizes")
 
   @staticmethod
-  def create(context : Context, imagepack : StringLiteral | str, loc : Location | None = None, **kwargs) -> "ImagePackExportOpSymbol":
+  def create(context : Context, imagepack : StringLiteral | str, loc : Location | None = None) -> "ImagePackExportOpSymbol":
     # 因为最后会使用参数来生成这个 Symbol 的名称，所以创建时我们不支持 name 参数
     if isinstance(imagepack, str):
       imagepack = StringLiteral.get(imagepack, context)
-    return ImagePackExportOpSymbol(init_mode=IRObjectInitMode.CONSTRUCT, context=context, loc=loc, **kwargs)
+    return ImagePackExportOpSymbol(init_mode=IRObjectInitMode.CONSTRUCT, context=context, imagepack=imagepack, loc=loc)
 
   def add_fork_param(self, param : Value) -> None:
     self._fork_params.add_operand(param)
@@ -95,6 +103,7 @@ class ImagePackExportOpSymbol(CacheableOperationSymbol):
     imagepack = AssetManager.get_instance().get_asset(self._imagepack.get().get_string())
     if imagepack is None:
       # 如果图片包不存在，我们就不用继续了
+      MessageHandler.warning(self._tr_imagepack_not_found.format(imagepack=self._imagepack.get().get_string()))
       return
     if not isinstance(imagepack, ImagePack):
       raise PPInternalError("Asset is not an image pack: " + self._imagepack.get().get_string())
@@ -139,13 +148,17 @@ class ImagePackExportOpSymbol(CacheableOperationSymbol):
       image = imagepack.get_composed_image(index)
       if image.width != x or image.height != y:
         image = image.resize(size=(x, y))
-      image.save(os.path.join(output_rootdir, path))
+      fullpath = os.path.join(output_rootdir, path)
+      os.makedirs(os.path.dirname(fullpath), exist_ok=True)
+      image.save(fullpath)
     num_layers_export = min(self._layers_export_indices.get_num_operands(), self._layers_export_paths.get_num_operands())
     for i in range(0, num_layers_export):
       index = self._layers_export_indices.get_operand(i).value
       path = self._layers_export_paths.get_operand(i).get_string()
       image = imagepack.layers[index].patch
-      image.save(os.path.join(output_rootdir, path))
+      fullpath = os.path.join(output_rootdir, path)
+      os.makedirs(os.path.dirname(fullpath), exist_ok=True)
+      image.save(fullpath)
     # 完成
 
   def get_workload_cpu_usage_estimate(self) -> float:
@@ -237,6 +250,10 @@ class ImagePackExportDataBuilder:
   instance_map : dict[str, dict[tuple | None, ImagePackInstanceInfo]] # pack_id -> fork_params -> (instance_id, op)
   global_instance_count : int
 
+  def __init__(self) -> None:
+    self.instance_map = {}
+    self.global_instance_count = 0
+
   def _add_value_impl(self, value : ImagePackElementLiteralExpr, is_require_merged_image : bool = False) -> ImagePackElementReferenceInfo | str:
     pack_id = value.pack_id.get_string()
     pack_map = None
@@ -282,7 +299,7 @@ class ImagePackExportDataBuilder:
     # 查看这个差分组合有没有用到之前没有记下要导出的图层，有的话为他们生成导出路径
     for layer_index in instance_info.descriptor.get_layers_from_composite_index(composite_index):
       if layer_index not in instance_info.layer_export_dict:
-        layer_path = self.get_imagepack_layer_filename(pack_id, layer_index)
+        layer_path = os.path.join(instance_info.instance_path, self.get_imagepack_layer_filename(pack_id, layer_index))
         instance_info.layer_export_dict[layer_index] = layer_path
     return reference_info
 

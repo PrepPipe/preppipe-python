@@ -1077,6 +1077,10 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
     if ty is types.NoneType:
       return None
 
+    # 如果是 AssetData 的话我们不做转换，不完全匹配的话就算失败
+    if issubclass(ty, AssetData):
+      return None
+
     # 到这里我们现在支持如下类型：
     # 整数型、浮点数型（仅作为输出，不作为输入）
     # 枚举类型（仅输出，可由字符串转换得来）
