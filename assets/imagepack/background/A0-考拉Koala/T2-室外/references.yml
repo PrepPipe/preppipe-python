@@ -1,4 +1,4 @@
-include: "../exports_template.yml"
+include: "../references_template.yml"
 id: "background-A0-T2"
 reference:
   en: "Exterior"

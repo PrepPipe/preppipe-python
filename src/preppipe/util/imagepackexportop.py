@@ -12,62 +12,64 @@ class ImagePackExportOpSymbol(CacheableOperationSymbol):
   # 所有对图片包的导出操作都会使用这个操作符
   _imagepack : OpOperand[StringLiteral]
   _fork_params : OpOperand # 可能是图片也可能是字符串等等
-  _target_size : OpOperand[IntTupleLiteral] # 如果要缩放大小的话，这里存放目标大小
   # 以下两项用于描述图层导出的内容，两项的数量应该一致
   _layers_export_indices : OpOperand[IntLiteral] # 导出的图层的下标
   _layers_export_paths : OpOperand[StringLiteral] # 导出的路径
-  # 以下两项用于描述图层组合的导出，两项的数量应该一致
+  # 以下用于描述图层组合的导出，各项的数量应该一致
   _composites_export_indices : OpOperand[IntLiteral] # 导出的图层组合的下标
   _composites_export_paths : OpOperand[StringLiteral] # 导出的路径
+  _composites_target_sizes : OpOperand[IntTupleLiteral] # 如果要缩放大小的话，这里存放目标大小（如果不缩放的话应该和原图大小一致）
 
-  def construct_init(self, *, imagepack : StringLiteral, target_size : IntTupleLiteral | None = None, name: str = '', loc: Location | None = None, **kwargs) -> None:
+  def construct_init(self, *, imagepack : StringLiteral, name: str = '', loc: Location | None = None, **kwargs) -> None:
     super().construct_init(name=name, loc=loc, **kwargs)
     self._imagepack = self._add_operand_with_value("imagepack", imagepack)
     self._fork_params = self._add_operand("fork_params")
-    self._target_size = self._add_operand_with_value("target_size", target_size)
     self._layers_export_indices = self._add_operand("layers_export_indices")
     self._layers_export_paths = self._add_operand("layers_export_paths")
     self._composites_export_indices = self._add_operand("composites_export_indices")
     self._composites_export_paths = self._add_operand("composites_export_paths")
-    if target_size is not None:
-      if len(target_size.value) != 2:
-        raise PPInternalError("Target size must be a 2-tuple")
+    self._composites_target_sizes = self._add_operand("composites_target_sizes")
 
   def post_init(self) -> None:
     self._imagepack = self.get_operand_inst("imagepack")
     self._fork_params = self.get_operand_inst("fork_params")
-    self._target_size = self.get_operand_inst("target_size")
     self._layers_export_indices = self.get_operand_inst("layers_export_indices")
     self._layers_export_paths = self.get_operand_inst("layers_export_paths")
     self._composites_export_indices = self.get_operand_inst("composites_export_indices")
     self._composites_export_paths = self.get_operand_inst("composites_export_paths")
+    self._composites_target_sizes = self.get_operand_inst("composites_target_sizes")
+
+  @staticmethod
+  def create(context : Context, imagepack : StringLiteral | str, loc : Location | None = None, **kwargs) -> "ImagePackExportOpSymbol":
+    # 因为最后会使用参数来生成这个 Symbol 的名称，所以创建时我们不支持 name 参数
+    if isinstance(imagepack, str):
+      imagepack = StringLiteral.get(imagepack, context)
+    return ImagePackExportOpSymbol(init_mode=IRObjectInitMode.CONSTRUCT, context=context, loc=loc, **kwargs)
 
   def add_fork_param(self, param : Value) -> None:
     self._fork_params.add_operand(param)
 
   def add_layer_export(self, index : IntLiteral, path : StringLiteral) -> None:
-    if self._target_size.get_num_operands() > 0:
-      raise PPInternalError("Cannot add layer export if target size is specified")
     self._layers_export_indices.add_operand(index)
     self._layers_export_paths.add_operand(path)
 
-  def add_composite_export(self, index : IntLiteral, path : StringLiteral) -> None:
+  def add_composite_export(self, index : IntLiteral, path : StringLiteral, target_size : IntTupleLiteral) -> None:
     self._composites_export_indices.add_operand(index)
     self._composites_export_paths.add_operand(path)
+    self._composites_target_sizes.add_operand(target_size)
 
   def finish_init(self) -> None:
     # 根据现有的参数，计算一个用于缓存输出的可读的字符串来作为这个操作符的名称
     resultname = "ImagePackExportOpSymbol[" + self._imagepack.get().get_string() + "]"
     if self._fork_params.get_num_operands() > 0:
       resultname += "<" + ",".join([str(use.value) for use in self._fork_params.operanduses()]) + ">" # 用于 fork 的参数
-    if self._target_size.get_num_operands() > 0:
-      resultname += str(self._target_size.get_operand(0).value)
     resultname += "{"
-    for i in range(0, min(self._layers_export_indices.get_num_operands(), self._layers_export_paths.get_num_operands())):
+    for i in range(0, self._layers_export_indices.get_num_operands()):
       resultname += str(self._layers_export_indices.get_operand(i).value) + ":" + self._layers_export_paths.get_operand(i).get_string() + ","
     resultname += "}{"
-    for i in range(0, min(self._composites_export_indices.get_num_operands(), self._composites_export_paths.get_num_operands())):
-      resultname += str(self._composites_export_indices.get_operand(i).value) + ":" + self._composites_export_paths.get_operand(i).get_string() + ","
+    for i in range(0, self._composites_export_indices.get_num_operands()):
+      resultname += str(self._composites_export_indices.get_operand(i).value) + ":" + self._composites_export_paths.get_operand(i).get_string()
+      resultname += " " + str(self._composites_target_sizes.get_operand(i).value) + ","
     resultname += "}"
     self._name = resultname
 
@@ -133,9 +135,9 @@ class ImagePackExportOpSymbol(CacheableOperationSymbol):
     for i in range(0, num_composites_export):
       index = self._composites_export_indices.get_operand(i).value
       path = self._composites_export_paths.get_operand(i).get_string()
+      x, y = self._composites_target_sizes.get_operand(i).value
       image = imagepack.get_composed_image(index)
-      if self._target_size.get_num_operands() > 0:
-        x, y = self._target_size.get_operand(0).value
+      if image.width != x or image.height != y:
         image = image.resize(size=(x, y))
       image.save(os.path.join(output_rootdir, path))
     num_layers_export = min(self._layers_export_indices.get_num_operands(), self._layers_export_paths.get_num_operands())
@@ -161,7 +163,7 @@ class ImagePackExportDataBuilder:
 
   # 以下需要子类提供实现(也可以用这里的默认实现)
   # ---------------------------------------------------------------------
-  def get_instance_id(self, pack_id : str, fork_params : tuple, pack_instance_index : int) -> str:
+  def get_instance_id(self, pack_id : str, fork_params : tuple | None, pack_instance_index : int) -> str:
     # 通过图片包 ID、fork 参数和图片包实例的索引来获取一个唯一的 ID
     return pack_id + "_" + str(pack_instance_index)
 
@@ -195,14 +197,16 @@ class ImagePackExportDataBuilder:
     # 添加一个图片包元素到 builder 中
     # 如果 is_require_merged_image 为 True，那么我们生成时会保证生成一个单独的图片，路径是返回值
     # 否则我们会尝试使用差分的方式来表示这个图片，返回值是 ImagePackElementReferenceInfo
-    raise NotImplementedError()
+    return self._add_value_impl(value, is_require_merged_image)
 
   @dataclasses.dataclass
   class LayerExportInfo:
     index : int
+    path : str
     offset_x : int
     offset_y : int
-    path : str
+    width : int
+    height : int
 
   @dataclasses.dataclass
   class InstanceExportInfo:
@@ -213,4 +217,104 @@ class ImagePackExportDataBuilder:
     # 完成添加图片包元素的操作，生成 ImagePackExportOpSymbol 并整理所有的图片包实例信息
     # 我们生成的导出操作中会包含单个文件的输出操作，但是这个函数的返回值只包含图片包实例的信息
     # 在 RenPy 中，我们会使用此函数的返回值来生成 layeredimage 语句，而单个文件可以直接使用文件名、不需要额外的处理
-    raise NotImplementedError()
+    return self._finalize_impl(dest)
+
+  # 以下是内部实现
+  # ---------------------------------------------------------------------
+
+  @dataclasses.dataclass
+  class ImagePackInstanceInfo:
+    instance_id : str
+    instance_path : str
+    op : ImagePackExportOpSymbol
+    descriptor : ImagePackDescriptor
+    # 为了保持 ImagePackExportOpSymbol 输出内容的稳定性，我们需要在加入导出内容前对其进行排序
+    # 以下是用于记录已经导出的内容，以便 (1) 在加新值时复用结果，(2) 在 finalize() 中填充 ImagePackExportOpSymbol 时保持顺序
+    composite_export_dict : dict[tuple[int, tuple[int, int]], str] = dataclasses.field(default_factory=dict) # (composite_index, target_size -> path)
+    layer_export_dict : dict[int, str] = dataclasses.field(default_factory=dict) # layer_index -> path
+    element_reference_dict : "dict[int, ImagePackExportDataBuilder.ImagePackElementReferenceInfo]" = dataclasses.field(default_factory=dict) # composite_index -> reference_info
+
+  instance_map : dict[str, dict[tuple | None, ImagePackInstanceInfo]] # pack_id -> fork_params -> (instance_id, op)
+  global_instance_count : int
+
+  def _add_value_impl(self, value : ImagePackElementLiteralExpr, is_require_merged_image : bool = False) -> ImagePackElementReferenceInfo | str:
+    pack_id = value.pack_id.get_string()
+    pack_map = None
+    if pack_id in self.instance_map:
+      pack_map = self.instance_map[pack_id]
+    else:
+      pack_map = {}
+      self.instance_map[pack_id] = pack_map
+    fork_params = value.get_fork_operands()
+    instance_info = None
+    if fork_params in pack_map:
+      instance_info = pack_map[fork_params]
+    else:
+      instance_index = self.global_instance_count
+      self.global_instance_count += 1
+      instance_id = self.get_instance_id(pack_id, fork_params, instance_index)
+      instance_path = self.place_imagepack_instance(instance_id, pack_id)
+      op = ImagePackExportOpSymbol.create(context=value.context, imagepack=pack_id)
+      if fork_params is not None:
+        for param in fork_params:
+          op.add_fork_param(param)
+      descriptor = ImagePack.get_descriptor_by_id(pack_id)
+      if not isinstance(descriptor, ImagePackDescriptor):
+        raise PPInternalError("Image pack descriptor not found: " + pack_id)
+      instance_info = ImagePackExportDataBuilder.ImagePackInstanceInfo(instance_id=instance_id, instance_path=instance_path, op=op, descriptor=descriptor)
+      pack_map[fork_params] = instance_info
+    target_size_tuple = (value.size.value[0], value.size.value[1])
+    composite_code = value.composite_name.value
+    composite_index = instance_info.descriptor.get_composite_index_from_code(composite_code)
+    if is_require_merged_image or target_size_tuple != instance_info.descriptor.size:
+      # 我们需要生成一个单独的图片
+      key_tuple = (composite_index, target_size_tuple)
+      if key_tuple in instance_info.composite_export_dict:
+        return instance_info.composite_export_dict[key_tuple]
+      path = self.place_imagepack_composite(instance_info.instance_id, pack_id, composite_code)
+      instance_info.composite_export_dict[key_tuple] = path
+      return path
+    # 否则我们使用差分的方式来表示这个图片
+    if composite_index in instance_info.element_reference_dict:
+      return instance_info.element_reference_dict[composite_index]
+    reference_info = ImagePackExportDataBuilder.ImagePackElementReferenceInfo(instance_id=instance_info.instance_id, composite_code=composite_code)
+    instance_info.element_reference_dict[composite_index] = reference_info
+    # 查看这个差分组合有没有用到之前没有记下要导出的图层，有的话为他们生成导出路径
+    for layer_index in instance_info.descriptor.get_layers_from_composite_index(composite_index):
+      if layer_index not in instance_info.layer_export_dict:
+        layer_path = self.get_imagepack_layer_filename(pack_id, layer_index)
+        instance_info.layer_export_dict[layer_index] = layer_path
+    return reference_info
+
+  def _finalize_impl(self, dest : SymbolTableRegion[ImagePackExportOpSymbol]) -> dict[str, InstanceExportInfo]:
+    resultdict : dict[str, ImagePackExportDataBuilder.InstanceExportInfo] = {}
+    for pack_id, pack_map in sorted(self.instance_map.items()):
+      for info in pack_map.values():
+        for layer_index, layer_path in sorted(info.layer_export_dict.items()):
+          converted_index = IntLiteral.get(layer_index, info.op.context)
+          converted_path = StringLiteral.get(layer_path, info.op.context)
+          info.op.add_layer_export(converted_index, converted_path)
+        for key_tuple, path in sorted(info.composite_export_dict.items()):
+          converted_index = IntLiteral.get(key_tuple[0], info.op.context)
+          converted_path = StringLiteral.get(path, info.op.context)
+          converted_target_size = IntTupleLiteral.get(key_tuple[1], info.op.context)
+          info.op.add_composite_export(converted_index, converted_path, converted_target_size)
+        info.op.finish_init()
+        dest.add(info.op)
+        # 如果没有差分组合的引用（全是单独图片的输出），我们不需要生成这个图片包实例的 InstanceExportInfo
+        if len(info.layer_export_dict) == 0:
+          continue
+        layer_exports = []
+        composite_exports = {}
+        for layer_index, layer_path in sorted(info.layer_export_dict.items()):
+          info_src = info.descriptor.get_layer_info(layer_index)
+          export_info = ImagePackExportDataBuilder.LayerExportInfo(index=layer_index, path=layer_path, offset_x=info_src.offset_x, offset_y=info_src.offset_y, width=info_src.width, height=info_src.height)
+          layer_exports.append(export_info)
+        for composite_index, reference_info in sorted(info.element_reference_dict.items()):
+          composite_code = reference_info.composite_code
+          layers = tuple(info.descriptor.get_layers_from_composite_index(composite_index))
+          composite_exports[composite_code] = layers
+        instance_export_info = ImagePackExportDataBuilder.InstanceExportInfo(layer_exports=layer_exports, composites=composite_exports)
+        resultdict[info.instance_id] = instance_export_info
+    return resultdict
+
