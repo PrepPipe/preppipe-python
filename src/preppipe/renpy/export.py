@@ -89,10 +89,11 @@ class RenPyExportVisitor(RenPyASTVisitor):
           if linetext.startswith((' ', '\t')):
             if input_indent == 0:
               linetext, input_indent = RenPyExportVisitor.count_leading_ws(linetext, input_indent)
+              num_indent_level += 1
             else:
               while linetext.startswith((' ', '\t')):
                 num_indent_level += 1
-                linetext = RenPyExportVisitor.drop_leading_ws(linetext, leadingws)
+                linetext = RenPyExportVisitor.drop_leading_ws(linetext, input_indent*num_indent_level)
       if num_lines > 0:
         pieces.append(self.get_eol_with_ws(num_indent_level))
       if is_require_python_escape:
@@ -364,6 +365,13 @@ class RenPyExportVisitor(RenPyASTVisitor):
     if with_ := v.with_.try_get_value():
       self.dest.write(' ')
       self.visitRenPyWithNode(with_)
+    if atl := v.atl.try_get_value():
+      self.dest.write(':')
+      curlevel = self.indent_level
+      self.indent_level += 1
+      self.dest.write(self.get_eol_with_ws())
+      self.visitRenPyASMNode(atl)
+      self.indent_level = curlevel
 
   def visitRenPyHideNode(self, v : RenPyHideNode):
     self.dest.write('hide ' + ' '.join(self.collect_strings(v.imspec)))

@@ -218,7 +218,7 @@ class MessageHandler:
     if len(locstring) > 0:
       locstring = ' ' + locstring + ': '
 
-    print("[{imp}]{loc}{msg}".format(imp=str(importance), loc=locstring, msg=msg))
+    print("[{imp}] {loc}{msg}".format(imp=importance.name, loc=locstring, msg=msg))
 
   @staticmethod
   def get():

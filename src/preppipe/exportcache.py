@@ -61,24 +61,25 @@ class CacheableOperationSymbol(Symbol):
     # 读取已执行过的操作
     existing_ops : set[str] = set()
     is_cache_require_change = False
-    with open(cache_file_path, 'r', encoding="utf-8") as f:
-      json_content = json.load(f)
-      if json_content['version'] == __version__:
-        # 我们只在版本号匹配时才读取缓存
-        for op_name in json_content['cacheable']:
-          if not isinstance(op_name, str):
-            is_cache_require_change = True
-            continue
-          existing_ops.add(op_name)
-      else:
-        is_cache_require_change = True
+    if os.path.exists(cache_file_path):
+      with open(cache_file_path, 'r', encoding="utf-8") as f:
+        json_content = json.load(f)
+        if json_content['version'] == __version__:
+          # 我们只在版本号匹配时才读取缓存
+          for op_name in json_content['cacheable']:
+            if not isinstance(op_name, str):
+              is_cache_require_change = True
+              continue
+            existing_ops.add(op_name)
+        else:
+          is_cache_require_change = True
 
     # 准备预加载资源
     asset_manager = AssetManager.get_instance()
 
     all_ops : list[str] = []
     todo_ops : list[tuple[CacheableOperationSymbol, float]] = [] # (op, cpu_usage_estimate)
-    loaded_assets : set[str] = set()
+    loaded_assets : set[str] = set() # 已尝试预加载的资源
     cpu_usage_sum = 0.0
     cpu_usage_minimum = 0.2
     for elem in ops:
@@ -93,18 +94,13 @@ class CacheableOperationSymbol(Symbol):
             break
         if all_files_exist:
           continue
-      is_asset_preload_failed = False
+
       for asset in elem.get_depended_assets():
         if asset in loaded_assets:
           continue
-        handle = asset_manager.get_asset(asset)
-        if handle is None:
-          # 无法加载资源的话就跳过这个操作
-          is_asset_preload_failed = True
-          break
+        asset_manager.get_asset(asset)
         loaded_assets.add(asset)
-      if is_asset_preload_failed:
-        continue
+
       # 我们确认这个操作需要且可以执行
       cpu_usage_estimate = elem.get_workload_cpu_usage_estimate()
       if cpu_usage_estimate < 0 or cpu_usage_estimate > 1:
@@ -122,7 +118,7 @@ class CacheableOperationSymbol(Symbol):
       threads_multiplier = task_count / cpu_usage_sum
       if numthreads is None:
         numthreads = 1
-      numthreads = max(1, int(numthreads * threads_multiplier))
+      numthreads = min(max(1, int(numthreads * threads_multiplier)), task_count)
       threadpool = concurrent.futures.ThreadPoolExecutor(max_workers=numthreads)
       todo_ops.sort(key=lambda x: x[1], reverse=True)
       # 交替执行操作
