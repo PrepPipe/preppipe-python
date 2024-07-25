@@ -214,6 +214,7 @@ class ImagePackElementLiteralExpr(BaseImageLiteralExpr, AssetDeclarationTrait):
   # 1. 图片包的名称(ID)
   # 2. 图片包中的组合名称
   # 3. 0-N 个选区参数（图片、颜色或是字符串文本）
+  # 如果某个选区参数没有提供，则使用 NullLiteral 代替
   @property
   def pack_id(self) -> StringLiteral:
     return self.get_value_tuple()[BaseImageLiteralExpr.DERIVED_DATA_START]
@@ -242,11 +243,19 @@ class ImagePackElementLiteralExpr(BaseImageLiteralExpr, AssetDeclarationTrait):
     # 选区参数可以少（用 None 填充）但是不能多
     cur_operands = []
     masks = descriptor.get_masks()
+    has_nonnull_operand = False
     if mask_operands is not None:
       for operand in mask_operands:
         index = len(cur_operands)
         if index >= len(masks):
           raise PPInternalError("Too many mask operands")
+        cur_operands.append(operand)
+        if operand is None:
+          # 我们应该使用 NullLiteral 代替 None
+          cur_operands[-1] = NullLiteral.get(context=context)
+          continue
+        # 检查参数类型
+        has_nonnull_operand = True
         match masks[index].get_param_type():
           case ImagePackDescriptor.MaskParamType.IMAGE:
             if not isinstance(operand, (ImageAssetData, ColorLiteral, StringLiteral)):
@@ -256,9 +265,11 @@ class ImagePackElementLiteralExpr(BaseImageLiteralExpr, AssetDeclarationTrait):
               raise PPInternalError("Invalid mask operand type: " + str(type(operand)))
           case _:
             raise PPInternalError("Invalid mask param type")
-        cur_operands.append(operand)
-    while len(cur_operands) < len(masks):
-      cur_operands.append(None)
+    if has_nonnull_operand:
+      while len(cur_operands) < len(masks):
+        cur_operands.append(None)
+    else:
+      cur_operands = []
     # 最后处理大小和 bbox
     # 描述对象中会有基础的大小和 bbox 信息，但是这里可以覆盖
     # 当用户指定了一个不一样的大小时，我们认为用户是想缩放图片，最后导出时要按指定尺寸导出
