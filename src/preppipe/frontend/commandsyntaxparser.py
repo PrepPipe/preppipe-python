@@ -327,8 +327,11 @@ def check_is_command_start(b : Block, ctx: Context) -> tuple[str, list[AssetData
       else:
         raise PPNotImplementedError('TODO support other possible element types in IMElementOp')
     if first_op is None:
-      # 这是开头
-      if command_str.startswith(_command_start_text):
+      # 这应该是开头，不过如果全是空格的话就等下一个
+      command_head = command_str.lstrip()
+      if len(command_head) == 0:
+        continue
+      if command_head.startswith(_command_start_text):
         first_op = op
       else:
         # 该段不以 _command_start_text 所注字符开头，不是命令
