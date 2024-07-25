@@ -2824,6 +2824,25 @@ class DILocation(Location):
 # Literals
 # ------------------------------------------------------------------------------
 
+@IRObjectJsonTypeName('null_l')
+class NullLiteral(Literal):
+  def construct_init(self, *, context : Context, value : typing.Any = None, **kwargs) -> None:
+    # 仍然需要有个 value 参数来避免出错
+    ty = VoidType.get(context)
+    super().construct_init(ty=ty, value=None, **kwargs)
+
+  @staticmethod
+  def get_fixed_value_type():
+    return VoidType
+
+  @property
+  def value(self) -> None:
+    return None
+
+  @staticmethod
+  def get(context : Context) -> NullLiteral:
+    return Literal._get_literal_impl(NullLiteral, None, context)
+
 @IRObjectJsonTypeName('int_l')
 class IntLiteral(Literal):
   def construct_init(self, *, context : Context, value : int, **kwargs) -> None:

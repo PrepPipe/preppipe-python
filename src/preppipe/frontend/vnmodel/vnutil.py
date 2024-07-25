@@ -244,21 +244,22 @@ def emit_image_expr_from_callexpr(context : Context, call : CallExprOperand, pla
       if mask in args:
         value = args[mask]
         del args[mask]
-        match mask.get_param_type():
-          case ImagePackDescriptor.MaskParamType.IMAGE:
-            if isinstance(value, ImageAssetData):
-              converted_arg = value
-            elif isinstance(value, Color):
-              converted_arg = ColorLiteral.get(value, context)
-            elif isinstance(value, str):
-              converted_arg = StringLiteral.get(value, context)
-            else:
-              raise PPInternalError("Unknown type of mask param")
-          case ImagePackDescriptor.MaskParamType.COLOR:
-            if isinstance(value, Color):
-              converted_arg = ColorLiteral.get(value, context)
-            else:
-              raise PPInternalError("Unknown type of mask param")
+        if value is not None:
+          match mask.get_param_type():
+            case ImagePackDescriptor.MaskParamType.IMAGE:
+              if isinstance(value, ImageAssetData):
+                converted_arg = value
+              elif isinstance(value, Color):
+                converted_arg = ColorLiteral.get(value, context)
+              elif isinstance(value, str):
+                converted_arg = StringLiteral.get(value, context)
+              else:
+                raise PPInternalError("Unknown type of mask param")
+            case ImagePackDescriptor.MaskParamType.COLOR:
+              if isinstance(value, Color):
+                converted_arg = ColorLiteral.get(value, context)
+              else:
+                raise PPInternalError("Unknown type of mask param")
       result.append(converted_arg)
       if converted_arg is not None:
         is_having_arg = True
