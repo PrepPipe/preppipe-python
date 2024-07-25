@@ -112,7 +112,9 @@ class ImagePackExportOpSymbol(CacheableOperationSymbol):
       args : list[Color | PIL.Image.Image | str | tuple[str, Color] | None] = []
       for use in self._fork_params.operanduses():
         value = use.value
-        if isinstance(value, StringLiteral):
+        if isinstance(value, NullLiteral):
+          args.append(None)
+        elif isinstance(value, StringLiteral):
           text = value.get_string()
           if len(text) == 0:
             args.append(None)
