@@ -213,6 +213,9 @@ class Translatable:
     self.cached_allcandidates = tuple(resultset)
     return self.cached_allcandidates
 
+  def dump_candidates_json(self) -> dict[str, list[str]]:
+    return self.candidates.copy()
+
   def __contains__(self, item : str) -> bool:
     return any(item in v for v in self.candidates.values())
 
