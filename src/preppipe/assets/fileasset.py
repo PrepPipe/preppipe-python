@@ -27,7 +27,7 @@ class FileAssetPack:
   def __init__(self, path : str):
     self.path = path
 
-  def dump_asset_info_json(self):
+  def dump_asset_info_json(self, name : str):
     result_dict : dict[str, typing.Any] = {
       "type": "file",
       "basepath": self.path

@@ -1216,7 +1216,7 @@ class ImagePack(NamedAssetClassBase):
       raise PPInternalError("Unexpected descriptor type: " + str(type(descriptor)))
     return descriptor.get_name()
 
-  def dump_asset_info_json(self) -> dict:
+  def dump_asset_info_json(self, name : str) -> dict:
     # 给 AssetManager 用的，返回一个适用于 JSON 的 dict 对象
     result : dict[str, typing.Any] = {
       "width": self.width,
@@ -1242,6 +1242,9 @@ class ImagePack(NamedAssetClassBase):
     # 如果有元数据，就把所有元数据放进去
     if len(self.opaque_metadata) > 0:
       result["metadata"] = self.opaque_metadata
+    # 如果有 Descriptor，就把 Descriptor 中的信息也放进去
+    if descriptor := self.get_descriptor_by_id(name):
+      result["descriptor"] = descriptor.dump_asset_info_json()
     return result
 
   @staticmethod
@@ -2009,6 +2012,19 @@ class ImagePackDescriptor:
         if len(authortag) == 0 or authortag in d.authortags:
           return d
     return None
+
+  def dump_asset_info_json(self) -> dict[str, typing.Any]:
+    result : dict[str, typing.Any] = {}
+    if isinstance(self.topref, Translatable):
+      result["name"] = self.topref.dump_candidates_json()
+    result["packtype"] = self.packtype.name
+    result["composites_code"] = self.composites_code
+    if len(self.composites_references) > 0:
+      reference_dict = {}
+      for k, v in self.composites_references.items():
+        reference_dict[k] = v.dump_candidates_json()
+      result["composites_references"] = reference_dict
+    return result
 
 def _test_main():
   srcdir = pathlib.Path(sys.argv[1])

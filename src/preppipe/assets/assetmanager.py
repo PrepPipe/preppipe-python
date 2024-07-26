@@ -110,7 +110,7 @@ class AssetManager:
     missing_assets_list : list[str] = []
     for name, info in self._assets.items():
       if info.handle is not None:
-        result_dict[name] = info.handle.dump_asset_info_json()
+        result_dict[name] = info.handle.dump_asset_info_json(name=name)
       else:
         missing_assets_list.append(info.relpath)
     if len(missing_assets_list) > 0:
