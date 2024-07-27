@@ -1191,7 +1191,7 @@ class _RenPyCodeGenHelper:
         if not isinstance(layerinfo, ImagePackExportDataBuilder.LayerExportInfo):
           raise PPInternalError('Unexpected layer export info type')
         attrdecl = "    attribute RL" + str(layerinfo.index) + ":"
-        attrbody = "        \"" + layerinfo.path + "\""
+        attrbody = "        \"" + layerinfo.path.replace("\\", "/") + "\""
         if layerinfo.offset_x != 0 or layerinfo.offset_y != 0:
           attrbody += " pos (" + str(layerinfo.offset_x) + ", " + str(layerinfo.offset_y) + ")"
         lines.append(attrdecl)
