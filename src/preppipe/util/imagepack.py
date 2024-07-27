@@ -371,7 +371,7 @@ class ImagePack(NamedAssetClassBase):
         non_zero_indices = np.where((mask_data > 0) & (base_data[:,:,3] > 0))
       else:
         non_zero_indices = np.where(mask_data > 0)
-    ImagePack.printstatus("non_zero_indices done")
+    ImagePack.print_checkpoint("non_zero_indices done")
 
     base_alpha = None
     if base_shape[2] == 4:
@@ -386,7 +386,7 @@ class ImagePack(NamedAssetClassBase):
     compensate_hsv[:, 0] = base_hsv[0]
     base_rgb = ImagePack.ndarray_hsv_to_rgb(compensate_hsv)
     delta_rgb = base_forchange.astype(np.int16) - base_rgb.astype(np.int16)
-    ImagePack.printstatus("base_decomp done")
+    ImagePack.print_checkpoint("base_decomp done")
 
     # step 2: compute the pure new color
     hsv_values = np.copy(original_hsv)
@@ -411,7 +411,7 @@ class ImagePack(NamedAssetClassBase):
       hsv_values[:, 0] = new_hsv[:, 0]
       hsv_values[:, 1] = np.clip(hsv_values[:, 1] + saturation_adjust, 0, 1)
       hsv_values[:, 2] = np.clip(hsv_values[:, 2] + value_adjust, 0, 1)
-    ImagePack.printstatus("hsv_values done")
+    ImagePack.print_checkpoint("hsv_values done")
 
     # Convert the modified HSV values back to RGB
     new_rgb = ImagePack.ndarray_hsv_to_rgb(hsv_values)
@@ -524,7 +524,7 @@ class ImagePack(NamedAssetClassBase):
         resultpack.layers.append(l)
         continue
       cur_base = None
-      ImagePack.printstatus("base apply start")
+      ImagePack.print_checkpoint("base apply start")
       for m, arg in zip(self.masks, args):
         # 如果当前 mask 不需要改动则跳过
         if arg is None:
@@ -546,7 +546,7 @@ class ImagePack(NamedAssetClassBase):
             patch_array = np.array(l.patch.convert("RGBA"))
           cur_base = np.zeros((self.height, self.width, patch_array.shape[2]), dtype=np.uint8)
           cur_base[l.offset_y:l.offset_y+l.patch.height, l.offset_x:l.offset_x+l.patch.width] = patch_array
-          ImagePack.printstatus("base prep done")
+          ImagePack.print_checkpoint("base prep done")
 
         # 在开始前，如果输入是图像且需要进行转换，则执行操作
         if isinstance(arg, Color):
@@ -579,7 +579,7 @@ class ImagePack(NamedAssetClassBase):
           mask_data = np.array(mask_data)
 
         cur_base = ImagePack.change_color_hsv_pillow(cur_base, mask_data, m.mask_color, converted_arg)
-        ImagePack.printstatus("mask applied")
+        ImagePack.print_checkpoint("mask applied")
       if cur_base is None:
         # 该图层可以原封不动地放到结果里
         resultpack.layers.append(l)
@@ -595,7 +595,7 @@ class ImagePack(NamedAssetClassBase):
         offset_x, offset_y, xmax, ymax = bbox
         newlayer = ImagePack.LayerInfo(newbase.crop(bbox), offset_x=offset_x, offset_y=offset_y, base=True, toggle=l.toggle, basename=l.basename)
         resultpack.layers.append(newlayer)
-        ImagePack.printstatus("crop done")
+        ImagePack.print_checkpoint("crop done")
     return resultpack
 
   @staticmethod
@@ -735,14 +735,14 @@ class ImagePack(NamedAssetClassBase):
     # kernel = np.ones((kernel_size, kernel_size), dtype=np.uint8)
 
     for img in images:
-      ImagePack.printstatus("handling image " + str(len(result_pack.composites)))
+      ImagePack.print_checkpoint("handling image " + str(len(result_pack.composites)))
       if img.width != width:
         raise PPInternalError()
       if img.height != height:
         raise PPInternalError()
 
       patch_image = ImagePack.inverse_alpha_composite(base_image, img)
-      ImagePack.printstatus("invcomp done")
+      ImagePack.print_checkpoint("invcomp done")
       if patch_image is None:
         # 该图就是基底图
         result_pack.composites.append(ImagePack.CompositeInfo([0]))
@@ -764,11 +764,11 @@ class ImagePack(NamedAssetClassBase):
       merged_nonzero_regions = sp.ndimage.binary_dilation(nonzero_regions, structure=structure_matrix)
       #merged_regions = sp.ndimage.convolve(nonzero_regions, kernel, mode='constant', cval=0)
       #merged_nonzero_regions = np.logical_or(nonzero_regions, merged_regions)
-      ImagePack.printstatus("merged zones")
+      ImagePack.print_checkpoint("merged zones")
 
       # Label connected components
       labeled_regions, num_labels = sp.ndimage.label(merged_nonzero_regions)
-      ImagePack.printstatus("labeling done")
+      ImagePack.print_checkpoint("labeling done")
 
       stack = [0]
       for label_id in range(1, num_labels + 1):
@@ -1281,21 +1281,21 @@ class ImagePack(NamedAssetClassBase):
     if num_input_spec == 0:
       raise PPInternalError("No input specified")
 
-    ImagePack.printstatus("start pipeline")
+    ImagePack.print_executing_command("start pipeline")
 
     current_pack = None
     if parsed_args.create is not None:
-      ImagePack.printstatus("executing --create")
+      ImagePack.print_executing_command("--create")
       # 创建一个新的 imagepack
       # 从 yaml 中读取
       current_pack = ImagePack.build_image_pack_from_yaml(parsed_args.create)
     elif parsed_args.load is not None:
       # 从 zip 中读取
-      ImagePack.printstatus("executing --load")
+      ImagePack.print_executing_command("--load")
       current_pack = ImagePack.create_from_zip(parsed_args.load)
     elif parsed_args.asset is not None:
       # 从 asset 中读取
-      ImagePack.printstatus("executing --asset")
+      ImagePack.print_executing_command("--asset")
       manager = AssetManager.get_instance()
       current_pack = manager.get_asset(parsed_args.asset)
       if current_pack is None:
@@ -1305,14 +1305,14 @@ class ImagePack(NamedAssetClassBase):
 
     if parsed_args.save is not None:
       # 保存到 zip 中
-      ImagePack.printstatus("executing --save")
+      ImagePack.print_executing_command("--save")
       if current_pack is None:
         raise PPInternalError("Cannot save without input")
       current_pack.write_zip(parsed_args.save)
 
     if parsed_args.fork is not None:
       # 创建一个新的 imagepack, 将 mask 所影响的部分替换掉
-      ImagePack.printstatus("executing --fork")
+      ImagePack.print_executing_command("--fork")
       if current_pack is None:
         raise PPInternalError("Cannot fork without input")
       if len(parsed_args.fork) != len(current_pack.masks):
@@ -1340,7 +1340,7 @@ class ImagePack(NamedAssetClassBase):
       current_pack = current_pack.fork_applying_mask(processed_args)
 
     if parsed_args.export is not None:
-      ImagePack.printstatus("executing --export")
+      ImagePack.print_executing_command("--export")
       if current_pack is None:
         raise PPInternalError("Cannot export without input")
       pathlib.Path(parsed_args.export).mkdir(parents=True, exist_ok=True)
@@ -1350,7 +1350,7 @@ class ImagePack(NamedAssetClassBase):
         img.save(os.path.join(parsed_args.export, outputname), format="PNG")
 
     if parsed_args.export_overview is not None:
-      ImagePack.printstatus("executing --export-overview")
+      ImagePack.print_executing_command("--export-overview")
       if current_pack is None:
         raise PPInternalError("Cannot export overview without input")
       current_pack.write_overview_image(parsed_args.export_overview)
@@ -1365,6 +1365,24 @@ class ImagePack(NamedAssetClassBase):
     curtime = time.time()
     timestr = "[{:.6f}] ".format(curtime - ImagePack._starttime)
     print(timestr + s, flush=True)
+
+  _tr_algo_checkpoint = TR_imagepack.tr("algo_checkpoint",
+    en="Algorithm Checkpoint: {name}",
+    zh_cn="算法检查点：{name}",
+    zh_hk="算法檢查點：{name}"
+  )
+  @staticmethod
+  def print_checkpoint(name : str):
+    ImagePack.printstatus(ImagePack._tr_algo_checkpoint.format(name=name))
+
+  _tr_executing_command = TR_imagepack.tr("executing_command",
+    en="Executing command: {command}",
+    zh_cn="执行命令：{command}",
+    zh_hk="執行命令：{command}"
+  )
+  @staticmethod
+  def print_executing_command(command : str):
+    ImagePack.printstatus(ImagePack._tr_executing_command.format(command=command))
 
 class ImagePackSummary:
   # 用于绘制概览图的类
@@ -2025,30 +2043,6 @@ class ImagePackDescriptor:
         reference_dict[k] = v.dump_candidates_json()
       result["composites_references"] = reference_dict
     return result
-
-def _test_main():
-  srcdir = pathlib.Path(sys.argv[1])
-  image_paths = list(srcdir.glob("*.png"))
-  images = [PIL.Image.open(path) for path in image_paths]
-
-  pack = ImagePack.create_image_pack_entry(images, base_image=images[0])
-  pack.add_mask(PIL.Image.open("../mask.png").convert('L'), Color.get((179, 178, 190)), projective_vertices=((1743,1381), (2215,1453), (1753,1682), (2227,1896)))
-  ImagePack.printstatus("image pack created")
-  pack.write_zip("pack.zip")
-  ImagePack.printstatus("zip written")
-  recpack = ImagePack.create_from_zip("pack.zip")
-  ImagePack.printstatus("zip loaded")
-  recpack = recpack.fork_applying_mask([PIL.Image.open("../testaddon.jpg")])
-  ImagePack.printstatus("pack forked")
-  index = 0
-  pathlib.Path("recovered").mkdir(parents=True, exist_ok=True)
-  for path, original in zip(image_paths, images):
-    recovered = recpack.get_composed_image(index)
-    index += 1
-    basename = os.path.basename(path)
-    with open("recovered/" + basename, "wb") as f:
-      recovered.save(f, format="PNG")
-  ImagePack.printstatus("recovered written")
 
 if __name__ == "__main__":
   # 由于这个模块会被其他模块引用，所以如果这是 __main__，其他地方再引用该模块，模块内的代码会被执行两次，导致出错
