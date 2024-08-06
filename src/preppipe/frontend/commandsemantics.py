@@ -509,6 +509,9 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
       # 第一个块一定有一个 IMElementOp，不会直接是子列表
       textblock = item_region.entry_block
       frontop = textblock.body.front
+      # 忽略空白的列表项（比如整行都被删除线划掉了）
+      if frontop is None:
+        continue
       text_str, asset_list = IMElementOp.collect_text_from_paragraph(textblock)
       text_str = text_str.strip()
       # 我们接受如下形式的语法：
