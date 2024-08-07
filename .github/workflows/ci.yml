@@ -29,7 +29,7 @@ jobs:
         run: python3 ./versionfile_gen.py
       - name: run pyinstaller
         run: |
-          pyinstaller --collect-data preppipe --icon=preppipe.ico --version-file=versionfile.txt -n preppipe_cli -D preppipe_cli.py
+          pyinstaller --collect-data preppipe --collect-data pypinyin --recursive-copy-metadata preppipe --icon=preppipe.ico --version-file=versionfile.txt -n preppipe_cli -D preppipe_cli.py
           cd dist/preppipe_cli && 7z.exe a -t7z -mx=9 ../preppipe_cli-windows-x64.7z *
       - uses: "marvinpinto/action-automatic-releases@latest"
         with:
