@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import copy
+import re
 
 from preppipe.irbase import Location, StringLiteral
 
@@ -16,6 +17,7 @@ from .vnast import *
 from .vncodegen import *
 from .vnsayscan import *
 from .vnutil import *
+from .vnstatematching import PartialStateMatcher
 from ...language import TranslationDomain
 
 from ...util.antlr4util import TextStringParsingUtil
@@ -784,17 +786,21 @@ def _helper_parse_image_exprtree(parser : VNParser, state : VNASTParsingState, v
   # 首先把一个值的情况解决了
   warnings : list[tuple[str,str]] = []
   nstuple = None
-  if ns :=state.output_current_file.namespace.try_get_value():
+  matcher = PartialStateMatcher()
+  if ns := state.output_current_file.namespace.try_get_value():
     nsstr = ns.get_string()
     nstuple = VNNamespace.expand_namespace_str(nsstr)
   nsstr = VNNamespace.stringize_namespace_path(nstuple) if nstuple is not None else '/'
-  def submit_expr(statestr : str, expr : Value):
+  def submit_expr(statestack : list[str], expr : Value, statestr : str | None = None):
     nonlocal statetree
+    if statestr is None:
+      statestr = ','.join(statestack)
     node = statetree.get(statestr)
     if node is None:
       node = VNASTNamespaceSwitchableValueSymbol.create(state.context, name=statestr, defaultvalue=expr, loc=loc)
       statetree.add(node)
     node.set_value(nsstr, expr)
+    matcher.add_valid_state(tuple(statestack))
 
   def visit_node(statestack : list[str], node : ListExprTreeNode):
     # 调用时应该已经把 node.key 放入 statestack 了
@@ -809,6 +815,14 @@ def _helper_parse_image_exprtree(parser : VNParser, state : VNASTParsingState, v
         expr = emit_image_expr_from_callexpr(context=state.context, call=node.value, placeholderdest=placeholderdest, placeholderdesc=placeholderdesc, warnings=warnings, children_out=children)
       elif isinstance(node.value, str):
         expr = emit_image_expr_from_str(context=state.context, s=node.value, basepath=state.input_file_path, placeholderdest=placeholderdest, placeholderdesc=placeholderdesc, warnings=warnings, children_out=children)
+        if expr is None:
+          # 尝试将字符串理解为已有的状态
+          referenced_states = [s.strip() for s in re.split(r'[,，]', node.value) if s]
+          matches = matcher.find_match(statestack[:-1], referenced_states)
+          if matches is not None:
+            target_state = ','.join(matches)
+            if target_node := statetree.get(target_state):
+              expr = target_node.get_value(nsstr)
       else:
         raise PPInternalError('Unexpected node value type: ' + str(type(node.value)))
       if expr is None:
@@ -816,12 +830,11 @@ def _helper_parse_image_exprtree(parser : VNParser, state : VNASTParsingState, v
         msg = _tr_image_notfound_help.format(dest=placeholderdesc, expr=node.value)
         state.emit_error(code='vnparse-invalid-imageexpr', msg=msg, loc=loc)
         state.emit_assetnotfound(loc=loc)
-      submit_expr(statestr, expr)
+      submit_expr(statestack, expr, statestr)
       if len(children) > 0:
         # 如果有子结点，我们需要把子结点的所有差分组合都加到状态树里
         for childstates, childexpr in children:
-          childstatestr = ','.join(statestack + childstates)
-          submit_expr(childstatestr, childexpr)
+          submit_expr(statestack + childstates, childexpr)
     # 开始读取子结点
     for child in node.children:
       # 如果子结点没有键，就报错
