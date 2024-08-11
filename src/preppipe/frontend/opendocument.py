@@ -3,7 +3,6 @@
 
 import io, sys, os
 import typing
-from warnings import warn
 import PIL.Image
 import dataclasses
 import re
@@ -12,6 +11,7 @@ import odf.opendocument
 import zipfile
 import urllib
 
+from ..util.message import MessageHandler
 from ..inputmodel import *
 import argparse
 from ..pipeline import TransformBase, FrontendDecl, IODecl

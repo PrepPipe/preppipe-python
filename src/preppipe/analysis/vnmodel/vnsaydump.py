@@ -9,6 +9,7 @@ import os
 from ...vnmodel import *
 from ...pipeline import TransformBase, IODecl, BackendDecl, TransformArgumentGroup
 from ...language import TranslationDomain
+from ...util.message import MessageHandler
 
 TR_vn_saydump = TranslationDomain("vn_saydump")
 
@@ -221,7 +222,7 @@ def vn_say_dump(m : VNModel, setting : _VNSayDumpSettings, outputdir : str):
       realpath = os.path.realpath(os.path.join(outputdir, dname))
       # 检查 realpath 是否在 outputdir 下，如果不在的话报错并跳过
       if os.path.commonprefix([realpath, outputdir]) != outputdir:
-        print(_TR_vn_saydump_name.get() + _TR_vn_saydump_dump_outside_outputdir.format(realpath=realpath, outputdir=outputdir))
+        MessageHandler.critical_warning(_TR_vn_saydump_name.get() + _TR_vn_saydump_dump_outside_outputdir.format(realpath=realpath, outputdir=outputdir))
         continue
       result = _get_blocks_list(f, setting, char_state_dict, char_sideimage_state_dict)
       if len(result) == 0:

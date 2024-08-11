@@ -23,6 +23,7 @@ import dataclasses
 from ..irbase import *
 from ..inputmodel import *
 from ..pipeline import *
+from ..util.message import MessageHandler
 
 class _DOCXParseContext:
   @dataclasses.dataclass

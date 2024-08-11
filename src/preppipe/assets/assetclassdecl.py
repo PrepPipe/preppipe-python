@@ -19,7 +19,7 @@ from ..exceptions import *
 #     如果该类需要类似 Manifest 的内容（比如用于在其他部分引用这些资源），则可返回一个任意可以 pickle 的对象
 # 3.  一个成员函数 dump_asset_info_json(self, name : str) -> dict
 #     该方法用于将素材的信息导出为一个 JSON 对象，将作为 AssetManager 的 dump 输出的一部分
-# 4.  (可选) 一个静态方法 load_manifest(manifest : list[typing.Any]) -> None
+# 4.  (可选) 一个静态方法 load_descriptors(descriptors : list[typing.Any]) -> None
 #     该方法用于从 AssetManager 的 Manifest 中加载素材的信息，列表中的对象均为 build_asset_archive 的返回值
 #     如果 build_asset_archive 只返回 None，则不需要提供该方法
 
@@ -103,8 +103,9 @@ class NamedAssetClassBase:
     return [f(cls.get_candidate_name(d)) for d in cls.MANIFEST.values()]
 
   @classmethod
-  def load_manifest(cls, manifest: list[typing.Any]) -> None:
-    for descriptor in manifest:
+  def load_descriptors(cls, descriptors: list[typing.Any]) -> None:
+    # 载入描述对象，可能被调用不止一次
+    for descriptor in descriptors:
       if not isinstance(descriptor, cls.DESCRIPTOR_TYPE):
         raise ValueError(f"Invalid descriptor type {type(descriptor)}")
       cls.add_descriptor(descriptor)

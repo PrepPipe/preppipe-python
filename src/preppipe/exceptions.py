@@ -19,3 +19,7 @@ class PPNotImplementedError(NotImplementedError):
 class PPAssertionError(AssertionError):
   def __init__(self, msg : str = '') -> None:
     super().__init__(TR_preppipe.assert_failure.get_with_msg(msg))
+
+class PPInvalidOperationError(RuntimeError):
+  def __init__(self, msg : str = '') -> None:
+    super().__init__(TR_preppipe.invalid_operation.get_with_msg(msg))

@@ -4,6 +4,7 @@
 import os
 import typing
 from ..language import TranslationDomain, Translatable
+from .message import MessageHandler
 
 class FileAccessAuditor:
   # 该类用于存储所有在读取阶段有关的设置，读取完毕后可扔
@@ -39,7 +40,7 @@ class FileAccessAuditor:
         return True
     # 到这就检查失败了
     if self._warn_empty_accessible_paths is not None and len(self._accessible_directories) == 0:
-      print(self._warn_empty_accessible_paths.get())
+      MessageHandler.warning(self._warn_empty_accessible_paths.get())
       self._warn_empty_accessible_paths = None
     return False
 

@@ -33,6 +33,7 @@ from ..tooldecl import ToolClassDecl
 from ..assets.assetclassdecl import AssetClassDecl, NamedAssetClassBase
 from ..assets.assetmanager import AssetManager
 from ..assets.fileasset import FileAssetPack
+from .message import MessageHandler
 
 @AssetClassDecl("imagepack")
 @ToolClassDecl("imagepack")
@@ -427,7 +428,7 @@ class ImagePack(NamedAssetClassBase):
 
     return base_data
 
-  TEXT_IMAGE_FONT_ASSET : typing.ClassVar[str] = "file-font-SourceHanSerif-thirdparty-Adobe"
+  TEXT_IMAGE_FONT_ASSET : typing.ClassVar[str] = AssetManager.ASSETREF_DEFAULT_FONT
   TEXT_IMAGE_FONT_PATH : typing.ClassVar[str] = "SourceHanSerif-Regular.ttc"
 
   @staticmethod
@@ -1355,16 +1356,13 @@ class ImagePack(NamedAssetClassBase):
         raise PPInternalError("Cannot export overview without input")
       current_pack.write_overview_image(parsed_args.export_overview)
 
-  _starttime = time.time()
   _debug = False
 
   @staticmethod
   def printstatus(s : str):
     if not ImagePack._debug:
       return
-    curtime = time.time()
-    timestr = "[{:.6f}] ".format(curtime - ImagePack._starttime)
-    print(timestr + s, flush=True)
+    MessageHandler.info(s)
 
   _tr_algo_checkpoint = TR_imagepack.tr("algo_checkpoint",
     en="Algorithm Checkpoint: {name}",
