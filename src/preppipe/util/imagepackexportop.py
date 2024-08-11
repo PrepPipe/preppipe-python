@@ -7,6 +7,7 @@ from ..irbase import *
 from ..exportcache import CacheableOperationSymbol
 from .imagepack import *
 from ..imageexpr import *
+from .message import MessageHandler
 from ..commontypes import *
 
 @IRObjectJsonTypeName("imagepack_export_op_symbol")

@@ -23,8 +23,11 @@ def str2identifier(name : str) -> str:
     return ''
   if re.match(r'''^[a-zA-Z]+[0-0A-Za-z_]*$''', name) is not None:
     return name
-  result = pypinyin.lazy_pinyin(name, style=pypinyin.Style.NORMAL, neutral_tone_with_five=True, tone_sandhi=True, errors=lambda c : _fallback_handling(c))
-  resultstr = ''.join(result)
+  if name.isascii():
+    resultstr = _fallback_handling(name)
+  else:
+    result = pypinyin.lazy_pinyin(name, style=pypinyin.Style.NORMAL, neutral_tone_with_five=True, tone_sandhi=True, errors=lambda c : _fallback_handling(c))
+    resultstr = ''.join(result)
   assert len(resultstr) > 0
   if not (resultstr[0].isascii() and resultstr[0].isalpha()):
     resultstr = 'n_' + resultstr

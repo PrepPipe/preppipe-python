@@ -142,6 +142,10 @@ class TranslationDomain:
   def not_implemented(self) -> Translatable:
     return TR_preppipe.get("not_implemented")
 
+  @property
+  def invalid_operation(self) -> Translatable:
+    return TR_preppipe.get("invalid_operation")
+
 # 只用作基础代码的翻译内容
 TR_preppipe = TranslationDomain("preppipe")
 
@@ -350,6 +354,11 @@ TR_preppipe.tr("not_implemented",
   en="The requested feature is not implemented and the program cannot continue. Please contact the developer to fix this.",
   zh_cn="所需的功能还没有完成，程序无法继续执行。请联系开发者来解决这个问题。",
   zh_hk="所需的功能還沒有完成，程序無法繼續執行。請聯系開發者來解決這個問題。",
+)
+TR_preppipe.tr("invalid_operation",
+  en="The requested operation cannot be performed due to invalid input or settings. Please fix the issues identified in the error message and try again.",
+  zh_cn="由于输入或设置的问题，无法执行所请求的操作。请修复错误信息中指出的问题后重试。",
+  zh_hk="由於輸入或設置的問題，無法執行所請求的操作。請修復錯誤信息中指出的問題後重試。",
 )
 
 ValueType = typing.TypeVar("ValueType") # pylint: disable=invalid-name

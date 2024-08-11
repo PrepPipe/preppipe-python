@@ -12,6 +12,7 @@ import traceback
 
 from .irbase import *
 from .util.audit import *
+from .util.message import MessageHandler
 from ._version import __version__
 from .language import TranslationDomain, Translatable
 from .exceptions import *
@@ -376,7 +377,6 @@ class TransformRegistration:
     pipeline_index = 0
     for flag, value in ordered_passes:
       pipeline_index += 1
-      # print('Pipeline: before flag ' + flag + ': cur type = ' + ('None' if current_ir_type is None else current_ir_type.__name__))
       transform_cls = TransformRegistration._flag_to_type_dict[flag]
       info = TransformRegistration._registration_record[transform_cls]
       # 让转换读取相应的命令行参数
@@ -442,8 +442,6 @@ class TransformRegistration:
             output_path = value
         transform_inst.set_output_path(output_path)
       pipeline.append(transform_inst)
-      if verbose:
-        print(TransformRegistration._tr_pipeline_stage.format(index=str(pipeline_index), flag=flag) + str(transform_inst))
     return pipeline
 
   _tr_transform_already_registered = TR_pipeline.tr("transform_already_registered",
@@ -727,7 +725,7 @@ class _PipelineManager:
       transform_cls = type(t)
       info = TransformRegistration._registration_record[transform_cls]
       if result_args.verbose:
-        print('[' + get_timestr() + '] ' + _PipelineManager._TR_pipeline_running.get() + ' ' + info.flag + " (" + str(step_count) + '/' + str(len(pipeline)) + ')', flush=True)
+        MessageHandler.info(_PipelineManager._TR_pipeline_running.get() + ' ' + info.flag + " (" + str(step_count) + '/' + str(len(pipeline)) + ')')
       is_append_result = False
       if isinstance(info.input_decl, type):
         # 该转换读取IR
@@ -795,10 +793,10 @@ class _PipelineManager:
       return
 
     if len(current_ir_ops) > 0 and not is_current_ir_used:
-      print(_PipelineManager._tr_pipeline_last_ir_notused.get())
+      MessageHandler.warning(_PipelineManager._tr_pipeline_last_ir_notused.get())
 
     if result_args.verbose:
-      print('[' + get_timestr() + '] ' + _PipelineManager._TR_pipeline_finished.get())
+      MessageHandler.info(_PipelineManager._TR_pipeline_finished.get())
 
     return
 
@@ -815,7 +813,7 @@ class _PipelineManager:
 
   @staticmethod
   def _load_module(module_name, file_path):
-    print(_PipelineManager._tr_plugin_loading.format(modulename=module_name, filepath=file_path), flush=True)
+    MessageHandler.info(_PipelineManager._tr_plugin_loading.format(modulename=module_name, filepath=file_path))
     is_loaded = False
     try:
       if spec := importlib.util.spec_from_file_location(module_name, file_path):
@@ -826,7 +824,7 @@ class _PipelineManager:
     except Exception as e:
       traceback.print_exception(e)
     if not is_loaded:
-      print(_PipelineManager._tr_plugin_load_fail.format(modulename=module_name, filepath=file_path))
+      MessageHandler.critical_warning(_PipelineManager._tr_plugin_load_fail.format(modulename=module_name, filepath=file_path))
 
   _tr_plugin_load_start = TR_pipeline.tr("plugin_load_start",
     en="Loading plugin(s) from PREPPIPE_PLUGINS: ",
@@ -842,7 +840,7 @@ class _PipelineManager:
       if os.path.isdir(plugindir):
         dircontent = os.listdir(plugindir)
         if len(dircontent) > 0:
-          print(_PipelineManager._tr_plugin_load_start.get() + '"' + plugindir + '"')
+          MessageHandler.info(_PipelineManager._tr_plugin_load_start.get() + '"' + plugindir + '"')
           for pluginname in dircontent:
             curpath = os.path.join(plugindir, pluginname)
             if os.path.isfile(curpath):

@@ -12,7 +12,7 @@ from ...imageexpr import *
 from ..commandsemantics import *
 from ..commandsyntaxparser import *
 from .vnast import *
-from ...commontypes import MessageHandler
+from ...util.message import MessageHandler
 from ...exceptions import *
 from ...language import TranslationDomain
 
