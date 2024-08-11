@@ -1,0 +1,3 @@
+subdirs:
+  - imagepack/background/background_templates.yml
+  - thirdparty/thirdparty.yml

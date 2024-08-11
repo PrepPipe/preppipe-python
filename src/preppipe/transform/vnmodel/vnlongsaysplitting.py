@@ -7,6 +7,7 @@ import argparse
 
 from ...vnmodel import *
 from ...pipeline import TransformBase, TransformArgumentGroup, MiddleEndDecl
+from ...util.message import MessageHandler
 
 def _is_character_fullwidth(ch : str):
   # https://stackoverflow.com/questions/23058564/checking-a-character-is-fullwidth-or-halfwidth-in-python
@@ -270,8 +271,8 @@ def vn_long_say_splitting(m : VNModel, setting : _LongSaySplittingSettings):
           say_to_break.clear()
           say_len_after = count_block_say_len(block)
           if say_len_after != say_len_before:
-            print('Say length not match after long say splitting: before=' + str(say_len_before) + ', after=' + str(say_len_after))
-            raise RuntimeError('Say length not match after long say splitting')
+            MessageHandler.error('Say length not match after long say splitting: before=' + str(say_len_before) + ', after=' + str(say_len_after))
+            raise PPAssertionError('Say length not match after long say splitting')
 
 @TransformArgumentGroup("vn-longsaysplitting", "Options for long say splitting pass")
 @MiddleEndDecl('vn-longsaysplitting', input_decl=VNModel, output_decl=VNModel)
