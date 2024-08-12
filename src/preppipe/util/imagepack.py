@@ -9,6 +9,7 @@ import sys
 import time
 import colorsys
 import math
+import itertools
 import PIL.Image
 import PIL.ImageDraw
 import PIL.ImageFont
@@ -954,6 +955,11 @@ class ImagePack(NamedAssetClassBase):
     zh_cn="元数据",
     zh_hk="元數據",
   )
+  TR_imagepack_yamlparse_generation = TR_imagepack.tr("generation",
+    en="generation",
+    zh_cn="生成",
+    zh_hk="生成",
+  )
   TR_imagepack_yamlparse_flags = TR_imagepack.tr("flags",
     en="flags",
     zh_cn="特殊标记",
@@ -1032,6 +1038,7 @@ class ImagePack(NamedAssetClassBase):
       masks = None
       composites = None
       metadata = None
+      generation = None
       for k in yamlobj.keys():
         if k in ImagePack.TR_imagepack_yamlparse_layers.get_all_candidates():
           layers = yamlobj[k]
@@ -1041,12 +1048,18 @@ class ImagePack(NamedAssetClassBase):
           composites = yamlobj[k]
         elif k in ImagePack.TR_imagepack_yamlparse_metadata.get_all_candidates():
           metadata = yamlobj[k]
+        elif k in ImagePack.TR_imagepack_yamlparse_generation.get_all_candidates():
+          generation = yamlobj[k]
         else:
           raise PPInternalError("Unknown key: " + k + "(supported keys: "
                                 + str(ImagePack.TR_imagepack_yamlparse_layers.get_all_candidates()) + ", "
                                 + str(ImagePack.TR_imagepack_yamlparse_masks.get_all_candidates()) + ", "
                                 + str(ImagePack.TR_imagepack_yamlparse_composites.get_all_candidates()) + ", "
-                                + str(ImagePack.TR_imagepack_yamlparse_metadata.get_all_candidates()) + ")")
+                                + str(ImagePack.TR_imagepack_yamlparse_metadata.get_all_candidates()) + ", "
+                                + str(ImagePack.TR_imagepack_yamlparse_generation.get_all_candidates())
+                                + ")")
+      if generation is not None:
+        layers, masks, composites, metadata = ImagePack.handle_yaml_generation(generation, layers, masks, composites, metadata)
       if layers is None:
         raise PPInternalError("No layers in " + yamlpath)
       layer_dict : dict[str, int] = {}
@@ -1188,6 +1201,387 @@ class ImagePack(NamedAssetClassBase):
 
       result.optimize_masks()
       return result
+
+  TR_imagepack_yamlgen_parts = TR_imagepack.tr("parts",
+    en="parts",
+    zh_cn="部件",
+    zh_hk="部件",
+  )
+  TR_imagepack_yamlgen_parts_kind = TR_imagepack.tr("parts_kind",
+    en="parts_kind",
+    zh_cn="部件类型",
+    zh_hk="部件類型",
+  )
+  class CharacterSpritePartsBased_PartKind(enum.Enum):
+    UNKNOWN = 0
+    BASE = enum.auto()
+    EYEBROW = enum.auto()
+    EYE = enum.auto()
+    MOUTH = enum.auto()
+    FULLFACE = enum.auto()
+    DECORATION = enum.auto()
+
+  PRESET_YAMLGEN_PARTS_KIND_PRESETS = {
+    "preset_kind_base" : (CharacterSpritePartsBased_PartKind.BASE, TR_imagepack.tr("preset_kind_base",
+      en="base",
+      zh_cn="基底",
+      zh_hk="基底",
+    )),
+    "preset_kind_eyebrow" : (CharacterSpritePartsBased_PartKind.EYEBROW, TR_imagepack.tr("preset_kind_eyebrow",
+      en="eyebrow",
+      zh_cn="眉毛",
+      zh_hk="眉毛",
+    )),
+    "preset_kind_eye" : (CharacterSpritePartsBased_PartKind.EYE, TR_imagepack.tr("preset_kind_eye",
+      en="eye",
+      zh_cn="眼睛",
+      zh_hk="眼睛",
+    )),
+    "preset_kind_mouth" : (CharacterSpritePartsBased_PartKind.MOUTH, TR_imagepack.tr("preset_kind_mouth",
+      en="mouth",
+      zh_cn="嘴巴",
+      zh_hk="嘴巴",
+    )),
+    "preset_kind_fullface" : (CharacterSpritePartsBased_PartKind.FULLFACE, TR_imagepack.tr("preset_kind_fullface",
+      en="fullface",
+      zh_cn="全脸",
+      zh_hk="全臉",
+    )),
+    "preset_kind_decoration" : (CharacterSpritePartsBased_PartKind.DECORATION, TR_imagepack.tr("preset_kind_decoration",
+      en="decoration",
+      zh_cn="装饰",
+      zh_hk="裝飾",
+    )),
+  }
+  TR_imagepack_yamlgen_tags = TR_imagepack.tr("tags",
+    en="tags",
+    zh_cn="标签",
+    zh_hk="標籤",
+  )
+  PRESET_YAMLGEN_TAGS_PRESETS = {
+    "preset_tag_general" : TR_imagepack.tr("preset_tag_general",
+      en="general",
+      zh_cn="通用",
+      zh_hk="通用",
+    ),
+    "preset_tag_smile" : TR_imagepack.tr("preset_tag_smile",
+      en="smile",
+      zh_cn="笑容",
+      zh_hk="笑容",
+    ),
+    "preset_tag_angry" : TR_imagepack.tr("preset_tag_angry",
+      en="angry",
+      zh_cn="愤怒",
+      zh_hk="憤怒",
+    ),
+    "preset_tag_sad" : TR_imagepack.tr("preset_tag_sad",
+      en="sad",
+      zh_cn="悲伤",
+      zh_hk="悲傷",
+    ),
+    "preset_tag_surprised" : TR_imagepack.tr("preset_tag_surprised",
+      en="surprised",
+      zh_cn="惊讶",
+      zh_hk="驚訝",
+    ),
+    "preset_tag_confused" : TR_imagepack.tr("preset_tag_confused",
+      en="confused",
+      zh_cn="困惑",
+      zh_hk="困惑",
+    ),
+    "preset_tag_scared" : TR_imagepack.tr("preset_tag_scared",
+      en="scared",
+      zh_cn="害怕",
+      zh_hk="害怕",
+    ),
+    "preset_tag_base" : TR_imagepack.tr("preset_tag_base",
+      en="base",
+      zh_cn="基底",
+      zh_hk="基底",
+    ),
+  }
+  TR_imagepack_yamlgen_parts_exclusions = TR_imagepack.tr("parts_exclusions",
+    en="exclusions",
+    zh_cn="互斥",
+    zh_hk="互斥",
+  )
+  TR_imagepack_yamlgen_parts_depends = TR_imagepack.tr("parts_depends",
+    en="depends",
+    zh_cn="依赖",
+    zh_hk="依賴",
+  )
+
+  @dataclasses.dataclass
+  class CharacterSpritePartsBased_PartsDecl:
+    name : str # 完整的名称，需要与图片名匹配
+    codename : str # 完整名称头部的一串纯字母数字的字符串，用于给其他部分引用
+    kind : str # 部件类型
+    tags : list[str] | None = None # 标签
+    exclusions : list[tuple[str, ...]] | None = None # 互斥的组合，列表中每一组都是互斥的部分的 codename，当前部件的任意一组中所有部件的 codename 已经全被选中的话就不能使用当前部件
+    depends : list[tuple[str, ...]] | None = None # 依赖的组合，当前部件的任意一组中所有部件的 codename 都被选中的话才能使用当前部件
+
+  @staticmethod
+  def yaml_generation_charactersprite_parts_based(data : dict, layers : dict | None, masks : dict | None, composites : dict | None, metadata : dict | None) -> tuple[dict | None, dict | None, dict | None, dict | None]:
+    part_kinds : collections.OrderedDict[str, str | Translatable] = collections.OrderedDict()
+    tags : collections.OrderedDict[str, str | Translatable] = collections.OrderedDict()
+    parts : collections.OrderedDict[str, ImagePack.CharacterSpritePartsBased_PartsDecl] = collections.OrderedDict() # codename -> parts_decl
+
+    # 为了支持立绘在使用相同表情时能有不同的基底（比如不同的衣服样式），我们也有基底间的排列组合，这些标签会被用于生成基底的组合
+    base_tags : list[str] = []
+
+    kinds_enum_map : dict[str, ImagePack.CharacterSpritePartsBased_PartKind] = {}
+
+    # 除了装饰部件以外，每种部件类型最多只能声明一次
+    used_part_kinds : set[ImagePack.CharacterSpritePartsBased_PartKind] = set()
+
+    def get_translated_partiallists(srclist : list[str]) -> list[tuple[str]]:
+      # 把形如 ["M1Y1", "M2Y2"] 的依赖列表转换为形如 [("M1", "Y1"), ("M2", "Y2")] 的列表
+      result = []
+      for s in srclist:
+        # 我们使用正则表达式进行匹配，每个部件代号由一个或多个大写字母和一个或多个数字组成
+        pattern = r'[A-Z]+\d+'
+        matches = re.findall(pattern, s)
+        result.append(tuple(matches))
+      return result
+
+    for k, v in data.items():
+      if k in ImagePack.TR_imagepack_yamlgen_parts_kind.get_all_candidates():
+        if not isinstance(v, dict):
+          raise PPInternalError("Invalid parts_kind in generation: expecting a dict but got " + str(v) + " (type: " + str(type(v)) + ")")
+        for kind_name, kind_raw_tr in v.items():
+          if isinstance(kind_raw_tr, str):
+            kind_enum, kind_name_tr = ImagePack.PRESET_YAMLGEN_PARTS_KIND_PRESETS.get(kind_raw_tr, (ImagePack.CharacterSpritePartsBased_PartKind.UNKNOWN, None))
+            kinds_enum_map[kind_name] = kind_enum
+            part_kinds[kind_name] = kind_name_tr if kind_name_tr is not None else kind_raw_tr
+            if kind_enum == ImagePack.CharacterSpritePartsBased_PartKind.UNKNOWN:
+              raise PPInternalError("Custom part kind is not implemented yet: " + kind_raw_tr)
+            elif kind_enum != ImagePack.CharacterSpritePartsBased_PartKind.DECORATION:
+              if kind_enum in used_part_kinds:
+                raise PPInternalError("Duplicate part kind: " + kind_name)
+              used_part_kinds.add(kind_enum)
+          elif isinstance(kind_raw_tr, dict):
+            tr_code = "parts_kind_tr_" + kind_name
+            kind_name_tr = ImagePack.TR_imagepack.tr(tr_code, **kind_raw_tr)
+            part_kinds[kind_name]
+            raise PPNotImplementedError("Custom part kind is not implemented yet")
+          else:
+            raise PPInternalError("Invalid parts_kind value (" + kind_name + ") in generation: expecting a str or dict but got " + str(kind_raw_tr) + " (type: " + str(type(kind_raw_tr)) + ")")
+      elif k in ImagePack.TR_imagepack_yamlgen_tags.get_all_candidates():
+        if not isinstance(v, dict):
+          raise PPInternalError("Invalid tags in generation: expecting a dict but got " + str(v) + " (type: " + str(type(v)) + ")")
+        for tag_name, tag_raw_tr in v.items():
+          if isinstance(tag_raw_tr, str):
+            if tag_name_tr := ImagePack.PRESET_YAMLGEN_TAGS_PRESETS.get(tag_raw_tr, None):
+              tags[tag_name] = tag_name_tr
+              if tag_raw_tr == "preset_tag_base":
+                base_tags.append(tag_name)
+            else:
+              tags[tag_name] = tag_raw_tr
+          elif isinstance(tag_raw_tr, dict):
+            tr_code = "tags_tr_" + tag_name
+            tag_name_tr = ImagePack.TR_imagepack.tr(tr_code, **tag_raw_tr)
+            tags[tag_name] = tag_name_tr
+          else:
+            raise PPInternalError("Invalid tag value (" + tag_name + ") in generation: expecting a str or dict but got " + str(tag_raw_tr) + " (type: " + str(type(tag_raw_tr)) + ")")
+      elif k in ImagePack.TR_imagepack_yamlgen_parts.get_all_candidates():
+        if not isinstance(v, dict):
+          raise PPInternalError("Invalid parts in generation: expecting a dict but got " + str(v) + " (type: " + str(type(v)) + ")")
+        for part_kind, kind_data in v.items():
+          if not isinstance(kind_data, dict):
+            raise PPInternalError("Invalid part declaration in generation: expecting a dict but got " + str(kind_data) + " (type: " + str(type(kind_data)) + ")")
+          for part_name, part_decl in kind_data.items():
+            codename = part_name.split("-")[0]
+            if re.match(r'^[A-Z]+\d+$', codename) is None:
+              raise PPInternalError("Invalid part declaration in generation: codename must be a string of uppercase letters followed by digits: " + codename)
+            if codename in parts:
+              raise PPInternalError("Invalid part declaration in generation: codename " + codename + " is already used")
+            part_entry = ImagePack.CharacterSpritePartsBased_PartsDecl(part_name, codename, part_kind, None, None, None)
+            parts[codename] = part_entry
+            if part_decl is None:
+              pass
+            elif isinstance(part_decl, str):
+              part_entry.tags = [part_decl]
+            elif isinstance(part_decl, list):
+              part_entry.tags = part_decl
+            elif isinstance(part_decl, dict):
+              for key, value in part_decl.items():
+                if key in ImagePack.TR_imagepack_yamlgen_tags.get_all_candidates():
+                  if isinstance(value, str):
+                    part_entry.tags = [value]
+                  elif isinstance(value, list):
+                    part_entry.tags = value
+                  else:
+                    raise PPInternalError("Invalid tags in part declaration in generation: expecting a str or list but got " + str(value) + " (type: " + str(type(value)) + ")")
+                elif key in ImagePack.TR_imagepack_yamlgen_parts_exclusions.get_all_candidates():
+                  part_entry.exclusions = get_translated_partiallists(value)
+                elif key in ImagePack.TR_imagepack_yamlgen_parts_depends.get_all_candidates():
+                  part_entry.depends = get_translated_partiallists(value)
+                else:
+                  raise PPInternalError("Unknown key in part declaration in generation: " + key + "(supported keys: "
+                                        + str(ImagePack.TR_imagepack_yamlgen_tags.get_all_candidates()) + ", "
+                                        + str(ImagePack.TR_imagepack_yamlgen_parts_exclusions.get_all_candidates()) + ", "
+                                        + str(ImagePack.TR_imagepack_yamlgen_parts_depends.get_all_candidates()) + ")")
+      else:
+        raise PPInternalError("Unknown key in generation: " + k + "(supported keys: "
+                              + str(ImagePack.TR_imagepack_yamlgen_parts.get_all_candidates()) + ", "
+                              + str(ImagePack.TR_imagepack_yamlgen_parts_kind.get_all_candidates()) + ", "
+                              + str(ImagePack.TR_imagepack_yamlgen_tags.get_all_candidates()) + ")")
+    # 检查一下输入有没有问题，所有标签是否都有定义，所有部件是否都有定义
+    # 同时我们也将对象分类
+    base_parts_by_tag : dict[str, list[str]] = {}
+    fullface_parts : list[str] = []
+    parts_by_tag_kind : dict[str, typing.OrderedDict[str, list[str]]] = {}
+    for codename, part in parts.items():
+      if kinds_enum_map[part.kind] == ImagePack.CharacterSpritePartsBased_PartKind.FULLFACE:
+        # 全脸表情部件不应该有标签、互斥或依赖
+        if part.tags is not None:
+          raise PPInternalError("Fullface part " + codename + " should not have tags")
+        if part.exclusions is not None:
+          raise PPInternalError("Fullface part " + codename + " should not have exclusions")
+        if part.depends is not None:
+          raise PPInternalError("Fullface part " + codename + " should not have dependencies")
+        fullface_parts.append(codename)
+        continue
+
+      # 除全脸表情部件外，其他所有部件都应该有标签
+      is_base = kinds_enum_map[part.kind] == ImagePack.CharacterSpritePartsBased_PartKind.BASE
+      if part.tags is None:
+        raise PPInternalError("Part " + codename + " should have tags")
+      for t in part.tags:
+        if t not in tags:
+          raise PPInternalError("Part " + codename + " has a tag that does not exist: " + t)
+        if is_base:
+          if t not in base_tags:
+            raise PPInternalError("Part " + codename + " is a base part but has a tag that is not a base tag: " + t)
+        elif t in base_tags:
+          raise PPInternalError("Part " + codename + " is not a base part but has a base tag: " + t)
+        if is_base:
+          if t not in base_parts_by_tag:
+            base_parts_by_tag[t] = []
+          base_parts_by_tag[t].append(codename)
+        else:
+          if t not in parts_by_tag_kind:
+            parts_by_tag_kind[t] = collections.OrderedDict()
+          if part.kind not in parts_by_tag_kind[t]:
+            parts_by_tag_kind[t][part.kind] = []
+          parts_by_tag_kind[t][part.kind].append(codename)
+      if part.exclusions is not None:
+        for exclusion in part.exclusions:
+          for ex in exclusion:
+            if ex not in parts:
+              raise PPInternalError("Part " + codename + " has an exclusion that does not exist: " + ex)
+            if (kinds_enum_map[parts[ex].kind] == ImagePack.CharacterSpritePartsBased_PartKind.BASE) != is_base:
+              raise PPInternalError("Part " + codename + " has an exclusion that is not consistent with the base part status of " + ex)
+      if part.depends is not None:
+        for depend in part.depends:
+          for de in depend:
+            if de not in parts:
+              raise PPInternalError("Part " + codename + " has a dependency that does not exist: " + de)
+            if (kinds_enum_map[parts[de].kind] == ImagePack.CharacterSpritePartsBased_PartKind.BASE) != is_base:
+              raise PPInternalError("Part " + codename + " has a dependency that is not consistent with the base part status of " + de)
+    base_parts_combinations : collections.OrderedDict[tuple[str, ...], bool] = collections.OrderedDict() # 值一定是 True，我们只是要一个有序的集合
+    all_parts_used : set[str] = set()
+    for tag, base_parts_list in base_parts_by_tag.items():
+      base_tuple = tuple(base_parts_list)
+      if base_tuple in base_parts_combinations:
+        continue
+      base_parts_combinations[base_tuple] = True
+      all_parts_used.update(base_parts_list)
+    nonbase_parts_dedup_set : set[tuple[str, ...]] = set()
+    nonbase_parts_combinations : list[tuple[str, ...]] = []
+    def try_add_combinations(parts_list : tuple[str, ...]):
+      # 如果已经生成过这个组合，直接返回
+      refnames_sorted_tuple = tuple(sorted(parts_list))
+      if refnames_sorted_tuple in nonbase_parts_dedup_set:
+        return
+      # 检查是否有互斥或者依赖条件没有满足
+      for part in parts_list:
+        part_decl = parts[part]
+        if part_decl.exclusions is not None:
+          for exclusion in part_decl.exclusions:
+            if all(p in parts_list for p in exclusion):
+              return
+        if part_decl.depends is not None:
+          is_dependency_satisfied = False
+          for depend in part_decl.depends:
+            if all(p in parts_list for p in depend):
+              is_dependency_satisfied = True
+              break
+          if not is_dependency_satisfied:
+            return
+      # 加到组合里
+      nonbase_parts_combinations.append(parts_list)
+      nonbase_parts_dedup_set.add(refnames_sorted_tuple)
+      all_parts_used.update(parts_list)
+    for tag in tags.keys():
+      if tag in base_tags:
+        continue
+      if tag not in parts_by_tag_kind:
+        continue
+      parts_by_kind = parts_by_tag_kind[tag]
+      main_parts : list[list[str]] = [] # 眉毛、眼睛、嘴巴
+      d_parts : list[list[str]] = [] # 装饰
+      for kind in part_kinds.keys():
+        kind_enum = kinds_enum_map[kind]
+        if kind_enum == ImagePack.CharacterSpritePartsBased_PartKind.DECORATION:
+          if cur_d_parts := parts_by_kind.get(kind):
+            d_parts.append(cur_d_parts)
+          continue
+        if kind_enum in (ImagePack.CharacterSpritePartsBased_PartKind.BASE, ImagePack.CharacterSpritePartsBased_PartKind.FULLFACE):
+          continue
+        # 剩下的应该只有眉毛、眼睛、嘴巴
+        if kind_enum not in (ImagePack.CharacterSpritePartsBased_PartKind.EYEBROW, ImagePack.CharacterSpritePartsBased_PartKind.EYE, ImagePack.CharacterSpritePartsBased_PartKind.MOUTH):
+          raise PPNotImplementedError("Unknown part kind: " + kind)
+        if cur_main_parts := parts_by_kind.get(kind):
+          main_parts.append(cur_main_parts)
+      # 生成所有可能的组合
+      for main_parts_combination in itertools.product(*main_parts):
+        try_add_combinations(main_parts_combination)
+        if len(d_parts) > 0:
+          for num_d_parts in range(1, len(d_parts)+1):
+            for d_parts_combination_list in itertools.combinations(d_parts, num_d_parts):
+              for d_parts_combination in itertools.product(*d_parts_combination_list):
+                try_add_combinations(main_parts_combination + d_parts_combination)
+    for fullface_part in fullface_parts:
+      try_add_combinations((fullface_part,))
+    # 仅供调试：把所有组合都打印出来
+    # for combination in nonbase_parts_combinations:
+    #   print(combination)
+    # 如果有部件没有被用到，报错
+    for codename, part in parts.items():
+      if codename not in all_parts_used:
+        raise PPInternalError("Part " + codename + " is not used in any combination")
+    # 如果没有组合结果，报错
+    if len(base_parts_combinations) == 0 or len(nonbase_parts_combinations) == 0:
+      raise PPInternalError("No valid combinations")
+    # 生成结果
+    # 首先按照部件的声明顺序添加图层，每个部件都是一个图层
+    result_layers : dict[str, dict] = {}
+    if layers is not None:
+      result_layers.update(layers)
+    for codename, part in parts.items():
+      part_dict = {}
+      if kinds_enum_map[part.kind] == ImagePack.CharacterSpritePartsBased_PartKind.BASE:
+        part_dict[ImagePack.TR_imagepack_yamlparse_flags.get()] = ImagePack.TR_imagepack_yamlparse_base.get()
+      result_layers[part.name] = part_dict
+    result_composites : dict[str, list[str]] = {}
+    if composites is not None:
+      raise PPInternalError("Manually-specified composites are not supported in this generation algorithm")
+    for base_combination in base_parts_combinations.keys():
+      combination_codename_base = "".join(base_combination)
+      combination_layers_base = [parts[part].name for part in base_combination]
+      for nonbase_combination in nonbase_parts_combinations:
+        combination_codename = combination_codename_base + "".join(nonbase_combination)
+        combination_layers = combination_layers_base + [parts[part].name for part in nonbase_combination]
+        result_composites[combination_codename] = combination_layers
+    return (result_layers, masks, result_composites, metadata)
+
+  @staticmethod
+  def handle_yaml_generation(generation : dict[str, typing.Any], layers : dict | None, masks : dict | None, composites : dict | None, metadata : dict | None) -> tuple[dict | None, dict | None, dict | None, dict | None]:
+    if "charactersprite_parts_based" in generation:
+      data = generation["charactersprite_parts_based"]
+      return ImagePack.yaml_generation_charactersprite_parts_based(data, layers, masks, composites, metadata)
+    raise PPInvalidOperationError("Unknown generation algorithm : " + str(generation))
 
   # 以下是提供给外部使用的接口
 
