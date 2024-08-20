@@ -571,12 +571,10 @@ class _VNFrontendCommandDumper(FrontendCommandDumper):
 
 def _main():
   parser = argparse.ArgumentParser()
-  preppipe.language.Translatable._language_install_arguments(parser) # pylint: disable=protected-access
   parser.add_argument("--namespace", type=str, choices=_DUMPERS.keys(), required=True)
   parser.add_argument("--doxygen", type=str, nargs=1)
   parser.add_argument("--latex", type=str, nargs=1)
   args = parser.parse_args()
-  preppipe.language.Translatable._language_handle_arguments(args, False) # pylint: disable=protected-access
   doxygen_path : str | None = None
   latex_path : str | None = None
   is_output_set = False

@@ -6,6 +6,7 @@ import shutil
 import preppipe
 import preppipe.pipeline_cmd
 import preppipe.pipeline
+import preppipe.language
 from . import util
 import warnings
 
@@ -31,8 +32,8 @@ class TestZHDocsRenPyExport(unittest.TestCase):
           testpath = os.path.join(project_dir, filebase)
           for lang in self.LANGMODE:
             shutil.rmtree(testpath, ignore_errors=True)
-            args = ["--language", lang,
-                    # "-v",
+            preppipe.language.Translatable.language_update_preferred_langs([lang])
+            args = [# "-v",
                     "--searchpath", assetdir,
                     input_flag, os.path.join(dirname, file),
                     "--cmdsyntax", "--vnparse", "--vncodegen",
