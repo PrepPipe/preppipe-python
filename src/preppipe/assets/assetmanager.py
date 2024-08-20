@@ -418,10 +418,8 @@ class AssetManager:
   @staticmethod
   def tool_main(args : list[str] | None = None):
     # 创建一个有以下参数的 argument parser: [--debug] [--create <yml> | --load <zip>] [--save <zip>] [--fork [args]] [--export <dir>]
-    Translatable._init_lang_list()
     AssetManager.init_nomanifest()
     parser = argparse.ArgumentParser(description="Asset Management Tool")
-    Translatable._language_install_arguments(parser) # pylint: disable=protected-access
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
     parser.add_argument("--build-embedded", metavar="<dir>", help="Build the embedded asset pack from the specified directory")
     parser.add_argument("--build-extra", metavar="<dir>", nargs="*", help="Build the extra asset pack from the specified directory")
@@ -432,7 +430,6 @@ class AssetManager:
 
     if parsed_args.debug:
       AssetManager._debug = True
-    Translatable._language_handle_arguments(parsed_args, AssetManager._debug) # pylint: disable=protected-access
     if parsed_args.build_embedded is not None or parsed_args.build_extra is not None:
       if parsed_args.build_embedded is not None:
         AssetManager.get_instance().build_assets_embedded(parsed_args.build_embedded)
