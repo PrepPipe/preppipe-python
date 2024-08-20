@@ -84,7 +84,7 @@ class TranslationDomain:
     if domain_filter is None:
       domains = sorted(TranslationDomain.ALL_DOMAINS.keys())
     else:
-      domains = [d for d in TranslationDomain.ALL_DOMAINS.keys() if re.fullmatch(domain_filter, d)]
+      domains = [d for d in TranslationDomain.ALL_DOMAINS if re.fullmatch(domain_filter, d)]
       domains.sort()
     result : typing.OrderedDict[str, typing.OrderedDict[str, dict[str, list[str]]]] = collections.OrderedDict()
     for d in domains:
@@ -251,14 +251,7 @@ class Translatable:
     return self.get().format(*args, **kwargs)
 
   @staticmethod
-  def _language_install_arguments(parser : argparse.ArgumentParser):
-    parser.add_argument("--language", type=str, nargs=1)
-
-  @staticmethod
-  def _language_update_preferred_langs(language_list : list[str]):
-    # 我们会在两个时候更新语言列表：
-    # 1. 当程序刚刚启动，没有加载插件、没有读取命令行参数时
-    # 2. 当程序开始初始化，加载了插件、刚刚读取完命令行参数，有可能在命令行上提供偏好的语言时
+  def language_update_preferred_langs(language_list : list[str]):
     supported_langs : dict[str, list[str]] = {
       "en" : [],
       "zh" : ["cn", "hk"],
@@ -308,8 +301,14 @@ class Translatable:
       Translatable.PREFERRED_LANG.append(final_lang_str)
 
   @staticmethod
-  def _init_lang_list():
-    if t := locale.getlocale():
+  def _init():
+    language_list : list[str] | None = None
+    # 首先从 PREPPIPE_LANGUAGE 环境变量中读取
+    if lang := os.environ.get("PREPPIPE_LANGUAGE"):
+      assert isinstance(lang, str)
+      language_list = lang.split(',')
+    elif t := locale.getlocale():
+      # 然后尝试从系统获取默认的语言
       # t 应该是类似 ('en_US', 'UTF-8') (Ubuntu) 或者 ('English_Canada', '936') (Windows) 这样的东西
       # 我们只要前一个值
       # 。。如果能稳定按照文档的说明那就更好了，不过(None, None)也出现过了。。
@@ -317,33 +316,29 @@ class Translatable:
         lang = t[0]
         if lang is not None:
           if not isinstance(lang, str):
-            raise RuntimeError("Language from locale is not a string: " + str(lang) + " (locale: " + str(t) + ')')
-          Translatable._language_update_preferred_langs([lang])
-      except:
+            print("Language from locale is not a string: " + str(lang) + " (locale: " + str(t) + ')')
+          else:
+            language_list = [lang]
+      except: # pylint: disable=bare-except
         traceback.print_exc()
+    if language_list:
+      Translatable.language_update_preferred_langs(language_list)
 
   @staticmethod
-  def _language_handle_arguments(parsed_args : argparse.Namespace, verbose : bool):
-    # 如果命令行有提供语言，我们从命令行读取
-    # 如果命令行没有提供，我们从系统中读取
-    if lang := parsed_args.language:
-      assert isinstance(lang, list) and len(lang) == 1
-      lang_str = lang[0]
-      assert isinstance(lang_str, str)
-      language_list = lang_str.split(',')
-      Translatable._language_update_preferred_langs(language_list)
-      if verbose:
-        print(Translatable._tr_lang_list.format(lang=str(Translatable.PREFERRED_LANG)))
+  def print_lang_list():
+    print(Translatable._tr_lang_list.format(lang=str(Translatable.PREFERRED_LANG)))
 
   # 声明要在 Translatable 内，方便隐藏名称
-  _tr_lang_list : typing.ClassVar[Translatable] = None
+  _tr_lang_list : typing.ClassVar[Translatable] = None # type: ignore
 
 # 初始化要在外面，不然 tr() 执行的时候，Translatable 类还没有闭合，无法创建实例
-Translatable._tr_lang_list = TR_preppipe.tr("lang_list",
+Translatable._tr_lang_list = TR_preppipe.tr("lang_list", # pylint: disable=protected-access
   en="Preferred language(s): {lang}",
   zh_cn="使用语言： {lang}",
   zh_hk="使用語言： {lang}",
 )
+
+Translatable._init() # pylint: disable=protected-access
 
 TR_preppipe.tr("unreachable_exception",
   en="An unexpected error happens and the program cannot continue. Please contact the developer to fix this.",

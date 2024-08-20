@@ -10,9 +10,9 @@ showversion:
 
 tmporaries:
 	mkdir -p $(COMMON_BUILD_DIR)
-	python3 scripts/frontendcommanddocs.py --namespace=vn --doxygen $(COMMON_BUILD_DIR)/frontend_commands_en.dox --language=en
-	python3 scripts/frontendcommanddocs.py --namespace=vn --doxygen $(COMMON_BUILD_DIR)/frontend_commands_zh_cn.dox --language=zh_cn
-	python3 scripts/frontendcommanddocs.py --namespace=vn --doxygen $(COMMON_BUILD_DIR)/frontend_commands_zh_hk.dox --language=zh_hk
+	PREPPIPE_LANGUAGE=en    python3 scripts/frontendcommanddocs.py --namespace=vn --doxygen $(COMMON_BUILD_DIR)/frontend_commands_en.dox
+	PREPPIPE_LANGUAGE=zh_cn python3 scripts/frontendcommanddocs.py --namespace=vn --doxygen $(COMMON_BUILD_DIR)/frontend_commands_zh_cn.dox
+	PREPPIPE_LANGUAGE=zh_hk python3 scripts/frontendcommanddocs.py --namespace=vn --doxygen $(COMMON_BUILD_DIR)/frontend_commands_zh_hk.dox
 
 doxygen_build: Doxyfile tmporaries
 	mkdir -p $(DOC_BUILD_DIR)

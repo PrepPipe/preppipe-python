@@ -673,7 +673,6 @@ class _PipelineManager:
 
   @staticmethod
   def pipeline_main(args : typing.List[str] | None = None):
-    Translatable._init_lang_list()
     AssetManager.init()
     # 先尝试读取插件
     _PipelineManager._load_plugins()
@@ -687,11 +686,9 @@ class _PipelineManager:
     # 第一步：读取
     parser = argparse.ArgumentParser(prog='preppipe_pipeline', description='Direct commandline interface for preppipe')
     parser.add_argument('--searchpath', nargs='*')
-    Translatable._language_install_arguments(parser) # pylint: disable=protected-access
 
     TransformRegistration.setup_argparser(parser)
     result_args = parser.parse_args(args)
-    Translatable._language_handle_arguments(result_args, result_args.verbose) # pylint: disable=protected-access
 
     # if there is no valid action performed, we want to print the help message
     is_action_performed = False

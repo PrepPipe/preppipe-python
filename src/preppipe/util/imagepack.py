@@ -1645,9 +1645,7 @@ class ImagePack(NamedAssetClassBase):
   @staticmethod
   def tool_main(args : list[str] | None = None):
     # 创建一个有以下参数的 argument parser: [--debug] [--create <yml> | --load <zip> | --asset <name>] [--save <zip>] [--fork [args]] [--export <dir>]
-    Translatable._init_lang_list()
     parser = argparse.ArgumentParser(description="ImagePack tool")
-    Translatable._language_install_arguments(parser) # pylint: disable=protected-access
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
     parser.add_argument("--create", metavar="<yml>", help="Create a new image pack from a yaml file")
     parser.add_argument("--load", metavar="<zip>", help="Load an existing image pack from a zip file")
@@ -1662,7 +1660,6 @@ class ImagePack(NamedAssetClassBase):
 
     if parsed_args.debug:
       ImagePack._debug = True
-    Translatable._language_handle_arguments(parsed_args, ImagePack._debug) # pylint: disable=protected-access
 
     num_input_spec = 0
     if parsed_args.create is not None:
