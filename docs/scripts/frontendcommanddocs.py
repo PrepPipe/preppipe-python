@@ -4,6 +4,7 @@ import enum
 import argparse
 import inspect
 import decimal
+import os
 
 import preppipe
 import preppipe.pipeline_cmd
@@ -591,8 +592,8 @@ def _main():
     return
   cls = _DUMPERS[args.namespace]
   dumper = cls()
-  if args.language:
-    dumper.pageref_suffix = args.language[0]
+  if lang := os.environ.get("PREPPIPE_LANGUAGE"):
+    dumper.pageref_suffix = lang
     assert isinstance(dumper.pageref_suffix, str)
   if doxygen_path:
     res = dumper.collect_docs(OutputDestKind.DOXYGEN)
