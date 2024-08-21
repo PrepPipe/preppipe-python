@@ -483,7 +483,7 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
   @classmethod
   def try_get_callexproperand_or_str(cls, ctx : Context, value : str) -> CallExprOperand | str | None:
     # 尝试把一个字符串转为 CallExprOperand
-    if cmd := try_parse_value_expr(value, ctx.null_location):
+    if cmd := try_parse_value_expr(value, loc=ctx.null_location):
       if isinstance(cmd, GeneralCommandOp):
         return cls.parse_commandop_as_callexpr(cmd)
     # 如果不是命令调用表达式，那么我们就返回原始的字符串（要把引号去掉）

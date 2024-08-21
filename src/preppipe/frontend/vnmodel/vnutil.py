@@ -335,7 +335,7 @@ def emit_image_expr_from_str(context : Context, s : str, basepath : str,  placeh
   # （现在仅有占位可以不需要额外参数，所以只需检查占位的情况）
   if _is_image_expr_name_placeholder(s):
     return emit_default_placeholder(context=context, dest=placeholderdest, description=StringLiteral.get(placeholderdesc, context))
-  if cmd := try_parse_value_expr(s, context.null_location):
+  if cmd := try_parse_value_expr(s, loc=context.null_location):
     if isinstance(cmd, GeneralCommandOp):
       callexpr = FrontendParserBase.parse_commandop_as_callexpr(cmd)
       return emit_image_expr_from_callexpr(context=context, call=callexpr, placeholderdest=placeholderdest, placeholderdesc=placeholderdesc, warnings=warnings, children_out=children_out)

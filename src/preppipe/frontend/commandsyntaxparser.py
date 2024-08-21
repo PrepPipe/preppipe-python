@@ -224,7 +224,7 @@ def try_parse_value_expr(body : str, loc : Location) -> GeneralCommandOp | str |
     return None
   if error_listener.error_occurred:
     return None
-  cmd_visitor = _CommandParseVisitorImpl(body, 0, {}, loc)
+  cmd_visitor = _CommandParseVisitorImpl(body, 0, {}, {}, loc)
   vref, outloc = cmd_visitor.visitValue(tree)
   if isinstance(vref, OpResult):
     cmd = vref.parent
@@ -475,10 +475,11 @@ class _CommandParseVisitorImpl(CommandParseVisitor):
   fulltext : str # we need this to accurately collect the string; whitespaces are excluded in ctx.getText()
   global_offset : int
   asset_map : dict[int, AssetData]
+  text_style_map : dict[int, TextStyleLiteral]
   commandop : GeneralCommandOp
   command_op_stack : list[GeneralCommandOp]
 
-  def __init__(self, fulltext : str, global_offset : int, asset_map : dict[int, AssetData], startloc : Location) -> None:
+  def __init__(self, fulltext : str, global_offset : int, asset_map : dict[int, AssetData], text_style_map : dict[int, TextStyleLiteral], startloc : Location) -> None:
     super().__init__()
     self.startloc = startloc
     self.fulltext = fulltext
@@ -697,7 +698,7 @@ def _visit_command_block_impl(b : Block, ctx : Context, command_str : str, asset
       errop = ErrorOp.create(error_code='cmd-parse-error', context=ctx, error_msg=StringLiteral.get(record.msg, ctx), name='', loc=errorloc)
       errop.insert_before(insert_before_op)
       continue
-    cmd_visitor = _CommandParseVisitorImpl(command_str, body_range_start, asset_map_dict, loc)
+    cmd_visitor = _CommandParseVisitorImpl(command_str, body_range_start, asset_map_dict, {}, loc)
     cmd_visitor.visit(tree)
     result_command_op = cmd_visitor.commandop
     result_command_op.insert_before(insert_before_op)
