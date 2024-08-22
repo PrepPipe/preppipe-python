@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>
+$$pp_imgpack_title
+</title>
+<style>
+  /* Style the tab */
+  .tab {
+    overflow: auto;
+    border: 1px solid #ccc;
+    background-color: #f1f1f1;
+  }
+
+  /* Style the labels inside the tab */
+  .tab label {
+    background-color: #fff;
+    padding: 10px 10px;
+    font-size: 17px;
+    float: left;
+  }
+
+  /* Style the buttons inside the tab */
+  .tab button {
+    background-color: inherit;
+    float: left;
+    border: none;
+    outline: none;
+    cursor: pointer;
+    padding: 10px 10px;
+    transition: 0s;
+    font-size: 17px;
+  }
+
+  /* Change background color of buttons on hover */
+  .tab button:hover {
+    background-color: #ddd;
+  }
+
+  /* Create an active/current tablink class */
+  .tab button.active {
+    background-color: #ccc;
+  }
+
+  </style>
+  <meta charset="UTF-8">
+  <meta name="author" content="{pp_imgpack_author}">
+  <meta name="description" content="{pp_imgpack_description}">
+</head>
+<body>
+<noscript>
+You are seeing this because scripting is disabled. To access the embedded IR inspection tools, please enable Javascript in your browser settings.<br>
+如果你能看到这条消息，那么Javascript并未被启用。如需使用内置的浏览工具，请在浏览器设置中启用Javascript。<br>
+<br></noscript>
+
+<div id="image_anon" style="position: relative; left: 0; top: 0;" hidden>
+$$pp_imgpack_imgdata
+</div>
+<script>
+$$pp_imgpack_script_datadecl
+
+let zoomFactor = 0.25;
+let show_codenames = false;
+
+// for each set of equivalent groups, we only create div for the leader group
+// this only use keys from leader groups
+let selected_layers = {};
+
+let selected_groups = {};
+</script>
+<div id="main_panel">
+  <div id="control_panel" style="float:left; width:30%">
+    <div id="settings_row">
+      <input type="range" id="zoom" name="zoom" min="1" max="100" value="25" onchange="setZoomFactor(this.value)" />
+      <label for="zoom">Zoom</label>
+      <input type="checkbox" id="show_codenames" name="show_codenames" checked onchange="setShowCodenames(this.checked)" />
+      <label for="show_codenames">Show Codenames</label>
+    </div>
+    <div id="presets">
+      <select id="preset_select"></select>
+      <button id="preset_apply" onclick="handlePresetApply()">Apply</button>
+    </div>
+    <div id="layer_groups"></div>
+  </div>
+  <div id="image_preview" style="float:right"></div>
+</div>
+<script>
+  function getLayerGroup(codename) {
+    return codename.match(/[A-Z]+/)[0];
+  }
+  function isGroupEnabled(group) {
+    let group_leader = getLeaderGroup(group);
+    if (mandatory_layer_groups.includes(group_leader))
+      return true;
+    if (group_leader in selected_groups && selected_groups[group_leader] === true)
+      return true;
+    return false;
+  }
+  function updateImagePreview() {
+    const previewArea = document.getElementById('image_preview');
+    previewArea.innerHTML = ''; // Clear previous image
+    let selected_layer_indices = [];
+    let composite_codename = "";
+    for (const layer_group of layer_group_orders) {
+      if (!isGroupEnabled(layer_group)) {
+        continue;
+      }
+      const codename = selected_layers[layer_group];
+      if (codename == null)
+        continue;
+      composite_codename += codename;
+      const index = layer_codenames.indexOf(codename);
+      if (index !== -1) {
+        selected_layer_indices.push(index);
+      }
+    }
+    selected_layer_indices.sort((a, b) => a - b);
+    if (selected_layer_indices.length === 0) {
+      return;
+    }
+    for (const index of selected_layer_indices) {
+      const img = document.getElementById(`img_l${index}`).cloneNode(true);
+      const [x, y, width, height] = layer_pos_size_info[index];
+      img.style.position = 'absolute';
+      img.style.left = `${x}px`;
+      img.style.top = `${y}px`;
+      img.style.width = `${width}px`;
+      img.style.height = `${height}px`;
+      previewArea.appendChild(img);
+    }
+  }
+  function setZoomFactor(value) {
+    zoomFactor = value * 0.01;
+    const previewArea = document.getElementById('image_preview');
+    previewArea.style.transform = `scale(${zoomFactor})`;
+  }
+  function getAllEquivalentGroups(group) {
+    let all_groups = [group];
+    if (group in equivalent_layer_groups) {
+      all_groups = equivalent_layer_groups[group];
+    }
+    return all_groups;
+  }
+  let layer_group_leader_dict = {};
+  let all_leader_groups = [];
+  let layers_by_group = {}; // group code -> list of layer codenames
+  for (layer of layer_codenames) {
+    let group = getLayerGroup(layer);
+    if (!(group in layers_by_group)) {
+      layers_by_group[group] = [];
+    }
+    layers_by_group[group].push(layer);
+  }
+  function getLeaderGroup(group) {
+    if (group in layer_group_leader_dict) {
+      return layer_group_leader_dict[group];
+    }
+    return group;
+  }
+  function createLayerGroupControl() {
+    const layer_groups = document.getElementById('layer_groups');
+    let visited_groups = {};
+    for (const group of layer_group_orders) {
+      if (group in visited_groups) {
+        continue;
+      }
+      visited_groups[group] = true;
+      all_leader_groups.push(group);
+      let equivalent_groups = getAllEquivalentGroups(group);
+      for (member_group of equivalent_groups) {
+        if (member_group == group) {
+          continue;
+        }
+        layer_group_leader_dict[member_group] = group;
+        visited_groups[member_group] = true;
+      }
+      let group_name = equivalent_groups.join(',');
+      if (group in layer_group_descriptive_names) {
+        group_name = layer_group_descriptive_names[group] + ' (' + equivalent_groups.join(',') + ')';
+      }
+      const groupDiv = document.createElement('div');
+      groupDiv.id = `layer_group_${group}`;
+      const groupCheckbox = document.createElement('input');
+      groupCheckbox.type = 'checkbox';
+      groupCheckbox.id = `layer_group_checkbox_${group}`;
+      groupCheckbox.onchange = function() {
+        const checked = groupCheckbox.checked;
+        selected_groups[group] = checked;
+        updateImagePreview();
+      };
+      groupDiv.appendChild(groupCheckbox);
+      selected_groups[group] = false;
+      if (mandatory_layer_groups.includes(group)) {
+        groupCheckbox.checked = true;
+        groupCheckbox.disabled = true;
+        selected_groups[group] = true;
+      }
+      const groupLabel = document.createElement('label');
+      groupLabel.innerHTML = group_name;
+      groupLabel.htmlFor = groupCheckbox.id;
+      groupDiv.appendChild(groupLabel);
+
+      const groupSelect = document.createElement('select');
+      groupSelect.id = `layer_group_select_${group}`;
+      groupSelect.onchange = function() {
+        const selected_codename = groupSelect.value;
+        selected_layers[group] = selected_codename
+        updateImagePreview();
+      };
+      groupDiv.appendChild(groupSelect);
+      layer_groups.appendChild(groupDiv);
+    }
+  }
+  function updateLayerGroupSelects() {
+    for (const group of all_leader_groups) {
+      const groupSelect = document.getElementById(`layer_group_select_${group}`);
+      groupSelect.innerHTML = '';
+      const prevValue = groupSelect.value
+      for (const member_group of getAllEquivalentGroups(group)) {
+        const groupLayers = layers_by_group[member_group];
+        for (const layer of groupLayers) {
+          const option = document.createElement('option');
+          option.value = layer;
+          option.innerHTML = (show_codenames? layer : layer_rawnames[layer_codenames.indexOf(layer)]);
+          groupSelect.appendChild(option);
+        }
+      }
+      if (prevValue) {
+        groupSelect.value = prevValue;
+      }
+      selected_layers[group] = groupSelect.value;
+    }
+  }
+  function setShowCodenames(show) {
+    show_codenames = show;
+    updateLayerGroupSelects();
+  }
+  function applyComposition(composition) {
+    // disable all groups first
+    for (const group of all_leader_groups) {
+      const groupCheckbox = document.getElementById(`layer_group_checkbox_${group}`);
+      if (groupCheckbox &&!(groupCheckbox.disabled)) {
+        selected_groups[group] = false;
+        groupCheckbox.checked = false;
+      }
+    }
+    // decompose composition into list of codenames
+    const layers = composition.match(/[A-Z]+\d+/g);
+    for (const layer of layers) {
+      const layer_group = getLayerGroup(layer);
+      const group_leader = getLeaderGroup(layer_group);
+      selected_layers[group_leader] = layer;
+      selected_groups[group_leader] = true;
+      const groupCheckbox = document.getElementById(`layer_group_checkbox_${group_leader}`);
+      if (groupCheckbox && !(groupCheckbox.disabled)) {
+        groupCheckbox.checked = true;
+      }
+      const groupSelect = document.getElementById(`layer_group_select_${group_leader}`);
+      if (groupSelect) {
+        groupSelect.value = layer;
+      }
+    }
+    updateImagePreview();
+  }
+  function handlePresetApply() {
+    const preset_select = document.getElementById('preset_select');
+    applyComposition(preset_select.value);
+  }
+  // Initialize GUI on page load
+  createLayerGroupControl();
+  setShowCodenames(show_codenames);
+  setZoomFactor(zoomFactor*100);
+  applyComposition(composites_codenames[0]);
+</script>
+</body>
+</html>

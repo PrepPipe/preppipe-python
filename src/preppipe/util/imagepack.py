@@ -9,8 +9,10 @@ import sys
 import time
 import colorsys
 import datetime
+import base64
 import math
 import itertools
+import collections
 import PIL.Image
 import PIL.ImageDraw
 import PIL.ImageFont
@@ -26,6 +28,7 @@ import enum
 import unicodedata
 import textwrap
 import re
+import graphviz
 
 from preppipe.irbase import IRValueMapper, Location, Operation
 
@@ -933,7 +936,7 @@ class ImagePack(NamedAssetClassBase):
     zh_hk="語涵編譯器",
   )
 
-  def write_overview_image(self, path : str, descriptor : "ImagePackDescriptor"):
+  def write_overview_image(self, path : str, descriptor : "ImagePackDescriptor", interactive_html_path : str | None = None):
     # 生成一个预览图
     # 先使用辅助函数生成 ImagePackSummary
     summary = self.get_summary_no_variations(descriptor)
@@ -977,6 +980,16 @@ class ImagePack(NamedAssetClassBase):
     summary.comments.append(license_tr.get())
     summary.pngmetadata["Copyright"] = copyright_str
     summary.write(pngpath=path)
+
+    if interactive_html_path is not None:
+      if not isinstance(descriptor, ImagePackDescriptor):
+        raise PPInternalError("Invalid descriptor")
+      _ImagePackHTMLExport.write_html(
+        interactive_html_path, self, descriptor,
+        html_title=imgpack_name,
+        html_author=self.TR_imagepack_md_prog.get(),
+        html_description="\n".join(summary.comments))
+
 
   TR_imagepack_yamlparse_layers = TR_imagepack.tr("layers",
     en="layers",
@@ -1697,6 +1710,7 @@ class ImagePack(NamedAssetClassBase):
     parser.add_argument("--fork", nargs="*", metavar="[args]", help="Fork the image pack with the given arguments")
     parser.add_argument("--export", metavar="<dir>", help="Export the image pack to a directory")
     parser.add_argument("--export-overview", metavar="<path>", help="Export a single overview image to the specified path")
+    parser.add_argument("--export-overview-html", metavar="<path>", help="Export an interactive HTML to the specified path; require --asset and --export-overview")
     if args is None:
       args = sys.argv[1:]
     parsed_args = parser.parse_args(args)
@@ -1715,6 +1729,8 @@ class ImagePack(NamedAssetClassBase):
       raise PPInternalError("Cannot specify more than one input")
     if num_input_spec == 0:
       raise PPInternalError("No input specified")
+    if parsed_args.export_overview_html and (parsed_args.export_overview is None or parsed_args.asset is None):
+      raise PPInternalError("Cannot export overview HTML without --export-overview and --asset")
 
     ImagePack.print_executing_command("start pipeline")
 
@@ -1790,7 +1806,7 @@ class ImagePack(NamedAssetClassBase):
       ImagePack.print_executing_command("--export-overview")
       if current_pack is None:
         raise PPInternalError("Cannot export overview without input")
-      current_pack.write_overview_image(parsed_args.export_overview, current_pack_descriptor)
+      current_pack.write_overview_image(parsed_args.export_overview, current_pack_descriptor, parsed_args.export_overview_html)
 
   _debug = False
 
@@ -1910,9 +1926,8 @@ class ImagePackSummary:
       image = self.get_text_image(text, preferred_font_size)
     return image
 
-  def write(self, pngpath : str | None = None, htmlpath : str | None = None):
+  def write(self, pngpath : str):
     # 绘制概览图
-    # 为了方便使用，除了传统的 PNG 图像，我们还可以生成一个 HTML 文件，用户可以通过文本查找来快速定位
     # 首先取基底图和局部差分图的高度和宽度
     # 决定布局时我们都按最大值来
     # 为了避免在没有基底图或是没有局部差分图的情况下出现除以0的情况，我们先初始化为1
@@ -2137,22 +2152,216 @@ class ImagePackSummary:
         overview.alpha_composite(comment, (0, y))
         y += comment.height + self.rowsep
     # 保存
-    if pngpath is not None:
-      pnginfo = None
-      if len(self.pngmetadata) > 0:
-        pnginfo = PIL.PngImagePlugin.PngInfo()
-        for k, v in self.pngmetadata.items():
-          pnginfo.add_itxt(k, v)
-      overview.save(pngpath, format="PNG", pnginfo=pnginfo)
-    # 如果有 htmlpath，我们还要生成 HTML 文件
-    # 为了避免使用太多的小图片，生成的 html 也会使用上面生成的 PNG 图像，使用 CSS 来截取一个个小图片
-    if htmlpath is not None:
-      # 先把概览图也存过去，把后缀名替换为 .png
-      basename = os.path.splitext(htmlpath)[0]
-      overview.save(basename + ".png", format="PNG")
-      # 然后生成 HTML 文件
-      # TODO
-      raise PPNotImplementedError()
+    pnginfo = None
+    if len(self.pngmetadata) > 0:
+      pnginfo = PIL.PngImagePlugin.PngInfo()
+      for k, v in self.pngmetadata.items():
+        pnginfo.add_itxt(k, v)
+    overview.save(pngpath, format="PNG", pnginfo=pnginfo)
+
+class _ImagePackHTMLExport:
+  @staticmethod
+  def escape(htmlstring : str) -> str:
+    escapes = {'\"': '&quot;',
+              '\'': '&#39;',
+              '<': '&lt;',
+              '>': '&gt;'}
+    # This is done first to prevent escaping other escapes.
+    htmlstring = htmlstring.replace('&', '&amp;')
+    for seq, esc in escapes.items():
+      htmlstring = htmlstring.replace(seq, esc)
+    return htmlstring
+
+  @staticmethod
+  def getBase64(pillow_image : PIL.Image.Image) -> bytes:
+    f = io.BytesIO()
+    pillow_image.save(f, format='PNG')
+    bytes_out = f.getvalue()
+    encoded = base64.b64encode(bytes_out)
+    return encoded
+
+  @staticmethod
+  def convertToJSVariable(data : typing.Any, variable_name : str) -> str:
+    def getValueRecursive(data):
+      if isinstance(data, int):
+        return str(data)
+      if isinstance(data, str):
+        return '"' + data + '"'
+      if isinstance(data, (list, tuple)):
+        result = []
+        for item in data:
+          result.append(getValueRecursive(item))
+        return '[' + ','.join(result) + ']'
+      if isinstance(data, dict):
+        result = []
+        for key, value in data.items():
+          assert isinstance(key, str) or isinstance(key, int)
+          result.append('"' + str(key) + '":' + getValueRecursive(value))
+        return '{' + ','.join(result) + '}'
+      raise RuntimeError("Unexpected data type " + str(type(data)))
+    return "const " + variable_name + " = " + getValueRecursive(data) + ";"
+
+  TR_overview_start = ImagePack.TR_imagepack.tr("overview_html_start",
+    en="Start",
+    zh_cn="开始",
+    zh_hk="開始",
+  )
+  TR_overview_finish = ImagePack.TR_imagepack.tr("overview_html_finish",
+    en="Finish",
+    zh_cn="完成",
+    zh_hk="完成",
+  )
+
+  @staticmethod
+  def write_html(html_path : str, imgpack : ImagePack, descriptor : 'ImagePackDescriptor',
+                 html_title : str = "Interactive Imagepack viewer",
+                 html_author : str = "PrepPipe Compiler",
+                 html_description : str = "Interactive Imagepack viewer") -> None:
+    if not isinstance(descriptor, ImagePackDescriptor):
+      raise PPInternalError("HTML export requires descriptor (cannot be used on temporarily created imagepack)")
+
+    imgdata : list[str] = [] # html img elements
+    layer_pos_size_info : list[tuple[int,int,int,int]] = [] # x, y, w, h
+    layer_codenames : list[str] = [] # 应该都是代码名 (L0, ...)
+    layer_rawnames : list[str] = [] # 应该是代码名+描述（L0-白天）
+    for i, layer in enumerate(imgpack.layers):
+      # 首先把元数据加进去
+      layer_pos_size_info.append((layer.offset_x, layer.offset_y, layer.patch.width, layer.patch.height))
+      rawname = layer.basename
+      codename = rawname.split("-")[0]
+      layer_codenames.append(codename)
+      layer_rawnames.append(rawname)
+      # 最后生成图片元素。这些图片都是塞在一个不可见的 div 中，不会被直接显示，我们只是把内容放在这
+      b64encoded = _ImagePackHTMLExport.getBase64(layer.patch).decode('utf-8')
+      imgdata.append(f'<img id="img_l{i}" src="data:image/png;base64, {b64encoded}" style="position: absolute; left: 0px; top: 0px;" />')
+    composites_descriptive_names : dict[str, str] = {}
+    for k, v in descriptor.composites_references.items():
+      composites_descriptive_names[k] = v.get()
+
+    # 我们要在这里确定图层类别的组合关系（比如一般来说立绘表情的图层组是 B[MYK|Q]D*）
+    # 作画时我们可能有其他的图层类别的命名规则（比如 M 可能有多个子类别）
+    # 在此我们都希望能够自动发现这些顺序关系
+    # 我们先构建一个图层类别的有向图，如果类别B紧挨着类别A，则画一条从A到B的有向边
+    # 然后我们对这个有向图进行拓扑排序，得到的顺序就是我们希望的顺序
+    layer_group_outgoing_edges : dict[str, collections.OrderedDict[str, bool]] = {} # 从某个类别出发的有向边（不含自环）
+    layer_group_incoming_edges : dict[str, collections.OrderedDict[str, bool]] = {} # 到达某个类别的有向边（不含自环）
+    layer_group_with_self_edges : collections.OrderedDict[str, bool] = collections.OrderedDict() # 有自环的类别
+    def add_layer_group_transition_edge(from_group : str, to_group : str):
+      if from_group == to_group:
+        layer_group_with_self_edges[from_group] = True
+        return
+      if from_group not in layer_group_outgoing_edges:
+        layer_group_outgoing_edges[from_group] = collections.OrderedDict()
+      layer_group_outgoing_edges[from_group][to_group] = True
+      if to_group not in layer_group_incoming_edges:
+        layer_group_incoming_edges[to_group] = collections.OrderedDict()
+      layer_group_incoming_edges[to_group][from_group] = True
+    all_layer_groups : collections.OrderedDict[str, int] = collections.OrderedDict()
+    for codename in descriptor.composites_code:
+      # 先把 codename 分成图层类别的列表 （即把 B0M1Y2K3D4 分为 ['B', 'M', 'Y', 'K', 'D']）
+      layer_group_names : list[str] = []
+      last_layer_group_name = ''
+      for c in codename:
+        if c.isdigit():
+          if len(last_layer_group_name) > 0:
+            layer_group_names.append(last_layer_group_name)
+            last_layer_group_name = ''
+          continue
+        last_layer_group_name += c
+      if len(last_layer_group_name) > 0:
+        layer_group_names.append(last_layer_group_name)
+      # 记录已有的类别（每个只记一次）
+      cur_set = set()
+      for layer_group in layer_group_names:
+        if layer_group in cur_set:
+          continue
+        cur_set.add(layer_group)
+        if layer_group not in all_layer_groups:
+          all_layer_groups[layer_group] = 1
+        else:
+          all_layer_groups[layer_group] += 1
+      # layer_group_names.insert(0, 'START')
+      # layer_group_names.append('FINISH')
+      # 然后我们把这个列表中的相邻元素两两配对，加入有向图
+      for i in range(len(layer_group_names) - 1):
+        add_layer_group_transition_edge(layer_group_names[i], layer_group_names[i + 1])
+    # 找到所有的等效图层类别，它们应该由一样的入边和出边
+    equivalence_map : dict[tuple[tuple[str,...], tuple[str,...]], list[str]] = {} # <入边，出边> -> 满足条件的图层类别
+    for layer_group in all_layer_groups.keys():
+      inedge_tuple = tuple(layer_group_incoming_edges.get(layer_group, {}).keys())
+      outedge_tuple = tuple(layer_group_outgoing_edges.get(layer_group, {}).keys())
+      key_tuple = (inedge_tuple, outedge_tuple)
+      if key_tuple not in equivalence_map:
+        equivalence_map[key_tuple] = [layer_group]
+      else:
+        equivalence_map[key_tuple].append(layer_group)
+    # 做一次拓扑排序
+    layer_group_orders : list[str] = []
+    worklist : collections.deque[str] = collections.deque()
+    def add_to_worklist(layer_group):
+      layer_group_orders.append(layer_group)
+      worklist.append(layer_group)
+    for layer_group in all_layer_groups.keys():
+      if layer_group not in layer_group_incoming_edges:
+        add_to_worklist(layer_group)
+    while len(worklist) > 0:
+      cur_layer_group = worklist.popleft()
+      if cur_layer_group in layer_group_outgoing_edges:
+        outedges = layer_group_outgoing_edges[cur_layer_group]
+        for next_layer_group in outedges.keys():
+          layer_group_incoming_edges[next_layer_group].pop(cur_layer_group)
+          if len(layer_group_incoming_edges[next_layer_group]) == 0:
+            add_to_worklist(next_layer_group)
+    if len(layer_group_orders) < len(all_layer_groups):
+      raise PPInternalError("Cycle detected in layer group ordering")
+    mandatory_layer_groups = []
+    for layer_group, count in all_layer_groups.items():
+      if count == len(descriptor.composites_code):
+        mandatory_layer_groups.append(layer_group)
+    variadic_layer_groups = list(layer_group_with_self_edges.keys())
+    equivalent_layer_groups : dict[str, list[str]] = {}
+    for layer_groups in equivalence_map.values():
+      if len(layer_groups) > 1:
+        for layer_group in layer_groups:
+          equivalent_layer_groups[layer_group] = layer_groups
+    layer_group_descriptive_names : dict[str, str] = {}
+
+    datadecl : list[str] = [
+      _ImagePackHTMLExport.convertToJSVariable(imgpack.width, "total_width"),
+      _ImagePackHTMLExport.convertToJSVariable(imgpack.height, "total_height"),
+      _ImagePackHTMLExport.convertToJSVariable(descriptor.packtype.name, "imgpack_type"),
+      _ImagePackHTMLExport.convertToJSVariable(layer_pos_size_info, "layer_pos_size_info"),
+      _ImagePackHTMLExport.convertToJSVariable(layer_codenames, "layer_codenames"),
+      _ImagePackHTMLExport.convertToJSVariable(layer_rawnames, "layer_rawnames"),
+      _ImagePackHTMLExport.convertToJSVariable(descriptor.composites_code, "composites_codenames"),
+      _ImagePackHTMLExport.convertToJSVariable(composites_descriptive_names, "composites_descriptive_names"),
+      _ImagePackHTMLExport.convertToJSVariable(layer_group_orders, "layer_group_orders"),
+      _ImagePackHTMLExport.convertToJSVariable(layer_group_descriptive_names, "layer_group_descriptive_names"),
+      _ImagePackHTMLExport.convertToJSVariable(mandatory_layer_groups, "mandatory_layer_groups"),
+      _ImagePackHTMLExport.convertToJSVariable(variadic_layer_groups, "variadic_layer_groups"),
+      _ImagePackHTMLExport.convertToJSVariable(equivalent_layer_groups, "equivalent_layer_groups"),
+    ]
+
+    parameter_dict : dict[bytes, str] = {}
+    parameter_dict[b"pp_imgpack_title"] = _ImagePackHTMLExport.escape(html_title)
+    parameter_dict[b"pp_imgpack_author"] = _ImagePackHTMLExport.escape(html_author)
+    parameter_dict[b"pp_imgpack_description"] = _ImagePackHTMLExport.escape(html_description)
+    parameter_dict[b"pp_imgpack_script_datadecl"] = "\n".join(datadecl)
+    parameter_dict[b"pp_imgpack_imgdata"] = "\n".join(imgdata)
+
+    template_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "imagepackhelper", "overview_html_template.html")
+    with open(html_path, "wb") as dst:
+      with open(template_path, "rb") as f:
+        while line := f.readline():
+          if line.startswith(b"$$"):
+            varname = line[2:].strip()
+            if varname not in parameter_dict:
+              raise PPInternalError(f"Template variable {varname} not found in parameter_dict")
+            dst.write(parameter_dict[varname].encode("utf-8"))
+            dst.write(b"\n")
+          else:
+            dst.write(line)
+
 
 @ImagePack._descriptor
 class ImagePackDescriptor:
