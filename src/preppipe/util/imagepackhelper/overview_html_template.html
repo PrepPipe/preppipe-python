@@ -58,6 +58,7 @@ $$pp_imgpack_imgdata
 </div>
 <script>
 $$pp_imgpack_script_datadecl
+$$pp_imgpack_ui_translations
 
 let zoomFactor = 0.25;
 let show_codenames = false;
@@ -67,24 +68,42 @@ let show_codenames = false;
 let selected_layers = {};
 
 let selected_groups = {};
+
+let current_composite_codename = "";
 </script>
 <div id="main_panel">
   <div id="control_panel" style="float:left; width:30%">
     <div id="settings_row">
+      <label id="zoom_label" for="zoom">Zoom:</label>
       <input type="range" id="zoom" name="zoom" min="1" max="100" value="25" onchange="setZoomFactor(this.value)" />
-      <label for="zoom">Zoom</label>
+      <label id="zoom_value">25%</label>
       <input type="checkbox" id="show_codenames" name="show_codenames" checked onchange="setShowCodenames(this.checked)" />
-      <label for="show_codenames">Show Codenames</label>
+      <label id="show_codenames_label" for="show_codenames">Show Codenames</label>
     </div>
     <div id="presets">
       <select id="preset_select"></select>
       <button id="preset_apply" onclick="handlePresetApply()">Apply</button>
     </div>
     <div id="layer_groups"></div>
+    <div id="view_info_row">
+      <label id="composition_label" for="view_info">Current Composition:</label>
+      <input type="text" id="view_info" value="" readonly />
+      <button id="save_view" onclick="saveComposition()" disabled>Save</button>
+    </div>
   </div>
-  <div id="image_preview" style="float:right"></div>
+  <div id="image_preview_panel" style="float:right">
+    <canvas id="image_preview"></canvas>
+  </div>
+  <div style="clear: both;"></div>
 </div>
 <script>
+  // load translated label names from ui_translations
+  document.getElementById('zoom_label').innerHTML = ui_translations['zoom_label'];
+  document.getElementById('show_codenames_label').innerHTML = ui_translations['show_codenames_label'];
+  document.getElementById('composition_label').innerHTML = ui_translations['composition_label'];
+  document.getElementById('save_view').innerHTML = ui_translations['save_view'];
+  document.getElementById('preset_apply').innerHTML = ui_translations['preset_apply'];
+
   function getLayerGroup(codename) {
     return codename.match(/[A-Z]+/)[0];
   }
@@ -97,8 +116,7 @@ let selected_groups = {};
     return false;
   }
   function updateImagePreview() {
-    const previewArea = document.getElementById('image_preview');
-    previewArea.innerHTML = ''; // Clear previous image
+    const canvas = document.getElementById('image_preview');
     let selected_layer_indices = [];
     let composite_codename = "";
     for (const layer_group of layer_group_orders) {
@@ -118,21 +136,43 @@ let selected_groups = {};
     if (selected_layer_indices.length === 0) {
       return;
     }
+    canvas.width = total_width;
+    canvas.height = total_height;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    current_composite_codename = composite_codename;
     for (const index of selected_layer_indices) {
       const img = document.getElementById(`img_l${index}`).cloneNode(true);
       const [x, y, width, height] = layer_pos_size_info[index];
-      img.style.position = 'absolute';
-      img.style.left = `${x}px`;
-      img.style.top = `${y}px`;
-      img.style.width = `${width}px`;
-      img.style.height = `${height}px`;
-      previewArea.appendChild(img);
+      ctx.drawImage(img, x, y);
     }
+    const view_info = document.getElementById('view_info');
+    view_info.value = current_composite_codename;
+    if (composites_codenames.includes(current_composite_codename)) {
+      view_info.style.color = 'black';
+    } else {
+      view_info.style.color = 'red';
+    }
+    const save_view = document.getElementById('save_view');
+    save_view.disabled = false;
+  }
+  function saveComposition() {
+    const canvas = document.getElementById('image_preview');
+    const dataURL = canvas.toDataURL();
+    let element = document.createElement('a');
+    element.setAttribute('href', dataURL);
+    element.setAttribute('download', `${current_composite_codename}.png`);
+    element.style.display = 'none';
+    document.body.appendChild(element);
+    element.click();
+    document.body.removeChild(element);
   }
   function setZoomFactor(value) {
     zoomFactor = value * 0.01;
-    const previewArea = document.getElementById('image_preview');
+    const previewArea = document.getElementById('image_preview_panel');
     previewArea.style.transform = `scale(${zoomFactor})`;
+    const zoomValue = document.getElementById('zoom_value');
+    zoomValue.innerHTML = `${value}%`;
   }
   function getAllEquivalentGroups(group) {
     let all_groups = [group];
@@ -268,6 +308,7 @@ let selected_groups = {};
   }
   // Initialize GUI on page load
   createLayerGroupControl();
+  document.getElementById("show_codenames").checked = show_codenames;
   setShowCodenames(show_codenames);
   setZoomFactor(zoomFactor*100);
   applyComposition(composites_codenames[0]);

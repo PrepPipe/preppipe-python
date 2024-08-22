@@ -2212,6 +2212,33 @@ class _ImagePackHTMLExport:
     zh_hk="完成",
   )
 
+  HTML_UI_LABELS : typing.ClassVar[dict[str, Translatable]] = {
+    "zoom_label" : ImagePack.TR_imagepack.tr("overview_html_zoom_label",
+      en="Zoom: ",
+      zh_cn="缩放：",
+      zh_hk="縮放：",
+    ),
+    "show_codenames_label" : ImagePack.TR_imagepack.tr("overview_html_show_codenames_label",
+      en="Show layer code only",
+      zh_cn="只显示图层编号",
+      zh_hk="只顯示圖層編號",
+    ),
+    "composition_label" : ImagePack.TR_imagepack.tr("overview_html_composition_label",
+      en="Composition: ",
+      zh_cn="组合：",
+      zh_hk="組合：",
+    ),
+    "save_view" : ImagePack.TR_imagepack.tr("overview_html_save_view",
+      en="Save image",
+      zh_cn="保存图片",
+      zh_hk="保存圖片",
+    ),
+    "preset_apply" : ImagePack.TR_imagepack.tr("overview_html_preset_apply",
+      en="Apply",
+      zh_cn="应用",
+      zh_hk="應用",
+    ),
+  }
   @staticmethod
   def write_html(html_path : str, imgpack : ImagePack, descriptor : 'ImagePackDescriptor',
                  html_title : str = "Interactive Imagepack viewer",
@@ -2295,23 +2322,27 @@ class _ImagePackHTMLExport:
         equivalence_map[key_tuple] = [layer_group]
       else:
         equivalence_map[key_tuple].append(layer_group)
-    # 做一次拓扑排序
+    # 做一次拓扑排序 (DFS)
     layer_group_orders : list[str] = []
     worklist : collections.deque[str] = collections.deque()
     def add_to_worklist(layer_group):
       layer_group_orders.append(layer_group)
       worklist.append(layer_group)
+    def drain_worklist():
+      while len(worklist) > 0:
+        cur_layer_group = worklist.pop() # DFS
+        if cur_layer_group in layer_group_outgoing_edges:
+          outedges = layer_group_outgoing_edges[cur_layer_group]
+          for next_layer_group in outedges.keys():
+            layer_group_incoming_edges[next_layer_group].pop(cur_layer_group)
+            if len(layer_group_incoming_edges[next_layer_group]) == 0:
+              add_to_worklist(next_layer_group)
+              drain_worklist()
     for layer_group in all_layer_groups.keys():
       if layer_group not in layer_group_incoming_edges:
-        add_to_worklist(layer_group)
-    while len(worklist) > 0:
-      cur_layer_group = worklist.popleft()
-      if cur_layer_group in layer_group_outgoing_edges:
-        outedges = layer_group_outgoing_edges[cur_layer_group]
-        for next_layer_group in outedges.keys():
-          layer_group_incoming_edges[next_layer_group].pop(cur_layer_group)
-          if len(layer_group_incoming_edges[next_layer_group]) == 0:
-            add_to_worklist(next_layer_group)
+        if layer_group not in layer_group_orders:
+          add_to_worklist(layer_group)
+          drain_worklist()
     if len(layer_group_orders) < len(all_layer_groups):
       raise PPInternalError("Cycle detected in layer group ordering")
     mandatory_layer_groups = []
@@ -2324,7 +2355,7 @@ class _ImagePackHTMLExport:
       if len(layer_groups) > 1:
         for layer_group in layer_groups:
           equivalent_layer_groups[layer_group] = layer_groups
-    layer_group_descriptive_names : dict[str, str] = {}
+    layer_group_descriptive_names : dict[str, str] = {} # TODO
 
     datadecl : list[str] = [
       _ImagePackHTMLExport.convertToJSVariable(imgpack.width, "total_width"),
@@ -2342,12 +2373,17 @@ class _ImagePackHTMLExport:
       _ImagePackHTMLExport.convertToJSVariable(equivalent_layer_groups, "equivalent_layer_groups"),
     ]
 
+    ui_translations = {}
+    for k, v in _ImagePackHTMLExport.HTML_UI_LABELS.items():
+      ui_translations[k] = v.get()
+
     parameter_dict : dict[bytes, str] = {}
     parameter_dict[b"pp_imgpack_title"] = _ImagePackHTMLExport.escape(html_title)
     parameter_dict[b"pp_imgpack_author"] = _ImagePackHTMLExport.escape(html_author)
     parameter_dict[b"pp_imgpack_description"] = _ImagePackHTMLExport.escape(html_description)
     parameter_dict[b"pp_imgpack_script_datadecl"] = "\n".join(datadecl)
     parameter_dict[b"pp_imgpack_imgdata"] = "\n".join(imgdata)
+    parameter_dict[b"pp_imgpack_ui_translations"] = _ImagePackHTMLExport.convertToJSVariable(ui_translations, "ui_translations")
 
     template_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "imagepackhelper", "overview_html_template.html")
     with open(html_path, "wb") as dst:
