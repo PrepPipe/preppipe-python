@@ -4,45 +4,6 @@
 <title>
 $$pp_imgpack_title
 </title>
-<style>
-  /* Style the tab */
-  .tab {
-    overflow: auto;
-    border: 1px solid #ccc;
-    background-color: #f1f1f1;
-  }
-
-  /* Style the labels inside the tab */
-  .tab label {
-    background-color: #fff;
-    padding: 10px 10px;
-    font-size: 17px;
-    float: left;
-  }
-
-  /* Style the buttons inside the tab */
-  .tab button {
-    background-color: inherit;
-    float: left;
-    border: none;
-    outline: none;
-    cursor: pointer;
-    padding: 10px 10px;
-    transition: 0s;
-    font-size: 17px;
-  }
-
-  /* Change background color of buttons on hover */
-  .tab button:hover {
-    background-color: #ddd;
-  }
-
-  /* Create an active/current tablink class */
-  .tab button.active {
-    background-color: #ccc;
-  }
-
-  </style>
   <meta charset="UTF-8">
   <meta name="author" content="{pp_imgpack_author}">
   <meta name="description" content="{pp_imgpack_description}">
@@ -71,8 +32,8 @@ let selected_groups = {};
 
 let current_composite_codename = "";
 </script>
-<div id="main_panel">
-  <div id="control_panel" style="float:left; width:30%">
+<div id="main_panel" style="position:relative">
+  <div id="control_panel" style="position:absolute; top:0px; left:0px; z-index:1">
     <div id="settings_row">
       <label id="zoom_label" for="zoom">Zoom:</label>
       <input type="range" id="zoom" name="zoom" min="1" max="100" value="25" onchange="setZoomFactor(this.value)" />
@@ -91,10 +52,9 @@ let current_composite_codename = "";
       <button id="save_view" onclick="saveComposition()" disabled>Save</button>
     </div>
   </div>
-  <div id="image_preview_panel" style="float:right">
-    <canvas id="image_preview"></canvas>
+  <div id="image_preview_panel" style="position:absolute; top:0px; left:400px; z-index:2">
+    <canvas id="image_preview" style="position:absolute; top:0px; left:0px;"></canvas>
   </div>
-  <div style="clear: both;"></div>
 </div>
 <script>
   // load translated label names from ui_translations
