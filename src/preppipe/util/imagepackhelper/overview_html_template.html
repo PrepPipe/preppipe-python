@@ -42,6 +42,7 @@ let current_composite_codename = "";
       <label id="show_codenames_label" for="show_codenames">Show Codenames</label>
     </div>
     <div id="presets">
+      <label id="preset_label" for="preset_select">Presets:</label>
       <select id="preset_select"></select>
       <button id="preset_apply" onclick="handlePresetApply()">Apply</button>
     </div>
@@ -62,6 +63,7 @@ let current_composite_codename = "";
   document.getElementById('show_codenames_label').innerHTML = ui_translations['show_codenames_label'];
   document.getElementById('composition_label').innerHTML = ui_translations['composition_label'];
   document.getElementById('save_view').innerHTML = ui_translations['save_view'];
+  document.getElementById('preset_label').innerHTML = ui_translations['preset_label'];
   document.getElementById('preset_apply').innerHTML = ui_translations['preset_apply'];
 
   function getLayerGroup(codename) {
@@ -80,16 +82,16 @@ let current_composite_codename = "";
     let selected_layer_indices = [];
     let composite_codename = "";
     for (const layer_group of layer_group_orders) {
-      if (!isGroupEnabled(layer_group)) {
+      if (!isGroupEnabled(layer_group) || !(layer_group in selected_layers)) {
         continue;
       }
-      const codename = selected_layers[layer_group];
-      if (codename == null)
-        continue;
-      composite_codename += codename;
-      const index = layer_codenames.indexOf(codename);
-      if (index !== -1) {
-        selected_layer_indices.push(index);
+      const codename_list = selected_layers[layer_group];
+      for (const codename of codename_list) {
+        const index = layer_codenames.indexOf(codename);
+        if (index !== -1) {
+          selected_layer_indices.push(index);
+          composite_codename += codename;
+        }
       }
     }
     selected_layer_indices.sort((a, b) => a - b);
@@ -157,9 +159,22 @@ let current_composite_codename = "";
     }
     return group;
   }
+  function getLayerGroupSelections(groupSelect) {
+    return Array.from(groupSelect.selectedOptions).map(({ value }) => value);
+  }
+  function setLayerGroupSelections(groupSelect, selections) {
+    for (const option of groupSelect.options) {
+      if (selections.includes(option.value)) {
+        option.selected = true;
+      } else {
+        option.selected = false;
+      }
+    }
+  }
   function createLayerGroupControl() {
     const layer_groups = document.getElementById('layer_groups');
     let visited_groups = {};
+    const layer_group_table = document.createElement('table');
     for (const group of layer_group_orders) {
       if (group in visited_groups) {
         continue;
@@ -178,8 +193,9 @@ let current_composite_codename = "";
       if (group in layer_group_descriptive_names) {
         group_name = layer_group_descriptive_names[group] + ' (' + equivalent_groups.join(',') + ')';
       }
-      const groupDiv = document.createElement('div');
-      groupDiv.id = `layer_group_${group}`;
+      const groupRow = document.createElement('tr');
+      layer_group_table.appendChild(groupRow);
+
       const groupCheckbox = document.createElement('input');
       groupCheckbox.type = 'checkbox';
       groupCheckbox.id = `layer_group_checkbox_${group}`;
@@ -188,34 +204,52 @@ let current_composite_codename = "";
         selected_groups[group] = checked;
         updateImagePreview();
       };
-      groupDiv.appendChild(groupCheckbox);
       selected_groups[group] = false;
       if (mandatory_layer_groups.includes(group)) {
         groupCheckbox.checked = true;
         groupCheckbox.disabled = true;
         selected_groups[group] = true;
       }
+      const groupCheckboxCell = document.createElement('td');
+      groupCheckboxCell.appendChild(groupCheckbox);
+      groupRow.appendChild(groupCheckboxCell);
+
       const groupLabel = document.createElement('label');
       groupLabel.innerHTML = group_name;
       groupLabel.htmlFor = groupCheckbox.id;
-      groupDiv.appendChild(groupLabel);
+      const groupLabelCell = document.createElement('td');
+      groupLabelCell.appendChild(groupLabel);
+      groupRow.appendChild(groupLabelCell);
 
       const groupSelect = document.createElement('select');
       groupSelect.id = `layer_group_select_${group}`;
       groupSelect.onchange = function() {
-        const selected_codename = groupSelect.value;
-        selected_layers[group] = selected_codename
+        let selections = getLayerGroupSelections(groupSelect);
+        selected_layers[group] = selections;
+        if (selections.length > 0) {
+          const groupCheckbox = document.getElementById(`layer_group_checkbox_${group}`);
+          if (!groupCheckbox.disabled) {
+            selected_groups[group] = true;
+            groupCheckbox.checked = true;
+          }
+        }
         updateImagePreview();
       };
-      groupDiv.appendChild(groupSelect);
-      layer_groups.appendChild(groupDiv);
+      if (variadic_layer_groups.includes(group)) {
+        groupSelect.multiple = true;
+      }
+      groupSelect.style.width = "100%";
+      const groupSelectCell = document.createElement('td');
+      groupSelectCell.appendChild(groupSelect);
+      groupRow.appendChild(groupSelectCell);
+      layer_groups.appendChild(groupRow);
     }
   }
   function updateLayerGroupSelects() {
     for (const group of all_leader_groups) {
       const groupSelect = document.getElementById(`layer_group_select_${group}`);
+      const prevValue = getLayerGroupSelections(groupSelect);
       groupSelect.innerHTML = '';
-      const prevValue = groupSelect.value
       for (const member_group of getAllEquivalentGroups(group)) {
         const groupLayers = layers_by_group[member_group];
         for (const layer of groupLayers) {
@@ -225,10 +259,7 @@ let current_composite_codename = "";
           groupSelect.appendChild(option);
         }
       }
-      if (prevValue) {
-        groupSelect.value = prevValue;
-      }
-      selected_layers[group] = groupSelect.value;
+      setLayerGroupSelections(groupSelect, prevValue);
     }
   }
   function setShowCodenames(show) {
@@ -243,13 +274,22 @@ let current_composite_codename = "";
         selected_groups[group] = false;
         groupCheckbox.checked = false;
       }
+      selected_layers[group] = [];
     }
     // decompose composition into list of codenames
     const layers = composition.match(/[A-Z]+\d+/g);
+    let new_selection_by_groups = {}
     for (const layer of layers) {
       const layer_group = getLayerGroup(layer);
       const group_leader = getLeaderGroup(layer_group);
-      selected_layers[group_leader] = layer;
+      if (!(group_leader in new_selection_by_groups)) {
+        new_selection_by_groups[group_leader] = [];
+      }
+      new_selection_by_groups[group_leader].push(layer);
+    }
+    for (const group_leader in new_selection_by_groups) {
+      const selections = new_selection_by_groups[group_leader];
+      selected_layers[group_leader] = selections;
       selected_groups[group_leader] = true;
       const groupCheckbox = document.getElementById(`layer_group_checkbox_${group_leader}`);
       if (groupCheckbox && !(groupCheckbox.disabled)) {
@@ -257,7 +297,7 @@ let current_composite_codename = "";
       }
       const groupSelect = document.getElementById(`layer_group_select_${group_leader}`);
       if (groupSelect) {
-        groupSelect.value = layer;
+        setLayerGroupSelections(groupSelect, selections);
       }
     }
     updateImagePreview();
