@@ -41,13 +41,16 @@ def init_builtin_assets(args : list[str] | None = None):
       is_downloaded = False
       for url in _builtin_asset_zip_urls:
         try:
-          print(f"Trying {url}...")
+          print(f"Trying {url}")
           _download_percentage = 0
+          _is_size_printed = False
           def _show_progress(block_num, block_size, total_size):
             nonlocal _download_percentage
-            if _download_percentage == 0:
+            nonlocal _is_size_printed
+            if not _is_size_printed:
               # print the total size in MB
               print(f"size: {total_size / 1024 / 1024:.2f} MB")
+              _is_size_printed = True
             cur_percentage = int(block_num * block_size * 100 / total_size)
             # print a single dot for every 1% increase
             # once we reach every 10%, print the percentage
