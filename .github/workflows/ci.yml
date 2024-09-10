@@ -16,6 +16,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build
+      - name: create source assets zip
+        run: 7z.exe a -tzip -mx=9 dist/builtin-assets.zip assets/*
       - name: Detecting version
         id: vars
         shell: bash
@@ -40,6 +42,7 @@ jobs:
           files: |
             dist/preppipe_cli-windows-x64.7z
             dist/*.whl
+            dist/builtin-assets.zip
       - name: Repository Dispatch
         if: github.ref == 'refs/heads/main'
         uses: peter-evans/repository-dispatch@v2
