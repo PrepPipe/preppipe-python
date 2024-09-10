@@ -91,6 +91,11 @@ class AssetManager:
     if load_manifest:
       self.try_load_manifest()
 
+  @staticmethod
+  def is_builtin_manifest_exists() -> bool:
+    manifest_filepath = os.path.join(AssetManager.get_embedded_asset_install_path(), AssetManager.MANIFEST_NAME)
+    return os.path.exists(manifest_filepath)
+
   def try_load_manifest(self):
     # 先尝试加载内嵌的素材列表
     manifest_filepath = os.path.join(AssetManager.get_embedded_asset_install_path(), AssetManager.MANIFEST_NAME)
