@@ -365,7 +365,6 @@ def _strip_whitespaces(text: str) -> typing.Tuple[str, int, int]: # trimmed stri
 
 class _InitParsedCommandInfo:
   total_range : typing.Tuple[int, int] # position (from the text) of the '[' and ']' (or counterparts) token
-  is_comment : bool # whether this is a comment
   body : str # content of the body (leading and terminating whitespace trimmed)
   body_range : typing.Tuple[int, int] # start and end position of the body text
 
@@ -385,9 +384,6 @@ class _CommandScanListener(CommandScanListener):
     # commandstart_start = commandstart.getSourceInterval()[0]
     # commandstart_end = commandstart.getSourceInterval()[1]
     result.total_range = (commandstart.start, commandend.stop) # inclusive; usually commandstart/end.start == ....stop
-
-    commentstart = ctx.COMMENTSTART() # antlr4.tree.Tree.TerminalNodeImpl or None
-    result.is_comment = (commentstart is not None)
 
     body = ctx.body()
     raw_text = body.getText()
@@ -631,12 +627,6 @@ class _CommandParseVisitorImpl(CommandParseVisitor):
 # ------------------------------------------------------------------------------
 # 组装起来
 
-#class _InitParsedCommandInfo:
-#  total_range : typing.Tuple[int, int] # position (from the text) of the '[' and ']' (or counterparts) token
-#  is_comment : bool # whether this is a comment
-#  body : str # content of the body (leading and terminating whitespace trimmed)
-#  body_range : typing.Tuple[int, int] # start and end position of the body text
-
 def _visit_command_block_impl(b : Block, ctx : Context, command_str : str, asset_list : typing.List[AssetData], insert_before_op : IMElementOp, infolist : list[_InitParsedCommandInfo]) -> GeneralCommandOp | None:
   # 如果生成了命令的话，返回最后一个生成的命令
   # 帮助生成位置信息
@@ -668,7 +658,6 @@ def _visit_command_block_impl(b : Block, ctx : Context, command_str : str, asset
   assert isinstance(infolist, list)
   for info in infolist:
     # total_range = info.total_range
-    is_comment = info.is_comment
     body = info.body
     body_range_start, body_range_end = info.body_range
     if body_range_start > body_range_end:
@@ -676,10 +665,12 @@ def _visit_command_block_impl(b : Block, ctx : Context, command_str : str, asset
       continue
     loc = get_loc_at_offset(body_range_start)
     # 如果是注释，则直接生成注释项
-    if is_comment:
-      comment = CommentOp.create(comment = StringLiteral.get(body, ctx), name = '', loc = loc)
-      comment.insert_before(insert_before_op)
-      continue
+    # 更新：现在我们不会这么早就区分什么是注释、什么不是，所以这里不会有注释
+    # (注释本身也是个命令)
+    # if False:
+    #   comment = CommentOp.create(comment = StringLiteral.get(body, ctx), name = '', loc = loc)
+    #   comment.insert_before(insert_before_op)
+    #   continue
     # 既然不是注释，那就是真正的命令了
     istream = antlr4.InputStream(body)
     error_listener = _CommandParseErrorListener()
