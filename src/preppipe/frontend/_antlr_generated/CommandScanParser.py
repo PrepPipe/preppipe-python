@@ -10,15 +10,14 @@ else:
 
 def serializedATN():
     return [
-        4,1,7,30,2,0,7,0,2,1,7,1,2,2,7,2,2,3,7,3,1,0,1,0,3,0,11,8,0,1,0,
-        1,0,1,0,1,1,5,1,17,8,1,10,1,12,1,20,9,1,1,2,4,2,23,8,2,11,2,12,2,
-        24,1,3,1,3,1,3,1,3,0,0,4,0,2,4,6,0,2,2,0,2,3,7,7,1,1,4,4,28,0,8,
-        1,0,0,0,2,18,1,0,0,0,4,22,1,0,0,0,6,26,1,0,0,0,8,10,5,5,0,0,9,11,
-        5,4,0,0,10,9,1,0,0,0,10,11,1,0,0,0,11,12,1,0,0,0,12,13,3,2,1,0,13,
-        14,5,6,0,0,14,1,1,0,0,0,15,17,7,0,0,0,16,15,1,0,0,0,17,20,1,0,0,
-        0,18,16,1,0,0,0,18,19,1,0,0,0,19,3,1,0,0,0,20,18,1,0,0,0,21,23,3,
-        0,0,0,22,21,1,0,0,0,23,24,1,0,0,0,24,22,1,0,0,0,24,25,1,0,0,0,25,
-        5,1,0,0,0,26,27,3,4,2,0,27,28,7,1,0,0,28,7,1,0,0,0,3,10,18,24
+        4,1,6,27,2,0,7,0,2,1,7,1,2,2,7,2,2,3,7,3,1,0,1,0,1,0,1,0,1,1,5,1,
+        14,8,1,10,1,12,1,17,9,1,1,2,4,2,20,8,2,11,2,12,2,21,1,3,1,3,1,3,
+        1,3,0,0,4,0,2,4,6,0,1,2,0,2,3,6,6,24,0,8,1,0,0,0,2,15,1,0,0,0,4,
+        19,1,0,0,0,6,23,1,0,0,0,8,9,5,4,0,0,9,10,3,2,1,0,10,11,5,5,0,0,11,
+        1,1,0,0,0,12,14,7,0,0,0,13,12,1,0,0,0,14,17,1,0,0,0,15,13,1,0,0,
+        0,15,16,1,0,0,0,16,3,1,0,0,0,17,15,1,0,0,0,18,20,3,0,0,0,19,18,1,
+        0,0,0,20,21,1,0,0,0,21,19,1,0,0,0,21,22,1,0,0,0,22,5,1,0,0,0,23,
+        24,3,4,2,0,24,25,5,0,0,1,25,7,1,0,0,0,2,15,21
     ]
 
 class CommandScanParser ( Parser ):
@@ -33,8 +32,8 @@ class CommandScanParser ( Parser ):
 
     literalNames = [ "<INVALID>", "<INVALID>", "<INVALID>", "'\\u0000'" ]
 
-    symbolicNames = [ "<INVALID>", "WS", "QUOTEDSTR", "ELEMENT", "COMMENTSTART", 
-                      "COMMANDSTART", "COMMANDEND", "NORMALTEXT" ]
+    symbolicNames = [ "<INVALID>", "WS", "QUOTEDSTR", "ELEMENT", "COMMANDSTART", 
+                      "COMMANDEND", "NORMALTEXT" ]
 
     RULE_command = 0
     RULE_body = 1
@@ -47,10 +46,9 @@ class CommandScanParser ( Parser ):
     WS=1
     QUOTEDSTR=2
     ELEMENT=3
-    COMMENTSTART=4
-    COMMANDSTART=5
-    COMMANDEND=6
-    NORMALTEXT=7
+    COMMANDSTART=4
+    COMMANDEND=5
+    NORMALTEXT=6
 
     def __init__(self, input:TokenStream, output:TextIO = sys.stdout):
         super().__init__(input, output)
@@ -78,9 +76,6 @@ class CommandScanParser ( Parser ):
         def COMMANDEND(self):
             return self.getToken(CommandScanParser.COMMANDEND, 0)
 
-        def COMMENTSTART(self):
-            return self.getToken(CommandScanParser.COMMENTSTART, 0)
-
         def getRuleIndex(self):
             return CommandScanParser.RULE_command
 
@@ -105,22 +100,13 @@ class CommandScanParser ( Parser ):
 
         localctx = CommandScanParser.CommandContext(self, self._ctx, self.state)
         self.enterRule(localctx, 0, self.RULE_command)
-        self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
             self.state = 8
             self.match(CommandScanParser.COMMANDSTART)
-            self.state = 10
-            self._errHandler.sync(self)
-            _la = self._input.LA(1)
-            if _la==CommandScanParser.COMMENTSTART:
-                self.state = 9
-                self.match(CommandScanParser.COMMENTSTART)
-
-
-            self.state = 12
+            self.state = 9
             self.body()
-            self.state = 13
+            self.state = 10
             self.match(CommandScanParser.COMMANDEND)
         except RecognitionException as re:
             localctx.exception = re
@@ -183,18 +169,18 @@ class CommandScanParser ( Parser ):
         self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 18
+            self.state = 15
             self._errHandler.sync(self)
             _la = self._input.LA(1)
             while (((_la) & ~0x3f) == 0 and ((1 << _la) & ((1 << CommandScanParser.QUOTEDSTR) | (1 << CommandScanParser.ELEMENT) | (1 << CommandScanParser.NORMALTEXT))) != 0):
-                self.state = 15
+                self.state = 12
                 _la = self._input.LA(1)
                 if not((((_la) & ~0x3f) == 0 and ((1 << _la) & ((1 << CommandScanParser.QUOTEDSTR) | (1 << CommandScanParser.ELEMENT) | (1 << CommandScanParser.NORMALTEXT))) != 0)):
                     self._errHandler.recoverInline(self)
                 else:
                     self._errHandler.reportMatch(self)
                     self.consume()
-                self.state = 20
+                self.state = 17
                 self._errHandler.sync(self)
                 _la = self._input.LA(1)
 
@@ -248,13 +234,13 @@ class CommandScanParser ( Parser ):
         self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 22 
+            self.state = 19 
             self._errHandler.sync(self)
             _la = self._input.LA(1)
             while True:
-                self.state = 21
+                self.state = 18
                 self.command()
-                self.state = 24 
+                self.state = 21 
                 self._errHandler.sync(self)
                 _la = self._input.LA(1)
                 if not (_la==CommandScanParser.COMMANDSTART):
@@ -279,9 +265,6 @@ class CommandScanParser ( Parser ):
         def commands(self):
             return self.getTypedRuleContext(CommandScanParser.CommandsContext,0)
 
-
-        def COMMENTSTART(self):
-            return self.getToken(CommandScanParser.COMMENTSTART, 0)
 
         def EOF(self):
             return self.getToken(CommandScanParser.EOF, 0)
@@ -310,18 +293,12 @@ class CommandScanParser ( Parser ):
 
         localctx = CommandScanParser.LineContext(self, self._ctx, self.state)
         self.enterRule(localctx, 6, self.RULE_line)
-        self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 26
+            self.state = 23
             self.commands()
-            self.state = 27
-            _la = self._input.LA(1)
-            if not(_la==CommandScanParser.EOF or _la==CommandScanParser.COMMENTSTART):
-                self._errHandler.recoverInline(self)
-            else:
-                self._errHandler.reportMatch(self)
-                self.consume()
+            self.state = 24
+            self.match(CommandScanParser.EOF)
         except RecognitionException as re:
             localctx.exception = re
             self._errHandler.reportError(self, re)

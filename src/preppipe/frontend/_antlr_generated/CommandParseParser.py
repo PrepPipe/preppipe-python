@@ -10,28 +10,28 @@ else:
 
 def serializedATN():
     return [
-        4,1,12,70,2,0,7,0,2,1,7,1,2,2,7,2,2,3,7,3,2,4,7,4,2,5,7,5,2,6,7,
+        4,1,11,70,2,0,7,0,2,1,7,1,2,2,7,2,2,3,7,3,2,4,7,4,2,5,7,5,2,6,7,
         6,2,7,7,7,2,8,7,8,2,9,7,9,1,0,1,0,1,1,1,1,1,1,1,1,1,1,1,2,1,2,3,
         2,30,8,2,1,3,1,3,1,4,1,4,1,4,1,4,1,5,1,5,3,5,40,8,5,4,5,42,8,5,11,
         5,12,5,43,1,6,1,6,3,6,48,8,6,4,6,50,8,6,11,6,12,6,51,1,7,3,7,55,
         8,7,1,7,3,7,58,8,7,1,8,1,8,1,8,1,9,1,9,3,9,65,8,9,1,9,3,9,68,8,9,
-        1,9,0,0,10,0,2,4,6,8,10,12,14,16,18,0,2,2,0,2,2,11,12,1,0,11,12,
-        68,0,20,1,0,0,0,2,22,1,0,0,0,4,29,1,0,0,0,6,31,1,0,0,0,8,33,1,0,
-        0,0,10,41,1,0,0,0,12,49,1,0,0,0,14,54,1,0,0,0,16,59,1,0,0,0,18,62,
-        1,0,0,0,20,21,7,0,0,0,21,1,1,0,0,0,22,23,3,6,3,0,23,24,5,9,0,0,24,
-        25,3,14,7,0,25,26,5,10,0,0,26,3,1,0,0,0,27,30,3,0,0,0,28,30,3,2,
-        1,0,29,27,1,0,0,0,29,28,1,0,0,0,30,5,1,0,0,0,31,32,7,1,0,0,32,7,
-        1,0,0,0,33,34,3,6,3,0,34,35,5,7,0,0,35,36,3,4,2,0,36,9,1,0,0,0,37,
-        39,3,4,2,0,38,40,5,8,0,0,39,38,1,0,0,0,39,40,1,0,0,0,40,42,1,0,0,
-        0,41,37,1,0,0,0,42,43,1,0,0,0,43,41,1,0,0,0,43,44,1,0,0,0,44,11,
-        1,0,0,0,45,47,3,8,4,0,46,48,5,8,0,0,47,46,1,0,0,0,47,48,1,0,0,0,
-        48,50,1,0,0,0,49,45,1,0,0,0,50,51,1,0,0,0,51,49,1,0,0,0,51,52,1,
-        0,0,0,52,13,1,0,0,0,53,55,3,10,5,0,54,53,1,0,0,0,54,55,1,0,0,0,55,
-        57,1,0,0,0,56,58,3,12,6,0,57,56,1,0,0,0,57,58,1,0,0,0,58,15,1,0,
-        0,0,59,60,3,14,7,0,60,61,5,0,0,1,61,17,1,0,0,0,62,64,3,6,3,0,63,
-        65,5,6,0,0,64,63,1,0,0,0,64,65,1,0,0,0,65,67,1,0,0,0,66,68,3,16,
-        8,0,67,66,1,0,0,0,67,68,1,0,0,0,68,19,1,0,0,0,9,29,39,43,47,51,54,
-        57,64,67
+        1,9,0,0,10,0,2,4,6,8,10,12,14,16,18,0,3,2,0,2,2,10,11,1,0,10,11,
+        1,0,5,6,68,0,20,1,0,0,0,2,22,1,0,0,0,4,29,1,0,0,0,6,31,1,0,0,0,8,
+        33,1,0,0,0,10,41,1,0,0,0,12,49,1,0,0,0,14,54,1,0,0,0,16,59,1,0,0,
+        0,18,62,1,0,0,0,20,21,7,0,0,0,21,1,1,0,0,0,22,23,3,6,3,0,23,24,5,
+        8,0,0,24,25,3,14,7,0,25,26,5,9,0,0,26,3,1,0,0,0,27,30,3,0,0,0,28,
+        30,3,2,1,0,29,27,1,0,0,0,29,28,1,0,0,0,30,5,1,0,0,0,31,32,7,1,0,
+        0,32,7,1,0,0,0,33,34,3,6,3,0,34,35,7,2,0,0,35,36,3,4,2,0,36,9,1,
+        0,0,0,37,39,3,4,2,0,38,40,5,7,0,0,39,38,1,0,0,0,39,40,1,0,0,0,40,
+        42,1,0,0,0,41,37,1,0,0,0,42,43,1,0,0,0,43,41,1,0,0,0,43,44,1,0,0,
+        0,44,11,1,0,0,0,45,47,3,8,4,0,46,48,5,7,0,0,47,46,1,0,0,0,47,48,
+        1,0,0,0,48,50,1,0,0,0,49,45,1,0,0,0,50,51,1,0,0,0,51,49,1,0,0,0,
+        51,52,1,0,0,0,52,13,1,0,0,0,53,55,3,10,5,0,54,53,1,0,0,0,54,55,1,
+        0,0,0,55,57,1,0,0,0,56,58,3,12,6,0,57,56,1,0,0,0,57,58,1,0,0,0,58,
+        15,1,0,0,0,59,60,3,14,7,0,60,61,5,0,0,1,61,17,1,0,0,0,62,64,3,6,
+        3,0,63,65,5,5,0,0,64,63,1,0,0,0,64,65,1,0,0,0,65,67,1,0,0,0,66,68,
+        3,16,8,0,67,66,1,0,0,0,67,68,1,0,0,0,68,19,1,0,0,0,9,29,39,43,47,
+        51,54,57,64,67
     ]
 
 class CommandParseParser ( Parser ):
@@ -46,9 +46,9 @@ class CommandParseParser ( Parser ):
 
     literalNames = [ "<INVALID>", "<INVALID>", "'\\u0000'" ]
 
-    symbolicNames = [ "<INVALID>", "WS", "ELEMENT", "COMMENTSTART", "COMMANDSTART", 
-                      "COMMANDEND", "COMMANDSEP", "ASSIGNMENTOP", "COMMAOP", 
-                      "CALLSTART", "CALLEND", "QUOTEDSTR", "NATURALTEXT" ]
+    symbolicNames = [ "<INVALID>", "WS", "ELEMENT", "COMMANDSTART", "COMMANDEND", 
+                      "COMMANDSEP", "ASSIGNMENTOP", "COMMAOP", "CALLSTART", 
+                      "CALLEND", "QUOTEDSTR", "NATURALTEXT" ]
 
     RULE_evalue = 0
     RULE_callexpr = 1
@@ -67,16 +67,15 @@ class CommandParseParser ( Parser ):
     EOF = Token.EOF
     WS=1
     ELEMENT=2
-    COMMENTSTART=3
-    COMMANDSTART=4
-    COMMANDEND=5
-    COMMANDSEP=6
-    ASSIGNMENTOP=7
-    COMMAOP=8
-    CALLSTART=9
-    CALLEND=10
-    QUOTEDSTR=11
-    NATURALTEXT=12
+    COMMANDSTART=3
+    COMMANDEND=4
+    COMMANDSEP=5
+    ASSIGNMENTOP=6
+    COMMAOP=7
+    CALLSTART=8
+    CALLEND=9
+    QUOTEDSTR=10
+    NATURALTEXT=11
 
     def __init__(self, input:TokenStream, output:TextIO = sys.stdout):
         super().__init__(input, output)
@@ -342,12 +341,15 @@ class CommandParseParser ( Parser ):
             return self.getTypedRuleContext(CommandParseParser.NameContext,0)
 
 
-        def ASSIGNMENTOP(self):
-            return self.getToken(CommandParseParser.ASSIGNMENTOP, 0)
-
         def value(self):
             return self.getTypedRuleContext(CommandParseParser.ValueContext,0)
 
+
+        def ASSIGNMENTOP(self):
+            return self.getToken(CommandParseParser.ASSIGNMENTOP, 0)
+
+        def COMMANDSEP(self):
+            return self.getToken(CommandParseParser.COMMANDSEP, 0)
 
         def getRuleIndex(self):
             return CommandParseParser.RULE_kwvalue
@@ -373,12 +375,18 @@ class CommandParseParser ( Parser ):
 
         localctx = CommandParseParser.KwvalueContext(self, self._ctx, self.state)
         self.enterRule(localctx, 8, self.RULE_kwvalue)
+        self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
             self.state = 33
             self.name()
             self.state = 34
-            self.match(CommandParseParser.ASSIGNMENTOP)
+            _la = self._input.LA(1)
+            if not(_la==CommandParseParser.COMMANDSEP or _la==CommandParseParser.ASSIGNMENTOP):
+                self._errHandler.recoverInline(self)
+            else:
+                self._errHandler.reportMatch(self)
+                self.consume()
             self.state = 35
             self.value()
         except RecognitionException as re:

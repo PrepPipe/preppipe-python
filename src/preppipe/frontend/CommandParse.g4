@@ -6,8 +6,6 @@ WS : [ \t\r\n\u00A0\u2000-\u200B\u202F\u205F\u3000\uFEFF]+ -> skip;
 // non-text elements replaced with unicode null character
 ELEMENT : '\u0000' ;
 
-COMMENTSTART : '#' | '\uFF03' ;
-
 COMMANDSTART : '[' | '\u3010' ;
 COMMANDEND   : ']' | '\u3011' ;
 COMMANDSEP   : ':' | '\uFF1A' ;
@@ -28,8 +26,8 @@ CALLEND      : ')' | '\uff09' ;
 // therefore, here we do not distinguish them
 QUOTEDSTR : '"' (~'"')*? '"' | '\'' (~'\'')*? '\'' | ('\u201C'|'\u201D') (~('\u201C'|'\u201D'))*? ('\u201C'|'\u201D') ;
 
-// NATURALTEXT excludes whitespaces, ',', '"', '\'', '=', '[', ']', '(', ')', ':', '#', and their unicode variants
-NATURALTEXT : (~[ \t\r\n\u00A0\u2000-\u200B\u202F\u205F\u3000\uFEFF,\uFF0C"'\u201C\u201D=\uFF1D[\u3010\]\u3011(\uff08)\uff09:\uFF1A#\uFF03])+ ;
+// NATURALTEXT excludes whitespaces, ',', '"', '\'', '=', '[', ']', '(', ')', ':', and their unicode variants
+NATURALTEXT : (~[ \t\r\n\u00A0\u2000-\u200B\u202F\u205F\u3000\uFEFF,\uFF0C"'\u201C\u201D=\uFF1D[\u3010\]\u3011(\uff08)\uff09:\uFF1A])+ ;
 
 // elementary value
 evalue : NATURALTEXT | QUOTEDSTR | ELEMENT ;
@@ -40,7 +38,7 @@ callexpr : name CALLSTART arguments CALLEND ;
 value  : evalue | callexpr ;
 name   : NATURALTEXT | QUOTEDSTR ;
 
-kwvalue : name ASSIGNMENTOP value ;
+kwvalue : name (ASSIGNMENTOP | COMMANDSEP) value ;
 
 positionals : (value COMMAOP?)+ ;
 kwargs : (kwvalue COMMAOP?)+ ;
