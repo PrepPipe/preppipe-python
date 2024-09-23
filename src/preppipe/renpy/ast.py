@@ -6,6 +6,7 @@ from __future__ import annotations
 from ..irbase import *
 from .. import irdataop
 from ..language import TranslationDomain, Translatable
+from ..enginecommon.ast import *
 from ..util.imagepackexportop import ImagePackExportOpSymbol
 
 # 在此我们定义 RenPy 语法的一个子集，以供我们对 Renpy 进行生成
@@ -19,11 +20,7 @@ TR_renpy = TranslationDomain("renpy")
 #-----------------------------------------------------------
 
 @irdataop.IROperationDataclass
-class RenPyNode(Operation):
-  # 代表一个 AST 节点的基类，对应 renpy 的 renpy/ast.py
-  def accept(self, visitor):
-    return getattr(visitor, "visit" + self.__class__.__name__)(self)
-
+class RenPyNode(BackendASTNodeBase):
   @classmethod
   def is_controlflow_instruction(cls) -> bool:
     # 是否是控制流指令
@@ -590,18 +587,6 @@ class RenPyIfNode(RenPyNode):
     return (self.entries,)
 
 @irdataop.IROperationDataclass
-class RenPyFileAssetOp(Symbol):
-  ref : OpOperand
-  export_format : OpOperand[StringLiteral] # 如果非空，我们在导出时需要进行另存为
-
-  def get_asset_value(self) -> Value:
-    return self.ref.get()
-
-  @staticmethod
-  def create(context : Context, assetref : Value, path : str, export_format : StringLiteral | str | None = None, loc : Location | None = None):
-    return RenPyFileAssetOp(init_mode=IRObjectInitMode.CONSTRUCT, context=context, ref=assetref, export_format=export_format, name=path, loc=loc)
-
-@irdataop.IROperationDataclass
 class RenPyScriptFileOp(Symbol):
   body : Block # "body"区下的单块，每个内容都是顶层 RenPyNode
   indent : OpOperand[IntLiteral] # 整数类型常量，每层缩进多少空格；无参数时不限制（应该只有读取的现成文件才会指定该值）
@@ -621,14 +606,7 @@ class RenPyScriptFileOp(Symbol):
     return RenPyScriptFileOp(init_mode=IRObjectInitMode.CONSTRUCT, context=context, name=name, loc=loc, indent=indent)
 
 # pylint: disable=invalid-name,too-many-public-methods
-class RenPyASTVisitor:
-  def visitChildren(self, v : Operation):
-    for r in v.regions:
-      for b in r.blocks:
-        for op in b.body:
-          if isinstance(op, RenPyNode):
-            op.accept(self)
-
+class RenPyASTVisitor(BackendASTVisitorBase):
   def start_visit(self, v : RenPyScriptFileOp):
     assert isinstance(v, RenPyScriptFileOp)
     return self.visitChildren(v)
@@ -692,35 +670,7 @@ class RenPyASTVisitor:
 
 
 @irdataop.IROperationDataclass
-class RenPyModel(Operation):
-  _script_region : SymbolTableRegion = irdataop.symtable_field(lookup_name="script") # RenPyScriptFileOp
-  _asset_region : SymbolTableRegion = irdataop.symtable_field(lookup_name="asset") # RenPyAsset
-  _cacheable_export_region : SymbolTableRegion = irdataop.symtable_field(lookup_name="cacheable_export") # ImagePackExportOpSymbol
-
-  def get_script(self, scriptname : str) -> RenPyScriptFileOp:
-    return self._script_region.get(scriptname)
-
-  def add_script(self, script : RenPyScriptFileOp):
-    self._script_region.add(script)
-
-  def get_asset(self, name : str) -> RenPyFileAssetOp:
-    return self._asset_region.get(name)
-
-  def add_asset(self, asset : RenPyFileAssetOp):
-    self._asset_region.add(asset)
-
-  def add_cacheable_export(self, export : ImagePackExportOpSymbol):
-    self._cacheable_export_region.add(export)
-
-  def scripts(self) -> typing.Iterable[RenPyScriptFileOp]:
-    return self._script_region
-
-  def assets(self) -> typing.Iterable[RenPyFileAssetOp]:
-    return self._asset_region
-
-  def cacheable_exports(self) -> typing.Iterable[ImagePackExportOpSymbol]:
-    return self._cacheable_export_region
-
+class RenPyModel(BackendProjectModelBase[RenPyScriptFileOp]):
   @staticmethod
   def create(context : Context) -> RenPyModel:
     return RenPyModel(init_mode=IRObjectInitMode.CONSTRUCT, context=context)

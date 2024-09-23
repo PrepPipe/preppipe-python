@@ -104,7 +104,7 @@ class NameResolver(typing.Generic[T]):
       return None
     return self._lookup_name(target_namespace, name)
 
-class NamespaceNodeInterface(typing.Generic[T], abc.ABC):
+class NamespaceNodeInterface(abc.ABC, typing.Generic[T]):
   @dataclasses.dataclass
   class AliasEntry:
     ns_path: tuple[str]
@@ -130,7 +130,7 @@ class NamespaceNodeInterface(typing.Generic[T], abc.ABC):
   def lookup_name(self, name : str) -> NamespaceNodeInterface[T] | T | AliasEntry | None:
     raise PPNotImplementedError()
 
-class NamespaceNode(typing.Generic[T], NamespaceNodeInterface[T]):
+class NamespaceNode(NamespaceNodeInterface[T], typing.Generic[T]):
   # 某个在该命名空间下的名称代表什么
   class NameResolutionDataEntryKind(enum.Enum):
     CanonicalEntry = 0 # 代表一个数据项，值是数据项记录

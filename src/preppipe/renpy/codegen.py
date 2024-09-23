@@ -1055,7 +1055,7 @@ class _RenPyCodeGenHelper:
     else:
       raise RuntimeError('Unknown asset type')
     path = self.get_asset_export_path(v, rootdir, export_format)
-    file = RenPyFileAssetOp.create(context=self.context, assetref=v, export_format=export_format, path=path)
+    file = BackendFileAssetOp.create(context=self.context, assetref=v, export_format=export_format, path=path)
     self.result.add_asset(file)
     return path
 
