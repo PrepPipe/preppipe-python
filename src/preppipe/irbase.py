@@ -45,7 +45,7 @@ T = typing.TypeVar('T')
 #       * iterating over a dllist is getting the VALUE on the nodes, instead of getting the nodes
 
 _IListNodeTypeVar = typing.TypeVar('_IListNodeTypeVar', bound='IListNode')
-class IList(typing.Generic[_IListNodeTypeVar, T], llist.dllist):
+class IList(llist.dllist, typing.Generic[_IListNodeTypeVar, T]):
   # __slots__ = ('_parent')
   _parent : typing.Any
   def __init__(self, parent : T) -> None:
@@ -161,7 +161,7 @@ class IListIterator(typing.Generic[_IListNodeTypeVar]):
 
 # if the list intends to be mutable, element node should inherit from this class
 # otherwise, just inheriting from llist.dllistnode is fine
-class IListNode(typing.Generic[_IListNodeTypeVar], llist.dllistnode):
+class IListNode(llist.dllistnode, typing.Generic[_IListNodeTypeVar]):
   # __slots__ = ()
 
   def __init__(self, **kwargs) -> None:
@@ -3186,7 +3186,7 @@ class StringListLiteral(LiteralExpr):
     return len(self.value) == 1
 
 @IRObjectJsonTypeName('enum_l')
-class EnumLiteral(typing.Generic[T], Literal):
+class EnumLiteral(Literal, typing.Generic[T]):
   # 用于将 Python Enum 打包成字面值
   # 用于 JSON 输入输出时，如果枚举类型不存在或字段值不存在，则使用 UnknownEnumLiteral 进行替代
 
