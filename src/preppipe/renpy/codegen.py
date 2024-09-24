@@ -10,6 +10,7 @@ from ..vnmodel import *
 from ..imageexpr import *
 from ..util.imagepackexportop import *
 from ..util import nameconvert
+from ..enginecommon.codegen import BackendCodeGenHelperBase
 
 @dataclasses.dataclass
 class _FunctionCodeGenHelper:
@@ -69,7 +70,7 @@ class _RenPyCharacterInfo:
   sayerstyle : TextStyleLiteral | None = None
   textstyle : TextStyleLiteral | None = None
 
-class _RenPyCodeGenHelper:
+class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
   model : VNModel
   cur_namespace : VNNamespace
   cur_path_prefix : str
@@ -88,9 +89,6 @@ class _RenPyCodeGenHelper:
   numeric_image_index : int
   imagepack_handler : ImagePackExportDataBuilder
 
-  # 辅助信息
-  CODEGEN_MATCH_TREE : typing.ClassVar[dict] = {}
-
   def __init__(self, model : VNModel) -> None:
     self.model = model
     self.cur_namespace = None # type: ignore
@@ -108,7 +106,7 @@ class _RenPyCodeGenHelper:
     self.numeric_image_index = 0
     self.imagepack_handler = ImagePackExportDataBuilder()
 
-    if len(_RenPyCodeGenHelper.CODEGEN_MATCH_TREE) == 0:
+    if not self.is_matchtree_installed():
       _RenPyCodeGenHelper.init_matchtable()
 
   @property
@@ -293,7 +291,9 @@ class _RenPyCodeGenHelper:
       menu.items.push_back(item)
       item.body.push_back(RenPyJumpNode.create(self.context, dest_label.codename.get()))
 
-  def gen_terminator(self, terminator : VNTerminatorInstBase, helper : _FunctionCodeGenHelper, label : RenPyLabelNode):
+  def gen_terminator(self, terminator : VNTerminatorInstBase, **kwargs) -> RenPyNode:
+    helper : _FunctionCodeGenHelper = kwargs['helper']
+    label : RenPyLabelNode = kwargs['label']
     assert label.body.body.empty
     if isinstance(terminator, VNBranchInst):
       self.gen_branch(terminator, helper, label)
@@ -309,6 +309,7 @@ class _RenPyCodeGenHelper:
       label.body.push_back(RenPyCallNode.create(self.context, label='__preppipe_ending__', arguments='ending_name="' + terminator.ending.get() + '"'))
     else:
       raise NotImplementedError("Unimplemented terminator type " + type(terminator).__name__)
+    return label.body.body.front
 
   # 在这里初始化指令转换表
   # 每个生成函数都应该是 def gen_XXX(self, instrs : list[VNInstruction], insert_before : RenPyNode) -> RenPyNode
@@ -319,7 +320,7 @@ class _RenPyCodeGenHelper:
   # 键值都是类型；可以按需要添加 RenPy 辅助生成的类（比如可以定义一个新的 InstructionGroup, 先用一个转换找到特定指令（比如可以共用 With 从句的 Show）并把它们替换为新的类型，然后在这里定义细则）
   @staticmethod
   def init_matchtable():
-    _RenPyCodeGenHelper.CODEGEN_MATCH_TREE = {
+    _RenPyCodeGenHelper.install_codegen_matchtree({
       VNWaitInstruction : {
         VNSayInstructionGroup: _RenPyCodeGenHelper.gen_say_wait,
         None: _RenPyCodeGenHelper.gen_wait,
@@ -332,7 +333,7 @@ class _RenPyCodeGenHelper:
       VNRemoveInst : _RenPyCodeGenHelper.gen_remove,
       VNCallInst : _RenPyCodeGenHelper.gen_call,
       VNBackendInstructionGroup : _RenPyCodeGenHelper.gen_renpy_asm,
-    }
+    })
 
   def collect_say_text(self, src : OpOperand) -> list[Value]:
     result = []
@@ -541,9 +542,7 @@ class _RenPyCodeGenHelper:
 
       if not is_handled:
         # 在这里就地生成
-        match_result = self.CODEGEN_MATCH_TREE[type(op)]
-        if isinstance(match_result, dict):
-          match_result = match_result[None]
+        match_result = self.match_codegen_depth1(type(op))
         genresult = match_result(self, [op], insert_before)
         if top_insert_place is None:
           top_insert_place = genresult
@@ -753,77 +752,6 @@ class _RenPyCodeGenHelper:
           firstinstr = cloned
     return firstinstr if firstinstr is not None else insert_before
 
-  def match_instr_patterns(self, finishtime : Value, blocktime : Value) -> tuple[list[VNInstruction], typing.Callable[[typing.Any, list[VNInstruction], RenPyNode], RenPyNode]]:
-    assert isinstance(finishtime, OpResult) and isinstance(finishtime.valuetype, VNTimeOrderType)
-    cur_match_dict = _RenPyCodeGenHelper.CODEGEN_MATCH_TREE
-    instrs = []
-    while True:
-      end_instr = finishtime.parent
-      assert isinstance(end_instr, VNInstruction)
-      instrs.append(end_instr)
-      match_type = type(end_instr)
-      if match_type not in cur_match_dict:
-        if None not in cur_match_dict:
-          raise RuntimeError('Codegen for instr type not supported yet: ' + match_type.__name__)
-        match_result = cur_match_dict[None]
-      else:
-        match_result = cur_match_dict[match_type]
-      if isinstance(match_result, dict):
-        cur_match_dict = match_result
-        finishtime = end_instr.get_start_time()
-        # 遇到以下三种情况时我们停止匹配：
-        # 1. 已经到块的开头
-        # 2. 前一个指令是上一步的类似等待的指令
-        # 3. 除了当前匹配到的指令外，前一个指令的输出时间有其他使用者（我们不能把这个输出时间抢走）
-        if finishtime is blocktime or self.is_waitlike_instr(finishtime.parent):
-          return (instrs, match_result[None])
-        for u in finishtime.uses:
-          user_instr = u.user.parent
-          if user_instr is not end_instr and user_instr.try_get_parent_group() is not end_instr:
-            # 情况三
-            return (instrs, match_result[None])
-        # 否则我们继续匹配
-        continue
-      return (instrs, match_result)
-
-  def is_waitlike_instr(self, instr : VNInstruction) -> bool:
-    if isinstance(instr, VNWaitInstruction):
-      return True
-    return False
-
-  def codegen_block(self, b : Block, helper : _FunctionCodeGenHelper):
-    # 从末指令开始从后往前，用查表的方式找到对应的函数进行指令生成
-    terminator = self.get_terminator(b)
-    label = helper.block_dict[b]
-    self.gen_terminator(terminator, helper, label)
-    if terminator is b.body.front:
-      return
-
-    cur_srcpos = terminator # Block @ VNModel
-    cur_insertpos = label.body.body.front # RenPyNode @ RenPyLabelNode
-    #pos_dict = {orders[terminator] : cur_insertpos}
-    block_start = b.get_argument('start')
-    # 下面这个是处理该块的主循环
-    visited_instrs = set()
-
-    while True:
-      if cur_srcpos is b.body.front:
-        return
-      cur_srcpos = cur_srcpos.get_prev_node()
-      if isinstance(cur_srcpos, VNInstruction):
-        if cur_srcpos in visited_instrs:
-          continue
-        instrs, gen = self.match_instr_patterns(cur_srcpos.get_finish_time(), block_start)
-        cur_insertpos = gen(self, instrs, cur_insertpos)
-        visited_instrs.update(instrs)
-      else:
-        if isinstance(cur_srcpos, MetadataOp):
-          cloned = cur_srcpos.clone()
-          cloned.insert_before(cur_insertpos)
-          cur_insertpos = cloned
-        else:
-          raise RuntimeError('Unexpected instruction kind: ' + type(cur_srcpos).__name__)
-
   def handle_function(self, func : VNFunction):
     # 在这里，函数内的基本块应当已按照拓扑排序顺序排列
     # 第一步：遍历所有块，生成局部标签
@@ -888,9 +816,6 @@ class _RenPyCodeGenHelper:
     # 1. 第一遍把已经有名称的块加进去（所有的局部名冲突是错误），
     # 2. 第二遍把还没有名称的块放进去（局部名冲突会使得名称重新生成）
     for b in func.body.blocks:
-      terminator = self.get_terminator(b)
-      #if len(terminator.get_passed_handles()) > 0:
-      #  raise RuntimeError('Terminator passing handles are not supported yet (report to the programmer)')
       if len(b.name) > 0:
         helper.reserve_block_name(b)
 
@@ -908,7 +833,7 @@ class _RenPyCodeGenHelper:
 
     # 第二步
     for b in func.body.blocks:
-      self.codegen_block(b, helper)
+      self.codegen_block(b, helper=helper, label=helper.block_dict[b])
 
     if entry := func.get_entry_point():
       if entry != 'main':
