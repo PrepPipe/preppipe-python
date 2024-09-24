@@ -16,10 +16,11 @@ class WebGalExportVisitor(BackendASTVisitorBase):
   WEBGAL_STR_ESCAPE_DICT : typing.ClassVar[dict[str, str]] = {
     '"' : r'\"',
     "'" : r"\'",
-    '\n' : r"\n",
-    '%' : r"\%",
-    '[' : r"[[",
-    '{' : r"{{",
+    ";" : r"\;",
+    #'\n' : r"\n",
+    #'%' : r"\%",
+    #'[' : r"[[",
+    #'{' : r"{{",
   }
 
   @staticmethod

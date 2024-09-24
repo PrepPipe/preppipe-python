@@ -819,6 +819,7 @@ class VNFunction(VNSymbol):
   # 函数属性标记
   ATTR_ENTRYPOINT : typing.ClassVar[str] = "EntryPoint" # 表示该函数应当作为引擎的某个入口。带一个字符串参数，表示是什么入口。
   ATTRVAL_ENTRYPOINT_MAIN : typing.ClassVar[str] = "main"
+  ATTR_SRCFILE : typing.ClassVar[str] = "SourceFile" # 函数所在的源文件名(不包含后缀) TODO:添加对这个属性的支持；应该给其他对象也加上这个属性
 
   NAME_PREBODY  : typing.ClassVar[str] = "prebody"
   NAME_POSTBODY : typing.ClassVar[str] = "postbody"
