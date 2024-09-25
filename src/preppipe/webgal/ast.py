@@ -28,6 +28,12 @@ class WebGalNode(BackendASTNodeBase):
 class WebGalCommentNode(WebGalNode):
   content : OpOperand[StringLiteral]
 
+  @staticmethod
+  def create(context : Context, content : StringLiteral | str, loc : Location | None = None):
+    if isinstance(content, str):
+      content = StringLiteral.get(content, context=context)
+    return WebGalCommentNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, content=content, loc=loc)
+
 @irdataop.IROperationDataclass
 class WebGalASMNode(WebGalNode):
   content : OpOperand[StringLiteral]
@@ -156,6 +162,10 @@ class WebGalPixiPerformNode(WebGalNode):
 class WebGalScriptFileOp(Symbol):
   relpath : OpOperand[StringLiteral]
   body : Block
+
+  @staticmethod
+  def create(context : Context, name : str, loc : Location | None = None):
+    return WebGalScriptFileOp(init_mode=IRObjectInitMode.CONSTRUCT, context=context, name=name, loc=loc)
 
 class WebGalASTVisitor(BackendASTVisitorBase):
   def start_visit(self, v : WebGalScriptFileOp):

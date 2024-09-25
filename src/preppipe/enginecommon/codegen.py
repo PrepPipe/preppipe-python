@@ -5,6 +5,7 @@ import typing
 from .ast import *
 from ..irbase import *
 from ..vnmodel import *
+from ..util.imagepackexportop import *
 
 SelfType = typing.TypeVar('SelfType', bound='BackendCodeGenHelperBase') # pylint: disable=invalid-name
 NodeType = typing.TypeVar('NodeType', bound=BackendASTNodeBase) # pylint: disable=invalid-name
@@ -13,6 +14,48 @@ class BackendCodeGenHelperBase(typing.Generic[NodeType]):
   # 我们使用 CODEGEN_MATCH_TREE 来组织代码生成的逻辑
   # 我们从每个 Block 的末尾开始，根据开始、结束时间将指令顺序化，并用 CODEGEN_MATCH_TREE 来生成代码
   CODEGEN_MATCH_TREE : typing.ClassVar[dict] = {}
+  ASSET_BASEDIR_MATCH_TREE : typing.ClassVar[dict] = {}
+  ASSET_SUPPORTED_FORMATS : typing.ClassVar[dict[type, list[str]]] = {}
+
+  # 我们一般应该只有在素材确定被用到的时候才将其写到输出目录
+  # 然而一般来说我们会先扫过所有场景、角色声明、素材声明等，然后再处理剧本内容
+  # 所以我们需要暂时在不知道它是否被用到的时候先把名称记录下来
+  class NamedAssetKind(enum.Enum):
+    NAMED_MISC = enum.auto()
+    CHARACTER_SPRITE = enum.auto()
+    CHARACTER_SIDEIMAGE = enum.auto()
+    BACKGROUND = enum.auto()
+    CG = enum.auto()
+
+  @dataclasses.dataclass
+  class NamedAssetInfo:
+    value : Value
+    kind : "BackendCodeGenHelperBase.NamedAssetKind"
+    name : str
+    symbolRef : VNConstExprAsSymbol | None = None
+    used : bool = False
+
+  # --------------------------------------------------------------------------
+  # 子类可以（应该）使用的成员
+  model : VNModel
+  imagepack_handler : ImagePackExportDataBuilder
+
+  # --------------------------------------------------------------------------
+  # 这个类自己用的成员
+  anon_asset_index_dict : collections.OrderedDict[str, int] # parent dir -> anon index
+  asset_decl_info_dict : collections.OrderedDict[Value, list[NamedAssetInfo]]
+
+  # --------------------------------------------------------------------------
+
+  def __init__(self, model : VNModel, imagepack_handler : ImagePackExportDataBuilder | None) -> None:
+    self.model = model
+    self.imagepack_handler = imagepack_handler if imagepack_handler is not None else ImagePackExportDataBuilder()
+    self.anon_asset_index_dict = collections.OrderedDict()
+    self.asset_decl_info_dict = collections.OrderedDict()
+
+  @property
+  def context(self) -> Context:
+    return self.model.context
 
   @classmethod
   def is_matchtree_installed(cls) -> bool:
@@ -37,8 +80,54 @@ class BackendCodeGenHelperBase(typing.Generic[NodeType]):
           pass
         else:
           raise ValueError(f"Unexpected value type {v}")
-      if istop:
-        return
+    checktreerecursive(matchtree, True)
+
+  @classmethod
+  def install_asset_basedir_matchtree(cls, matchtree: dict):
+    # 每个键都应该是 AssetData 的子类，每个值要么是一个 dict 且键是 VNStandardDeviceKind 或是 None，要么是一个字符串（即该资源类型的基础路径）
+    cls.ASSET_BASEDIR_MATCH_TREE = matchtree
+    def checktreerecursive(tree : dict, istop : bool):
+      for k, v in tree.items():
+        if k is not None:
+          if istop:
+            if not issubclass(k, AssetData):
+              raise ValueError(f"Key {k} is not a subclass of AssetData")
+          else:
+            if not isinstance(k, VNStandardDeviceKind):
+              raise ValueError(f"Key {k} is not an instance of VNStandardDeviceKind")
+        if isinstance(v, dict):
+          if istop:
+            checktreerecursive(v, False)
+          else:
+            raise ValueError(f"Value {v} is a dict but not at top level")
+        elif isinstance(v, str):
+          pass
+        else:
+          raise ValueError(f"Unexpected value type {v}")
+    checktreerecursive(matchtree, True)
+
+  @classmethod
+  def install_asset_supported_formats(cls, formats: dict):
+    # 每个键都应该是 AssetData 的子类，每个值应该是一个字符串列表，表示支持的格式
+    cls.ASSET_SUPPORTED_FORMATS = formats
+    for k, v in formats.items():
+      if not issubclass(k, AssetData):
+        raise ValueError(f"Key {k} is not a subclass of AssetData")
+      if len(v) == 0:
+        raise ValueError(f"Value {v} is an empty list")
+      if not all(isinstance(x, str) for x in v):
+        raise ValueError(f"Value {v} is not a list of strings")
+
+  # --------------------------------------------------------------------------
+  # 需要子类实现的接口
+
+  def gen_terminator(self, terminator : VNTerminatorInstBase, **kwargs) -> NodeType:
+    raise NotImplementedError()
+
+  def get_result(self) -> BackendProjectModelBase:
+    raise NotImplementedError()
+
+  # --------------------------------------------------------------------------
 
   @classmethod
   def match_codegen_depth1(cls, ty : type) -> typing.Callable:
@@ -52,9 +141,6 @@ class BackendCodeGenHelperBase(typing.Generic[NodeType]):
     if isinstance(instr, VNWaitInstruction):
       return True
     return False
-
-  def gen_terminator(self, terminator : VNTerminatorInstBase, **kwargs) -> NodeType:
-    raise NotImplementedError()
 
   def codegen_block(self, b : Block, **kwargs):
     terminator = b.body.back
@@ -119,3 +205,92 @@ class BackendCodeGenHelperBase(typing.Generic[NodeType]):
         # 否则我们继续匹配
         continue
       return (instrs, match_result)
+
+  def get_asset_rootpath(self, v : AssetData, user_hint : VNStandardDeviceKind | None) -> str:
+    ty_key = type(v)
+    if ty_key not in self.ASSET_BASEDIR_MATCH_TREE:
+      ty_key = None
+    cur_match_dict = self.ASSET_BASEDIR_MATCH_TREE[ty_key]
+    if isinstance(cur_match_dict, dict):
+      if user_hint in cur_match_dict:
+        return cur_match_dict[user_hint]
+      return cur_match_dict[None]
+    elif isinstance(cur_match_dict, str):
+      return cur_match_dict
+    else:
+      raise RuntimeError('Unexpected match tree value type: ' + type(cur_match_dict).__name__)
+
+
+  def get_asset_export_path(self, v : AssetData, parentdir : str, export_format_ext : str | None) -> str:
+    # 给指定的资源生成一个在 parentdir 下的导出路径
+    # 如果 export_format_ext 提供的话，应该是一个小写的后缀名，不带 '.'，没提供的话就是不改变原来的后缀名
+    # 这里我们也要处理去重等情况
+    NAME_ANON = 'anon'
+    basename = NAME_ANON
+    baseext = str(v.format)
+    if export_format_ext == baseext:
+      export_format_ext = None
+    if len(baseext) == 0:
+      baseext = 'bin'
+    if loc := v.location:
+      fileloc = loc.get_file_path()
+      assert len(fileloc) > 0
+      basepath, oldext = os.path.splitext(fileloc)
+      basename = os.path.basename(basepath)
+      assert oldext[0] == '.'
+      baseext = oldext[1:]
+    if export_format_ext is not None:
+      baseext = export_format_ext
+    # 找到一个没被用上的名字
+    cur_path = parentdir + '/' + basename + '.' + baseext
+    if existing := self.get_result().get_asset(cur_path):
+      # 如果内容一样就直接报错（不应该尝试生成导出路径）
+      # 不然的话加后缀直到不重名
+      if existing.get_asset_value() is v:
+        raise RuntimeError('Should not happen')
+      suffix = 0
+      if basename == NAME_ANON and parentdir in self.anon_asset_index_dict:
+        suffix = self.anon_asset_index_dict[parentdir]
+      cur_path = parentdir + '/' + basename + '_' + str(suffix) + '.' + baseext
+      while existing := self.get_result().get_asset(cur_path):
+        if existing.get_asset_value() is v:
+          raise RuntimeError('Should not happen')
+        suffix += 1
+        cur_path = parentdir + '/' + basename + '_' + str(suffix) + '.' + baseext
+      if basename == NAME_ANON:
+        self.anon_asset_index_dict[parentdir] = suffix + 1
+    return cur_path
+
+  def get_asset_export_format(self, v : AssetData) -> str:
+    supported_formats = self.ASSET_SUPPORTED_FORMATS[type(v)]
+    cur_format = str(v.format)
+    if cur_format in supported_formats:
+      return cur_format
+    return supported_formats[0]
+
+  def add_assetdata(self, v : AssetData, user_hint : VNStandardDeviceKind | None = None) -> str:
+    rootdir = self.get_asset_rootpath(v, user_hint)
+
+    # 看看是否需要转换格式，需要的话把值和后缀都改了
+    export_format = self.get_asset_export_format(v)
+    path = self.get_asset_export_path(v, rootdir, export_format)
+    file = BackendFileAssetOp.create(context=v.context, assetref=v, export_format=export_format, path=path)
+    self.get_result().add_asset(file)
+    return path
+
+  def _add_asset_name(self, v : Value, info : NamedAssetInfo):
+    if v not in self.asset_decl_info_dict:
+      self.asset_decl_info_dict[v] = []
+    self.asset_decl_info_dict[v].append(info)
+
+  def collect_named_assets(self, n : VNNamespace):
+    for c in n.characters:
+      for symb in c.sprites:
+        self._add_asset_name(symb, self.NamedAssetInfo(value=symb, kind=self.NamedAssetKind.CHARACTER_SPRITE, name=symb.name))
+      for symb in c.side_images:
+        self._add_asset_name(symb, self.NamedAssetInfo(value=symb, kind=self.NamedAssetKind.CHARACTER_SIDEIMAGE, name=symb.name))
+    for b in n.scenes:
+      for bg in b.backgrounds:
+        self._add_asset_name(bg, self.NamedAssetInfo(value=bg, kind=self.NamedAssetKind.BACKGROUND, name=bg.name))
+    for a in n.assets:
+      self._add_asset_name(a.get_value(), self.NamedAssetInfo(value=a.get_value(), kind=self.NamedAssetKind.NAMED_MISC, name=a.name))
