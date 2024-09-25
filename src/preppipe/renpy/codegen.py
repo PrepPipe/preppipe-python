@@ -71,7 +71,6 @@ class _RenPyCharacterInfo:
   textstyle : TextStyleLiteral | None = None
 
 class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
-  model : VNModel
   cur_namespace : VNNamespace
   cur_path_prefix : str
   cur_mainscript : RenPyScriptFileOp | None
@@ -85,12 +84,10 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
   global_name_dict : collections.OrderedDict # 避免命名冲突的全局名称字典
   imspec_dict : collections.OrderedDict[Value, tuple[StringLiteral, ...]]
   audiospec_dict : collections.OrderedDict[Value, StringLiteral]
-  anon_asset_index_dict : collections.OrderedDict[str, int] # parent dir -> anon index
   numeric_image_index : int
-  imagepack_handler : ImagePackExportDataBuilder
 
   def __init__(self, model : VNModel) -> None:
-    self.model = model
+    super().__init__(model=model, imagepack_handler=ImagePackExportDataBuilder())
     self.cur_namespace = None # type: ignore
     self.cur_path_prefix = None # type: ignore
     self.cur_mainscript = None
@@ -102,9 +99,7 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
     self.global_name_dict = collections.OrderedDict()
     self.imspec_dict = collections.OrderedDict()
     self.audiospec_dict = collections.OrderedDict()
-    self.anon_asset_index_dict = collections.OrderedDict()
     self.numeric_image_index = 0
-    self.imagepack_handler = ImagePackExportDataBuilder()
 
     if not self.is_matchtree_installed():
       _RenPyCodeGenHelper.init_matchtable()
@@ -334,6 +329,23 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
       VNCallInst : _RenPyCodeGenHelper.gen_call,
       VNBackendInstructionGroup : _RenPyCodeGenHelper.gen_renpy_asm,
     })
+    _RenPyCodeGenHelper.install_asset_basedir_matchtree({
+      AudioAssetData : {
+        VNStandardDeviceKind.O_VOICE_AUDIO :  "audio/voice",
+        VNStandardDeviceKind.O_SE_AUDIO :     "audio/se",
+        VNStandardDeviceKind.O_BGM_AUDIO :    "audio/bgm",
+        None : "audio/misc",
+      },
+      ImageAssetData : "images",
+      None : "misc",
+    })
+    _RenPyCodeGenHelper.install_asset_supported_formats({
+      ImageAssetData : ["png", "jpeg", "jpg", "webp"],
+      AudioAssetData : ["ogg", "mp3", "wav"],
+    })
+
+  def get_result(self) -> RenPyModel:
+    return self.result
 
   def collect_say_text(self, src : OpOperand) -> list[Value]:
     result = []
@@ -905,88 +917,9 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
     self.global_name_dict[definenode.varname.get().get_string()] = definenode
     return definenode
 
-  def get_asset_export_path(self, v : AssetData, parentdir : str, export_format_ext : str | None) -> str:
-    # 给指定的资源生成一个在 parentdir 下的导出路径
-    # 如果 export_format_ext 提供的话，应该是一个小写的后缀名，不带 '.'
-    # 这里我们也要处理去重等情况
-    NAME_ANON = 'anon'
-    basename = NAME_ANON
-    baseext = str(v.format)
-    if len(baseext) == 0:
-      baseext = 'bin'
-    if loc := v.location:
-      fileloc = loc.get_file_path()
-      assert len(fileloc) > 0
-      basepath, oldext = os.path.splitext(fileloc)
-      basename = os.path.basename(basepath)
-      assert oldext[0] == '.'
-      baseext = oldext[1:]
-    if export_format_ext is not None:
-      baseext = export_format_ext
-    # 找到一个没被用上的名字
-    cur_path = parentdir + '/' + basename + '.' + baseext
-    if existing := self.result.get_asset(cur_path):
-      # 如果内容一样就直接报错（不应该尝试生成导出路径）
-      # 不然的话加后缀直到不重名
-      if existing.get_asset_value() is v:
-        raise RuntimeError('Should not happen')
-      suffix = 0
-      if basename == NAME_ANON and parentdir in self.anon_asset_index_dict:
-        suffix = self.anon_asset_index_dict[parentdir]
-      cur_path = parentdir + '/' + basename + '_' + str(suffix) + '.' + baseext
-      while existing := self.result.get_asset(cur_path):
-        if existing.get_asset_value() is v:
-          raise RuntimeError('Should not happen')
-        suffix += 1
-        cur_path = parentdir + '/' + basename + '_' + str(suffix) + '.' + baseext
-      if basename == NAME_ANON:
-        self.anon_asset_index_dict[parentdir] = suffix + 1
-    return cur_path
-
-  def _handle_assetdata(self, v : AssetData, user_hint : VNStandardDeviceKind | None = None) -> str:
-    rootdir = ''
-    if isinstance(v, AudioAssetData):
-      match user_hint:
-        case VNStandardDeviceKind.O_VOICE_AUDIO:
-          rootdir = 'audio/voice'
-        case VNStandardDeviceKind.O_SE_AUDIO:
-          rootdir = 'audio/se'
-        case VNStandardDeviceKind.O_BGM_AUDIO:
-          rootdir = 'audio/bgm'
-        case _:
-          rootdir = 'audio/misc'
-    elif isinstance(v, ImageAssetData):
-      rootdir = 'images'
-    else:
-      rootdir = 'misc'
-
-    # 看看是否需要转换格式，需要的话把值和后缀都改了
-    export_format = None
-    if isinstance(v, ImageAssetData):
-      cur_format = v.format
-      if cur_format is None:
-        # 现在应该没有这种情况
-        raise RuntimeError('Should not happen')
-      if cur_format not in ['webp', 'png', 'jpeg', 'jpg']:
-        # 创建一个 png 格式的新资源
-        export_format = 'png'
-    elif isinstance(v, AudioAssetData):
-      cur_format = v.format
-      if cur_format is None:
-        # 现在应该没有这种情况
-        raise RuntimeError('Should not happen')
-      if cur_format not in ['ogg', 'mp3', 'wav']:
-        export_format = 'ogg'
-    else:
-      raise RuntimeError('Unknown asset type')
-    path = self.get_asset_export_path(v, rootdir, export_format)
-    file = BackendFileAssetOp.create(context=self.context, assetref=v, export_format=export_format, path=path)
-    self.result.add_asset(file)
-    return path
-
   def _gen_asmexpr(self, v : Value, user_hint : VNStandardDeviceKind | None = None) -> str:
     if isinstance(v, AssetData):
-      return '"' + self._handle_assetdata(v, user_hint) + '"'
+      return '"' + self.add_assetdata(v, user_hint) + '"'
     if isinstance(v, PlaceholderImageLiteralExpr):
       match v.dest:
         case ImageExprPlaceholderDest.DEST_SCENE_BACKGROUND:
@@ -997,7 +930,7 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
           kind = "None"
       return 'Placeholder(base=' + kind + ', text="' + v.description.get_string() + '")'
     if isinstance(v, ImageAssetLiteralExpr):
-      return '"' + self._handle_assetdata(v.image, user_hint) + '"'
+      return '"' + self.add_assetdata(v.image, user_hint) + '"'
     if isinstance(v, ImagePackElementLiteralExpr):
       ref = self.imagepack_handler.add_value(v)
       if isinstance(ref, str):
@@ -1014,7 +947,7 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
 
     # 如果是有图片直接支撑的，那就可以直接取图片名
     if isinstance(v, ImageAssetLiteralExpr):
-      path = self._handle_assetdata(v.image, user_hint)
+      path = self.add_assetdata(v.image, user_hint)
       basename = os.path.basename(path)
       base = os.path.splitext(basename)[0]
       spec = tuple([StringLiteral.get(v, self.context) for v in base.split()])
