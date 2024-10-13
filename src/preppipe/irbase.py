@@ -27,7 +27,7 @@ import bidict
 import llist
 
 from .commontypes import TextAttribute, Color
-from ._version import __version__
+from . import __version__
 from .util.audit import *
 from .exceptions import *
 

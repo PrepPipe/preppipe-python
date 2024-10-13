@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 
-import preppipe
-import preppipe._version
 import datetime
+import preppipe
 
 def generate_versionfile():
   # The version string must be a 4-number string separated by dots, so we need a conversion here
-  versionstr = preppipe._version.__version__.replace("post", "")
-  version_number_tuple = tuple([int(s) for s in versionstr.split(".")])
+  versionstr = preppipe.__version__.replace("post", ".")
+  version_number_list = [int(s) for s in versionstr.split(".")]
+  while len(version_number_list) < 4:
+    version_number_list.append(0)
+  version_number_tuple = tuple(version_number_list)
+  versionstr = ".".join([str(s) for s in version_number_tuple])
   year = datetime.datetime.now().year
   versionfile_content = f"""# UTF-8
 #

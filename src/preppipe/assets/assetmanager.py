@@ -32,7 +32,7 @@ from ..tooldecl import ToolClassDecl
 from .assetclassdecl import _registered_asset_classes
 from ..util.message import MessageHandler
 from ..util.nameconvert import str2identifier
-from .._version import __version__
+from .. import __version__
 
 @dataclasses.dataclass
 class AssetManifestObject:

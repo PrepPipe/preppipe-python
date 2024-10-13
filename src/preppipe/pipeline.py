@@ -13,7 +13,7 @@ import traceback
 from .irbase import *
 from .util.audit import *
 from .util.message import MessageHandler
-from ._version import __version__
+from . import __version__
 from .language import TranslationDomain, Translatable
 from .exceptions import *
 from .tooldecl import _registered_tools
