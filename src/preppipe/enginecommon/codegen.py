@@ -20,6 +20,7 @@ class BackendCodeGenHelperBase(typing.Generic[NodeType]):
   # 我们一般应该只有在素材确定被用到的时候才将其写到输出目录
   # 然而一般来说我们会先扫过所有场景、角色声明、素材声明等，然后再处理剧本内容
   # 所以我们需要暂时在不知道它是否被用到的时候先把名称记录下来
+  # TODO 添加对更多资源类型的支持
   class NamedAssetKind(enum.Enum):
     NAMED_MISC = enum.auto()
     CHARACTER_SPRITE = enum.auto()
@@ -27,13 +28,35 @@ class BackendCodeGenHelperBase(typing.Generic[NodeType]):
     BACKGROUND = enum.auto()
     CG = enum.auto()
 
+    @staticmethod
+    def get_filter_from_user_hint(hint : VNStandardDeviceKind):
+      match hint:
+        # 目前还没有做对音频资源的声明，所以他们不可能是带名字的资源
+        case VNStandardDeviceKind.O_BGM_AUDIO:
+          return BackendCodeGenHelperBase.NamedAssetKind.NAMED_MISC
+        case VNStandardDeviceKind.O_SE_AUDIO:
+          return BackendCodeGenHelperBase.NamedAssetKind.NAMED_MISC
+        case VNStandardDeviceKind.O_VOICE_AUDIO:
+          return BackendCodeGenHelperBase.NamedAssetKind.NAMED_MISC
+        case VNStandardDeviceKind.O_FOREGROUND_DISPLAY:
+          return (BackendCodeGenHelperBase.NamedAssetKind.CHARACTER_SPRITE, # 人物立绘
+                  BackendCodeGenHelperBase.NamedAssetKind.NAMED_MISC) # 其他前景（物件图）
+        case VNStandardDeviceKind.O_BACKGROUND_DISPLAY:
+          return (BackendCodeGenHelperBase.NamedAssetKind.BACKGROUND, # 背景
+                  BackendCodeGenHelperBase.NamedAssetKind.CG) # CG
+        case VNStandardDeviceKind.O_SAY_SIDEIMAGE_DISPLAY:
+          return BackendCodeGenHelperBase.NamedAssetKind.CHARACTER_SIDEIMAGE
+        case _:
+          return BackendCodeGenHelperBase.NamedAssetKind.NAMED_MISC
+
   @dataclasses.dataclass
   class NamedAssetInfo:
     value : Value
     kind : "BackendCodeGenHelperBase.NamedAssetKind"
-    name : str
-    symbolRef : VNConstExprAsSymbol | None = None
-    used : bool = False
+    self_symbol : VNConstExprAsSymbol | None = None # 该资源在哪被声明的（比如某角色的某立绘差分）
+    parent_symbol : VNSymbol | None = None # 该资源的父级符号（比如哪个角色）
+    internal_data : typing.Any | None = None
+    used : bool = False # 是否被用到了。只在所有代码生成完后才能最终决定
 
   # --------------------------------------------------------------------------
   # 子类可以（应该）使用的成员
@@ -283,14 +306,61 @@ class BackendCodeGenHelperBase(typing.Generic[NodeType]):
       self.asset_decl_info_dict[v] = []
     self.asset_decl_info_dict[v].append(info)
 
+  def query_asset_name(self, v : Value, *, symbol : VNSymbol | None = None, kind : NamedAssetKind | tuple[NamedAssetKind, ...] | None = None) -> list[NamedAssetInfo]:
+    if v in self.asset_decl_info_dict:
+      result = []
+      for entry in self.asset_decl_info_dict[v]:
+        if symbol is not None and entry.self_symbol is not symbol:
+          continue
+        if kind is not None:
+          if entry.kind not in kind if isinstance(kind, tuple) else entry.kind != kind:
+            continue
+        result.append(entry)
+      return result
+    return []
+
   def collect_named_assets(self, n : VNNamespace):
     for c in n.characters:
       for symb in c.sprites:
-        self._add_asset_name(symb, self.NamedAssetInfo(value=symb, kind=self.NamedAssetKind.CHARACTER_SPRITE, name=symb.name))
-      for symb in c.side_images:
-        self._add_asset_name(symb, self.NamedAssetInfo(value=symb, kind=self.NamedAssetKind.CHARACTER_SIDEIMAGE, name=symb.name))
+        value = symb.get_value()
+        self._add_asset_name(value, self.NamedAssetInfo(value=value, kind=self.NamedAssetKind.CHARACTER_SPRITE, self_symbol=symb, parent_symbol=c))
+      for symb in c.sideimages:
+        value = symb.get_value()
+        self._add_asset_name(value, self.NamedAssetInfo(value=value, kind=self.NamedAssetKind.CHARACTER_SIDEIMAGE, self_symbol=symb, parent_symbol=c))
     for b in n.scenes:
       for bg in b.backgrounds:
-        self._add_asset_name(bg, self.NamedAssetInfo(value=bg, kind=self.NamedAssetKind.BACKGROUND, name=bg.name))
+        value = bg.get_value()
+        self._add_asset_name(value, self.NamedAssetInfo(value=value, kind=self.NamedAssetKind.BACKGROUND, self_symbol=bg, parent_symbol=b))
     for a in n.assets:
-      self._add_asset_name(a.get_value(), self.NamedAssetInfo(value=a.get_value(), kind=self.NamedAssetKind.NAMED_MISC, name=a.name))
+      value = a.get_value()
+      self._add_asset_name(value, self.NamedAssetInfo(value=value, kind=self.NamedAssetKind.NAMED_MISC, self_symbol=a))
+
+  def get_handle_value_and_device(self, handlein : Value) -> tuple[Value, VNDeviceSymbol]:
+    assert isinstance(handlein, (VNCreateInst, VNModifyInst, BlockArgument))
+    if isinstance(handlein, BlockArgument):
+      raise PPNotImplementedError('Handles from block arguments not supported yet')
+    if isinstance(handlein, VNCreateInst):
+      value = handlein.content.get()
+    elif isinstance(handlein, VNModifyInst):
+      value = handlein.content.get()
+    else:
+      raise PPInternalError('Should not happen')
+    rootdev = None
+    curhandle = handlein
+    while not isinstance(curhandle, VNCreateInst):
+      assert isinstance(curhandle, VNModifyInst)
+      curhandle = curhandle.handlein.get()
+    rootdev = curhandle.device.get()
+    return (value, rootdev)
+
+  def get_root_handle(self, handlein : Value) -> VNCreateInst:
+    assert isinstance(handlein, (VNCreateInst, VNModifyInst, BlockArgument))
+    if isinstance(handlein, VNCreateInst):
+      return handlein
+    if isinstance(handlein, BlockArgument):
+      raise PPNotImplementedError('Handles from block arguments not supported yet')
+    curhandle = handlein
+    while not isinstance(curhandle, VNCreateInst):
+      assert isinstance(curhandle, VNModifyInst)
+      curhandle = curhandle.handlein.get()
+    return curhandle

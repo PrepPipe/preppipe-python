@@ -272,7 +272,7 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
   def gen_menu(self, terminator : VNMenuInst, helper : _FunctionCodeGenHelper, label : RenPyLabelNode):
     menu = RenPyMenuNode.create(self.context)
     label.body.push_back(menu)
-    num_options = terminator.text_list.get_num_operands()
+    num_options = terminator.get_num_options()
     for i in range(0, num_options):
       text = terminator.text_list.get_operand(i)
       cond = terminator.condition_list.get_operand(i)
@@ -503,24 +503,6 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
     result.insert_before(insert_before)
     return result
 
-  def _get_handle_value_and_device(self, handlein : Value) -> tuple[Value, VNDeviceSymbol]:
-    assert isinstance(handlein, (VNCreateInst, VNModifyInst, BlockArgument))
-    if isinstance(handlein, BlockArgument):
-      raise RuntimeError('Handles from block arguments not supported yet')
-    if isinstance(handlein, VNCreateInst):
-      value = handlein.content.get()
-    elif isinstance(handlein, VNModifyInst):
-      value = handlein.content.get()
-    else:
-      raise RuntimeError('Should not happen')
-    rootdev = None
-    curhandle = handlein
-    while not isinstance(curhandle, VNCreateInst):
-      assert isinstance(curhandle, VNModifyInst)
-      curhandle = curhandle.handlein.get()
-    rootdev = curhandle.device.get()
-    return (value, rootdev)
-
   def gen_sceneswitch(self, instrs : list[VNInstruction], insert_before : RenPyNode) -> RenPyNode:
     assert len(instrs) == 1
     sceneswitch = instrs[0]
@@ -545,7 +527,7 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
           transition = op.transition.try_get_value()
       elif isinstance(op, VNRemoveInst):
         # 如果是前景、背景内容的话就不需要额外操作了，包含在 scene 命令里了
-        removevalue, rootdev = self._get_handle_value_and_device(op.handlein.get())
+        removevalue, rootdev = self.get_handle_value_and_device(op.handlein.get())
         match rootdev.get_std_device_kind():
           case VNStandardDeviceKind.O_BACKGROUND_DISPLAY | VNStandardDeviceKind.O_FOREGROUND_DISPLAY:
             is_handled = True
@@ -691,7 +673,7 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
     assert len(instrs) == 1
     instr = instrs[0]
     assert isinstance(instr, VNModifyInst)
-    modifyvalue, rootdev = self._get_handle_value_and_device(instr.handlein.get())
+    modifyvalue, rootdev = self.get_handle_value_and_device(instr.handlein.get())
     devkind = rootdev.get_std_device_kind()
     match devkind:
       case VNStandardDeviceKind.O_BACKGROUND_DISPLAY | VNStandardDeviceKind.O_FOREGROUND_DISPLAY:
@@ -722,7 +704,7 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
     assert len(instrs) == 1
     instr = instrs[0]
     assert isinstance(instr, VNRemoveInst)
-    removevalue, rootdev = self._get_handle_value_and_device(instr.handlein.get())
+    removevalue, rootdev = self.get_handle_value_and_device(instr.handlein.get())
     if kind := rootdev.get_std_device_kind():
       match kind:
         case VNStandardDeviceKind.O_BACKGROUND_DISPLAY | VNStandardDeviceKind.O_FOREGROUND_DISPLAY:
