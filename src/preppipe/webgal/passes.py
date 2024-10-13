@@ -5,9 +5,19 @@ from ..irbase import *
 from ..pipeline import *
 from .ast import *
 
+from .codegen import codegen_webgal
 from .export import export_webgal
 from ..vnmodel import VNModel
 import shutil
+
+@MiddleEndDecl('webgal-codegen', input_decl=VNModel, output_decl=WebGalModel)
+class _WebGalCodeGen(TransformBase):
+  def run(self) -> WebGalModel | None:
+    if len(self._inputs) == 0:
+      return None
+    if len(self._inputs) > 1:
+      raise RuntimeError("webgal-codegen: codegen multiple input IR is not supported")
+    return codegen_webgal(self.inputs[0])
 
 @TransformArgumentGroup('webgal-export', "Options for WebGal Export")
 @BackendDecl('webgal-export', input_decl=WebGalModel, output_decl=IODecl(description='<output directory>', nargs=1))

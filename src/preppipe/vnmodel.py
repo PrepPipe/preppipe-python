@@ -1210,6 +1210,9 @@ class VNMenuInst(VNLocalTransferInstBase):
     self.condition_list.add_operand(condition)
     return self._add_branch_impl(target)
 
+  def get_num_options(self) -> int:
+    return self.text_list.get_num_operands()
+
   @staticmethod
   def create(context : Context, start_time: Value, name : str = '', loc : Location | None = None):
     return VNMenuInst(init_mode=IRObjectInitMode.CONSTRUCT, context=context, start_time=start_time, name=name, loc=loc)

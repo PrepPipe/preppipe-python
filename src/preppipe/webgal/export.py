@@ -84,6 +84,11 @@ class WebGalExportVisitor(BackendASTVisitorBase):
       result.append('-notend')
     if self.test(node.flag_concat):
       result.append('-concat')
+    self.add_common_flags(result, node)
+    self.dest.write(' '.join(result) + ';\n')
+
+  def visitWebGalIntroNode(self, node : WebGalIntroNode):
+    result = ['intro:' + '|'.join([s.get_string() for s in node.content.get().value])]
     if self.test(node.flag_hold):
       result.append('-hold')
     self.add_common_flags(result, node)
