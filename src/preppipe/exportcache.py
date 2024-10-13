@@ -10,7 +10,7 @@ import os
 import pathlib
 import concurrent.futures
 
-from ._version import __version__
+from . import __version__
 from .irbase import *
 from .irdataop import *
 from .commontypes import *
