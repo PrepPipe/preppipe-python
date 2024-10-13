@@ -24,6 +24,9 @@ class WebGalNode(BackendASTNodeBase):
       return v.value
     return False
 
+  def set_flag_next(self, v : bool = True):
+    self.flag_next.set_operand(0, BoolLiteral.get(v, context=self.context))
+
 @irdataop.IROperationDataclass
 class WebGalCommentNode(WebGalNode):
   content : OpOperand[StringLiteral]
@@ -38,16 +41,33 @@ class WebGalCommentNode(WebGalNode):
 class WebGalASMNode(WebGalNode):
   content : OpOperand[StringLiteral]
 
+  @staticmethod
+  def create(context : Context, content : StringLiteral | str, loc : Location | None = None):
+    if isinstance(content, str):
+      content = StringLiteral.get(content, context=context)
+    return WebGalASMNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, content=content, loc=loc)
+
 @irdataop.IROperationDataclass
 class WebGalSayNode(WebGalNode):
-  sayer : OpOperand[StringLiteral]
+  sayer : OpOperand[StringLiteral] # 必须有值，旁白的话就是空字符串
   content : OpOperand[StringListLiteral]
   voice : OpOperand[StringLiteral]
   voice_volume : OpOperand[IntLiteral]
-  flag_hold : OpOperand[BoolLiteral]
   # 不管下面哪一个 flag 被设置，历史记录中都会把之前的所有内容重复一遍
+  # （相当于一个独立的 VNSayInstructionGroup）
   flag_notend : OpOperand[BoolLiteral] # 等效于 next 外加输出 \r
   flag_concat : OpOperand[BoolLiteral] # 等效于前一句没加 \n
+
+  @staticmethod
+  def create(context : Context, sayer : StringLiteral | str, content : StringListLiteral, loc : Location | None = None):
+    if isinstance(sayer, str):
+      sayer = StringLiteral.get(sayer, context=context)
+    return WebGalSayNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, sayer=sayer, content=content, loc=loc)
+
+@irdataop.IROperationDataclass
+class WebGalIntroNode(WebGalNode):
+  content : OpOperand[StringListLiteral]
+  flag_hold : OpOperand[BoolLiteral]
 
 @irdataop.IROperationDataclass
 class WebGalSetTextboxNode(WebGalNode):
@@ -55,11 +75,20 @@ class WebGalSetTextboxNode(WebGalNode):
 
 @irdataop.IROperationDataclass
 class WebGalEndNode(WebGalNode):
-  pass
+
+  @staticmethod
+  def create(context : Context, loc : Location | None = None):
+    return WebGalEndNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, loc=loc)
 
 @irdataop.IROperationDataclass
 class WebGalChangeBGNode(WebGalNode):
   bg : OpOperand[StringLiteral] # 相对路径或者 "none"
+
+  @staticmethod
+  def create(context : Context, bg : StringLiteral | str = "none", loc : Location | None = None):
+    if isinstance(bg, str):
+      bg = StringLiteral.get(bg, context=context)
+    return WebGalChangeBGNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, bg=bg, loc=loc)
 
 @irdataop.IROperationDataclass
 class WebGalChangeFigureNode(WebGalNode):
@@ -67,6 +96,12 @@ class WebGalChangeFigureNode(WebGalNode):
   figure : OpOperand[StringLiteral] # 相对路径或者 "none"
   position : OpOperand[StringLiteral] # "", "left", "right"
   transform : OpOperand[StringLiteral] # 应该是一个 json dict 转换为字符串后的结果
+
+  @staticmethod
+  def create(context : Context, figure : StringLiteral | str = "none", loc : Location | None = None):
+    if isinstance(figure, str):
+      figure = StringLiteral.get(figure, context=context)
+    return WebGalChangeFigureNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, figure=figure, loc=loc)
 
 @irdataop.IROperationDataclass
 class WebGalMiniAvatarNode(WebGalNode):
@@ -84,16 +119,34 @@ class WebGalBGMNode(WebGalNode):
   volume : OpOperand[IntLiteral]
   enter : OpOperand[IntLiteral]
 
+  @staticmethod
+  def create(context : Context, bgm : StringLiteral | str = "none", loc : Location | None = None):
+    if isinstance(bgm, str):
+      bgm = StringLiteral.get(bgm, context=context)
+    return WebGalBGMNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, bgm=bgm, loc=loc)
+
 @irdataop.IROperationDataclass
 class WebGalPlayEffectNode(WebGalNode):
   id_str : OpOperand[StringLiteral]
   effect : OpOperand[StringLiteral]
   volume : OpOperand[IntLiteral]
 
+  @staticmethod
+  def create(context : Context, effect : StringLiteral | str = "none", loc : Location | None = None):
+    if isinstance(effect, str):
+      effect = StringLiteral.get(effect, context=context)
+    return WebGalPlayEffectNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, effect=effect, loc=loc)
+
 @irdataop.IROperationDataclass
 class WebGalUnlockBGMNode(WebGalNode):
   bgm : OpOperand[StringLiteral]
   namestr : OpOperand[StringLiteral]
+
+  @staticmethod
+  def create(context : Context, bgm : StringLiteral | str, loc : Location | None = None):
+    if isinstance(bgm, str):
+      bgm = StringLiteral.get(bgm, context=context)
+    return WebGalUnlockBGMNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, bgm=bgm, loc=loc)
 
 @irdataop.IROperationDataclass
 class WebGalPlayVideoNode(WebGalNode):
@@ -104,9 +157,21 @@ class WebGalPlayVideoNode(WebGalNode):
 class WebGalChangeSceneNode(WebGalNode):
   scene : OpOperand[StringLiteral]
 
+  @staticmethod
+  def create(context : Context, scene : StringLiteral | str, loc : Location | None = None):
+    if isinstance(scene, str):
+      scene = StringLiteral.get(scene, context=context)
+    return WebGalChangeSceneNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, scene=scene, loc=loc)
+
 @irdataop.IROperationDataclass
 class WebGalCallSceneNode(WebGalNode):
   scene : OpOperand[StringLiteral]
+
+  @staticmethod
+  def create(context : Context, scene : StringLiteral | str, loc : Location | None = None):
+    if isinstance(scene, str):
+      scene = StringLiteral.get(scene, context=context)
+    return WebGalCallSceneNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, scene=scene, loc=loc)
 
 @irdataop.IROperationDataclass
 class WebGalChooseBranchNode(WebGalNode):
@@ -115,17 +180,41 @@ class WebGalChooseBranchNode(WebGalNode):
   text : OpOperand[StringLiteral]
   destination : OpOperand[StringLiteral]
 
+  @staticmethod
+  def create(context : Context, text : StringLiteral | str, destination : StringLiteral | str, loc : Location | None = None):
+    if isinstance(text, str):
+      text = StringLiteral.get(text, context=context)
+    if isinstance(destination, str):
+      destination = StringLiteral.get(destination, context=context)
+    return WebGalChooseBranchNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, text=text, destination=destination, loc=loc)
+
 @irdataop.IROperationDataclass
 class WebGalChooseNode(WebGalNode):
   choices : Block # WebGalChooseBranchNode
+
+  @staticmethod
+  def create(context : Context, loc : Location | None = None):
+    return WebGalChooseNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, loc=loc)
 
 @irdataop.IROperationDataclass
 class WebGalLabelNode(WebGalNode):
   label : OpOperand[StringLiteral]
 
+  @staticmethod
+  def create(context : Context, label : StringLiteral | str, loc : Location | None = None):
+    if isinstance(label, str):
+      label = StringLiteral.get(label, context=context)
+    return WebGalLabelNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, label=label, loc=loc)
+
 @irdataop.IROperationDataclass
 class WebGalJumpLabelNode(WebGalNode):
   label : OpOperand[StringLiteral]
+
+  @staticmethod
+  def create(context : Context, label : StringLiteral | str, loc : Location | None = None):
+    if isinstance(label, str):
+      label = StringLiteral.get(label, context=context)
+    return WebGalJumpLabelNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, label=label, loc=loc)
 
 irdataop.IROperationDataclass
 class WebGalSetVarNode(WebGalNode):
