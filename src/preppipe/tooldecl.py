@@ -7,10 +7,15 @@
 # 该文件定义支持自动注册工具的修饰符
 
 _registered_tools : dict[str, type] = {}
+_reserved_tools = [
+  "pipeline",
+  "gui",
+]
 
 def ToolClassDecl(name : str): # pylint: disable=invalid-name
   def decorator(cls):
     assert name not in _registered_tools, f"Duplicate tool name {name}"
+    assert name not in _reserved_tools, f"Reserved tool name {name}"
     # 确认该类有一个叫 tool_main(args : list[str] | None) 的静态方法
     assert hasattr(cls, "tool_main"), f"Tool {name} must have a static method tool_main(args : list[str] | None)"
     _registered_tools[name] = cls
