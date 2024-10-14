@@ -859,6 +859,9 @@ def _check_is_using_tool() -> type | None:
   # 如果环境变量 PREPPIPE_TOOL 没有给出，直接返回 None
   if toolname := os.environ.get("PREPPIPE_TOOL"):
     if len(toolname) > 0:
+      # "pipeline" 是保留给当前的主管线的
+      if toolname == "pipeline":
+        return None
       if toolname in _registered_tools:
         return _registered_tools[toolname]
       else:
