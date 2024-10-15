@@ -9,11 +9,11 @@ import platform
 import dataclasses
 import tempfile
 import tkinter as tk
-import tkinter.ttk
+from tkinter import ttk
 import tkinter.scrolledtext
 import preppipe
 from preppipe.language import *
-from .languageupdate import get_string_var
+from .languageupdate import *
 
 
 TR_gui_executewindow = TranslationDomain("gui_executewindow")
@@ -295,7 +295,7 @@ class ExecuteWindow(tk.Toplevel):
     # Right side: Vertical layout
     # Output group box
     groupbox_label = tk.Label(self, textvariable=get_string_var(self._tr_outputs, self))
-    self.outputGroupBox = tk.ttk.LabelFrame(right_frame, labelwidget=groupbox_label)
+    self.outputGroupBox = ttk.LabelFrame(right_frame, labelwidget=groupbox_label)
     self.outputGroupBox.pack(fill=tk.BOTH, expand=True)
     self.outputLayout = tk.Frame(self.outputGroupBox)
     self.outputLayout.pack(fill=tk.BOTH, expand=True)

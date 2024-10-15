@@ -12,6 +12,7 @@ import preppipe.pipeline
 from preppipe.language import *
 from .executewindow import *
 from .settings import SettingsDict
+from .framedecl import *
 
 TR_gui_main = TranslationDomain("gui_main")
 
@@ -75,19 +76,6 @@ def to_tk_image(image : PIL.Image.Image | None) -> PIL.ImageTk.PhotoImage | None
 def open_docs():
   # 打开文档
   print("TODO Opening documentation...")
-
-# Placeholder classes for frames
-class MainPipelineFrame(tk.Frame):
-  def __init__(self, parent):
-    super().__init__(parent)
-    label = tk.Label(self, text="Main Pipeline Frame")
-    label.pack()
-
-class SettingsFrame(tk.Frame):
-  def __init__(self, parent):
-    super().__init__(parent)
-    label = tk.Label(self, text="Settings Frame")
-    label.pack()
 
 # 用于 GUI 的配置
 # 由于在构建时无法获取图标、无法构建子部件，我们填这些信息时使用 lambda 函数，等到实际运行时再获取
