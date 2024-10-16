@@ -161,6 +161,8 @@ class FileSelectionWidget(_FileSelectionBaseWidget):
     # Update the label text
     self.updateLabelText()
 
+    watch_language_change(self, self.updateLabelText)
+
   def setIsOutputInsteadofInput(self, v: bool):
     self.isOutputInsteadofInput = v
 
@@ -186,9 +188,9 @@ class FileSelectionWidget(_FileSelectionBaseWidget):
 
   def updateLabelText(self):
     if len(self.currentPath) == 0:
-      self.pathLabel.config(textvariable=get_string_var_alt(self, lambda: (self.fieldName.get() + ': ' if self.fieldName else '') + self._tr_file_not_selected.get()))
+      self.pathLabel.config(text=((self.fieldName.get() + ': ' if self.fieldName else '') + self._tr_file_not_selected.get()))
     else:
-      self.pathLabel.config(text=self.currentPath)
+      self.pathLabel.config(text=self.currentPath, textvariable='') # type: ignore
 
   def requestOpenDialog(self):
     if path := self.open_dialog_for_path_input(self.currentPath, self.defaultName.get() if self.defaultName else '', self.isOutputInsteadofInput):
@@ -232,7 +234,7 @@ class FileListInputWidget(_FileSelectionBaseWidget):
     h_frame.pack(fill='x')
 
     # Label
-    self.label = tk.Label(h_frame, text='')
+    self.label = tk.Label(h_frame, text='<Input name>')
     self.label.pack(side='left', fill='x', expand=True)
 
     # Add button

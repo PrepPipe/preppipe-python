@@ -101,16 +101,29 @@ class _DeclFrameBase(tk.Frame):
     zh_hk="執行",
   )
   data: dict[str, typing.Any]  # Data for member functions in subclasses
+  data_watchers: dict[str, list[typing.Callable]]
   _decl_dict: typing.ClassVar[typing.Optional[dict[str, dict[str, typing.Any]]]] = None  # Declaration dict
 
   def __init__(self, parent):
     super().__init__(parent)
     self.data = {}
+    self.data_watchers = {}
     self.widget_dict = {}    # Keep references to widgets
     self.variable_dict = {}  # Keep references to variables (e.g., StringVar, IntVar, etc.)
     self._data_to_label = {}  # For combobox options (data to label mapping)
     self._data_to_tr = {}     # For combobox options (data to Translatable mapping)
     self.setup()
+
+  def data_updated(self, key : str):
+    if key in self.data_watchers:
+      for cb in self.data_watchers[key]:
+        cb()
+
+  def add_data_watcher(self, key : str, cb : typing.Callable):
+    if key not in self.data_watchers:
+      self.data_watchers[key] = [cb]
+    else:
+      self.data_watchers[key].append(cb)
 
   @classmethod
   def get_decl(cls) -> dict[str, dict[str, typing.Any]]:
@@ -167,44 +180,46 @@ class _DeclFrameBase(tk.Frame):
     values = []
     data_to_label = {}
     data_to_tr = {}
+    default_index = 0
     for option in options:
       data = option.get('data')
       label_option_tr = option.get('label')
       label_option_var = label_option_tr.get() if isinstance(label_option_tr, Translatable) else label_option_tr
+      # Initial values
+      if len(values) == 0:
+        var.set(label_option_var)
+        self.data[key] = data
+      if default is not None:
+        if default == data:
+          default_index = len(values)-1
+          var.set(label_option_var)
+          self.data[key] = data
       values.append(label_option_var)
       data_to_label[data] = label_option_var
-      data_to_tr[data] = label_option_tr
+      data_to_tr[data] = label_option_tr if isinstance(label_option_tr, Translatable) else None
     # Create Combobox
-    combobox = ttk.Combobox(parent_widget, values=values, textvariable=var, state='readonly')
+    combobox = ttk.Combobox(parent_widget, values=tuple(values), textvariable=var, state='readonly') #
     if pack_opts:
       combobox.pack(**pack_opts)
     else:
       combobox.pack(fill='x', padx=5, pady=2)
-    # Set default value
-    if default is not None:
-      default_label = data_to_label.get(default)
-      if default_label is not None:
-        var.set(default_label)
-        self.data[key] = default
-    else:
-      if len(values) > 0:
-        var.set(values[0])
-        # Find the data corresponding to the first label
-        for data, label in data_to_label.items():
-          if label == values[0]:
-            self.data[key] = data
-            break
     # Define callback function
-    def on_combobox_change(event):
+    def on_combobox_change(*args):
       selected_label = var.get()
       # Find the data corresponding to the selected label
+      is_label_found = False
       for data, label in data_to_label.items():
         if label == selected_label:
           self.data[key] = data
           if update_callback:
             update_callback(self, data)
+          self.data_updated(key)
+          is_label_found = True
           break
-    combobox.bind('<<ComboboxSelected>>', on_combobox_change)
+      if not is_label_found:
+        raise RuntimeError()
+    var.trace_add("write", on_combobox_change)
+    combobox.current(default_index)
     # Store variable and widget
     self.variable_dict[key] = var
     self.widget_dict[key] = combobox
@@ -230,6 +245,7 @@ class _DeclFrameBase(tk.Frame):
       self.data[key] = var.get()
       if update_callback:
         update_callback(self, var.get())
+      self.data_updated(key)
     var.trace_add('write', on_checkbox_toggle)
     # Store variable and widget
     self.variable_dict[key] = var
@@ -259,6 +275,7 @@ class _DeclFrameBase(tk.Frame):
         self.data[key] = value
         if update_callback:
           update_callback(self, value)
+        self.data_updated(key)
       except tk.TclError:
         pass  # Invalid int, ignore for now
     var.trace_add('write', on_var_change)
@@ -290,6 +307,7 @@ class _DeclFrameBase(tk.Frame):
         self.data[key] = value
         if update_callback:
           update_callback(self, value)
+        self.data_updated(key)
       except tk.TclError:
         pass  # Invalid float, ignore for now
     var.trace_add('write', on_var_change)
@@ -320,6 +338,7 @@ class _DeclFrameBase(tk.Frame):
       self.data[key] = value
       if update_callback:
         update_callback(self, value)
+      self.data_updated(key)
     var.trace_add('write', on_var_change)
     # Store variable and widget
     self.variable_dict[key] = var
@@ -333,6 +352,7 @@ class _DeclFrameBase(tk.Frame):
     direction = node.get('direction', 'input')  # 'input' or 'output'
     multiple = node.get('multiple', False)
     isDirectoryMode = node.get('type') == 'directory'
+    update_callback = node.get('update_callback')
     # Create a Label
     label_var = get_string_var(label_tr)
     label_widget = ttk.Label(parent_widget, textvariable=label_var)
@@ -340,24 +360,32 @@ class _DeclFrameBase(tk.Frame):
     # Create the appropriate widget
     if multiple:
       widget = FileListInputWidget(parent_widget)
+      widget.setFieldName(label_tr)
       widget.setDirectoryMode(isDirectoryMode)
       # Add event binding
       def on_list_changed(event):
         value = widget.getCurrentList()
         self.data[key] = value
-        # No update_callback in this case
+        if update_callback:
+          update_callback(self, value)
+        self.data_updated(key)
       widget.bind('<<ListChanged>>', on_list_changed)
       # Initialize data
       self.data[key] = widget.getCurrentList()
     else:
       widget = FileSelectionWidget(parent_widget)
+      widget.setFieldName(label_tr)
       widget.setDirectoryMode(isDirectoryMode)
       widget.setIsOutputInsteadofInput(direction == 'output')
+      if isinstance(default, Translatable):
+        widget.setDefaultName(default)
       # Add event binding
       def on_file_path_updated(event):
         value = widget.getCurrentPath()
         self.data[key] = value
-        # No update_callback in this case
+        if update_callback:
+          update_callback(self, value)
+        self.data_updated(key)
       widget.bind('<<FilePathUpdated>>', on_file_path_updated)
       # Initialize data
       self.data[key] = widget.getCurrentPath()
@@ -390,6 +418,7 @@ class _DeclFrameBase(tk.Frame):
       def on_checkbutton_toggle(*args):
         self.data[key] = var.get()
         # No update_callback specified
+        self.data_updated(key)
       var.trace_add('write', on_checkbutton_toggle)
       # Initialize data
       self.data[key] = var.get()
@@ -418,7 +447,7 @@ class _DeclFrameBase(tk.Frame):
       # Hide the frame initially
       frame.pack_forget()
     # Function to update visible frame based on selector value
-    def update_stack(*args):
+    def update_stack():
       selected_value = self.data.get(selector)
       for skey, sframe in stack_widgets.items():
         if skey == selected_value:
@@ -427,11 +456,10 @@ class _DeclFrameBase(tk.Frame):
           sframe.pack_forget()
     # Bind the selector variable to update_stack
     if selector in self.variable_dict:
-      var = self.variable_dict[selector]
-      var.trace_add('write', lambda *args: update_stack())
+      self.add_data_watcher(selector, update_stack)
     else:
       # If selector variable not yet created, we need to defer the binding
-      pass  # Simplification: assumes selector variable exists
+      raise RuntimeError("selector did not appear before stack")
     # Initialize stack
     update_stack()
     # Store widget
@@ -487,6 +515,7 @@ class _DeclFrameBase(tk.Frame):
       update_callback = node.get('update_callback')
       if update_callback:
         update_callback(self, value)
+    self.data_updated(key)
 
   def _find_node_by_key(self, decl, key):
     for k, node in decl.items():
@@ -622,8 +651,8 @@ class SettingsFrame(_DeclFrameBase):
   def __init__(self, parent):
     super().__init__(parent)
 
-  def language_updated(self):
-    pass
+  def language_updated(self, lang):
+    set_language(lang)
 
 TR_gui_main_pipeline = TranslationDomain("gui_main_pipeline")
 
@@ -657,6 +686,11 @@ class MainPipelineFrame(_DeclFrameBase):
     en="Ren'Py Settings",
     zh_cn="Ren'Py 设置",
     zh_hk="Ren'Py 設定"
+  )
+  _tr_webgal_settings = TR_gui_main_pipeline.tr("webgal_settings",
+    en="WebGal Settings",
+    zh_cn="WebGal 设置",
+    zh_hk="WebGal 設定"
   )
   _tr_output_dir = TR_gui_main_pipeline.tr("output_dir",
     en="Output Directory",
@@ -769,11 +803,7 @@ class MainPipelineFrame(_DeclFrameBase):
                     }
                   },
                   "webgal": {
-                    "label": TR_gui_main_pipeline.tr("webgal_settings",
-                      en="WebGal Settings",
-                      zh_cn="WebGal 设置",
-                      zh_hk="WebGal 設定"
-                    ),
+                    "label": cls._tr_webgal_settings,
                     "type": "group",
                     "elements": {
                       "webgal_output_dir": {
@@ -841,4 +871,4 @@ class MainPipelineFrame(_DeclFrameBase):
     super().__init__(parent)
 
   def launch(self):
-    pass
+    print(str(self.data))
