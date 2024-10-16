@@ -115,12 +115,12 @@ class OutputWidget(tk.Frame):
 
     # openInExplorerPushButton
     self.openInExplorerPushButton = tk.Button(h_frame1, command=self.requestOpenContainingDirectory)
-    self.openInExplorerPushButton.config(textvariable=get_string_var(self._tr_open_containing_directory, self.openInExplorerPushButton))
+    self.openInExplorerPushButton.config(textvariable=get_string_var(self._tr_open_containing_directory))
     self.openInExplorerPushButton.pack(side=tk.LEFT)
 
     # openPushButton
     self.openPushButton = tk.Button(h_frame1, command=self.requestOpen)
-    self.openPushButton.config(textvariable=get_string_var(self._tr_open, self.openPushButton))
+    self.openPushButton.config(textvariable=get_string_var(self._tr_open))
     self.openPushButton.pack(side=tk.LEFT)
 
     # Second horizontal layout
@@ -136,7 +136,7 @@ class OutputWidget(tk.Frame):
     self.path = path
     self.fieldNameLabel.config(text=fieldName)
     self.pathLabel.config(text=path)
-    self.statusLabel.config(textvariable=get_string_var(self._tr_filestate_initial, self.statusLabel))
+    self.statusLabel.config(textvariable=get_string_var(self._tr_filestate_initial))
 
     if os.path.exists(path):
       if os.path.isdir(path):
@@ -168,11 +168,11 @@ class OutputWidget(tk.Frame):
       else:
         current_time = os.path.getmtime(self.path)
       if self.lastModified is None or self.lastModified < current_time:
-        self.statusLabel.config(textvariable=get_string_var(self._tr_filestate_generated, self.statusLabel))
+        self.statusLabel.config(textvariable=get_string_var(self._tr_filestate_generated))
       else:
-        self.statusLabel.config(textvariable=get_string_var(self._tr_filestate_not_updated, self.statusLabel))
+        self.statusLabel.config(textvariable=get_string_var(self._tr_filestate_not_updated))
     else:
-      self.statusLabel.config(textvariable=get_string_var(self._tr_filestate_not_generated_yet, self.statusLabel))
+      self.statusLabel.config(textvariable=get_string_var(self._tr_filestate_not_generated_yet))
 
   def requestOpenContainingDirectory(self):
     if not os.path.exists(self.path):
@@ -294,7 +294,7 @@ class ExecuteWindow(tk.Toplevel):
 
     # Right side: Vertical layout
     # Output group box
-    groupbox_label = tk.Label(self, textvariable=get_string_var(self._tr_outputs, self))
+    groupbox_label = tk.Label(self, textvariable=get_string_var(self._tr_outputs))
     self.outputGroupBox = ttk.LabelFrame(right_frame, labelwidget=groupbox_label)
     self.outputGroupBox.pack(fill=tk.BOTH, expand=True)
     self.outputLayout = tk.Frame(self.outputGroupBox)
@@ -307,7 +307,7 @@ class ExecuteWindow(tk.Toplevel):
 
     # Kill Process button
     self.killButton = tk.Button(right_frame, command=self.kill_process)
-    self.killButton.config(textvariable=get_string_var(self._tr_kill_process, self.killButton))
+    self.killButton.config(textvariable=get_string_var(self._tr_kill_process))
     self.killButton.pack()
     self.killButton.config(state='disabled')  # Initially disabled
 

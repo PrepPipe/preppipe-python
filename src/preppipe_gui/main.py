@@ -308,6 +308,7 @@ class ClickableFrameCell(tk.Frame):
     super().__init__(parent, bd=1, relief='raised')
     self.cell_data = cell_data
     self.app = app
+    self.frame = None
 
     # Set up the UI elements
     image_func = cell_data.get('image')
@@ -343,10 +344,11 @@ class ClickableFrameCell(tk.Frame):
     elif callable(action):
       if isinstance(action, type) and issubclass(action, tk.Frame):
         # It's a Frame class
-        frame = action(self.app.main_area)
+        if self.frame is None:
+          self.frame = action(self.app.main_area)
         name_tr = self.cell_data.get('name')
         icon = None  # Could load icon if needed
-        self.app.navigate_to_frame(frame, name_tr, icon)
+        self.app.navigate_to_frame(self.frame, name_tr, icon)
       else:
         # It's a function
         action()
