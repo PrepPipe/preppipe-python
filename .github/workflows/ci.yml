@@ -34,7 +34,7 @@ jobs:
       - name: run pyinstaller
         run: |
           pyinstaller --icon=preppipe.ico --version-file=versionfile_cli.txt -n preppipe_cli -D preppipe_cli.py
-          pyinstaller --icon=preppipe.ico --version-file=versionfile_gui.txt -n preppipe -D preppipe_gui_entry.py
+          pyinstaller --icon=preppipe.ico --version-file=versionfile_gui.txt -n preppipe -D preppipe_gui_entry.py --noconsole
           cd dist/preppipe_cli && 7z.exe a -t7z -mx=9 ../preppipe_cli-windows-x64.7z * && cd ../..
           cd dist/preppipe     && 7z.exe a -t7z -mx=9 ../preppipe-windows-x64.7z *     && cd ../..
       - uses: "marvinpinto/action-automatic-releases@latest"
