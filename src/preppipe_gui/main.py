@@ -144,9 +144,9 @@ main_window_panels = {
           zh_hk="設置",
         ),
         "description": TR_gui_executewindow.tr("cell_settings_description",
-          en="Saved in files with the executable.",
-          zh_cn="保存在程序所在的文件夹中。",
-          zh_hk="保存在程序所在的文件夾中。",
+          en="Settings saved in files with the executable.",
+          zh_cn="设置保存在程序所在的文件夹中。",
+          zh_hk="設置保存在程序所在的文件夾中。",
         ),
         "action": SettingsFrame,
       },
@@ -195,13 +195,13 @@ class MainApplication(tk.Frame):
   def __init__(self, root):
     super().__init__(root)
     self.root = root
-    self.pack(fill='both', expand=True)
+    self.pack(fill='both', expand=True, padx=5, pady=5)
     # Initialize the stack of panels
     self.panel_stack: list[dict[str, typing.Any]] = []
     # Initialize panels dictionary
     self.panels: dict[str, dict[str, typing.Any]] = {}
     # Create the address bar
-    self.address_bar = tk.Frame(self)
+    self.address_bar = tk.Frame(self, bd=1, relief="ridge")
     self.address_bar.pack(side='top', fill='x')
     # Create the main area
     self.main_area = tk.Frame(self)
@@ -306,14 +306,18 @@ class GridPanel(tk.Frame):
     self.panel_id = panel_id
     self.panel_data = panel_data
     self.app = app  # Reference to MainApplication
-    self.grid_size = panel_data.get('grid_size', (0, 0))
+    self.grid_size_ = panel_data.get('grid_size', (0, 0))
     self.content = panel_data.get('content', {})
     self.cells = {}
     # Build the grid
     for (row, col), cell_data in self.content.items():
       cell = ClickableFrameCell(self, cell_data, self.app)
-      cell.grid(row=row, column=col, padx=5, pady=5)
+      cell.grid(row=row, column=col, padx=5, pady=5, sticky='nsew')
       self.cells[(row, col)] = cell
+    for row in range(self.grid_size_[0]):
+      self.grid_rowconfigure(row, weight=1)
+    for col in range(self.grid_size_[1]):
+      self.grid_columnconfigure(col, weight=1)
 
 class ClickableFrameCell(tk.Frame):
   cell_data : dict[str, typing.Any]
@@ -399,7 +403,7 @@ def _build_gui_root():
   MainApplication.create_instance(root)
   return root
 
-def gui_main():
+def gui_main(settings_path : str | None = None):
   # 判断是使用 GUI 还是其他工具、管线
   is_gui_specified = False
   is_other_tool_specified = False
@@ -423,6 +427,8 @@ def gui_main():
     # 已经有另一个实例在运行了
     sys.exit(0)
   try:
+    if settings_path is not None:
+      SettingsDict.try_set_settings_dir(settings_path)
     root = _build_gui_root()
     root.mainloop()
   finally:

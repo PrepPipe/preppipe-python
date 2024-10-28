@@ -9,19 +9,13 @@ import threading
 import collections
 import collections.abc
 
-_bundle_dir = '.'
-if getattr(sys, 'frozen', False):
-  # we are running in a bundle
-  _bundle_dir = sys._MEIPASS # type: ignore
-else:
-  # we are running in a normal Python environment
-  _bundle_dir = os.path.dirname(os.path.abspath(__file__))
-
-def get_bundle_dir() -> str:
-  return _bundle_dir
+def _get_initial_settings_dir() -> str:
+  if getattr(sys, 'frozen', False):
+    return os.path.dirname(sys.executable)
+  return os.path.dirname(os.path.abspath(__file__))
 
 class SettingsDict(collections.abc.MutableMapping):
-  _settings_file_path : typing.ClassVar[str] = os.path.join(_bundle_dir, "preppipe_gui.settings.db")
+  _executable_base_dir : typing.ClassVar[str] = _get_initial_settings_dir()
   _settings_instance : typing.ClassVar['SettingsDict | None'] = None
 
   lock : threading.Lock
@@ -30,7 +24,7 @@ class SettingsDict(collections.abc.MutableMapping):
   @staticmethod
   def instance():
     if SettingsDict._settings_instance is None:
-      SettingsDict._settings_instance = SettingsDict(SettingsDict._settings_file_path)
+      SettingsDict._settings_instance = SettingsDict(os.path.join(SettingsDict._executable_base_dir, "preppipe_gui.settings.db"))
     return SettingsDict._settings_instance
 
   @staticmethod
@@ -38,6 +32,16 @@ class SettingsDict(collections.abc.MutableMapping):
     if SettingsDict._settings_instance is not None:
       SettingsDict._settings_instance.close()
       SettingsDict._settings_instance = None
+
+  @staticmethod
+  def try_set_settings_dir(path : str) -> None:
+    if SettingsDict._settings_instance is not None:
+      raise RuntimeError("SettingsDict instance already exists. Cannot change settings directory after initialization")
+    if getattr(sys, 'frozen', False):
+      return
+    SettingsDict._executable_base_dir = os.path.abspath(path)
+    if not os.path.isdir(SettingsDict._executable_base_dir):
+      raise FileNotFoundError(f"Path '{SettingsDict._executable_base_dir}' does not exist")
 
   def __init__(self, filename='settings.db'):
     self.filename = filename
