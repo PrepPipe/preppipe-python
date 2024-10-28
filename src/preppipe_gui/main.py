@@ -183,6 +183,13 @@ main_window_panels = {
 
 # Classes for the main application
 class MainApplication(tk.Frame):
+  _instance = None
+
+  @staticmethod
+  def create_instance(root):
+    MainApplication._instance = MainApplication(root)
+    SettingsFrame.gui_initialize()
+
   def __init__(self, root):
     super().__init__(root)
     self.root = root
@@ -360,7 +367,7 @@ class ClickableFrameCell(tk.Frame):
 
 def _build_gui_root():
   root = tk.Tk()
-  app = MainApplication(root)
+  MainApplication.create_instance(root)
   return root
 
 def gui_main():

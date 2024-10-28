@@ -157,3 +157,5 @@ _antlr_generated
 # generated asset packs
 src/preppipe/assets/_install
 
+# gui settings
+*.settings.db

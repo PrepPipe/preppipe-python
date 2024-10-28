@@ -4,8 +4,10 @@
 import tkinter as tk
 from tkinter import ttk
 from preppipe.language import *
+import preppipe.language
 from .fileselection import *
 from .languageupdate import *
+from .settings import SettingsDict
 
 class CheckableLabelFrame(ttk.LabelFrame):
   def __init__(self, master=None, **kwargs):
@@ -116,10 +118,13 @@ class _DeclFrameBase(tk.Frame):
 
   def data_updated(self, key : str):
     if key in self.data_watchers:
+      data = self.data[key]
       for cb in self.data_watchers[key]:
-        cb()
+        cb(self, data)
 
   def add_data_watcher(self, key : str, cb : typing.Callable):
+    if not callable(cb):
+      raise RuntimeError("Callback not callable")
     if key not in self.data_watchers:
       self.data_watchers[key] = [cb]
     else:
@@ -165,11 +170,22 @@ class _DeclFrameBase(tk.Frame):
     else:
       raise ValueError(f"Unknown type '{node_type}' in decl for key '{key}'")
 
+  def _handle_update_callback(self, key : str, callbacks):
+    if callbacks is None:
+      return
+    if isinstance(callbacks, (list, tuple)):
+      for cb in callbacks:
+        self.add_data_watcher(key, cb)
+    else:
+      self.add_data_watcher(key, callbacks)
+
   def _build_combobox(self, key, node, parent_widget, pack_opts):
     label_tr = node.get('label')
     options = node.get('options', [])
     default = node.get('default')
-    update_callback = node.get('update_callback')
+    if callable(default):
+      default = default(self, key)
+    self._handle_update_callback(key, node.get('update_callback'))
     # Create a Label
     label_var = get_string_var(label_tr)
     label_widget = ttk.Label(parent_widget, textvariable=label_var)
@@ -191,7 +207,7 @@ class _DeclFrameBase(tk.Frame):
         self.data[key] = data
       if default is not None:
         if default == data:
-          default_index = len(values)-1
+          default_index = len(values)
           var.set(label_option_var)
           self.data[key] = data
       values.append(label_option_var)
@@ -211,8 +227,6 @@ class _DeclFrameBase(tk.Frame):
       for data, label in data_to_label.items():
         if label == selected_label:
           self.data[key] = data
-          if update_callback:
-            update_callback(self, data)
           self.data_updated(key)
           is_label_found = True
           break
@@ -230,7 +244,7 @@ class _DeclFrameBase(tk.Frame):
   def _build_checkbox(self, key, node, parent_widget, pack_opts):
     label_tr = node.get('label')
     default = node.get('default', False)
-    update_callback = node.get('update_callback')
+    self._handle_update_callback(key, node.get('update_callback'))
     var = tk.BooleanVar(value=default)
     checkbox = ttk.Checkbutton(parent_widget, variable=var)
     if label_tr:
@@ -243,8 +257,6 @@ class _DeclFrameBase(tk.Frame):
     # Define callback
     def on_checkbox_toggle(*args):
       self.data[key] = var.get()
-      if update_callback:
-        update_callback(self, var.get())
       self.data_updated(key)
     var.trace_add('write', on_checkbox_toggle)
     # Store variable and widget
@@ -256,7 +268,7 @@ class _DeclFrameBase(tk.Frame):
   def _build_int_entry(self, key, node, parent_widget, pack_opts):
     label_tr = node.get('label')
     default = node.get('default', 0)
-    update_callback = node.get('update_callback')
+    self._handle_update_callback(key, node.get('update_callback'))
     # Create a Label
     label_var = get_string_var(label_tr)
     label_widget = ttk.Label(parent_widget, textvariable=label_var)
@@ -273,8 +285,6 @@ class _DeclFrameBase(tk.Frame):
       try:
         value = var.get()
         self.data[key] = value
-        if update_callback:
-          update_callback(self, value)
         self.data_updated(key)
       except tk.TclError:
         pass  # Invalid int, ignore for now
@@ -288,7 +298,7 @@ class _DeclFrameBase(tk.Frame):
   def _build_float_entry(self, key, node, parent_widget, pack_opts):
     label_tr = node.get('label')
     default = node.get('default', 0.0)
-    update_callback = node.get('update_callback')
+    self._handle_update_callback(key, node.get('update_callback'))
     # Create a Label
     label_var = get_string_var(label_tr)
     label_widget = ttk.Label(parent_widget, textvariable=label_var)
@@ -305,8 +315,6 @@ class _DeclFrameBase(tk.Frame):
       try:
         value = var.get()
         self.data[key] = value
-        if update_callback:
-          update_callback(self, value)
         self.data_updated(key)
       except tk.TclError:
         pass  # Invalid float, ignore for now
@@ -320,7 +328,7 @@ class _DeclFrameBase(tk.Frame):
   def _build_string_entry(self, key, node, parent_widget, pack_opts):
     label_tr = node.get('label')
     default = node.get('default', '')
-    update_callback = node.get('update_callback')
+    self._handle_update_callback(key, node.get('update_callback'))
     # Create a Label
     label_var = get_string_var(label_tr)
     label_widget = ttk.Label(parent_widget, textvariable=label_var)
@@ -336,8 +344,6 @@ class _DeclFrameBase(tk.Frame):
     def on_var_change(*args):
       value = var.get()
       self.data[key] = value
-      if update_callback:
-        update_callback(self, value)
       self.data_updated(key)
     var.trace_add('write', on_var_change)
     # Store variable and widget
@@ -352,7 +358,7 @@ class _DeclFrameBase(tk.Frame):
     direction = node.get('direction', 'input')  # 'input' or 'output'
     multiple = node.get('multiple', False)
     isDirectoryMode = node.get('type') == 'directory'
-    update_callback = node.get('update_callback')
+    self._handle_update_callback(key, node.get('update_callback'))
     # Create a Label
     label_var = get_string_var(label_tr)
     label_widget = ttk.Label(parent_widget, textvariable=label_var)
@@ -366,8 +372,6 @@ class _DeclFrameBase(tk.Frame):
       def on_list_changed(event):
         value = widget.getCurrentList()
         self.data[key] = value
-        if update_callback:
-          update_callback(self, value)
         self.data_updated(key)
       widget.bind('<<ListChanged>>', on_list_changed)
       # Initialize data
@@ -383,8 +387,6 @@ class _DeclFrameBase(tk.Frame):
       def on_file_path_updated(event):
         value = widget.getCurrentPath()
         self.data[key] = value
-        if update_callback:
-          update_callback(self, value)
         self.data_updated(key)
       widget.bind('<<FilePathUpdated>>', on_file_path_updated)
       # Initialize data
@@ -447,8 +449,7 @@ class _DeclFrameBase(tk.Frame):
       # Hide the frame initially
       frame.pack_forget()
     # Function to update visible frame based on selector value
-    def update_stack():
-      selected_value = self.data.get(selector)
+    def update_stack(dummy_parent, selected_value):
       for skey, sframe in stack_widgets.items():
         if skey == selected_value:
           sframe.pack(fill='both', expand=True)
@@ -461,7 +462,7 @@ class _DeclFrameBase(tk.Frame):
       # If selector variable not yet created, we need to defer the binding
       raise RuntimeError("selector did not appear before stack")
     # Initialize stack
-    update_stack()
+    update_stack(None, self.data.get(selector))
     # Store widget
     self.widget_dict[key] = stack_frame
 
@@ -509,12 +510,6 @@ class _DeclFrameBase(tk.Frame):
       if isinstance(var, tk.Variable):
         var.set(value)
     # Execute action for value changes when specified
-    # We need to check if there is an update_callback for this key
-    node = self._find_node_by_key(self._decl_dict, key)
-    if node:
-      update_callback = node.get('update_callback')
-      if update_callback:
-        update_callback(self, value)
     self.data_updated(key)
 
   def _find_node_by_key(self, decl, key):
@@ -625,34 +620,50 @@ class SettingsFrame(_DeclFrameBase):
     zh_cn="语言",
     zh_hk="語言",
   )
+  _langs_dict = {
+    "en": "English",
+    "zh_cn": "中文（简体）",
+    "zh_hk": "中文（繁體）",
+  }
   @classmethod
   def get_decl(cls) -> dict[str, dict[str, typing.Any]]:
     return  {
       "language": {
         "label": cls._tr_language,
         "type": "combobox",
-        "options": [
-          {
-            "data": "en",
-            "label": "English"
-          },
-          {
-            "data": "zh_cn",
-            "label": "中文（简体）"
-          },
-          {
-            "data": "zh_hk",
-            "label": "中文（繁體）"
-          }
-        ],
+        "options": [{"data": k, "label": v} for k, v in SettingsFrame._langs_dict.items()],
+        "default": SettingsFrame.get_initial_value,
         "update_callback": SettingsFrame.language_updated
       }
     }
   def __init__(self, parent):
     super().__init__(parent)
 
+  @staticmethod
+  def gui_initialize():
+    if lang := SettingsDict.instance()["language"]:
+      set_language(lang)
+
+  def _get_current_language(self) -> str:
+    if lang := SettingsDict.instance()["language"]:
+      return lang
+    for candidate in Translatable.PREFERRED_LANG:
+      if candidate in SettingsFrame._langs_dict:
+        return candidate
+    return "en"
+
+  def get_initial_value(self, key : str):
+    match key:
+      case "language":
+        return self._get_current_language()
+      case _:
+        raise RuntimeError("Unexpected key")
+
   def language_updated(self, lang):
+    if lang == self._get_current_language():
+      return
     set_language(lang)
+    SettingsDict.instance()["language"] = lang
 
 TR_gui_main_pipeline = TranslationDomain("gui_main_pipeline")
 

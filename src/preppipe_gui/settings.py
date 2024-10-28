@@ -6,6 +6,8 @@ import sys
 import os
 import shelve
 import threading
+import collections
+import collections.abc
 
 _bundle_dir = '.'
 if getattr(sys, 'frozen', False):
@@ -18,12 +20,15 @@ else:
 def get_bundle_dir() -> str:
   return _bundle_dir
 
-class SettingsDict:
+class SettingsDict(collections.abc.MutableMapping):
   _settings_file_path : typing.ClassVar[str] = os.path.join(_bundle_dir, "preppipe_gui.settings.db")
   _settings_instance : typing.ClassVar['SettingsDict | None'] = None
 
+  lock : threading.Lock
+  shelf : shelve.Shelf
+
   @staticmethod
-  def instance() -> 'SettingsDict':
+  def instance():
     if SettingsDict._settings_instance is None:
       SettingsDict._settings_instance = SettingsDict(SettingsDict._settings_file_path)
     return SettingsDict._settings_instance
@@ -52,6 +57,10 @@ class SettingsDict:
     with self.lock:
       del self.shelf[key]
       self.shelf.sync()
+
+  def __len__(self):
+    with self.lock:
+      return len(self.shelf)
 
   def update(self, *args, **kwargs):
     with self.lock:
