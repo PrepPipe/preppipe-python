@@ -189,6 +189,8 @@ class MainApplication(tk.Frame):
   def create_instance(root):
     MainApplication._instance = MainApplication(root)
     SettingsFrame.gui_initialize()
+    MainApplication._instance.update_window_title()
+    watch_language_change(MainApplication._instance, MainApplication._instance.update_window_title)
 
   def __init__(self, root):
     super().__init__(root)
@@ -294,6 +296,9 @@ class MainApplication(tk.Frame):
       else:
         button = tk.Button(self.address_bar, textvariable=name_var, command=lambda idx=i: self.navigate_back_to(idx))
       button.pack(side='left')
+
+  def update_window_title(self):
+    self.root.title(Translatable.tr_program_name.get())
 
 class GridPanel(tk.Frame):
   def __init__(self, parent, panel_id, panel_data, app):
