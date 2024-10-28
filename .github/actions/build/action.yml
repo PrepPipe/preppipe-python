@@ -26,8 +26,11 @@ runs:
     - name: build
       run: python3 -X utf8 -m build
       shell: bash
+    - name: fetch wheel filename
+      run: echo WHEEL_FILE=`echo dist/*.whl` >> $GITHUB_ENV
+      shell: bash
     - name: install
-      run: pip install dist/*.whl
+      run: pip install "${WHEEL_FILE}[gui]"
       shell: bash
     - name: build assets
       run: python3 -X utf8 ./build_assets.py

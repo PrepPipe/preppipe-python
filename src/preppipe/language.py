@@ -198,6 +198,12 @@ class Translatable:
     self.cached_str = self.candidates["en"][0]
     return self.cached_str
 
+  def lookup_candidate(self, lang : str) -> str | None:
+    if l := self.candidates.get(lang):
+      if len(l) > 0:
+        return l[0]
+    return None
+
   def get_with_msg(self, msg : str):
     # 一般用于在报错时追加部分没有翻译的错误提示
     # （只有程序内部错误的处理可以用这种方式，如果用户操作有错的话还是应该用带翻译的提示）

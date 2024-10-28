@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 
+import sys
+import argparse
 import datetime
 import preppipe
+import preppipe.language
 
-def generate_versionfile():
+def generate_versionfile(versionfile_filename: str, executable_filename : str, is_cli_only : bool = True):
   # The version string must be a 4-number string separated by dots, so we need a conversion here
   versionstr = preppipe.__version__.replace("post", ".")
   version_number_list = [int(s) for s in versionstr.split(".")]
@@ -12,6 +15,22 @@ def generate_versionfile():
   version_number_tuple = tuple(version_number_list)
   versionstr = ".".join([str(s) for s in version_number_tuple])
   year = datetime.datetime.now().year
+
+  internalname = "PrepPipe CLI"
+  file_description_dict = {
+    "en" : "PrepPipe Compiler Command Line Interface",
+    "zh_cn": "语涵编译器命令行",
+    "zh_hk": "語涵編譯器命令行"
+  }
+  if not is_cli_only:
+    internalname = "PrepPipe"
+    keys = list(file_description_dict.keys())
+    for key in keys:
+      result = preppipe.language.Translatable.tr_program_name.lookup_candidate(key)
+      if result is None:
+        raise RuntimeError(f"Cannot find the program name for language {key}")
+      file_description_dict[key] = result
+
   versionfile_content = f"""# UTF-8
 #
 # For more details about fixed file info 'ffi' see:
@@ -44,33 +63,33 @@ VSVersionInfo(
       StringTable(
         u'040904B0',
         [StringStruct(u'CompanyName', u'PrepPipe Project'),
-        StringStruct(u'FileDescription', u'PrepPipe Compiler Command Line Interface'),
+        StringStruct(u'FileDescription', u'{file_description_dict["en"]}'),
         StringStruct(u'FileVersion', u'{versionstr}'),
-        StringStruct(u'InternalName', u'PrepPipe CLI'),
+        StringStruct(u'InternalName', u'{internalname}'),
         StringStruct(u'LegalCopyright', u'Copyright (c) {year} PrepPipe Contributors.'),
-        StringStruct(u'OriginalFilename', u'preppipe_cli.exe'),
+        StringStruct(u'OriginalFilename', u'{executable_filename}'),
         StringStruct(u'ProductName', u'PrepPipe Compiler'),
         StringStruct(u'ProductVersion', u'{versionstr}')]
       ),
       StringTable(
         u'080404B0',
         [StringStruct(u'CompanyName', u'语涵计划'),
-        StringStruct(u'FileDescription', u'语涵编译器命令行'),
+        StringStruct(u'FileDescription', u'{file_description_dict["zh_cn"]}'),
         StringStruct(u'FileVersion', u'{versionstr}'),
-        StringStruct(u'InternalName', u'PrepPipe CLI'),
+        StringStruct(u'InternalName', u'{internalname}'),
         StringStruct(u'LegalCopyright', u'Copyright (c) {year} 语涵计划贡献者'),
-        StringStruct(u'OriginalFilename', u'preppipe_cli.exe'),
+        StringStruct(u'OriginalFilename', u'{executable_filename}'),
         StringStruct(u'ProductName', u'语涵编译器'),
         StringStruct(u'ProductVersion', u'{versionstr}')]
       ),
       StringTable(
         u'040404B0',
         [StringStruct(u'CompanyName', u'語涵計劃'),
-        StringStruct(u'FileDescription', u'語涵編譯器命令行'),
+        StringStruct(u'FileDescription', u'{file_description_dict["zh_hk"]}'),
         StringStruct(u'FileVersion', u'{versionstr}'),
-        StringStruct(u'InternalName', u'PrepPipe CLI'),
+        StringStruct(u'InternalName', u'{internalname}'),
         StringStruct(u'LegalCopyright', u'Copyright (c) {year} 語涵計劃貢獻者'),
-        StringStruct(u'OriginalFilename', u'preppipe_cli.exe'),
+        StringStruct(u'OriginalFilename', u'{executable_filename}'),
         StringStruct(u'ProductName', u'語涵編譯器'),
         StringStruct(u'ProductVersion', u'{versionstr}')]
       ),
@@ -79,7 +98,7 @@ VSVersionInfo(
   ]
 )
 """
-  with open("versionfile.txt", "w", encoding="utf-8") as f:
+  with open(versionfile_filename, "w", encoding="utf-8") as f:
     f.write(versionfile_content)
 
   # print the content for debugging
@@ -90,4 +109,11 @@ VSVersionInfo(
   print(versionfile_print)
 
 if __name__== "__main__":
-  generate_versionfile()
+  # versionfile_gen.py <versionfile> <executable_filename> [--cli]
+  parser = argparse.ArgumentParser(description='Generate version file for Windows executable')
+  parser.add_argument('versionfile', type=str, help='Output version file', default="versionfile.txt")
+  parser.add_argument('executable_filename', type=str, help='Executable filename', default="preppipe.exe")
+  parser.add_argument('--cli', action='store_true', help='CLI only')
+  args = parser.parse_args()
+  is_cli_only = args.cli
+  generate_versionfile(args.versionfile, args.executable_filename, is_cli_only)
