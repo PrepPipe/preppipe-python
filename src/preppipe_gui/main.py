@@ -316,11 +316,17 @@ class GridPanel(tk.Frame):
       self.cells[(row, col)] = cell
 
 class ClickableFrameCell(tk.Frame):
+  cell_data : dict[str, typing.Any]
+  app : MainApplication
+  frame : tk.Frame | None
+  hover_default_bgcolor : str | None
+
   def __init__(self, parent, cell_data, app):
     super().__init__(parent, bd=1, relief='raised')
     self.cell_data = cell_data
     self.app = app
     self.frame = None
+    self.hover_default_bgcolor = None
 
     # Set up the UI elements
     image_func = cell_data.get('image')
@@ -349,6 +355,10 @@ class ClickableFrameCell(tk.Frame):
     for widget in self.winfo_children():
       widget.bind("<Button-1>", self.on_click)
 
+    # Bind hover events
+    self.bind("<Enter>", self.on_hover)
+    self.bind("<Leave>", self.on_leave)
+
   def on_click(self, event):
     action = self.cell_data.get('action')
     if action is None:
@@ -359,6 +369,8 @@ class ClickableFrameCell(tk.Frame):
         if self.frame is None:
           self.frame = action(self.app.main_area)
         name_tr = self.cell_data.get('name')
+        if not isinstance(name_tr, Translatable):
+          raise RuntimeError("Frame must have a Translatable name (current type: " + str(type(name_tr)) + ")")
         icon = None  # Could load icon if needed
         self.app.navigate_to_frame(self.frame, name_tr, icon)
       else:
@@ -369,6 +381,18 @@ class ClickableFrameCell(tk.Frame):
       self.app.navigate_to_panel(action)
     else:
       pass
+
+  def on_hover(self, event):
+    self.hover_default_bgcolor = self.cget('bg')
+    self.config(bg='lightblue')
+    for widget in self.winfo_children():
+      widget.config(bg="lightblue")
+
+  def on_leave(self, event):
+    self.config(bg=self.hover_default_bgcolor)
+    for widget in self.winfo_children():
+      widget.config(bg=self.hover_default_bgcolor)
+    self.hover_default_bgcolor = None
 
 def _build_gui_root():
   root = tk.Tk()
