@@ -930,11 +930,6 @@ class ImagePack(NamedAssetClassBase):
     zh_cn="本图片包以 CC0 1.0 通用 (CC0 1.0) 公共领域贡献方式分发。",
     zh_hk="本圖片包以 CC0 1.0 通用 (CC0 1.0) 公共領域貢獻方式分發。",
   )
-  TR_imagepack_md_prog = TR_imagepack.tr("md_prog",
-    en="PrepPipe Compiler",
-    zh_cn="语涵编译器",
-    zh_hk="語涵編譯器",
-  )
 
   def write_overview_image(self, path : str, descriptor : "ImagePackDescriptor", interactive_html_path : str | None = None):
     # 生成一个预览图
@@ -943,7 +938,7 @@ class ImagePack(NamedAssetClassBase):
     # 再把元数据加上
     # http://www.libpng.org/pub/png/spec/1.2/PNG-Chunks.html#:~:text=4.2.3.%20Textual%20information
     # 图片包名称，从 descriptor 中获取
-    summary.pngmetadata["Software"] = self.TR_imagepack_md_prog.get()
+    summary.pngmetadata["Software"] = Translatable.tr_program_name.get()
     summary.pngmetadata["Creation Time"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     imgpack_name = ''
     if isinstance(descriptor, ImagePackDescriptor):
@@ -987,7 +982,7 @@ class ImagePack(NamedAssetClassBase):
       _ImagePackHTMLExport.write_html(
         interactive_html_path, self, descriptor,
         html_title=imgpack_name,
-        html_author=self.TR_imagepack_md_prog.get(),
+        html_author=Translatable.tr_program_name.get(),
         html_description="\n".join(summary.comments))
 
 
