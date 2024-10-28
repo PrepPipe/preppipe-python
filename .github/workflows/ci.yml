@@ -48,8 +48,17 @@ jobs:
             dist/preppipe-windows-x64.7z
             dist/*.whl
             dist/builtin-assets.zip
+
+  # make this a separate job so that if this step fails (e.g., due to permission settings issue),
+  # we don't have to re-run pre-release when only this step is needed
+  request-all-in-one-build:
+    name: "Request rebuilding the all-in-one package"
+    needs: pre-release
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    steps:
       - name: Repository Dispatch
-        if: github.ref == 'refs/heads/main'
         uses: peter-evans/repository-dispatch@v2
         with:
           token: ${{ secrets.PREPPIPE_ALL_IN_ONE_PAT }}
