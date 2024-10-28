@@ -641,11 +641,11 @@ class SettingsFrame(_DeclFrameBase):
 
   @staticmethod
   def gui_initialize():
-    if lang := SettingsDict.instance()["language"]:
+    if lang := SettingsDict.instance().get("language"):
       set_language(lang)
 
   def _get_current_language(self) -> str:
-    if lang := SettingsDict.instance()["language"]:
+    if lang := SettingsDict.instance().get("language"):
       return lang
     for candidate in Translatable.PREFERRED_LANG:
       if candidate in SettingsFrame._langs_dict:
