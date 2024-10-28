@@ -328,14 +328,22 @@ class Translatable:
   def print_lang_list():
     print(Translatable._tr_lang_list.format(lang=str(Translatable.PREFERRED_LANG)))
 
-  # 声明要在 Translatable 内，方便隐藏名称
+  # 声明要在 Translatable 内，方便隐藏名称、避免名称冲突
   _tr_lang_list : typing.ClassVar[Translatable] = None # type: ignore
+
+  # 这个会在其他地方用到
+  tr_program_name : typing.ClassVar[Translatable] = None # type: ignore
 
 # 初始化要在外面，不然 tr() 执行的时候，Translatable 类还没有闭合，无法创建实例
 Translatable._tr_lang_list = TR_preppipe.tr("lang_list", # pylint: disable=protected-access
   en="Preferred language(s): {lang}",
   zh_cn="使用语言： {lang}",
   zh_hk="使用語言： {lang}",
+)
+Translatable.tr_program_name = TR_preppipe.tr("program_name", # pylint: disable=protected-access
+  en="PrepPipe Compiler",
+  zh_cn="语涵编译器",
+  zh_hk="語涵編譯器",
 )
 
 Translatable._init() # pylint: disable=protected-access
