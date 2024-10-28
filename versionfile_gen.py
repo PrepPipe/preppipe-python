@@ -8,7 +8,7 @@ import preppipe.language
 
 def generate_versionfile(versionfile_filename: str, executable_filename : str, is_cli_only : bool = True):
   # The version string must be a 4-number string separated by dots, so we need a conversion here
-  versionstr = preppipe.__version__.replace("post", ".")
+  versionstr = preppipe.__version__.replace("post", "") # there should already be a dot before the "post" part
   version_number_list = [int(s) for s in versionstr.split(".")]
   while len(version_number_list) < 4:
     version_number_list.append(0)
