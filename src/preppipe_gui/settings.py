@@ -45,8 +45,9 @@ class SettingsDict(collections.abc.MutableMapping):
     self.shelf = shelve.open(self.filename, writeback=True)
 
   def __getitem__(self, key):
-    with self.lock:
-      return self.shelf[key]
+    raise RuntimeError("Please use get() to properly handle missing keys (instead of raising KeyError)")
+    #with self.lock:
+    #  return self.shelf[key]
 
   def __setitem__(self, key, value):
     with self.lock:
