@@ -1,0 +1,3 @@
+file:
+  assets:
+    copyfrom: "{srcpath}/assets"
