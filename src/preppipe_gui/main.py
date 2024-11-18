@@ -13,6 +13,7 @@ import preppipe
 import preppipe.pipeline_cmd
 import preppipe.pipeline
 from preppipe.language import *
+from .guiassets import GUIAssetLoader
 from .executewindow import *
 from .settings import SettingsDict, get_executable_base_dir
 from .framedecl import *
@@ -117,7 +118,8 @@ main_window_panels = {
           zh_cn="如果只想使用子工具而不是整个剧本处理管线。",
           zh_hk="如果只想使用子工具而不是整個劇本處理管線。",
         ),
-        "action": "tools",
+        # 等到有工具了再加回去
+        "action": None, # "tools",
       },
       (1, 0): {
         "id": "frame_settings",
@@ -182,6 +184,9 @@ class MainApplication(tk.Frame):
 
   @staticmethod
   def create_instance(root):
+    if icon := GUIAssetLoader.try_get_image_asset("preppipe.ico"):
+      iconimg = to_tk_image(icon)
+      root.iconphoto(True, iconimg)
     MainApplication._instance = MainApplication(root)
     SettingsFrame.gui_initialize()
     MainApplication._instance.update_window_title()
@@ -397,9 +402,21 @@ class ClickableFrameCell(tk.Frame):
     self.bind("<Enter>", self.on_hover)
     self.bind("<Leave>", self.on_leave)
 
+  _tr_not_implemented_title = TR_gui_main.tr("not_implemented_title",
+    en="Feature Not Supported",
+    zh_cn="功能暂不支持",
+    zh_hk="功能暫不支持",
+  )
+  _tr_not_implemented_details = TR_gui_main.tr("not_implemented_details",
+    en="Sorry, this feature is not supported yet.",
+    zh_cn="抱歉，此功能暂不支持。",
+    zh_hk="抱歉，此功能暫不支持。",
+  )
+
   def on_click(self, event):
     action = self.cell_data.get('action')
     if action is None:
+      tk.messagebox.showerror(self._tr_not_implemented_title.get(), self._tr_not_implemented_details.get())
       return
     elif callable(action):
       if isinstance(action, type) and issubclass(action, tk.Frame):
