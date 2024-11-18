@@ -161,7 +161,9 @@ class _DeclFrameBase(tk.Frame):
       self._build_group(key, node, parent_widget, pack_opts)
     elif node_type == 'stack':
       self._build_stack(key, node, parent_widget, pack_opts)
-    elif node_type == 'hbox' or node_type == 'buttonbox':
+    elif node_type == 'buttonbox':
+      self._build_box(key, node, parent_widget, horizontal=True, backward_packing=True, pack_opts=pack_opts)
+    elif node_type == 'hbox':
       self._build_box(key, node, parent_widget, horizontal=True, pack_opts=pack_opts)
     elif node_type == 'vbox':
       self._build_box(key, node, parent_widget, horizontal=False, pack_opts=pack_opts)
@@ -360,9 +362,11 @@ class _DeclFrameBase(tk.Frame):
     isDirectoryMode = node.get('type') == 'directory'
     self._handle_update_callback(key, node.get('update_callback'))
     # Create a Label
-    label_var = get_string_var(label_tr)
-    label_widget = ttk.Label(parent_widget, textvariable=label_var)
-    label_widget.pack(anchor='w')
+    is_create_label = not multiple
+    if is_create_label:
+      label_var = get_string_var(label_tr)
+      label_widget = ttk.Label(parent_widget, textvariable=label_var)
+      label_widget.pack(anchor='w')
     # Create the appropriate widget
     if multiple:
       widget = FileListInputWidget(parent_widget)
@@ -466,7 +470,7 @@ class _DeclFrameBase(tk.Frame):
     # Store widget
     self.widget_dict[key] = stack_frame
 
-  def _build_box(self, key, node, parent_widget, horizontal=True, pack_opts=None):
+  def _build_box(self, key, node, parent_widget, horizontal=True, backward_packing=False, pack_opts=None):
     elements = node.get('children', {}) or node.get('elements', {})
     box_frame = ttk.Frame(parent_widget)
     if pack_opts:
@@ -479,7 +483,10 @@ class _DeclFrameBase(tk.Frame):
       for elem_key, elem_node in elements.items():
         # We can use a frame to wrap each element
         elem_frame = ttk.Frame(box_frame)
-        elem_frame.pack(side='left', padx=2, pady=2)
+        if backward_packing:
+          elem_frame.pack(side='right', padx=2, pady=2)
+        else:
+          elem_frame.pack(side='left', padx=2, pady=2)
         self._build_widget(elem_key, elem_node, elem_frame)
     else:
       # For vbox, pack elements top to bottom
@@ -759,12 +766,12 @@ class MainPipelineFrame(_DeclFrameBase):
                 "direction": "input",
                 "multiple": True
               },
-              "input_assetdir_extra": {
-                "label": cls._tr_input_assetdir_extra,
-                "type": "directory",
-                "direction": "input",
-                "multiple": True
-              }
+              #"input_assetdir_extra": {
+              #  "label": cls._tr_input_assetdir_extra,
+              #  "type": "directory",
+              #  "direction": "input",
+              #  "multiple": True
+              #}
             }
           },
           "output_settings": {
