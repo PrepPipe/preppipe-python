@@ -9,13 +9,13 @@ import threading
 import collections
 import collections.abc
 
-def _get_initial_settings_dir() -> str:
+def get_executable_base_dir() -> str:
   if getattr(sys, 'frozen', False):
     return os.path.dirname(sys.executable)
   return os.path.dirname(os.path.abspath(__file__))
 
 class SettingsDict(collections.abc.MutableMapping):
-  _executable_base_dir : typing.ClassVar[str] = _get_initial_settings_dir()
+  _executable_base_dir : typing.ClassVar[str] = get_executable_base_dir()
   _settings_instance : typing.ClassVar['SettingsDict | None'] = None
 
   lock : threading.Lock
