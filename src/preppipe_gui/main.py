@@ -3,6 +3,9 @@
 
 import sys
 import os
+import webbrowser
+import tkinter as tk
+import tkinter.messagebox
 import PIL
 import PIL.Image
 import PIL.ImageTk
@@ -11,7 +14,7 @@ import preppipe.pipeline_cmd
 import preppipe.pipeline
 from preppipe.language import *
 from .executewindow import *
-from .settings import SettingsDict
+from .settings import SettingsDict, get_executable_base_dir
 from .framedecl import *
 
 TR_gui_main = TranslationDomain("gui_main")
@@ -73,10 +76,6 @@ def to_tk_image(image : PIL.Image.Image | None) -> PIL.ImageTk.PhotoImage | None
     return PIL.ImageTk.PhotoImage(image)
   return None
 
-def open_docs():
-  # 打开文档
-  print("TODO Opening documentation...")
-
 # 用于 GUI 的配置
 # 由于在构建时无法获取图标、无法构建子部件，我们填这些信息时使用 lambda 函数，等到实际运行时再获取
 main_window_panels = {
@@ -88,24 +87,9 @@ main_window_panels = {
       zh_hk="主界面",
     ),
     "type": "grid",
-    "grid_size": (2, 3),
+    "grid_size": (2, 2),
     "content": {
       (0, 0): {
-        "id": "frame_docs",
-        "image": lambda : to_tk_image(get_description_image("docs")),
-        "name": TR_gui_executewindow.tr("cell_docs_name",
-          en="Tutorials and Documentations",
-          zh_cn="教程、文档",
-          zh_hk="教程、文檔",
-        ),
-        "description": TR_gui_executewindow.tr("cell_docs_description",
-          en="Have questions or do not know how to get started?",
-          zh_cn="有疑问或是不知怎么上手？",
-          zh_hk="有疑問或是不知怎麼上手？",
-        ),
-        "action": open_docs,
-      },
-      (0, 1): {
         "id": "frame_pipeline",
         "image": lambda : to_tk_image(get_description_image("pipeline")),
         "name": TR_gui_executewindow.tr("cell_pipeline_name",
@@ -120,7 +104,7 @@ main_window_panels = {
         ),
         "action": MainPipelineFrame,
       },
-      (0, 2): {
+      (0, 1): {
         "id": "frame_tools",
         "image": lambda : to_tk_image(get_description_image("tools")),
         "name": TR_gui_executewindow.tr("cell_tools_name",
@@ -185,6 +169,17 @@ main_window_panels = {
 class MainApplication(tk.Frame):
   _instance = None
 
+  _tr_current_page = TR_gui_main.tr("current_page",
+    en="Current Page",
+    zh_cn="当前页面",
+    zh_hk="當前頁面",
+  )
+  _tr_documentation = TR_gui_main.tr("documentation",
+    en="Documentation",
+    zh_cn="文档",
+    zh_hk="文檔",
+  )
+
   @staticmethod
   def create_instance(root):
     MainApplication._instance = MainApplication(root)
@@ -200,12 +195,18 @@ class MainApplication(tk.Frame):
     self.panel_stack: list[dict[str, typing.Any]] = []
     # Initialize panels dictionary
     self.panels: dict[str, dict[str, typing.Any]] = {}
-    # Create the address bar
-    self.address_bar = tk.Frame(self, bd=1, relief="ridge")
-    self.address_bar.pack(side='top', fill='x')
+    # Create the top panel
+    self.top_panel = tk.Frame(self)
+    self.top_panel.pack(side='top', fill='x')
+    self.addr_label = tk.Label(self.top_panel, textvariable=get_string_var(self._tr_current_page))
+    self.addr_label.pack(side='left')
+    self.address_bar = tk.Frame(self.top_panel, bd=1, relief="ridge")
+    self.address_bar.pack(side='left', fill='x', expand=True)
+    self.docs_button = tk.Button(self.top_panel, textvariable=get_string_var(self._tr_documentation), command=self.open_docs)
+    self.docs_button.pack(side='right')
     # Create the main area
     self.main_area = tk.Frame(self)
-    self.main_area.pack(side='top', fill='both', expand=True)
+    self.main_area.pack(side='bottom', fill='both', expand=True)
     # Start with the main panel
     self.navigate_to_panel('main')
 
@@ -296,9 +297,42 @@ class MainApplication(tk.Frame):
       else:
         button = tk.Button(self.address_bar, textvariable=name_var, command=lambda idx=i: self.navigate_back_to(idx))
       button.pack(side='left')
+    # add tail padding to fill the rest of the space
+    padding_frame = tk.Frame(self.address_bar)
+    padding_frame.pack(side='left', expand=True, fill='x')
 
   def update_window_title(self):
     self.root.title(Translatable.tr_program_name.get())
+
+  _tr_documentation_not_found_title = TR_gui_main.tr("documentation_not_found_title",
+    en="Documentation not found",
+    zh_cn="文档未找到",
+    zh_hk="文檔未找到",
+  )
+  _tr_documentation_not_found_details_dir = TR_gui_main.tr("documentation_not_found_details_dir",
+    en="Document directory {dir} not found. Please check the integrity of the installation.",
+    zh_cn="文档目录 {dir} 未找到，请检查安装是否完整。",
+    zh_hk="文檔目錄 {dir} 未找到，請檢查安裝是否完整。",
+  )
+  _tr_documentation_not_found_details_file = TR_gui_main.tr("documentation_not_found_details_file",
+    en="Document page {page} not found. Please check the integrity of the installation.",
+    zh_cn="文档页面 {page} 未找到，请检查安装是否完整。",
+    zh_hk="文檔頁面 {page} 未找到，請檢查安裝是否完整。",
+  )
+  def open_docs(self):
+    docs_root = ''
+    if docs := os.environ.get("PREPPIPE_DOCS"):
+      docs_root = os.path.abspath(docs)
+    if len(docs_root) == 0:
+      docs_root = os.path.join(get_executable_base_dir(), 'docs')
+    if not os.path.isdir(docs_root):
+      tk.messagebox.showerror(self._tr_documentation_not_found_title.get(), self._tr_documentation_not_found_details_dir.format(dir=docs_root))
+      return
+    index_page_path = os.path.join(docs_root, "index.html")
+    if not os.path.isfile(index_page_path):
+      tk.messagebox.showerror(self._tr_documentation_not_found_title.get(), self._tr_documentation_not_found_details_file.format(page=index_page_path))
+      return
+    webbrowser.open_new_tab('file:///' + index_page_path)
 
 class GridPanel(tk.Frame):
   def __init__(self, parent, panel_id, panel_data, app):
