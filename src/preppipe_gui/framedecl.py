@@ -1,13 +1,19 @@
 # SPDX-FileCopyrightText: 2024 PrepPipe's Contributors
 # SPDX-License-Identifier: Apache-2.0
 
+import io
 import tkinter as tk
 from tkinter import ttk
+import cairosvg
+import PIL
+import PIL.Image
+import PIL.ImageTk
 from preppipe.language import *
 import preppipe.language
 from .fileselection import *
 from .languageupdate import *
 from .settings import SettingsDict
+from .guiassets import GUIAssetLoader
 
 class CheckableLabelFrame(ttk.LabelFrame):
   def __init__(self, master=None, **kwargs):
@@ -104,6 +110,7 @@ class _DeclFrameBase(tk.Frame):
   )
   data: dict[str, typing.Any]  # Data for member functions in subclasses
   data_watchers: dict[str, list[typing.Callable]]
+  _image_cache : dict[str, tk.PhotoImage | PIL.ImageTk.PhotoImage] # for keeping a reference to used images (to avoid its destruction)
   _decl_dict: typing.ClassVar[typing.Optional[dict[str, dict[str, typing.Any]]]] = None  # Declaration dict
 
   def __init__(self, parent):
@@ -114,6 +121,8 @@ class _DeclFrameBase(tk.Frame):
     self.variable_dict = {}  # Keep references to variables (e.g., StringVar, IntVar, etc.)
     self._data_to_label = {}  # For combobox options (data to label mapping)
     self._data_to_tr = {}     # For combobox options (data to Translatable mapping)
+    self._image_cache = {}
+
     self.setup()
 
   def data_updated(self, key : str):
@@ -169,6 +178,8 @@ class _DeclFrameBase(tk.Frame):
       self._build_box(key, node, parent_widget, horizontal=False, pack_opts=pack_opts)
     elif node_type == 'button':
       self._build_button(key, node, parent_widget, pack_opts)
+    elif node_type == 'image':
+      self._build_image(key, node, parent_widget, pack_opts)
     else:
       raise ValueError(f"Unknown type '{node_type}' in decl for key '{key}'")
 
@@ -509,6 +520,35 @@ class _DeclFrameBase(tk.Frame):
     # Store widget
     self.widget_dict[key] = button
 
+  def _build_image(self, key, node, parent_widget, pack_opts):
+    if key in self._image_cache:
+      raise RuntimeError("Duplicated initialization")
+    path = node.get('path')
+    installpath = GUIAssetLoader.try_get_asset_path(path)
+    if installpath is None:
+      return
+    size = node.get('size', (100, 100))
+    match os.path.splitext(path)[1].lower():
+      case '.svg':
+        with open(installpath, 'rb') as f:
+          svg = f.read()
+        buffer = io.BytesIO()
+        cairosvg.svg2png(svg, output_width=size[0], output_height=size[1], write_to=buffer)
+        image = PIL.Image.open(buffer, formats=('PNG',))
+        tkimage = PIL.ImageTk.PhotoImage(image)
+      case _:
+        image = PIL.Image.open(installpath)
+        image = image.resize(size)
+        tkimage = PIL.ImageTk.PhotoImage(image)
+    self._image_cache[key] = tkimage
+    label = tk.Label(parent_widget, image=tkimage, width=size[0], height=size[1])
+    if pack_opts:
+      label.pack(**pack_opts)
+    else:
+      label.pack(padx=5, pady=2)
+    # Store widget
+    self.widget_dict[key] = label
+
   def set_data(self, key: str, value: typing.Any):
     self.data[key] = value
     # Update the UI
@@ -800,6 +840,11 @@ class MainPipelineFrame(_DeclFrameBase):
                     "label": cls._tr_renpy_settings,
                     "type": "group",
                     "elements": {
+                      "renpy_logo": {
+                        "type": "image",
+                        "path": "vnengines/renpy.png",
+                        "size": (100, 150),
+                      },
                       "renpy_output_dir": {
                         "label": cls._tr_output_dir,
                         "type": "directory",
@@ -824,6 +869,11 @@ class MainPipelineFrame(_DeclFrameBase):
                     "label": cls._tr_webgal_settings,
                     "type": "group",
                     "elements": {
+                      "webgal_logo": {
+                        "type": "image",
+                        "path": "vnengines/webgal.svg",
+                        "size": (100, 100),
+                      },
                       "webgal_output_dir": {
                         "label": cls._tr_output_dir,
                         "type": "directory",
