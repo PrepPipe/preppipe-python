@@ -6,7 +6,7 @@
 import os
 import shutil
 import typing
-from .assetclassdecl import AssetClassDecl
+from .assetclassdecl import AssetClassDecl, NamedAssetClassBase
 
 @AssetClassDecl("file")
 class FileAssetPack:
@@ -20,6 +20,7 @@ class FileAssetPack:
   def build_asset_archive(name : str, destpath : str, copyfrom : str):
     if os.path.isdir(copyfrom):
       os.makedirs(destpath, exist_ok=True)
+      NamedAssetClassBase.clear_directory_recursive(destpath)
       shutil.copytree(copyfrom, destpath, dirs_exist_ok=True, ignore_dangling_symlinks=True)
     else:
       shutil.copy2(copyfrom, destpath)
