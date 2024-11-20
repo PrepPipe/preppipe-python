@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: 2024 PrepPipe's Contributors
 # SPDX-License-Identifier: Apache-2.0
 
+import shutil
 import typing
 from ..language import *
 from ..exceptions import *
@@ -119,3 +120,14 @@ class NamedAssetClassBase:
     cls.DESCRIPTOR_DICT = TranslatableDict()
     cls.DESCRIPTOR_DICT_STRONLY = {}
     return descriptor_type
+
+  @staticmethod
+  def clear_directory_recursive(path : str) -> None:
+    # 构建素材时经常会需要清空已有的目录，这是给子类的辅助函数
+    if not os.path.isdir(path):
+      raise FileNotFoundError(f"Directory {path} not found")
+    for root, dirs, files in os.walk(path):
+      for f in files:
+        os.unlink(os.path.join(root, f))
+      for d in dirs:
+        shutil.rmtree(os.path.join(root, d))
