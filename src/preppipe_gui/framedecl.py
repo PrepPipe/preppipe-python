@@ -4,7 +4,6 @@
 import io
 import tkinter as tk
 from tkinter import ttk
-import cairosvg
 import PIL
 import PIL.Image
 import PIL.ImageTk
@@ -528,18 +527,9 @@ class _DeclFrameBase(tk.Frame):
     if installpath is None:
       return
     size = node.get('size', (100, 100))
-    match os.path.splitext(path)[1].lower():
-      case '.svg':
-        with open(installpath, 'rb') as f:
-          svg = f.read()
-        buffer = io.BytesIO()
-        cairosvg.svg2png(svg, output_width=size[0], output_height=size[1], write_to=buffer)
-        image = PIL.Image.open(buffer, formats=('PNG',))
-        tkimage = PIL.ImageTk.PhotoImage(image)
-      case _:
-        image = PIL.Image.open(installpath)
-        image = image.resize(size)
-        tkimage = PIL.ImageTk.PhotoImage(image)
+    image = PIL.Image.open(installpath)
+    image = image.resize(size)
+    tkimage = PIL.ImageTk.PhotoImage(image)
     self._image_cache[key] = tkimage
     label = tk.Label(parent_widget, image=tkimage, width=size[0], height=size[1])
     if pack_opts:
@@ -871,7 +861,7 @@ class MainPipelineFrame(_DeclFrameBase):
                     "elements": {
                       "webgal_logo": {
                         "type": "image",
-                        "path": "vnengines/webgal.svg",
+                        "path": "vnengines/webgal.png",
                         "size": (100, 100),
                       },
                       "webgal_output_dir": {
