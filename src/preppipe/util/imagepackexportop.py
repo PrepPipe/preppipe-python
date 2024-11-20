@@ -149,11 +149,9 @@ class ImagePackExportOpSymbol(CacheableOperationSymbol):
       path = self._composites_export_paths.get_operand(i).get_string()
       x, y = self._composites_target_sizes.get_operand(i).value
       image = imagepack.get_composed_image(index)
-      if image.width != x or image.height != y:
-        image = image.resize(size=(x, y))
       fullpath = os.path.join(output_rootdir, path)
       os.makedirs(os.path.dirname(fullpath), exist_ok=True)
-      image.save(fullpath)
+      image.save_to_path(fullpath, resizeTo = (x, y) if (imagepack.width != x or imagepack.height != y) else None)
     num_layers_export = min(self._layers_export_indices.get_num_operands(), self._layers_export_paths.get_num_operands())
     for i in range(0, num_layers_export):
       index = self._layers_export_indices.get_operand(i).value
@@ -161,7 +159,7 @@ class ImagePackExportOpSymbol(CacheableOperationSymbol):
       image = imagepack.layers[index].patch
       fullpath = os.path.join(output_rootdir, path)
       os.makedirs(os.path.dirname(fullpath), exist_ok=True)
-      image.save(fullpath)
+      image.save_to_path(fullpath)
     # 完成
 
   def get_workload_cpu_usage_estimate(self) -> float:
