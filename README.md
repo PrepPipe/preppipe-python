@@ -31,6 +31,11 @@ QQ群：732421719
 
 语涵编译器在运行时需要使用 `ffmpeg` 进行音视频的格式转换。请确保程序能在运行时找到它，比如把路径加到 `PATH` 中。
 
+要在 Python 中使用 `import preppipe` 等的话，请确保本仓库里的 `src` 目录在 `PYTHONPATH` 中，比如：(假设这个 `preppipe` 仓库在 `/path/to/preppipe`)
+```
+export PYTHONPATH=/path/to/preppipe/src
+```
+
 另外我们推荐执行以下操作来注入设置。目前这能使 `git` 更好地显示中文路径（部分素材有用到）。
 ```
 git config --local include.path $PWD/gitconfig
