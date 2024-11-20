@@ -297,7 +297,7 @@ class ImagePack(NamedAssetClassBase):
     if len(self.opaque_metadata) > 0:
       jsonout["metadata"] = self.opaque_metadata
 
-    with open(os.path.join(path, "manifest.json"), "w") as f:
+    with open(os.path.join(path, "manifest.json"), "w", encoding="utf-8") as f:
       json.dump(jsonout, f, ensure_ascii=False, indent=None, separators=(',', ':'))
 
   @staticmethod
@@ -311,7 +311,7 @@ class ImagePack(NamedAssetClassBase):
       raise PPInternalError("Cannot reload when data is already loaded")
 
     # Read manifest.json
-    with open(os.path.join(path, "manifest.json"), "r") as f:
+    with open(os.path.join(path, "manifest.json"), "r", encoding="utf-8") as f:
       manifest = json.load(f)
     if not isinstance(manifest, dict):
       raise PPInternalError("Invalid manifest.json")
