@@ -22,3 +22,16 @@ python3 -m preppipe.pipeline_cmd <commands...>
 文档在写了在写了。（新建文件夹）
 
 QQ群：732421719
+
+## 开发环境设置
+
+如果您想构建一个开发环境，您需要安装以下 Python 依赖项。推荐在一个 `venv` 中操作。
+  * 构建需要 `build twine`
+  * 运行时需要的包在 [setup.cfg](setup.cfg) 的 `options.install_requires` 和 `options.extras_require` 下
+
+语涵编译器在运行时需要使用 `ffmpeg` 进行音视频的格式转换。请确保程序能在运行时找到它，比如把路径加到 `PATH` 中。
+
+另外我们推荐执行以下操作来注入设置。目前这能使 `git` 更好地显示中文路径（部分素材有用到）。
+```
+git config --local include.path $PWD/gitconfig
+```
