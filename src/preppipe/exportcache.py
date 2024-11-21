@@ -33,6 +33,8 @@ class CacheableOperationSymbol(Symbol):
   #   "version": <__version__>,
   #   "cacheable": [<name1>, <name2>, ...]
   # }
+
+  TR_exportcache = TranslationDomain("exportcache")
   CACHE_FILE_NAME : typing.ClassVar[str] = '.preppipe_export_cache.json'
 
   def get_export_file_list(self) -> list[str]:
@@ -55,6 +57,21 @@ class CacheableOperationSymbol(Symbol):
     # 一般会在一个新的线程中执行这个操作
     raise NotImplementedError("Should be implemented by subclass")
 
+  _tr_exporting_file = TR_exportcache.tr("exporting_file",
+    en="Exporting {file}",
+    zh_cn="正在导出 {file}",
+    zh_hk="正在導出 {file}",
+  )
+  _tr_updating_cache_file = TR_exportcache.tr("updating_cache_file",
+    en="Updating cache file",
+    zh_cn="正在更新缓存文件",
+    zh_hk="正在更新快取檔案",
+  )
+
+  @staticmethod
+  def report_exporting_file(relpath : str) -> None:
+    MessageHandler.get().info(CacheableOperationSymbol._tr_exporting_file.format(file=relpath))
+
   @staticmethod
   def run_export_all(ops: "typing.Iterable[CacheableOperationSymbol]", output_rootdir : str) -> None:
     # 执行所有的操作; ops 一般应该是 SymbolTableRegion[CacheableOperationSymbol]
@@ -75,9 +92,6 @@ class CacheableOperationSymbol(Symbol):
             existing_ops.add(op_name)
         else:
           is_cache_require_change = True
-
-    # 准备预加载资源
-    asset_manager = AssetManager.get_instance()
 
     all_ops : list[str] = []
     todo_ops_dict : dict[type, list[CacheableOperationSymbol]] = {}
@@ -118,6 +132,7 @@ class CacheableOperationSymbol(Symbol):
 
     if is_cache_require_change:
       # 更新缓存
+      MessageHandler.get().info(CacheableOperationSymbol._tr_updating_cache_file.get() + ' ' + CacheableOperationSymbol.CACHE_FILE_NAME)
       all_ops.sort()
       with open(cache_file_path, 'w', encoding="utf-8") as f:
         json.dump({
