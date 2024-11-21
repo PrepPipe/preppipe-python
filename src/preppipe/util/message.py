@@ -3,6 +3,7 @@
 
 import enum
 import time
+import threading
 
 class MessageHandler:
   class MessageImportance(enum.Enum):
@@ -26,6 +27,7 @@ class MessageHandler:
 
   _instance = None
   _starttime = time.time()
+  _mutex = threading.Lock()
 
   @staticmethod
   def install_message_handler(handler):
@@ -36,6 +38,7 @@ class MessageHandler:
   def message(self, importance : MessageImportance, msg : str, file : str = "", location: str = ""):
     # usually the location string contains the file path
     # use location if available
+    MessageHandler._mutex.acquire()
     curtime = time.time()
     locstring = ""
     if len(location) > 0:
@@ -47,6 +50,7 @@ class MessageHandler:
       locstring += ': '
 
     print("[{time:.3f} {imp}] {loc}{msg}".format(time=(curtime - MessageHandler._starttime), imp=importance.get_short_name(), loc=locstring, msg=msg), flush=True)
+    MessageHandler._mutex.release()
 
   @staticmethod
   def get():
