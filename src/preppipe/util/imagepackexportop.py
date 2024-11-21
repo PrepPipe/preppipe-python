@@ -177,33 +177,31 @@ class ImagePackExportOpSymbol(CacheableOperationSymbol):
           raise PPInternalError("Unsupported fork parameter type: " + str(value))
       if len(args) < len(imagepack.masks):
         args += [None] * (len(imagepack.masks) - len(args))
-      imagepack = imagepack.fork_applying_mask(args)
-    num_composites_export = min(self._composites_export_indices.get_num_operands(), self._composites_export_paths.get_num_operands())
-    for i in range(0, num_composites_export):
-      index = self._composites_export_indices.get_operand(i).value
-      path = self._composites_export_paths.get_operand(i).get_string()
-      x, y = self._composites_target_sizes.get_operand(i).value
-      image = imagepack.get_composed_image(index)
-      fullpath = os.path.join(output_rootdir, path)
-      os.makedirs(os.path.dirname(fullpath), exist_ok=True)
-      image.save_to_path(fullpath, resizeTo = (x, y) if (imagepack.width != x or imagepack.height != y) else None)
-    num_layers_export = min(self._layers_export_indices.get_num_operands(), self._layers_export_paths.get_num_operands())
-    for i in range(0, num_layers_export):
-      index = self._layers_export_indices.get_operand(i).value
-      path = self._layers_export_paths.get_operand(i).get_string()
-      image = imagepack.layers[index].patch
-      fullpath = os.path.join(output_rootdir, path)
-      os.makedirs(os.path.dirname(fullpath), exist_ok=True)
-      image.save_to_path(fullpath)
+      imagepack = imagepack.fork_applying_mask(args, enable_parallelization=True)
+    MessageHandler.info("Fork done")
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+      num_composites_export = min(self._composites_export_indices.get_num_operands(), self._composites_export_paths.get_num_operands())
+      for i in range(0, num_composites_export):
+        index = self._composites_export_indices.get_operand(i).value
+        path = self._composites_export_paths.get_operand(i).get_string()
+        x, y = self._composites_target_sizes.get_operand(i).value
+        image = imagepack.get_composed_image(index)
+        fullpath = os.path.join(output_rootdir, path)
+        resizeTo = (x, y) if (imagepack.width != x or imagepack.height != y) else None
+        executor.submit(self._export_image_helper, fullpath, image, resizeTo)
+      num_layers_export = min(self._layers_export_indices.get_num_operands(), self._layers_export_paths.get_num_operands())
+      for i in range(0, num_layers_export):
+        index = self._layers_export_indices.get_operand(i).value
+        path = self._layers_export_paths.get_operand(i).get_string()
+        image = imagepack.layers[index].patch
+        fullpath = os.path.join(output_rootdir, path)
+        executor.submit(self._export_image_helper, fullpath, image, None)
     # 完成
 
-  def get_workload_cpu_usage_estimate(self) -> float:
-    # 返回这个操作的 CPU 使用量估计(1: CPU 密集型；0: I/O 密集型)，用于计算线程池的大小和计算调度
-    if self._fork_params.get_num_operands() > 0 or self._composites_export_indices.get_num_operands() > 0:
-      # 在这两种情况下我们都需要执行图片组合或是 fork 操作，所以是 CPU 密集型
-      return 1.0
-    # 否则是 I/O 密集型，只需要输出现有的图片
-    return 0.25
+  @staticmethod
+  def _export_image_helper(fullpath : str, image : ImageWrapper, resizeTo : tuple[int,int] | None) -> None:
+    os.makedirs(os.path.dirname(fullpath), exist_ok=True)
+    image.save_to_path(fullpath, resizeTo=resizeTo)
 
 class ImagePackExportDataBuilder:
   # 我们使用该类在将 VNModel 转化为后端 IR/AST 时对图片包的引用进行整理
