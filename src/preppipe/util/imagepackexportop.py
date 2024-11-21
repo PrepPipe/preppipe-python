@@ -30,6 +30,11 @@ class ImagePackExportOpSymbol(CacheableOperationSymbol):
     zh_cn="图片包未找到：{imagepack}",
     zh_hk="圖片包未找到：{imagepack}"
   )
+  _tr_loading_imagepack = ImagePack.TR_imagepack.tr("loading_imagepack",
+    en="Loading image pack: {imagepack}",
+    zh_cn="正在载入图片包：{imagepack}",
+    zh_hk="正在載入圖片包：{imagepack}",
+  )
 
   def construct_init(self, *, imagepack : StringLiteral, name: str = '', loc: Location | None = None, **kwargs) -> None:
     super().construct_init(name=name, loc=loc, **kwargs)
@@ -130,6 +135,12 @@ class ImagePackExportOpSymbol(CacheableOperationSymbol):
           if m.mask is not None:
             if m.mask.image is None:
               tp.submit(m.mask.get)
+        descriptor = ImagePack.get_descriptor_by_id(imagepack_id)
+        name_tr = descriptor.get_name()
+        if not isinstance(name_tr, (Translatable, str)):
+          raise PPInternalError("Unexpected type for ImagePack name: " + str(type(name_tr)))
+        name_str = name_tr.get() if isinstance(name_tr, Translatable) else name_tr
+        MessageHandler.get().info(self._tr_loading_imagepack.format(imagepack=name_str))
     return True
 
   def run_export(self, output_rootdir : str) -> None:
@@ -178,7 +189,6 @@ class ImagePackExportOpSymbol(CacheableOperationSymbol):
       if len(args) < len(imagepack.masks):
         args += [None] * (len(imagepack.masks) - len(args))
       imagepack = imagepack.fork_applying_mask(args, enable_parallelization=True)
-    MessageHandler.info("Fork done")
     with concurrent.futures.ThreadPoolExecutor() as executor:
       num_composites_export = min(self._composites_export_indices.get_num_operands(), self._composites_export_paths.get_num_operands())
       for i in range(0, num_composites_export):
@@ -186,20 +196,20 @@ class ImagePackExportOpSymbol(CacheableOperationSymbol):
         path = self._composites_export_paths.get_operand(i).get_string()
         x, y = self._composites_target_sizes.get_operand(i).value
         image = imagepack.get_composed_image(index)
-        fullpath = os.path.join(output_rootdir, path)
         resizeTo = (x, y) if (imagepack.width != x or imagepack.height != y) else None
-        executor.submit(self._export_image_helper, fullpath, image, resizeTo)
+        executor.submit(self._export_image_helper, output_rootdir, path, image, resizeTo)
       num_layers_export = min(self._layers_export_indices.get_num_operands(), self._layers_export_paths.get_num_operands())
       for i in range(0, num_layers_export):
         index = self._layers_export_indices.get_operand(i).value
         path = self._layers_export_paths.get_operand(i).get_string()
         image = imagepack.layers[index].patch
-        fullpath = os.path.join(output_rootdir, path)
-        executor.submit(self._export_image_helper, fullpath, image, None)
+        executor.submit(self._export_image_helper, output_rootdir, path, image, None)
     # 完成
 
   @staticmethod
-  def _export_image_helper(fullpath : str, image : ImageWrapper, resizeTo : tuple[int,int] | None) -> None:
+  def _export_image_helper(rootdir : str, relpath : str, image : ImageWrapper, resizeTo : tuple[int,int] | None) -> None:
+    CacheableOperationSymbol.report_exporting_file(relpath=relpath)
+    fullpath = os.path.join(rootdir, relpath)
     os.makedirs(os.path.dirname(fullpath), exist_ok=True)
     image.save_to_path(fullpath, resizeTo=resizeTo)
 
