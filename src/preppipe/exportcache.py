@@ -33,25 +33,27 @@ class CacheableOperationSymbol(Symbol):
   #   "version": <__version__>,
   #   "cacheable": [<name1>, <name2>, ...]
   # }
-  CACHE_FILE_NAME : typing.ClassVar[str] = 'cache.json'
+  CACHE_FILE_NAME : typing.ClassVar[str] = '.preppipe_export_cache.json'
 
   def get_export_file_list(self) -> list[str]:
     # 返回这个操作导出的文件列表，只需要基于输出根目录的相对路径
     raise NotImplementedError("Should be implemented by subclass")
 
+  @classmethod
+  def cls_prepare_export(cls, tp : concurrent.futures.ThreadPoolExecutor) -> None:
+    # 如果需要执行操作，这个函数会在执行前被调用一次
+    # 要 jit 或者做一些其他准备工作的话可以在这里做
+    pass
+
+  def instance_prepare_export(self, tp : concurrent.futures.ThreadPoolExecutor) -> bool:
+    # 每个实例在执行前会在主线程调用这个函数
+    # 如果返回 False 则表示这个操作不需要执行
+    return True
+
   def run_export(self, output_rootdir : str) -> None:
     # 执行这个操作的导出，output_rootdir 是输出根目录
     # 一般会在一个新的线程中执行这个操作
     raise NotImplementedError("Should be implemented by subclass")
-
-  def get_depended_assets(self) -> list[str]:
-    # 返回这个操作依赖的资源文件列表
-    # 所有需要的资源都会在导出前预加载，这样资源使用时就不用管加载时的 race condition 问题
-    return []
-
-  def get_workload_cpu_usage_estimate(self) -> float:
-    # 返回这个操作的 CPU 使用量估计(1: CPU 密集型；0: I/O 密集型)，用于计算线程池的大小和计算调度
-    return 0.5
 
   @staticmethod
   def run_export_all(ops: "typing.Iterable[CacheableOperationSymbol]", output_rootdir : str) -> None:
@@ -78,10 +80,9 @@ class CacheableOperationSymbol(Symbol):
     asset_manager = AssetManager.get_instance()
 
     all_ops : list[str] = []
-    todo_ops : list[tuple[CacheableOperationSymbol, float]] = [] # (op, cpu_usage_estimate)
-    loaded_assets : set[str] = set() # 已尝试预加载的资源
-    cpu_usage_sum = 0.0
-    cpu_usage_minimum = 0.2
+    todo_ops_dict : dict[type, list[CacheableOperationSymbol]] = {}
+    threadpool = None
+    task_count = 0
     for elem in ops:
       all_ops.append(elem.name)
       if elem.name in existing_ops:
@@ -95,55 +96,25 @@ class CacheableOperationSymbol(Symbol):
         if all_files_exist:
           continue
 
-      for asset in elem.get_depended_assets():
-        if asset in loaded_assets:
-          continue
-        asset_manager.get_asset(asset)
-        loaded_assets.add(asset)
+      # 自定义准备工作
+      if threadpool is None:
+        threadpool = concurrent.futures.ThreadPoolExecutor()
+      opclass = elem.__class__
+      if opclass not in todo_ops_dict:
+        opclass.cls_prepare_export(threadpool)
+        todo_ops_dict[opclass] = []
+      if not elem.instance_prepare_export(threadpool):
+        continue
+      todo_ops_dict[opclass].append(elem)
+      task_count += 1
 
-      # 我们确认这个操作需要且可以执行
-      cpu_usage_estimate = elem.get_workload_cpu_usage_estimate()
-      if cpu_usage_estimate < 0 or cpu_usage_estimate > 1:
-        raise ValueError("Invalid CPU usage estimate")
-      todo_ops.append((elem, cpu_usage_estimate))
-      cpu_usage_sum += max(cpu_usage_minimum, cpu_usage_estimate)
-      is_cache_require_change = True
-
-    threadpool = None
-    task_count = len(todo_ops)
     if task_count > 0:
-      # 有操作需要执行
-      # 我们需要手动计算线程数量，因为默认值假设的是 I/O 密集型任务
-      numthreads = os.cpu_count()
-      threads_multiplier = task_count / cpu_usage_sum
-      if numthreads is None:
-        numthreads = 1
-      numthreads = min(max(1, int(numthreads * threads_multiplier)), task_count)
-      threadpool = concurrent.futures.ThreadPoolExecutor(max_workers=numthreads)
-      todo_ops.sort(key=lambda x: x[1], reverse=True)
-      # 交替执行操作
-      is_scheduling_io = True
-      io_cpu_usage_sum = 0.0
-      cpu_cpu_usage_sum = 0.0
-      num_io_tasks_scheduled = 0
-      num_cpu_tasks_scheduled = 0
-      while num_io_tasks_scheduled + num_cpu_tasks_scheduled < task_count:
-        if is_scheduling_io:
-          op, cpu_usage_estimate = todo_ops[task_count - 1 - num_io_tasks_scheduled]
+      is_cache_require_change = True
+      if threadpool is None:
+        raise PPInternalError("Threadpool not initialized")
+      for opclass, op_list in todo_ops_dict.items():
+        for op in op_list:
           threadpool.submit(op.run_export, output_rootdir)
-          num_io_tasks_scheduled += 1
-          io_cpu_usage_sum += max(cpu_usage_minimum, cpu_usage_estimate)
-          next_cpu_usage = todo_ops[num_cpu_tasks_scheduled][1]
-          if io_cpu_usage_sum > (next_cpu_usage + cpu_cpu_usage_sum):
-            is_scheduling_io = False
-        else:
-          op, cpu_usage_estimate = todo_ops[num_cpu_tasks_scheduled]
-          threadpool.submit(op.run_export, output_rootdir)
-          num_cpu_tasks_scheduled += 1
-          cpu_cpu_usage_sum += max(cpu_usage_minimum, cpu_usage_estimate)
-          next_cpu_usage = todo_ops[task_count - 1 - num_io_tasks_scheduled][1]
-          if cpu_cpu_usage_sum > (next_cpu_usage + io_cpu_usage_sum):
-            is_scheduling_io = True
 
     if is_cache_require_change:
       # 更新缓存
