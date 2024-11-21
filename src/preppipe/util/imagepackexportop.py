@@ -9,6 +9,7 @@ from .imagepack import *
 from ..imageexpr import *
 from .message import MessageHandler
 from ..commontypes import *
+import concurrent.futures
 
 @IRObjectJsonTypeName("imagepack_export_op_symbol")
 class ImagePackExportOpSymbol(CacheableOperationSymbol):
@@ -22,6 +23,7 @@ class ImagePackExportOpSymbol(CacheableOperationSymbol):
   _composites_export_indices : OpOperand[IntLiteral] # 导出的图层组合的下标
   _composites_export_paths : OpOperand[StringLiteral] # 导出的路径
   _composites_target_sizes : OpOperand[IntTupleLiteral] # 如果要缩放大小的话，这里存放目标大小（如果不缩放的话应该和原图大小一致）
+  _fully_loaded_imagepacks : typing.ClassVar[dict[str, list[concurrent.futures.Future]] | None] = None # 用于记录已经加载过的图片包，避免重复加载
 
   _tr_imagepack_not_found = ImagePack.TR_imagepack.tr("export_op_imagepack_not_found",
     en="Image pack not found: {imagepack}",
@@ -86,26 +88,59 @@ class ImagePackExportOpSymbol(CacheableOperationSymbol):
     # 返回这个操作导出的文件列表，只需要基于输出根目录的相对路径
     return [use.value.get_string() for uselist in [self._layers_export_paths.operanduses(), self._composites_export_paths.operanduses()] for use in uselist]
 
-  def get_depended_assets(self) -> list[str]:
-    # 返回这个操作依赖的资源文件列表
-    result = [self._imagepack.get().get_string()]
-    # 如果 fork 参数里有文本，我们需要把字体资源给加进来
-    for use in self._fork_params.operanduses():
-      value = use.value
-      if isinstance(value, (StringLiteral, TextFragmentLiteral)):
-        if len(value.get_string()) > 0:
-          result.append(ImagePack.TEXT_IMAGE_FONT_ASSET)
-          break
-    return result
+  @classmethod
+  def cls_prepare_export(cls, tp : concurrent.futures.ThreadPoolExecutor) -> None:
+    # 如果需要执行操作，这个函数会在执行前被调用一次
+    # 要 jit 或者做一些其他准备工作的话可以在这里做
+    if cls._fully_loaded_imagepacks is not None:
+      raise PPInternalError("ImagePackExportOpSymbol.cls_prepare_export() called twice")
+    cls._fully_loaded_imagepacks = {}
+    # 不管怎样都尝试载入一下字体，反正字体也是到时按需载入
+    AssetManager.get_instance().get_asset(ImagePack.TEXT_IMAGE_FONT_ASSET)
+
+  def instance_prepare_export(self, tp : concurrent.futures.ThreadPoolExecutor) -> bool:
+    if self._fully_loaded_imagepacks is None:
+      raise PPInternalError("ImagePackExportOpSymbol.cls_prepare_export() not called")
+    imagepack_id = self._imagepack.get().get_string()
+    imagepack = AssetManager.get_instance().get_asset(imagepack_id)
+    if imagepack is None:
+      # 如果图片包不存在，我们就不用继续了
+      MessageHandler.warning(self._tr_imagepack_not_found.format(imagepack=self._imagepack.get().get_string()))
+      return False
+    if not isinstance(imagepack, ImagePack):
+      raise PPInternalError("Asset is not an image pack: " + self._imagepack.get().get_string())
+    # 检查我们是否需要载入该图片包的所有图片，是的话把它加到 _fully_loaded_imagepacks 中
+    if imagepack_id not in self._fully_loaded_imagepacks:
+      is_require_full_load = False
+      # 目前我们需要在 (1) 有 fork 参数时， (2) 需要改变导出的大小时载入图片
+      if self._fork_params.get_num_operands() > 0:
+        is_require_full_load = True
+      else:
+        for i in range(0, self._composites_target_sizes.get_num_operands()):
+          if self._composites_target_sizes.get_operand(i).value != (imagepack.width, imagepack.height):
+            is_require_full_load = True
+            break
+      if is_require_full_load:
+        future_list = []
+        self._fully_loaded_imagepacks[imagepack_id] = future_list
+        for l in imagepack.layers:
+          if l.patch.image is None:
+            tp.submit(l.patch.get)
+        for m in imagepack.masks:
+          if m.mask is not None:
+            if m.mask.image is None:
+              tp.submit(m.mask.get)
+    return True
 
   def run_export(self, output_rootdir : str) -> None:
     # 执行这个操作的导出，output_rootdir 是输出根目录
     # 一般会在一个新的线程中执行这个操作
-    imagepack = AssetManager.get_instance().get_asset(self._imagepack.get().get_string())
-    if imagepack is None:
-      # 如果图片包不存在，我们就不用继续了
-      MessageHandler.warning(self._tr_imagepack_not_found.format(imagepack=self._imagepack.get().get_string()))
-      return
+    imagepack_id = self._imagepack.get().get_string()
+    if self._fully_loaded_imagepacks is None:
+      raise PPInternalError("ImagePackExportOpSymbol.cls_prepare_export() not called")
+    if imagepack_id in self._fully_loaded_imagepacks:
+      concurrent.futures.wait(self._fully_loaded_imagepacks[imagepack_id])
+    imagepack = AssetManager.get_instance().get_asset(imagepack_id)
     if not isinstance(imagepack, ImagePack):
       raise PPInternalError("Asset is not an image pack: " + self._imagepack.get().get_string())
     # 如果需要 fork 操作，我们就执行 fork 操作
