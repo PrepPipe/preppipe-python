@@ -29,6 +29,7 @@ import textwrap
 import re
 import graphviz
 import shutil
+import concurrent.futures
 
 from preppipe.irbase import IRValueMapper, Location, Operation
 
@@ -435,7 +436,6 @@ class ImagePack(NamedAssetClassBase):
         non_zero_indices = np.where((mask_data > 0) & (base_data[:,:,3] > 0))
       else:
         non_zero_indices = np.where(mask_data > 0)
-    ImagePack.print_checkpoint("non_zero_indices done")
 
     base_alpha = None
     if base_shape[2] == 4:
@@ -450,7 +450,6 @@ class ImagePack(NamedAssetClassBase):
     compensate_hsv[:, 0] = base_hsv[0]
     base_rgb = ImagePack.ndarray_hsv_to_rgb(compensate_hsv)
     delta_rgb = base_forchange.astype(np.int16) - base_rgb.astype(np.int16)
-    ImagePack.print_checkpoint("base_decomp done")
 
     # step 2: compute the pure new color
     hsv_values = np.copy(original_hsv)
@@ -475,7 +474,6 @@ class ImagePack(NamedAssetClassBase):
       hsv_values[:, 0] = new_hsv[:, 0]
       hsv_values[:, 1] = np.clip(hsv_values[:, 1] + saturation_adjust, 0, 1)
       hsv_values[:, 2] = np.clip(hsv_values[:, 2] + value_adjust, 0, 1)
-    ImagePack.print_checkpoint("hsv_values done")
 
     # Convert the modified HSV values back to RGB
     new_rgb = ImagePack.ndarray_hsv_to_rgb(hsv_values)
@@ -570,7 +568,64 @@ class ImagePack(NamedAssetClassBase):
     ydiffmin = min(vertices[2][1] - vertices[0][1], vertices[3][1] - vertices[1][1])
     return (xdiffmin, ydiffmin)
 
-  def fork_applying_mask(self, args : list[Color | PIL.Image.Image | str | tuple[str, Color] | None]):
+  @staticmethod
+  def create_forked_layer(imgwidth : int, imgheight : int, l : LayerInfo, layerindex: int, applicable_forks : list[tuple[MaskInfo, Color | PIL.Image.Image | str | tuple[str, Color] | None]]) -> LayerInfo:
+    # 开始修改，先把图弄全
+    if l.patch.get().mode in ("RGBA", "RGB"):
+      patch_array = np.array(l.patch.get())
+    else:
+      patch_array = np.array(l.patch.get().convert("RGBA"))
+    cur_base = np.zeros((imgheight, imgwidth, patch_array.shape[2]), dtype=np.uint8)
+    cur_base[l.offset_y:l.offset_y+l.height, l.offset_x:l.offset_x+l.width] = patch_array
+
+    for m, arg in applicable_forks:
+      # 在开始前，如果输入是图像且需要进行转换，则执行操作
+      if isinstance(arg, Color):
+        converted_arg = arg
+      else:
+        # 之前应该检查过了
+        assert m.projective_vertices is not None
+        if not isinstance(arg, PIL.Image.Image):
+          start_point_size = ImagePack.get_starting_font_point_size(imgwidth, imgheight)
+          text_image_size = ImagePack.get_projective_rectangular_size_for_text(m.projective_vertices)
+          text = ''
+          color = None
+          if isinstance(arg, str):
+            text = arg
+          elif isinstance(arg, tuple):
+            text, color = arg
+          arg = ImagePack.create_text_image_for_mask(text, color, start_point_size, text_image_size, m.mask_color)
+        converted_arg = np.full((imgheight, imgwidth, 3), m.mask_color.to_float_tuple_rgb(), dtype=np.float32)
+        srcpoints = np.matrix([[0, 0], [arg.width-1, 0], [0, arg.height-1], [arg.width-1, arg.height-1]], dtype=np.float32)
+        dstpoints = np.matrix(m.projective_vertices, dtype=np.float32)
+        projective_matrix = cv2.getPerspectiveTransform(srcpoints, dstpoints)
+        converted_arg = cv2.warpPerspective(src=np.array(arg.convert("RGB")).astype(np.float32)/255.0, M=projective_matrix, dsize=(imgwidth, imgheight), dst=converted_arg, flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_TRANSPARENT)
+        converted_arg = (converted_arg * 255.0).astype(np.uint8) # type: ignore
+
+      # 转换当前的 mask
+      mask_data = None
+      if m.mask is not None:
+        mask_data = PIL.Image.new("L", (imgwidth, imgheight), color=0)
+        mask_data.paste(m.mask.get().convert("L"), (m.offset_x, m.offset_y))
+        mask_data = np.array(mask_data)
+
+      cur_base = ImagePack.change_color_hsv_pillow(cur_base, mask_data, m.mask_color, converted_arg)
+
+    if cur_base.shape[2] == 3:
+      mode = "RGB"
+    else:
+      mode = "RGBA"
+    newbase = PIL.Image.fromarray(cur_base, mode)
+    bbox = newbase.getbbox()
+    if bbox is None:
+      raise PPInternalError("Empty base after applying mask?")
+    offset_x, offset_y, xmax, ymax = bbox
+    return ImagePack.LayerInfo(ImageWrapper(image=newbase.crop(bbox)),
+                                    offset_x=offset_x, offset_y=offset_y,
+                                    width=xmax-offset_x, height=ymax-offset_y,
+                                    base=True, toggle=l.toggle, basename=l.basename)
+
+  def fork_applying_mask(self, args : list[Color | PIL.Image.Image | str | tuple[str, Color] | None], enable_parallelization : bool = False):
     # 创建一个新的 imagepack, 将 mask 所影响的部分替换掉
     if not self.is_imagedata_loaded():
       raise PPInternalError("Cannot fork_applying_mask() without data")
@@ -584,13 +639,15 @@ class ImagePack(NamedAssetClassBase):
     resultpack.opaque_metadata["forked"] = True
 
     # 开始搬运 layers
-    for layerindex in range(len(self.layers)): # pylint: disable=consider-using-enumerate
-      l = self.layers[layerindex]
+    forkinglayers : dict[int, list[tuple[ImagePack.MaskInfo, Color | PIL.Image.Image | str | tuple[str, Color] | None]]] = {}
+    newlayers : dict[int, ImagePack.LayerInfo | None] = {}
+    for layerindex, l in enumerate(self.layers):
       if not l.base:
-        resultpack.layers.append(l)
+        newlayers[layerindex] = l
         continue
-      cur_base = None
-      ImagePack.print_checkpoint("base apply start")
+
+      # 检查当前基底是否必须修改，不修改的话还是可以直接搬
+      applicable_forks : list[tuple[ImagePack.MaskInfo, Color | PIL.Image.Image | str | tuple[str, Color] | None]] = []
       for m, arg in zip(self.masks, args):
         # 如果当前 mask 不需要改动则跳过
         if arg is None:
@@ -601,70 +658,34 @@ class ImagePack(NamedAssetClassBase):
         # 如果当前 mask 不支持图像输入但给了图像则报错
         if m.projective_vertices is None and not isinstance(arg, Color):
           raise PPInternalError("Mask does not support image input")
+        # 到这的话就应该需要了
+        applicable_forks.append((m, arg))
 
-        # 当前 mask 需要加在图层上
-        # 将 base 转化为合适的形式
-        if cur_base is None:
-          # 把图弄全
-          if l.patch.get().mode in ("RGBA", "RGB"):
-            patch_array = np.array(l.patch.get())
-          else:
-            patch_array = np.array(l.patch.get().convert("RGBA"))
-          cur_base = np.zeros((self.height, self.width, patch_array.shape[2]), dtype=np.uint8)
-          cur_base[l.offset_y:l.offset_y+l.height, l.offset_x:l.offset_x+l.width] = patch_array
-          ImagePack.print_checkpoint("base prep done")
+      if len(applicable_forks) == 0:
+        newlayers[layerindex] = l
+        continue
 
-        # 在开始前，如果输入是图像且需要进行转换，则执行操作
-        if isinstance(arg, Color):
-          converted_arg = arg
-        else:
-          # 之前应该检查过了
-          assert m.projective_vertices is not None
-          if not isinstance(arg, PIL.Image.Image):
-            start_point_size = ImagePack.get_starting_font_point_size(self.width, self.height)
-            text_image_size = ImagePack.get_projective_rectangular_size_for_text(m.projective_vertices)
-            text = ''
-            color = None
-            if isinstance(arg, str):
-              text = arg
-            elif isinstance(arg, tuple):
-              text, color = arg
-            arg = ImagePack.create_text_image_for_mask(text, color, start_point_size, text_image_size, m.mask_color)
-          converted_arg = np.full((self.height, self.width, 3), m.mask_color.to_float_tuple_rgb(), dtype=np.float32)
-          srcpoints = np.matrix([[0, 0], [arg.width-1, 0], [0, arg.height-1], [arg.width-1, arg.height-1]], dtype=np.float32)
-          dstpoints = np.matrix(m.projective_vertices, dtype=np.float32)
-          projective_matrix = cv2.getPerspectiveTransform(srcpoints, dstpoints)
-          converted_arg = cv2.warpPerspective(src=np.array(arg.convert("RGB")).astype(np.float32)/255.0, M=projective_matrix, dsize=(self.width, self.height), dst=converted_arg, flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_TRANSPARENT)
-          converted_arg = (converted_arg * 255.0).astype(np.uint8) # type: ignore
+      forkinglayers[layerindex] = applicable_forks
 
-        # 转换当前的 mask
-        mask_data = None
-        if m.mask is not None:
-          mask_data = PIL.Image.new("L", (self.width, self.height), color=0)
-          mask_data.paste(m.mask.get().convert("L"), (m.offset_x, m.offset_y))
-          mask_data = np.array(mask_data)
-
-        cur_base = ImagePack.change_color_hsv_pillow(cur_base, mask_data, m.mask_color, converted_arg)
-        ImagePack.print_checkpoint("mask applied")
-      if cur_base is None:
-        # 该图层可以原封不动地放到结果里
-        resultpack.layers.append(l)
+    if len(forkinglayers) > 0:
+      if len(forkinglayers) == 1 or not enable_parallelization:
+        for layerindex, applicable_forks in forkinglayers.items():
+          newlayers[layerindex] = ImagePack.create_forked_layer(self.width, self.height, self.layers[layerindex], layerindex, applicable_forks)
       else:
-        if cur_base.shape[2] == 3:
-          mode = "RGB"
-        else:
-          mode = "RGBA"
-        newbase = PIL.Image.fromarray(cur_base, mode)
-        bbox = newbase.getbbox()
-        if bbox is None:
-          raise PPInternalError("Empty base after applying mask?")
-        offset_x, offset_y, xmax, ymax = bbox
-        newlayer = ImagePack.LayerInfo(ImageWrapper(image=newbase.crop(bbox)),
-                                       offset_x=offset_x, offset_y=offset_y,
-                                       width=xmax-offset_x, height=ymax-offset_y,
-                                       base=True, toggle=l.toggle, basename=l.basename)
-        resultpack.layers.append(newlayer)
-        ImagePack.print_checkpoint("crop done")
+        futures = {}
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+          for layerindex, applicable_forks in forkinglayers.items():
+            futureobj = executor.submit(ImagePack.create_forked_layer, self.width, self.height, self.layers[layerindex], layerindex, applicable_forks)
+            futures[layerindex] = futureobj
+        for layerindex, future in futures.items():
+          newlayers[layerindex] = future.result()
+    if len(resultpack.layers) > 0:
+      raise PPInternalError("Layers already initialized?")
+    for i in range(len(self.layers)):
+      newlayer = newlayers[i]
+      if newlayer is None:
+        raise PPInternalError("layer not computed")
+      resultpack.layers.append(newlayer)
     return resultpack
 
   @staticmethod
