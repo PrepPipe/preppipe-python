@@ -249,12 +249,13 @@ class AssetUsage:
         # 2. AssetPlaceholderTrait 或 AssetDeclarationTrait 的子类，代表占位、声明的内容
         # 3. LiteralExpr 的子类，可以引用其他资源，表示对一个或多个资源的某种处理
         #    注意 LiteralExpr 子类也可能继承 AssetPlaceholderTrait 或 AssetDeclarationTrait，如果是这样的话我们视其为第二类
-        # 4. 其他无法识别的内容（应该是 Literal），全部忽略
+        # 4. VNAssetValueSymbol ，这些是在场景、角色声明时列举的内容。碰到这类值的话我们把它们作为最终结果
+        # 其他无法识别的内容（应该是 Literal）全部忽略
         worklist = collections.deque()
         worklist.append(directvalue)
         while not len(worklist) == 0:
           curvalue = worklist.popleft()
-          if isinstance(curvalue, (AssetData, AssetPlaceholderTrait, AssetDeclarationTrait)):
+          if isinstance(curvalue, (AssetData, AssetPlaceholderTrait, AssetDeclarationTrait, VNAssetValueSymbol)):
             if curvalue not in asset_references:
               asset_references[curvalue] = [directvalue]
             else:

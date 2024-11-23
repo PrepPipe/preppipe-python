@@ -163,10 +163,12 @@ class VNCodeGen:
   _all_functions : dict[VNASTFunction, VNFunction]
   _func_prebody_map : dict[VNFunction, Block]
   _func_postbody_map : dict[VNFunction, Block]
-  #_char_sprite_map : dict[VNCharacterSymbol, dict[str, VNASTNamespaceSwitchableValueSymbol]]
   _char_parent_map : dict[VNCharacterSymbol, VNASTCharacterSymbol]
+  _char_sprite_map : dict[VNCharacterSymbol, dict[str, VNAssetValueSymbol]]
+  _char_sideimage_map : dict[VNCharacterSymbol, dict[str, VNAssetValueSymbol]]
   _char_state_matcher : dict[VNCharacterSymbol, PartialStateMatcher]
   _scene_parent_map : dict[VNSceneSymbol, VNASTSceneSymbol]
+  _scene_background_map : dict[VNSceneSymbol, dict[str, VNAssetValueSymbol]]
   _scene_state_matcher : dict[VNSceneSymbol, PartialStateMatcher]
   _global_parsecontext : ParseContext
   _global_say_index : int
@@ -181,10 +183,12 @@ class VNCodeGen:
     self._all_functions = {}
     self._func_prebody_map = {}
     self._func_postbody_map = {}
-    #self._char_sprite_map = {}
     self._char_parent_map = {}
+    self._char_sprite_map = {}
+    self._char_sideimage_map = {}
     self._char_state_matcher = {}
     self._scene_parent_map = {}
+    self._scene_background_map = {}
     self._scene_state_matcher = {}
     narrator = VNCharacterSymbol.create_narrator(self.ast.context)
     self._global_parsecontext = VNCodeGen.ParseContext(parent=None, narrator=narrator)
@@ -249,9 +253,9 @@ class VNCodeGen:
       return func
     return None
 
-  def resolve_asset(self, name : str, from_namespace : tuple[str, ...], parsecontext : ParseContext) -> VNConstExprAsSymbol | None:
+  def resolve_asset(self, name : str, from_namespace : tuple[str, ...], parsecontext : ParseContext) -> VNAssetValueSymbol | None:
     asset = self.resolver.unqualified_lookup(name, from_namespace, None)
-    if asset is None or not isinstance(asset, VNConstExprAsSymbol):
+    if asset is None or not isinstance(asset, VNAssetValueSymbol):
       return None
     return asset
 
@@ -1064,38 +1068,35 @@ class VNCodeGen:
       return node
 
     def get_character_sprite(self, character : VNCharacterSymbol, state : tuple[str,...]) -> Value | None:
-      if srccharacter := self.codegen.get_character_astnode(character):
-        sprite = srccharacter.sprites.get(','.join(state))
-        if isinstance(sprite, VNASTNamespaceSwitchableValueSymbol):
-          sprite = sprite.get_value(self.namespace_tuple)
-        return sprite
+      if curmap := self.codegen._char_sprite_map.get(character):
+        if sprite := curmap.get(','.join(state)):
+          # TODO 检查命名空间
+          return sprite
       return None
 
     def get_character_sideimage(self, character : VNCharacterSymbol, state : tuple[str,...] | None) -> Value | None:
       # state 如果有的话就是一个经过了状态匹配的完整状态
       # 由于我们认为立绘的状态是所有可能的状态的集合，而侧边头像状态是立绘状态的子集，
       # 我们这里会在找不到选项时尝试把状态串缩短来找到最佳的匹配项
-      if srcsayer := self.codegen.get_character_astnode(character):
-        if len(srcsayer.sideimages) > 0:
+      if curmap := self.codegen._char_sideimage_map.get(character):
+        if len(curmap) > 0:
           if state is None:
             state = ()
           statestr = ','.join(state)
           while True:
-            if sideimage := srcsayer.sideimages.get(statestr):
-              return sideimage.get_value(self.namespace_tuple)
+            if sideimage := curmap.get(statestr):
+              # TODO 检查命名空间
+              return sideimage
             if len(state) == 0:
               break
             state = state[:-1]
       return None
 
     def get_scene_background(self, scene : VNSceneSymbol, state : tuple[str, ...]) -> Value | None:
-      if scene in self.codegen._scene_parent_map:
-        srcscene = self.codegen._scene_parent_map[scene]
-        background = srcscene.backgrounds.get(','.join(state))
-        if isinstance(background, VNASTNamespaceSwitchableValueSymbol):
-          background = background.get_value(self.namespace_tuple)
-        return background
-      return None
+      if curmap := self.codegen._scene_background_map.get(scene):
+        if background := curmap.get(','.join(state)):
+          # TODO 检查 background.get_owner_namespace()
+          return background
 
     _tr_character_state_empty = TR_vn_codegen.tr("character_state_empty",
       en="Character {character}: No sprite state declared, therefore all state changes will be ignored. If you want to introduce sprite change when the character state changes, please declare all sprite states when declaring the character.",
@@ -1486,7 +1487,7 @@ class VNCodeGen:
               # 如果有描述的话，我们在 VNModel 中创建一个 Asset，把名字记下来
               if len(description) > 0:
                 name = "undeclared_" + '_'.join(description)
-                symb = VNConstExprAsSymbol.create(context=self.context, value=content, name=name, loc=node.location)
+                symb = VNAssetValueSymbol.create(context=self.context, value=content, name=name, loc=node.location)
                 self.codegen.get_or_create_ns(self.namespace_tuple).add_asset(symb)
             case VNASTAssetIntendedOperation.OP_REMOVE:
               content = self._create_image_expr(assetdata) if assetdata is not None else None
@@ -2083,11 +2084,11 @@ class VNCodeGen:
           case VNASTAssetKind.KIND_IMAGE:
             if not isinstance(value, BaseImageLiteralExpr):
               raise PPNotImplementedError
-            symb = VNConstExprAsSymbol.create(context=self.context, value=value, name=name, loc=asset.location)
+            symb = VNAssetValueSymbol.create(context=self.context, value=value, name=name, loc=asset.location)
           case VNASTAssetKind.KIND_AUDIO:
             if not isinstance(value, AudioAssetData):
               raise PPNotImplementedError
-            symb = VNConstExprAsSymbol.create(context=self.context, value=value, name=name, loc=asset.location)
+            symb = VNAssetValueSymbol.create(context=self.context, value=value, name=name, loc=asset.location)
           case _:
             # 其他资源暂不支持
             raise PPNotImplementedError("TODO")
@@ -2111,15 +2112,21 @@ class VNCodeGen:
           aliasname = u.value.get_string()
           alias = VNAliasSymbol.create(context=self.context, name=aliasname, target_name=symb.name, target_namespace=ns.get_namespace_string(), loc=symb.location)
           ns.add_alias(alias)
+        bg_map = {}
+        self._scene_background_map[symb] = bg_map
         for bg in scene.backgrounds:
-          state = bg.name.split(',')
-          matcher.add_valid_state(tuple(state))
           # 尝试声明背景资源
           bg_img = bg.get_value(nstuple)
           if not isinstance(bg_img, BaseImageLiteralExpr):
             raise PPNotImplementedError
-          bg_entry = VNConstExprAsSymbol.create(context=self.context, value=bg_img, name=bg.name, loc=scene.location)
+          bg_entry = VNAssetValueSymbol.create(context=self.context, value=bg_img, name=bg.name, loc=scene.location)
           symb.backgrounds.add(bg_entry)
+          bg_map[bg.name] = bg_entry
+          matcher.add_valid_state(tuple(bg.name.split(',')))
+          for use in bg.aliases.operanduses():
+            aliasname = use.value.get_string()
+            bg_map[aliasname] = bg_entry
+            matcher.add_valid_state(tuple(aliasname.split(',')))
         matcher.finish_init()
 
       for character in file.characters:
@@ -2177,19 +2184,28 @@ class VNCodeGen:
           saytext_style = next(iter(saytext_styles))
           symb.saytext_style.set_operand(0, saytext_style)
         # 添加立绘信息
+        sprite_map = {}
+        self._char_sprite_map[symb] = sprite_map
         for sprite in character.sprites:
           # 添加立绘状态
           if not isinstance(sprite, VNASTNamespaceSwitchableValueSymbol):
             raise PPAssertionError
-          state = sprite.name.split(',')
-          matcher.add_valid_state(tuple(state))
           # 尝试声明立绘资源
           sprite_img = sprite.get_value(nstuple)
           if not isinstance(sprite_img, BaseImageLiteralExpr):
             raise PPNotImplementedError
-          sprite_entry = VNConstExprAsSymbol.create(context=self.context, value=sprite_img, name=sprite.name, loc=character.location)
+          sprite_entry = VNAssetValueSymbol.create(context=self.context, value=sprite_img, name=sprite.name, loc=character.location)
           symb.sprites.add(sprite_entry)
+          sprite_map[sprite.name] = sprite_entry
+          matcher.add_valid_state(tuple(sprite.name.split(',')))
+          for use in sprite.aliases.operanduses():
+            aliasname = use.value.get_string()
+            sprite_map[aliasname] = sprite_entry
+            matcher.add_valid_state(tuple(aliasname.split(',')))
+
         # 如果有侧边头像的话把它们也加进去
+        sideimage_map = {}
+        self._char_sideimage_map[symb] = sideimage_map
         for sideimage in character.sideimages:
           if not isinstance(sideimage, VNASTNamespaceSwitchableValueSymbol):
             raise PPAssertionError
@@ -2197,8 +2213,12 @@ class VNCodeGen:
           sideimage_img = sideimage.get_value(nstuple)
           if not isinstance(sideimage_img, BaseImageLiteralExpr):
             raise PPNotImplementedError
-          sideimage_entry = VNConstExprAsSymbol.create(context=self.context, value=sideimage_img, name=sideimage.name, loc=character.location)
+          sideimage_entry = VNAssetValueSymbol.create(context=self.context, value=sideimage_img, name=sideimage.name, loc=character.location)
           symb.sideimages.add(sideimage_entry)
+          sideimage_map[sideimage.name] = sideimage_entry
+          for use in sideimage.aliases.operanduses():
+            aliasname = use.value.get_string()
+            sideimage_map[aliasname] = sideimage_entry
         matcher.finish_init()
 
       for variable in file.variables:

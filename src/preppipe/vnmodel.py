@@ -224,24 +224,50 @@ class VNEffectFunctionType(StatelessType):
 @IRObjectJsonTypeName("vn_record_op")
 class VNSymbol(Symbol, Value):
   # 所有能够按名查找的（全局、顶层）内容的基类
-  # 有些内容（比如缩放后的图片，纯色图片等）既可以作为常量表达式也可以作为符号，但是只要需要赋予名称，他们一定需要绑为符号(可用 VNConstExprAsSymbol 解决)
+  # 有些内容（比如缩放后的图片，纯色图片等）既可以作为常量表达式也可以作为符号，但是只要需要赋予名称，他们一定需要绑为符号(可用 VNAssetValueSymbol 解决)
   # 有些内容（比如预设的转场效果等）主要是代码，参数部分很少，我们可以为它们新定义字面值(Literal)，然后用常量表达式来表示对它们的引用
   codename : OpOperand[StringLiteral]
 
 
 @IRObjectJsonTypeName("vn_cexpr_record_op")
-class VNConstExprAsSymbol(VNSymbol):
-  def construct_init(self, *, name: str, loc: Location, value : ConstExpr | LiteralExpr | AssetData, **kwargs) -> None:
+class VNAssetValueSymbol(VNSymbol):
+  # 用来给素材赋予名称、路径等信息
+  # 部分资源有可能是子命名空间独有的，但是我们不会把父项（角色、背景等）在子命名空间重复一遍（比如在 DLC 里有套新的立绘）
+  # 为了在这种情况下标识这些属于其他命名空间的素材，我们在这也留一个命名空间记录
+  # 如果该项为空，则素材属于本命名空间，否则这是归属的命名空间的完整路径
+  owner_namespace : OpOperand[StringLiteral]
+
+  def construct_init(self, *, name: str, loc: Location, value : ConstExpr | LiteralExpr | AssetData, owner_namespace: StringLiteral | None = None, **kwargs) -> None:
     assert isinstance(value, (ConstExpr, LiteralExpr, AssetData))
     super().construct_init(name=name, loc=loc, ty=value.valuetype, **kwargs)
     self._add_operand_with_value('value', value)
+    self._add_operand_with_value('owner_namespace', owner_namespace)
+
+  def post_init(self) -> None:
+    super().post_init()
+    self.owner_namespace = self.get_operand_inst('owner_namespace')
 
   def get_value(self) -> ConstExpr | LiteralExpr | AssetData:
     return self.get_operand('value') # type: ignore
 
+  def get_owner_namespace(self) -> str | None:
+    if s := self.owner_namespace.try_get_value():
+      return s.get_string()
+    return None
+
+  def set_owner_namespace(self, ns : str):
+    self.owner_namespace.set_operand(0, StringLiteral.get(ns, self.context))
+
+  def __str__(self):
+    # 可能会在资源使用情况分析中用到
+    parent = self.parent_op
+    if parent is None:
+      return self.name
+    return parent.name + '(' + self.name + ')'
+
   @staticmethod
   def create(context : Context, value : ConstExpr | LiteralExpr | AssetData, name : str, loc : Location | None = None):
-    return VNConstExprAsSymbol(init_mode=IRObjectInitMode.CONSTRUCT, context=context, value=value, name=name, loc=loc)
+    return VNAssetValueSymbol(init_mode=IRObjectInitMode.CONSTRUCT, context=context, value=value, name=name, loc=loc)
 
 
 # ------------------------------------------------------------------------------
@@ -555,11 +581,11 @@ class VNCharacterSymbol(VNSymbol):
   saytext_style : OpOperand[TextStyleLiteral] # 可以为空
 
   # 后端可能可以根据以下内容更好地给导出的资源起名
-  # 如果使用一个声明的资源，我们这里也直接引用其值而不引用资源声明的 VNConstExprAsSymbol
-  # （需要的话之后可以找到值相同的 VNConstExprAsSymbol 进行去重）
+  # 如果使用一个声明的资源，我们这里也直接引用其值而不引用资源声明的 VNAssetValueSymbol
+  # （需要的话之后可以找到值相同的 VNAssetValueSymbol 进行去重）
   # 这里只是声明一些可能会用到的，不用的话可以忽略，改变角色状态时肯定会带完整的值，不需要这里的信息
-  sprites : SymbolTableRegion[VNConstExprAsSymbol]
-  sideimages : SymbolTableRegion[VNConstExprAsSymbol]
+  sprites : SymbolTableRegion[VNAssetValueSymbol]
+  sideimages : SymbolTableRegion[VNAssetValueSymbol]
 
   @staticmethod
   def create(context : Context, kind : EnumLiteral[VNCharacterKind] | VNCharacterKind, name : str, codename : StringLiteral | str | None = None, loc : Location | None = None) -> VNCharacterSymbol:
@@ -582,7 +608,7 @@ class VNCharacterSymbol(VNSymbol):
 class VNSceneSymbol(VNSymbol):
 
   # 后端可能可以根据以下内容更好地给导出的资源起名
-  backgrounds : SymbolTableRegion[VNConstExprAsSymbol]
+  backgrounds : SymbolTableRegion[VNAssetValueSymbol]
 
   @staticmethod
   def create(context : Context, name : str, codename : StringLiteral | str | None = None, loc : Location | None = None):
@@ -1221,7 +1247,7 @@ class VNMenuInst(VNLocalTransferInstBase):
 @IRObjectJsonTypeName("vn_namespace_op")
 class VNNamespace(Symbol, NamespaceNodeInterface[VNSymbol]):
   functions : SymbolTableRegion[VNFunction]
-  assets : SymbolTableRegion[VNConstExprAsSymbol]
+  assets : SymbolTableRegion[VNAssetValueSymbol]
   characters : SymbolTableRegion[VNCharacterSymbol]
   scenes : SymbolTableRegion[VNSceneSymbol]
   devices : SymbolTableRegion[VNDeviceSymbol]
@@ -1266,8 +1292,8 @@ class VNNamespace(Symbol, NamespaceNodeInterface[VNSymbol]):
     self.devices.add(device)
     return device
 
-  def add_asset(self, asset : VNConstExprAsSymbol) -> VNConstExprAsSymbol:
-    assert isinstance(asset, VNConstExprAsSymbol)
+  def add_asset(self, asset : VNAssetValueSymbol) -> VNAssetValueSymbol:
+    assert isinstance(asset, VNAssetValueSymbol)
     self.assets.add(asset)
     return asset
 

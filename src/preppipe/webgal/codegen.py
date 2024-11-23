@@ -205,6 +205,8 @@ class _WebGalCodeGenHelper(BackendCodeGenHelperBase[WebGalNode]):
     return '/'.join(path_split_results[1:])
 
   def get_image_expr(self, v : Value, user_hint : VNStandardDeviceKind | None = None) -> str:
+    if isinstance(v, VNAssetValueSymbol):
+      return self.get_image_expr(v.get_value(), user_hint)
     asset_ref = self.get_asset_candidate_common(v, user_hint)
     if asset_ref is not None and asset_ref.internal_data is not None:
       if not isinstance(asset_ref.internal_data, str):

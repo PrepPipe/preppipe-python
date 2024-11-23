@@ -53,7 +53,7 @@ class BackendCodeGenHelperBase(typing.Generic[NodeType]):
   class NamedAssetInfo:
     value : Value
     kind : "BackendCodeGenHelperBase.NamedAssetKind"
-    self_symbol : VNConstExprAsSymbol | None = None # 该资源在哪被声明的（比如某角色的某立绘差分）
+    self_symbol : VNAssetValueSymbol | None = None # 该资源在哪被声明的（比如某角色的某立绘差分）
     parent_symbol : VNSymbol | None = None # 该资源的父级符号（比如哪个角色）
     internal_data : typing.Any | None = None
     used : bool = False # 是否被用到了。只在所有代码生成完后才能最终决定
