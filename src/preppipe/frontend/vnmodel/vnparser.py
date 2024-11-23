@@ -783,7 +783,6 @@ def _get_placeholder_desc_for_missing_img(context : Context, v : str):
 def _helper_parse_image_exprtree(parser : VNParser, state : VNASTParsingState, v : ListExprTreeNode, statetree : SymbolTableRegion[VNASTNamespaceSwitchableValueSymbol], placeholderdest : ImageExprPlaceholderDest, entityprefix : str, loc : Location):
   # 如果是一个词典，那么是个和角色立绘差不多的树状结构，每个子节点根一个图案表达式
   # 如果是一个值，那么只有一个图片
-  # 首先把一个值的情况解决了
   warnings : list[tuple[str,str]] = []
   nstuple = None
   matcher = PartialStateMatcher()
@@ -791,16 +790,27 @@ def _helper_parse_image_exprtree(parser : VNParser, state : VNASTParsingState, v
     nsstr = ns.get_string()
     nstuple = VNNamespace.expand_namespace_str(nsstr)
   nsstr = VNNamespace.stringize_namespace_path(nstuple) if nstuple is not None else '/'
-  def submit_expr(statestack : list[str], expr : Value, statestr : str | None = None):
-    nonlocal statetree
-    if statestr is None:
-      statestr = ','.join(statestack)
-    node = statetree.get(statestr)
-    if node is None:
-      node = VNASTNamespaceSwitchableValueSymbol.create(state.context, name=statestr, defaultvalue=expr, loc=loc)
-      statetree.add(node)
-    node.set_value(nsstr, expr)
-    matcher.add_valid_state(tuple(statestack))
+  # 我们想要把所有别名（比如其他语言下的差分名称）都存到主名称（用来做资源使用情况分析等）的“别名”区域
+  # 但是我们又想要支持覆盖别名
+  # 为了准确判断别名间的覆盖情况，我们中间多一个步骤，暂时把信息放在以下数据结构里，等全都定下来了再生成
+  value_id_to_inst : dict[int, Value] = {} # id(value) -> value
+  value_primary_names : dict[int, tuple[str, ...]] = {}
+  value_by_name : dict[tuple[str, ...], int] = {}
+
+  def submit_expr(statestack : list[str], expr : Value, aliases : list[list[str]] | None = None):
+    # matcher 一定要立即更新，后面会用到
+    vid = id(expr)
+    vnametuple = tuple(statestack)
+    value_id_to_inst[vid] = expr
+    value_primary_names[vid] = vnametuple
+    value_by_name[vnametuple] = vid
+    matcher.add_valid_state(vnametuple)
+    if aliases is not None:
+      statestack_prefix = [] if len(statestack) == 0 else statestack[:-1]
+      for alias in aliases:
+        aliasstack = tuple(statestack_prefix + alias)
+        value_by_name[aliasstack] = vid
+        matcher.add_valid_state(aliasstack)
 
   def visit_node(statestack : list[str], node : ListExprTreeNode):
     # 调用时应该已经把 node.key 放入 statestack 了
@@ -808,7 +818,7 @@ def _helper_parse_image_exprtree(parser : VNParser, state : VNASTParsingState, v
       # 尝试根据目前项的值来更新图片列表
       statestr = ','.join(statestack)
       placeholderdesc = entityprefix + ':' + statestr
-      children : list[tuple[list[str], BaseImageLiteralExpr]] = []
+      children : list[tuple[list[str], BaseImageLiteralExpr, list[list[str]]]] = []
       if isinstance(node.value, ImageAssetData):
         expr = node.value
       elif isinstance(node.value, CallExprOperand):
@@ -820,9 +830,9 @@ def _helper_parse_image_exprtree(parser : VNParser, state : VNASTParsingState, v
           referenced_states = [s.strip() for s in re.split(r'[,，]', node.value) if s]
           matches = matcher.find_match(statestack[:-1], referenced_states)
           if matches is not None:
-            target_state = ','.join(matches)
-            if target_node := statetree.get(target_state):
-              expr = target_node.get_value(nsstr)
+            vid = value_by_name.get(matches)
+            if vid is not None:
+              expr = value_id_to_inst[vid]
       else:
         raise PPInternalError('Unexpected node value type: ' + str(type(node.value)))
       if expr is None:
@@ -830,11 +840,12 @@ def _helper_parse_image_exprtree(parser : VNParser, state : VNASTParsingState, v
         msg = _tr_image_notfound_help.format(dest=placeholderdesc, expr=node.value)
         state.emit_error(code='vnparse-invalid-imageexpr', msg=msg, loc=loc)
         state.emit_assetnotfound(loc=loc)
-      submit_expr(statestack, expr, statestr)
+
+      submit_expr(statestack, expr)
       if len(children) > 0:
         # 如果有子结点，我们需要把子结点的所有差分组合都加到状态树里
-        for childstates, childexpr in children:
-          submit_expr(statestack + childstates, childexpr)
+        for childstates, childexpr, childaliases in children:
+          submit_expr(statestack + childstates, childexpr, childaliases)
     # 开始读取子结点
     for child in node.children:
       # 如果子结点没有键，就报错
@@ -846,6 +857,19 @@ def _helper_parse_image_exprtree(parser : VNParser, state : VNASTParsingState, v
       statestack.pop()
   statestack = []
   visit_node(statestack, v)
+
+  # 写回结果
+  value_nodes : dict[int, VNASTNamespaceSwitchableValueSymbol] = {}
+  used_vids = set(value_by_name.values())
+  for vid, vnametuple in value_primary_names.items():
+    if vid not in used_vids:
+      continue
+    namestr = ','.join(vnametuple)
+    node = VNASTNamespaceSwitchableValueSymbol.create(state.context, name=namestr, defaultvalue=value_id_to_inst[vid], loc=loc)
+    statetree.add(node)
+    value_nodes[vid] = node
+  for vnametuple, vid in value_by_name.items():
+    value_nodes[vid].add_alias(','.join(vnametuple))
 
   for t in warnings:
     code, msg = t

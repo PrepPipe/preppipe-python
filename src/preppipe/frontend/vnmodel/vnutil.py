@@ -201,7 +201,11 @@ _tr_composite_not_found = _TR_vn_util.tr("composite_not_found",
   zh_cn="未找到差分组合 {composite}",
   zh_hk="未找到差分組合 {composite}",
 )
-def emit_image_expr_from_callexpr(context : Context, call : CallExprOperand, placeholderdest : ImageExprPlaceholderDest, placeholderdesc: str, warnings : list[tuple[str, str]], children_out : list[tuple[list[str], BaseImageLiteralExpr]] | None = None) -> BaseImageLiteralExpr | None:
+def emit_image_expr_from_callexpr(context : Context, call : CallExprOperand, placeholderdest : ImageExprPlaceholderDest, placeholderdesc: str,
+                                  warnings : list[tuple[str, str]],
+                                  children_out : list[tuple[list[str], BaseImageLiteralExpr, list[list[str]]]] | None = None,
+                                  curstate_is_child : list[str] | None = None
+                                  ) -> BaseImageLiteralExpr | None:
   # 调用表达式有以下几种可能：(所有的分辨率输入均为可选项，解析完成后我们会尝试推导分辨率)
   # 占位（描述=...，分辨率=...），描述可选，按位参数视为描述
   # 声明（引用=...，分辨率=...）, 引用必需，按位参数视为引用
@@ -274,15 +278,17 @@ def emit_image_expr_from_callexpr(context : Context, call : CallExprOperand, pla
     if size is not None:
       converted_size = IntTupleLiteral.get(size, context)
     if len(composite) == 0 and children_out is not None:
+      composite = descriptor.get_default_composite()
       # 我们需要把该图片包中的所有差分组合都加到 children_out 中
       for c in descriptor.get_all_composites():
         imgexpr = ImagePackElementLiteralExpr.get(context=context, pack=descriptor.get_pack_id(), element=c, size=converted_size, mask_operands=args)
+        primary_name = c
         all_names = [c]
         if tr := descriptor.try_get_composite_name(c):
+          primary_name = tr.get()
           all_names.extend(tr.get_all_candidates())
-        for name in all_names:
-          children_out.append(([name], imgexpr))
-      composite = descriptor.get_default_composite()
+        all_names.remove(primary_name)
+        children_out.append(([primary_name], imgexpr, [[name] for name in all_names]))
     if composite_code := descriptor.get_composite_code_from_name(composite):
       return ImagePackElementLiteralExpr.get(context=context, pack=descriptor.get_pack_id(), element=composite_code, size=converted_size, mask_operands=args)
     if composite == descriptor.get_default_composite():
@@ -326,7 +332,7 @@ def emit_image_expr_from_callexpr(context : Context, call : CallExprOperand, pla
     return imageexpr
   return None
 
-def emit_image_expr_from_str(context : Context, s : str, basepath : str,  placeholderdest : ImageExprPlaceholderDest, placeholderdesc : str, warnings : list[tuple[str, str]], children_out : list[tuple[list[str], BaseImageLiteralExpr]] | None = None) -> BaseImageLiteralExpr | None:
+def emit_image_expr_from_str(context : Context, s : str, basepath : str,  placeholderdest : ImageExprPlaceholderDest, placeholderdesc : str, warnings : list[tuple[str, str]], children_out : list[tuple[list[str], BaseImageLiteralExpr, list[list[str]]]] | None = None) -> BaseImageLiteralExpr | None:
   # 不确定字符串是什么形式
   # 先尝试转化成调用表达式，不行的话试试当成路径
   # 都不行的话视为失败
