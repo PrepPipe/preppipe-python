@@ -268,6 +268,7 @@ class VNASTNamespaceSwitchableValueSymbol(Symbol):
   # 我们使用命名空间的字符串作为 OpOperand 的名称
   # 根命名空间('/')除外，放在 defaultvalue 里面
   defaultvalue : OpOperand
+  aliases : OpOperand[StringLiteral] # 0 到 N 个字符串，表示其他有哪些名字也可以由本 symbol 解析
 
   def get_value(self, ns : str | tuple[str, ...]) -> Value:
     if ns == '/' or ns == ():
@@ -297,6 +298,9 @@ class VNASTNamespaceSwitchableValueSymbol(Symbol):
         self._add_operand_with_value(ns, v)
     else:
       self.defaultvalue.set_operand(0, v)
+
+  def add_alias(self, name : str):
+    self.aliases.add_operand(StringLiteral.get(name, self.context))
 
   def get_short_str(self, indent : int = 0) -> str:
     result = 'NSSwitchable ' + str(self.defaultvalue.get())

@@ -151,7 +151,7 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
       self.global_name_dict[codename] = func
       self.func_dict[func] = _FunctionCodeGenHelper(codename = codename_l)
 
-  def handle_asset(self, asset : VNConstExprAsSymbol):
+  def handle_asset(self, asset : VNAssetValueSymbol):
     codename = asset.name
     if not self.check_identifier(codename):
       codename = self.get_unique_global_name(codename)
@@ -900,6 +900,8 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
     return definenode
 
   def _gen_asmexpr(self, v : Value, user_hint : VNStandardDeviceKind | None = None) -> str:
+    if isinstance(v, VNAssetValueSymbol):
+      return self._gen_asmexpr(v.get_value(), user_hint)
     if isinstance(v, AssetData):
       return '"' + self.add_assetdata(v, user_hint) + '"'
     if isinstance(v, PlaceholderImageLiteralExpr):
