@@ -27,7 +27,7 @@ def str2identifier(name : str) -> str:
     resultstr = _fallback_handling(name)
   else:
     result = pypinyin.lazy_pinyin(name, style=pypinyin.Style.NORMAL, neutral_tone_with_five=True, tone_sandhi=True, errors=lambda c : _fallback_handling(c))
-    resultstr = ''.join(result)
+    resultstr = ''.join([s.title() for s in result])
   assert len(resultstr) > 0
   if not (resultstr[0].isascii() and resultstr[0].isalpha()):
     resultstr = 'n_' + resultstr
