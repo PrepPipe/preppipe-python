@@ -56,7 +56,7 @@ cli_exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     version='versionfile_cli.txt',
-    icon=['preppipe.ico'],
+    icon=['preppipe_cli.ico'],
 )
 
 gui_pyz = PYZ(gui_a.pure, gui_a.zipped_data, cipher=block_cipher)
