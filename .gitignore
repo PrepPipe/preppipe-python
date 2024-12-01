@@ -159,3 +159,7 @@ src/preppipe/assets/_install
 
 # gui settings
 *.settings.db
+
+# version files for pyinstaller build
+versionfile_*.txt
+
