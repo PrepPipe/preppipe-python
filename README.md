@@ -19,7 +19,7 @@
 python3 -m preppipe.pipeline_cmd <commands...>
 ```
 
-文档在写了在写了。（https://github.com/PrepPipe/preppipe-docs）
+文档在写了在写了。([文档的仓库在这。](https://github.com/PrepPipe/preppipe-docs))
 
 QQ群：732421719
 
