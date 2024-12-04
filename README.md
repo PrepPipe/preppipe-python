@@ -28,6 +28,7 @@ QQ群：732421719
 如果您想构建一个开发环境，您需要安装以下 Python 依赖项。推荐在一个 `venv` 中操作。
   * 构建需要 `build twine`
   * 运行时需要的包在 [setup.cfg](setup.cfg) 的 `options.install_requires` 和 `options.extras_require` 下
+  * 部分依赖（比如 llist）可能需要您拥有 C/C++ 编译环境，如果安装依赖时报错请按照提示操作。
 
 语涵编译器在运行时需要使用 `ffmpeg` 进行音视频的格式转换。请确保程序能在运行时找到它，比如把路径加到 `PATH` 中。
 
