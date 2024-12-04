@@ -40,4 +40,4 @@ export PYTHONPATH=/path/to/preppipe/src
 ```
 git config --local include.path $PWD/gitconfig
 ```
-一个小卡拉米的报道……
+一个小卡拉米的报道0
