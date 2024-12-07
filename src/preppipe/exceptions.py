@@ -7,12 +7,12 @@
 from .language import TR_preppipe
 
 class PPInternalError(RuntimeError):
-  '''没有翻译的需求时时，替代默认的 RuntimeError'''
+  '''在没有翻译需求时，替代掉默认的 RuntimeError'''
   def __init__(self, msg : str = '') -> None:
     super().__init__(TR_preppipe.unreachable.get_with_msg(msg))
 
 class PPNotImplementedError(NotImplementedError):
-  '''没有翻译的需求时时，替代默认的 NotImplementedError'''
+  '''在没有翻译需求时，替代掉默认的 NotImplementedError'''
   def __init__(self, msg : str = '') -> None:
     super().__init__(TR_preppipe.not_implemented.get_with_msg(msg))
 
