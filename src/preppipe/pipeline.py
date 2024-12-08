@@ -858,14 +858,13 @@ def _check_is_using_tool() -> type | None:
   # (2) 如果该名称没有类注册，那么报错
   # 如果环境变量 PREPPIPE_TOOL 没有给出，直接返回 None
   if toolname := os.environ.get("PREPPIPE_TOOL"):
-    if len(toolname) > 0:
-      # "pipeline" 是保留给当前的主管线的
-      if toolname == "pipeline":
-        return None
-      if toolname in _registered_tools:
-        return _registered_tools[toolname]
-      else:
-        raise RuntimeError("Tool name " + toolname + " not registered")
+    # "pipeline" 是保留给当前主管线的
+    if toolname == "pipeline":
+      return None
+    if toolname in _registered_tools:
+      return _registered_tools[toolname]
+    else:
+      raise RuntimeError("Tool name " + toolname + " not registered")
 
 def pipeline_main(args : typing.List[str] | None = None):
   # 保持一个统一性，这个全局函数作为对外的接口
