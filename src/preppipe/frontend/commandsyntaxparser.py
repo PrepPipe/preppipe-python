@@ -24,8 +24,11 @@ from ..irbase import *
 from ..inputmodel import *
 from ..pipeline import TransformBase, MiddleEndDecl
 from ..exceptions import *
+from ..language import *
 
 # 命令扫描（语法分析阶段）
+
+TR_parser = TranslationDomain("frontendparser")
 
 # ------------------------------------------------------------------------------
 # Command AST definition
@@ -285,6 +288,12 @@ class CommandSyntaxAnalysisTransform(TransformBase):
       result.append(op)
     return result
 
+_tr_noncontent_entry_in_command = TR_parser.tr("noncontent_entry_in_command",
+  en="Command \"{cmdstr}\" contains unsupported element: {elemtype}; cannot parse the command.",
+  zh_cn="命令 \"{cmdstr}\" 包含不支持的内容：{elemtype}；无法解析该命令。",
+  zh_hk="命令 \"{cmdstr}\" 包含不支持的內容：{elemtype}；無法解析該命令。",
+)
+
 def check_is_command_start(b : Block, ctx: Context) -> tuple[str, list[AssetData], IMElementOp, list[IMElementOp], list[_InitParsedCommandInfo]] | None:
   # 检查该段是否含有以 _command_start_text 中所标的字符开头并且是纯内容（不包含像是 IMFrameOp, IMListOp这种），是的话就返回:
   # (1) 一个纯文本的段落内容，所有资源都以'\0'替代；
@@ -308,7 +317,8 @@ def check_is_command_start(b : Block, ctx: Context) -> tuple[str, list[AssetData
       # 碰到了一项非内容的
       # 如果我们已经找到了开始标记，就在开始标记前添加一个错误记录
       if first_op is not None:
-        error_op = ErrorOp.create(error_code='cmd-noncontent-entry-in-command', context=ctx, error_msg=StringLiteral.get(command_str, ctx), name='', loc = first_op.location)
+        errmsg = _tr_noncontent_entry_in_command.format(cmdstr=command_str, elemtype=str(type(op)))
+        error_op = ErrorOp.create(error_code='cmd-noncontent-entry-in-command', context=ctx, error_msg=StringLiteral.get(errmsg, ctx), name='', loc = first_op.location)
         error_op.insert_before(first_op)
       continue
     # 找到了一项内容
@@ -627,6 +637,12 @@ class _CommandParseVisitorImpl(CommandParseVisitor):
 # ------------------------------------------------------------------------------
 # 组装起来
 
+_tr_syntax_error = TR_parser.tr("syntax_error",
+  en="Command syntax error: {err}",
+  zh_cn="命令语法错误：{err}",
+  zh_hk="命令語法錯誤：{err}",
+)
+
 def _visit_command_block_impl(b : Block, ctx : Context, command_str : str, asset_list : typing.List[AssetData], insert_before_op : IMElementOp, infolist : list[_InitParsedCommandInfo]) -> GeneralCommandOp | None:
   # 如果生成了命令的话，返回最后一个生成的命令
   # 帮助生成位置信息
@@ -685,7 +701,8 @@ def _visit_command_block_impl(b : Block, ctx : Context, command_str : str, asset
     if error_listener.error_occurred:
       record = error_listener.get_error_record()
       errorloc = get_loc_at_offset(record.column)
-      errop = ErrorOp.create(error_code='cmd-parse-error', context=ctx, error_msg=StringLiteral.get(record.msg, ctx), name='', loc=errorloc)
+      errormsg = _tr_syntax_error.format(err=record.msg)
+      errop = ErrorOp.create(error_code='cmd-parse-error', context=ctx, error_msg=StringLiteral.get(errormsg, ctx), name='', loc=errorloc)
       errop.insert_before(insert_before_op)
       continue
     cmd_visitor = _CommandParseVisitorImpl(command_str, body_range_start, asset_map_dict, loc)

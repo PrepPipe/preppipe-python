@@ -15,7 +15,7 @@ from ..irbase import *
 from ..inputmodel import *
 from ..language import Translatable, TranslationDomain
 from ..nameresolution import NameResolver, NamespaceNode
-from .commandsyntaxparser import GeneralCommandOp, CMDValueSymbol, CMDPositionalArgOp, CommandCallReferenceType, try_parse_value_expr
+from .commandsyntaxparser import GeneralCommandOp, CMDValueSymbol, CMDPositionalArgOp, CommandCallReferenceType, try_parse_value_expr, TR_parser
 
 # ------------------------------------------------------------------------------
 # 解析器定义 （语义分析阶段）
@@ -353,8 +353,6 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
   #     这部分应该单独放在一个状态对象里，方便进行复制(fork)等操作
   # 第二部分的数据的类型应通过构造函数的 state_type 参数进行声明
 
-  TR_parser = TranslationDomain('frontendparser')
-
   @dataclasses.dataclass
   class CommandInvocationInfo:
     # 如果我们找到了一个可以用于处理给定命令的回调函数，我们用这个类型来保存参数以及警告
@@ -375,12 +373,18 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
           # should not be possible
           raise NotImplementedError()
 
+    _tr_cmdparser_param_conversion_failed = TR_parser.tr("cmdparser_param_conversion_failed",
+      en="Command parameter \"{param}\" cannot be converted to type \"{annotation}\"",
+      zh_cn="命令参数 \"{param}\" 无法转换为类型 \"{annotation}\"",
+      zh_hk="命令參數 \"{param}\" 無法轉換為類型 \"{annotation}\"",
+    )
+
     def try_add_parameter(self, param : inspect.Parameter, value : typing.Any) -> typing.Tuple[str, typing.Any] | None:
       # 尝试把给定的值赋予参数
       # 如果有错误的话返回错误
       target_value = FrontendParserBase.try_convert_parameter(param.annotation, value)
       if target_value is None:
-        return ('cmdparser-param-conversion-failed', param.name)
+        return ('cmdparser-param-conversion-failed', self._tr_cmdparser_param_conversion_failed.format(param=param.name, annotation=str(param.annotation)))
       self.add_parameter(param, target_value)
       return None
 
@@ -493,6 +497,17 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
     # 什么都没动的话就返回 None
     return None
 
+  _tr_listitem_unresolved_asset_reference = TR_parser.tr("listitem_unresolved_asset_reference",
+    en="Unresolved asset reference in list item ({loc})",
+    zh_cn="无法解析列表项中的资源引用 ({loc})",
+    zh_hk="無法解析列表項中的資源引用 ({loc})",
+  )
+  _tr_listitem_extra_asset_unused = TR_parser.tr("listitem_extra_asset_unused",
+    en="Extra asset reference in list item unused ({loc})",
+    zh_cn="列表项中有未使用的多余的资源引用 ({loc})",
+    zh_hk="列表項中有未使用的多餘的資源引用 ({loc})",
+  )
+
   def _populate_listexpr(self, src : IMListOp, warnings : list[tuple[str, str]], root: ListExprTreeNode) -> None:
     # 如果列表中有命令，那么使用该列表的命令总归可以接受原始的 GeneralCommandOp 输入来自行处理
     # 所以我们只需要处理所有“列表不包含命令”的情况
@@ -539,7 +554,7 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
           # 这是一个资源
           if len(asset_list) == 0:
             errcode = 'cmdparser-listitem-unresolved-asset-reference'
-            msg = str(frontop.location)
+            msg = self._tr_listitem_unresolved_asset_reference.format(loc=str(frontop.location))
             warnings.append((errcode, msg))
           else:
             value_v = asset_list[0]
@@ -561,7 +576,7 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
       # 检查是否所有内容都用上了
       if isinstance(value_v, AssetData) and len(asset_list) > 1 or len(asset_list) > 0:
         errcode = 'cmdparser-listitem-extra-asset-unused'
-        msg = str(frontop.location)
+        msg = self._tr_listitem_extra_asset_unused.format(loc=str(frontop.location))
         warnings.append((errcode, msg))
       root.children.append(childnode)
 
@@ -610,6 +625,47 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
     if issubclass(annotation, ExtendDataExprBase):
       return [annotation]
     return []
+
+  _tr_special_param_name_conflict = TR_parser.tr("special_param_name_conflict",
+    en="Special parameter \"{name}\" got user-specified value; it was supposed to be provided internally.",
+    zh_cn="特殊参数 \"{name}\" 有用户赋值；此参数本应由程序内部指定。",
+    zh_hk="特殊參數 \"{name}\" 有用戶賦值；此參數本應由程式內部指定。",
+  )
+  _tr_mismatched_type_for_extend_data = TR_parser.tr("mismatched_type_for_extend_data",
+    en="Extended argument type (list/block/table) does not match with the parameter specification ({name}).",
+    zh_cn="延伸参数类型（列表/特殊块/表格）与参数要求不符 ({name})。",
+    zh_hk="延伸參數類型（列表/特殊塊/表格）與參數要求不符 ({name})。",
+  )
+  _tr_unused_positional_args = TR_parser.tr("unused_positional_args",
+    en="Positional argument not used. First parameter \"{name}\" is taking value from the keyword argument.",
+    zh_cn="按位参数未使用。第一个参数 \"{name}\" 从关键字参数中取值。",
+    zh_hk="按位參數未使用。第一個參數 \"{name}\" 從關鍵字參數中取值。",
+  )
+  _tr_kwarg_using_positional_value = TR_parser.tr("kwarg_using_positional_value",
+    en="Parameter \"{name}\" can only appear as a keyword argument and it should not take value from the positional argument.",
+    zh_cn="参数 \"{name}\" 只能作为关键字参数使用，不应作为按位参数传值。",
+    zh_hk="參數 \"{name}\" 只能作為關鍵字參數使用，不應作為按位參數傳值。",
+  )
+  _tr_missing_param = TR_parser.tr("missing_param",
+    en="Parameter not provided: {name}",
+    zh_cn="参数未提供：{name}",
+    zh_hk="參數未提供：{name}",
+  )
+  _tr_unused_param = TR_parser.tr("unused_param",
+    en="Parameter not used: {name}",
+    zh_cn="参数未使用：{name}",
+    zh_hk="參數未使用：{name}",
+  )
+  _tr_positional_arg = TR_parser.tr("positional_arg",
+    en="<positional argument>",
+    zh_cn="<按位参数>",
+    zh_hk="<按位參數>",
+  )
+  _tr_extend_data = TR_parser.tr("extend_data",
+    en="<Extended argument>",
+    zh_cn="<延伸参数>",
+    zh_hk="<延伸參數>",
+  )
 
   def handle_command_invocation(self, state : ParserStateType, commandop : GeneralCommandOp, cmdinfo : FrontendCommandInfo):
     # 从所有候选命令实现中找到最合适的，并进行调用
@@ -663,7 +719,7 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
           is_parser_param_found = True
           cur_match.add_parameter(param, self)
           if name in kwargs:
-            cur_match.add_warning('cmdparser-special-param-name-conflict', name)
+            cur_match.add_warning('cmdparser-special-param-name-conflict', self._tr_special_param_name_conflict.format(name=name))
           continue
         if param.annotation == self.get_state_type():
           if is_state_param_found:
@@ -672,7 +728,7 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
           assert isinstance(state, self.get_state_type())
           cur_match.add_parameter(param, state)
           if name in kwargs:
-            cur_match.add_warning('cmdparser-special-param-name-conflict', name)
+            cur_match.add_warning('cmdparser-special-param-name-conflict', self._tr_special_param_name_conflict.format(name=name))
           continue
         if param.annotation == Context:
           if is_context_param_found:
@@ -680,7 +736,7 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
           is_context_param_found = True
           cur_match.add_parameter(param, self.context)
           if name in kwargs:
-            cur_match.add_warning('cmdparser-special-param-name-conflict', name)
+            cur_match.add_warning('cmdparser-special-param-name-conflict', self._tr_special_param_name_conflict.format(name=name))
           continue
         if param.annotation == GeneralCommandOp:
           if is_op_param_found:
@@ -688,7 +744,7 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
           is_op_param_found = True
           cur_match.add_parameter(param, commandop)
           if name in kwargs:
-            cur_match.add_warning('cmdparser-special-param-name-conflict', name)
+            cur_match.add_warning('cmdparser-special-param-name-conflict', self._tr_special_param_name_conflict.format(name=name))
           continue
         # 如果有延伸的参数的话也检查它们是否匹配
         # 因为有可能有 T1 | T2 这样的标注，我们使用 check_is_extend_data() 来获取所有可能的类型，而不是只用单个 issubclass() / isinstance()
@@ -706,12 +762,12 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
             is_extend_data_used = True
             cur_match.add_parameter(param, extend_data_value)
             if name in kwargs:
-              cur_match.add_warning('cmdparser-special-param-name-conflict', name)
+              cur_match.add_warning('cmdparser-special-param-name-conflict', self._tr_special_param_name_conflict.format(name=name))
             continue
           elif len(candidate_type_list) > 0 and param.default == inspect.Parameter.empty:
             # 这种情况下，参数的标注确实是延伸的数据类型，但是当前提供的数据不是想要的类型
             # （我们需要检查一下初值，这样如果延伸的数据是可选的，我们也不会在这过早报错）
-            first_fatal_error = ('cmdparser-mismatched-type-for-extend-data', name)
+            first_fatal_error = ('cmdparser-mismatched-type-for-extend-data', self._tr_mismatched_type_for_extend_data.format(name=name))
             break
 
         # 该命令不是一个特殊参数，尝试赋值
@@ -722,7 +778,7 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
         # 另外如果提供了 positional_args 但是在 kwargs 里有值的话同样报错，我们只接受对第一个参数使用 positional args
         if name in kwargs:
           if is_first_param_for_positional_args and len(positional_args) > 0:
-            first_fatal_error = ('cmdparser-unused-positional-args', name)
+            first_fatal_error = ('cmdparser-unused-positional-args', self._tr_unused_positional_args.format(name=name))
             break
           used_args.add(name)
           is_first_param_for_positional_args = False
@@ -733,7 +789,7 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
         if is_first_param_for_positional_args and len(positional_args) > 0:
           # 如果该参数只能以 kwargs 出现的话也报错
           if param.kind == inspect.Parameter.KEYWORD_ONLY:
-            first_fatal_error = ('cmdparser-kwarg-using-positional-value', name)
+            first_fatal_error = ('cmdparser-kwarg-using-positional-value', self._tr_kwarg_using_positional_value.format(name=name))
             break
           is_positional_arg_used = True
           is_first_param_for_positional_args = False
@@ -745,23 +801,23 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
           cur_match.add_parameter(param, param.default)
           continue
         # 没有其他来源的值了，报错
-        first_fatal_error = ('cmdparser-missing-param', name)
+        first_fatal_error = ('cmdparser-missing-param', self._tr_missing_param.format(name=name))
         break
       if first_fatal_error is not None:
         unmatched_results.append((cb, first_fatal_error))
         continue
       # 检查是否有参数没用上，有的话同样报错
       if not is_positional_arg_used:
-        unmatched_results.append((cb, ('cmdparser-unused-param', '<positional>')))
+        unmatched_results.append((cb, ('cmdparser-unused-param', self._tr_unused_param.format(name=self._tr_positional_arg.get()))))
         continue
       if not is_extend_data_used:
         # 即使命令直接使用 GeneralCommandOp 来读取延伸参数，只要它没有显式声明对延伸参数的引用，我们都不认为这是成功的匹配
         # （加一个不被使用的参数没有影响，但是其他命令可能只用 GeneralCommandOp 而不使用延伸参数，我们想找到这样的情况）
-        unmatched_results.append((cb, ('cmdparser-unused-param', '<extenddata>')))
+        unmatched_results.append((cb, ('cmdparser-unused-param', self._tr_unused_param.format(name=self._tr_extend_data.get()))))
         continue
       for name, value in kwargs.items():
         if name not in used_args:
-          first_fatal_error = ('cmdparser-unused-param', name)
+          first_fatal_error = ('cmdparser-unused-param', self._tr_unused_param.format(name=name))
           break
       if first_fatal_error is not None:
         unmatched_results.append((cb, first_fatal_error))
@@ -775,9 +831,13 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
       return self.handle_command_unique_invocation(state, commandop, cmdinfo, matched_results[0], unmatched_results)
     return self.handle_command_ambiguous(state, commandop, cmdinfo, matched_results, unmatched_results)
 
-
+  _tr_unrecognized_cmdname = TR_parser.tr("unrecognized_cmdname",
+    en="Command name not found: \"{name}\"",
+    zh_cn="未找到匹配该名称的命令：\"{name}\"",
+    zh_hk="未找到匹配該名稱的命令：\"{name}\"",
+  )
   def handle_command_unrecognized(self, state : ParserStateType, op : GeneralCommandOp, opname : str) -> None:
-    err = ErrorOp('', op.location, 'cmdparser-unrecognized-cmdname', StringLiteral.get('Command name not found: ' + opname, self.context))
+    err = ErrorOp.create('cmdparser-unrecognized-cmdname', self.context, StringLiteral.get(self._tr_unrecognized_cmdname.format(name=opname), self.context), loc=op.location)
     err.insert_before(op)
 
   def visit_op(self, state : ParserStateType, op : Operation) -> None:
@@ -1061,6 +1121,10 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
         if cur_result is not None:
           return cur_result
       return None
+
+    # typing.Any 表示不管什么值都可以。一般来说这个结果不会被用到。
+    if ty is typing.Any:
+      return value
 
     # 剩余的情况下， ty 都应该是 type
     # 如果这里报错的话请检查类型标注是否有问题
