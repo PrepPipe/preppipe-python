@@ -232,7 +232,7 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
   def handle_scene(self, scene : VNSceneSymbol):
     scenename = nameconvert.str2identifier(scene.name)
     for bg in scene.backgrounds:
-      self.try_set_imspec_for_asset(bg.get_value(), self._populate_imspec_from_assetdecl(scenename, bg.name, 'bg'))
+      self.try_set_imspec_for_asset(bg, self._populate_imspec_from_assetdecl(scenename, bg.name, 'bg'))
     # 目前不需要其他操作
     return
 
@@ -923,6 +923,8 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
         return '"' + ref.instance_id + ' ' + ref.composite_code + '"'
       else:
         raise PPInternalError('Unknown image pack reference type')
+    if isinstance(v, ColorImageLiteralExpr):
+      return '"' + v.color.value.get_string() + '"'
     raise NotImplementedError('Unsupported value type for asmexpr generation: ' + str(type(v)))
 
   def get_impsec(self, v : Value, user_hint : VNStandardDeviceKind | None = None) -> tuple[StringLiteral, ...]:
