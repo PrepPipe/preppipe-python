@@ -571,7 +571,7 @@ _tr_chdecl_sayalternativename = TR_vnparse.tr("chdecl_say_alternative_name",
   (_tr_chdecl_sayalternativename, _helper_parse_character_alternativesay),
 ])
 @CommandDecl(vn_command_ns, _imports, 'DeclCharacter')
-def cmd_character_decl(parser: VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str, ext : ListExprOperand):
+def cmd_character_decl(parser: VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str, ext : ListExprOperand | None = None):
   # 声明角色仅用于提供角色的身份
   # 在前端命令上可以身份+显示方式（比如显示名称，名字颜色等）一并设置，也可以只用该指令设定身份，用后面的“设置角色发言属性”来提供其他信息
   if existing := state.output_current_file.characters.get(name):
@@ -1557,17 +1557,16 @@ def cmd_expand_table(parser : VNParser, state : VNASTParsingState, commandop : G
     parser.handle_command_op(state=state, op=cmd)
 
 @CmdAliasDecl(TR_vnparse, {
-  "zh_cn": "注释",
-  "zh_hk": "註釋",
+  "zh_cn": ["注释", "注"],
+  "zh_hk": ["註釋", "註"],
 }, {
   "comment": {
-    "zh_cn": "注释",
-    "zh_hk": "註釋",
+    "zh_cn": ["注释", "注"],
+    "zh_hk": ["註釋", "註"],
   }
 })
 @CommandDecl(vn_command_ns, _imports, 'Comment')
-def cmd_comment(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, comment : str):
+def cmd_comment(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, comment : typing.Any):
   if rawstr := commandop.try_get_raw_arg():
-    comment = rawstr
-  node = CommentOp.create(comment=StringLiteral.get(comment, state.context), name=commandop.name, loc=commandop.location)
-  state.emit_md(node)
+    node = CommentOp.create(comment=StringLiteral.get(rawstr, state.context), name=commandop.name, loc=commandop.location)
+    state.emit_md(node)
