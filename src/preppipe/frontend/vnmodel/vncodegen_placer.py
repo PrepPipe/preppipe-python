@@ -233,10 +233,13 @@ class VNCodeGen_Placer(VNCodeGen_PlacerBase):
       self._scene_objects.append(self.ObjectInfo(handle=asset, ty=VNCodeGen_Placer.HandleType.IMAGE, pos=pos))
 
   def compute_initial_position_for_character(self, character: VNASTCharacterSymbol, sprite: Value, destexpr : VNASTNodeBase) -> VNCodeGen_PlacementInfo:
-    if not isinstance(sprite, BaseImageLiteralExpr):
+    sprite_img = sprite
+    if isinstance(sprite, VNAssetValueSymbol):
+      sprite_img = sprite.get_value()
+    if not isinstance(sprite_img, BaseImageLiteralExpr):
       raise PPInternalError("Unhandled sprite type")
-    width, height = sprite.size.value
-    left, top, right, bot = sprite.bbox.value
+    width, height = sprite_img.size.value
+    left, top, right, bot = sprite_img.bbox.value
     # 如果用户已经指定了位置，我们直接使用该位置
     # 不过目前暂不支持从用户输入中读取位置，所以跳过这里
     # 如果用户没有指定位置，我们根据角色声明时的约束条件来决定位置

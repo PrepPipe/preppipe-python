@@ -1162,8 +1162,8 @@ def cmd_set_function(parser : VNParser, state : VNASTParsingState, commandop : G
   state.output_current_region = func
 
 @CmdAliasDecl(TR_vnparse, {
-  "zh_cn": "调用函数",
-  "zh_hk": "調用函數",
+  "zh_cn": ["调用函数", "调用章节"],
+  "zh_hk": ["調用函數", "調用章節"],
 }, {
   "name": {
     "zh_cn": "名称",
