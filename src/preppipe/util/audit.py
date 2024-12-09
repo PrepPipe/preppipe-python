@@ -69,14 +69,15 @@ class FileAccessAuditor:
       # 再解决没有后缀、需要猜的情况
       parent = os.path.dirname(candidate)
       basename = os.path.basename(candidate)
-      for file in os.listdir(parent):
-        if not file.startswith(basename):
-          continue
-        root, ext = os.path.splitext(file)
-        if root == basename and len(ext) > 0:
-          candidatepath = os.path.join(parent, file)
-          if result := filecheckCB(candidatepath):
-            return result
+      if os.path.isdir(parent):
+        for file in os.listdir(parent):
+          if not file.startswith(basename):
+            continue
+          root, ext = os.path.splitext(file)
+          if root == basename and len(ext) > 0:
+            candidatepath = os.path.join(parent, file)
+            if result := filecheckCB(candidatepath):
+              return result
     return None
 
   _tr_name = _tr.tr("name",

@@ -46,6 +46,8 @@ def duplicated_showat_removal(model : RenPyModel):
 
   for file in model.scripts():
     for node in file.body.body:
+      if isinstance(node, MetadataOp):
+        continue
       if not isinstance(node, RenPyNode):
         raise PPInternalError("Expected RenPyNode, got "+str(node))
       if not isinstance(node, RenPyLabelNode):
