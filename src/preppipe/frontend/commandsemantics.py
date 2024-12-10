@@ -425,10 +425,15 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
     # 目前我们不定义 fully qualified lookup，因为貌似没有适合作为命名空间分隔符的字符。。。
     lookup_result = self.lookup(opname.value)
     if lookup_result is None:
+      self.try_emit_command_parse_error(op)
       self.handle_command_unrecognized(state, op, opname.value)
       return
     assert isinstance(lookup_result, FrontendCommandInfo)
     return self.handle_command_invocation(state, op, lookup_result)
+
+  def try_emit_command_parse_error(self, op : GeneralCommandOp):
+    if err := op.try_get_parse_error():
+      err.insert_before(op)
 
   def handle_command_ambiguous(self, state : ParserStateType,
                                commandop : GeneralCommandOp, cmdinfo : FrontendCommandInfo,
@@ -825,10 +830,13 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
       # 所有检查全部通过，该调用可用
       matched_results.append(cur_match)
     assert len(matched_results) + len(unmatched_results) == len(cmdinfo.handler_list)
-    if len(matched_results) == 0:
-      return self.handle_command_no_match(state, commandop, cmdinfo, unmatched_results)
+    # 先处理正好能调用的情况
     if len(matched_results) == 1:
       return self.handle_command_unique_invocation(state, commandop, cmdinfo, matched_results[0], unmatched_results)
+    # 剩余的情况下这个命令都有问题
+    self.try_emit_command_parse_error(commandop)
+    if len(matched_results) == 0:
+      return self.handle_command_no_match(state, commandop, cmdinfo, unmatched_results)
     return self.handle_command_ambiguous(state, commandop, cmdinfo, matched_results, unmatched_results)
 
   _tr_unrecognized_cmdname = TR_parser.tr("unrecognized_cmdname",
