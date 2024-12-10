@@ -36,24 +36,6 @@ class VNASTImageExprSource(enum.Enum):
   SRC_CHARACTER_SIDEIMAGE = enum.auto() # 人物头像
   SRC_SCENE_BACKGROUND    = enum.auto() # 场景背景
 
-def get_default_size_for_placeholders(dest : ImageExprPlaceholderDest, screen_resolution : tuple[int, int] | None = None) -> tuple[int, int]:
-  if screen_resolution is None:
-    screen_resolution = (1920, 1080)
-  finalresolution = screen_resolution
-  width, height = screen_resolution
-  match dest:
-    case ImageExprPlaceholderDest.DEST_SCENE_BACKGROUND:
-      pass
-    case ImageExprPlaceholderDest.DEST_CHARACTER_SPRITE:
-      width_p = int(600 * height / 1080)
-      finalresolution = (width_p, height)
-    case ImageExprPlaceholderDest.DEST_CHARACTER_SIDEIMAGE:
-      width_p = int(600 * min(width, height) / 1080)
-      finalresolution = (width_p, width_p)
-    case _:
-      pass
-  return finalresolution
-
 def emit_default_placeholder(context : Context, dest : ImageExprPlaceholderDest, description : StringLiteral | None = None) -> PlaceholderImageLiteralExpr:
   if description is None:
     description = StringLiteral.get('', context)
@@ -651,3 +633,80 @@ setattr(parse_image_placer_config, "keywords", [
   _tr_vnutil_placer_absolute_helptext,
   _tr_vnutil_placer_sprite_helptext,
 ])
+
+def infer_placeholder_sizes(t : SymbolTableRegion[VNASTNamespaceSwitchableValueSymbol], default_size : tuple[int, int], default_bbox : tuple[int, int, int, int]):
+  value_uses : list[Use] = []
+  has_placeholder_uses = False
+  for s in t:
+    if not isinstance(s, VNASTNamespaceSwitchableValueSymbol):
+      raise PPInternalError()
+    for ns, operand in s.operands.items():
+      if not isinstance(operand, OpOperand):
+        raise PPInternalError()
+      for use in operand.operanduses():
+        if isinstance(use.value, BaseImageLiteralExpr):
+          value_uses.append(use)
+          if isinstance(use.value, PlaceholderImageLiteralExpr) and use.value.size.value == (0,0):
+            has_placeholder_uses = True
+        elif isinstance(use.value, StringLiteral):
+          continue
+        else:
+          raise PPInternalError("Unexpected image value type: " + str(type(use.value)))
+  if not has_placeholder_uses:
+    return
+  # 我们只保留画幅面积最大(w*h 最大)的 bbox
+  cur_bbox_xmin = 0
+  cur_bbox_ymin = 0
+  cur_bbox_xmax = 0
+  cur_bbox_ymax = 0
+  cur_width = 0
+  cur_height = 0
+  placeholder_uses : list[Use] = []
+  for u in value_uses:
+    expr = u.value
+    if not isinstance(expr, BaseImageLiteralExpr):
+      raise PPInternalError()
+    w, h = expr.size.value
+    if isinstance(expr, PlaceholderImageLiteralExpr) and expr.size.value == (0,0):
+      placeholder_uses.append(u)
+    if w * h > cur_width * cur_height:
+      # 如果画幅更大，则完全替换之前的结果
+      cur_width = w
+      cur_height = h
+      cur_bbox_xmin, cur_bbox_ymin, cur_bbox_xmax, cur_bbox_ymax = expr.bbox.value
+    elif w == cur_width and h == cur_height:
+      # 取并集
+      xmin, ymin, xmax, ymax = expr.bbox.value
+      cur_bbox_xmin = min(cur_bbox_xmin, xmin)
+      cur_bbox_ymin = min(cur_bbox_ymin, ymin)
+      cur_bbox_xmax = max(cur_bbox_xmax, xmax)
+      cur_bbox_ymax = max(cur_bbox_ymax, ymax)
+  if cur_width == 0 and cur_height == 0:
+    cur_width, cur_height = default_size
+    cur_bbox_xmin, cur_bbox_ymin, cur_bbox_xmax, cur_bbox_ymax = default_bbox
+  for u in placeholder_uses:
+    expr = u.value
+    if not isinstance(expr, PlaceholderImageLiteralExpr):
+      raise PPInternalError()
+    newexpr = expr.get_with_updated_sizes(size=(cur_width, cur_height), bbox=(cur_bbox_xmin, cur_bbox_ymin, cur_bbox_xmax, cur_bbox_ymax))
+    u.set_value(newexpr)
+
+def parse_postprocessing_update_placeholder_imagesizes(ast : VNAST):
+  screen_width, screen_height = ast.screen_resolution.get().value
+  background_size = (screen_width, screen_height)
+  charactersprite_width = int(600 * screen_height / 1080)
+  charactersprite_size = (charactersprite_width, screen_height)
+  charactersideimage_width = int(600 * min(screen_width, screen_height) / 1080)
+  charactersideimage_size = (charactersideimage_width, charactersideimage_width)
+  for f in ast.files.body:
+    if not isinstance(f, VNASTFileInfo):
+      raise PPInternalError("Unexpected file type")
+    for c in f.characters:
+      if not isinstance(c, VNASTCharacterSymbol):
+        raise PPInternalError("Unexpected character type")
+      infer_placeholder_sizes(c.sprites, charactersprite_size, (0, 0, charactersprite_size[0], charactersprite_size[1]))
+      infer_placeholder_sizes(c.sideimages, charactersideimage_size, (0, 0, charactersideimage_size[0], charactersideimage_size[1]))
+    for s in f.scenes:
+      if not isinstance(s, VNASTSceneSymbol):
+        raise PPInternalError("Unexpected scene type")
+      infer_placeholder_sizes(s.backgrounds, background_size, (0, 0, background_size[0], background_size[1]))

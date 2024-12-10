@@ -240,6 +240,8 @@ class VNCodeGen_Placer(VNCodeGen_PlacerBase):
       raise PPInternalError("Unhandled sprite type")
     width, height = sprite_img.size.value
     left, top, right, bot = sprite_img.bbox.value
+    if width == 0 or height == 0:
+      raise PPInternalError("zero-sized image found")
     # 如果用户已经指定了位置，我们直接使用该位置
     # 不过目前暂不支持从用户输入中读取位置，所以跳过这里
     # 如果用户没有指定位置，我们根据角色声明时的约束条件来决定位置

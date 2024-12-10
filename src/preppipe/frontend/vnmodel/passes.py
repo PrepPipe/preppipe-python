@@ -43,6 +43,7 @@ class VNParseTransform(TransformBase):
   def run(self) -> Operation | typing.List[Operation] | None:
     for doc in self.inputs:
       self._parser.add_document(doc)
+    self._parser.postprocessing()
     ast = self._parser.ast
     # print(ast.get_short_str())
     return ast
