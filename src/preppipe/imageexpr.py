@@ -2,6 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
+
+import PIL.Image
+import PIL.ImageDraw
 from .irbase import *
 from .language import TranslationDomain
 from .util.imagepack import ImagePack, ImagePackDescriptor

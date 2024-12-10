@@ -6,6 +6,7 @@ from .ast import *
 from ..irbase import *
 from ..vnmodel import *
 from ..util.imagepackexportop import *
+from ..util.placeholderimageexportop import *
 
 SelfType = typing.TypeVar('SelfType', bound='BackendCodeGenHelperBase') # pylint: disable=invalid-name
 NodeType = typing.TypeVar('NodeType', bound=BackendASTNodeBase) # pylint: disable=invalid-name
@@ -230,7 +231,9 @@ class BackendCodeGenHelperBase(typing.Generic[NodeType]):
       return (instrs, match_result)
 
   def get_asset_rootpath(self, v : AssetData, user_hint : VNStandardDeviceKind | None) -> str:
-    ty_key = type(v)
+    return self.get_asset_rootpath_impl(ty = type(v), user_hint=user_hint)
+  def get_asset_rootpath_impl(self, ty : type, user_hint : VNStandardDeviceKind | None) -> str:
+    ty_key = ty
     if ty_key not in self.ASSET_BASEDIR_MATCH_TREE:
       ty_key = None
     cur_match_dict = self.ASSET_BASEDIR_MATCH_TREE[ty_key]
@@ -243,19 +246,20 @@ class BackendCodeGenHelperBase(typing.Generic[NodeType]):
     else:
       raise RuntimeError('Unexpected match tree value type: ' + type(cur_match_dict).__name__)
 
-
   def get_asset_export_path(self, v : AssetData, parentdir : str, export_format_ext : str | None) -> str:
+    return self.get_asset_export_path_impl(parentdir=parentdir, export_format_ext=export_format_ext, baseext=str(v.format), duplicate_check_item=v, asset_loc=v.location)
+
+  def get_asset_export_path_impl(self, parentdir : str, export_format_ext : str | None, baseext : str, duplicate_check_item : Value, asset_loc : Location | None = None) -> str:
     # 给指定的资源生成一个在 parentdir 下的导出路径
     # 如果 export_format_ext 提供的话，应该是一个小写的后缀名，不带 '.'，没提供的话就是不改变原来的后缀名
     # 这里我们也要处理去重等情况
     NAME_ANON = 'anon'
     basename = NAME_ANON
-    baseext = str(v.format)
     if export_format_ext == baseext:
       export_format_ext = None
     if len(baseext) == 0:
       baseext = 'bin'
-    if loc := v.location:
+    if loc := asset_loc:
       fileloc = loc.get_file_path()
       assert len(fileloc) > 0
       basepath, oldext = os.path.splitext(fileloc)
@@ -269,15 +273,15 @@ class BackendCodeGenHelperBase(typing.Generic[NodeType]):
     if existing := self.get_result().get_asset(cur_path):
       # 如果内容一样就直接报错（不应该尝试生成导出路径）
       # 不然的话加后缀直到不重名
-      if existing.get_asset_value() is v:
-        raise RuntimeError('Should not happen')
+      if existing.get_asset_value() is duplicate_check_item:
+        raise RuntimeError('Trying to export an asset that is already exported (not resolving aliases correctly?)')
       suffix = 0
       if basename == NAME_ANON and parentdir in self.anon_asset_index_dict:
         suffix = self.anon_asset_index_dict[parentdir]
       cur_path = parentdir + '/' + basename + '_' + str(suffix) + '.' + baseext
       while existing := self.get_result().get_asset(cur_path):
-        if existing.get_asset_value() is v:
-          raise RuntimeError('Should not happen')
+        if existing.get_asset_value() is duplicate_check_item:
+          raise RuntimeError('Trying to export an asset that is already exported (not resolving aliases correctly?)')
         suffix += 1
         cur_path = parentdir + '/' + basename + '_' + str(suffix) + '.' + baseext
       if basename == NAME_ANON:
@@ -299,6 +303,14 @@ class BackendCodeGenHelperBase(typing.Generic[NodeType]):
     path = self.get_asset_export_path(v, rootdir, export_format)
     file = BackendFileAssetOp.create(context=v.context, assetref=v, export_format=export_format, path=path)
     self.get_result().add_asset(file)
+    return path
+
+  def lower_placeholder_image(self, v : PlaceholderImageLiteralExpr, user_hint : VNStandardDeviceKind | None = None) -> str:
+    rootdir = self.get_asset_rootpath_impl(ImageAssetData, user_hint)
+
+    path = self.get_asset_export_path_impl(parentdir=rootdir, export_format_ext=None, baseext='png', duplicate_check_item=v, asset_loc=None)
+    exportop = PlaceholderImageExportOpSymbol.create(context=v.context, v=v, path=StringLiteral.get(path, v.context))
+    self.get_result().add_cacheable_export(exportop)
     return path
 
   def _add_asset_name(self, v : Value, info : NamedAssetInfo):
