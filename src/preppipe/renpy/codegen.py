@@ -210,10 +210,10 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
       self._populate_renpy_characterexpr_from_textstyle(charexpr, textstyle)
       is_change_made = True
     for img in character.sprites:
-      self.try_set_imspec_for_asset(img.get_value(), self._populate_imspec_from_assetdecl(codename, img.name))
+      self.try_set_imspec_for_asset(img, self._populate_imspec_from_assetdecl(codename, img.name))
       is_change_made = True
     for img in character.sideimages:
-      self.try_set_imspec_for_asset(img.get_value(), self._populate_imspec_from_assetdecl(codename + '_side', img.name))
+      self.try_set_imspec_for_asset(img, self._populate_imspec_from_assetdecl(codename + '_side', img.name))
       is_change_made = True
     # 暂时不支持其他项
     if character.kind.get().value == VNCharacterKind.NARRATOR:
@@ -905,14 +905,7 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
     if isinstance(v, AssetData):
       return '"' + self.add_assetdata(v, user_hint) + '"'
     if isinstance(v, PlaceholderImageLiteralExpr):
-      match v.dest:
-        case ImageExprPlaceholderDest.DEST_SCENE_BACKGROUND:
-          kind = "'bg'"
-        case ImageExprPlaceholderDest.DEST_CHARACTER_SPRITE | ImageExprPlaceholderDest.DEST_CHARACTER_SIDEIMAGE:
-          kind = "'girl'"
-        case _:
-          kind = "None"
-      return 'Placeholder(base=' + kind + ', text="' + v.description.get_string() + '")'
+      return '"' + self.lower_placeholder_image(v, user_hint) + '"'
     if isinstance(v, ImageAssetLiteralExpr):
       return '"' + self.add_assetdata(v.image, user_hint) + '"'
     if isinstance(v, ImagePackElementLiteralExpr):
