@@ -399,6 +399,9 @@ class VNParser(FrontendParserBase[VNASTParsingState]):
     func.body.take_body(file.pending_content)
     # 结束
 
+  def postprocessing(self):
+    parse_postprocessing_update_placeholder_imagesizes(self.ast)
+
   def create_command_match_error(self, commandop: GeneralCommandOp, unmatched_results: list[typing.Tuple[callable, typing.Tuple[str, str]]] | None = None, matched_results: list[FrontendParserBase.CommandInvocationInfo] | None = None) -> ErrorOp:
     errmsg = 'Cannot find unique match for command: ' + commandop.get_short_str()
     if matched_results is not None and len(matched_results) > 0:
@@ -766,11 +769,6 @@ def cmd_scene_decl(parser : VNParser, state : VNASTParsingState, commandop : Gen
       # 到这就说明当前的键值没有匹配到认识的
       state.emit_error('vnparse-scenedecl-invalid-expr', 'Unexpected key "' + str(childnode.key) + '"', loc=commandop.location)
 
-_tr_image_notfound = TR_vnparse.tr("image_not_found",
-  en="Image not found: ",
-  zh_cn="图片未找到： ",
-  zh_hk="圖片未找到： ",
-)
 _tr_image_notfound_help = TR_vnparse.tr("image_notfound_help",
   en="When handling \"{dest}\": Image not found: {expr}.",
   zh_cn="处理 \"{dest}\" 时没有找到图片： {expr}。",
@@ -778,7 +776,7 @@ _tr_image_notfound_help = TR_vnparse.tr("image_notfound_help",
 )
 
 def _get_placeholder_desc_for_missing_img(context : Context, v : str):
-  return StringLiteral.get(_tr_image_notfound.get() + v, context)
+  return StringLiteral.get(v, context)
 
 def _helper_parse_image_exprtree(parser : VNParser, state : VNASTParsingState, v : ListExprTreeNode, statetree : SymbolTableRegion[VNASTNamespaceSwitchableValueSymbol], placeholderdest : ImageExprPlaceholderDest, entityprefix : str, loc : Location):
   # 如果是一个词典，那么是个和角色立绘差不多的树状结构，每个子节点根一个图案表达式
