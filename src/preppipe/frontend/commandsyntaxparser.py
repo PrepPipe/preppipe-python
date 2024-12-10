@@ -638,9 +638,9 @@ class _CommandParseVisitorImpl(CommandParseVisitor):
 # 组装起来
 
 _tr_syntax_error = TR_parser.tr("syntax_error",
-  en="Command syntax error: {err}",
-  zh_cn="命令语法错误：{err}",
-  zh_hk="命令語法錯誤：{err}",
+  en="Command \"{cmd}\" syntax error: {err}",
+  zh_cn="命令 \"{cmd}\" 语法错误：{err}",
+  zh_hk="命令 \"{cmd}\" 語法錯誤：{err}",
 )
 
 def _visit_command_block_impl(b : Block, ctx : Context, command_str : str, asset_list : typing.List[AssetData], insert_before_op : IMElementOp, infolist : list[_InitParsedCommandInfo]) -> GeneralCommandOp | None:
@@ -701,7 +701,7 @@ def _visit_command_block_impl(b : Block, ctx : Context, command_str : str, asset
     if error_listener.error_occurred:
       record = error_listener.get_error_record()
       errorloc = get_loc_at_offset(record.column)
-      errormsg = _tr_syntax_error.format(err=record.msg)
+      errormsg = _tr_syntax_error.format(cmd=command_str, err=record.msg)
       errop = ErrorOp.create(error_code='cmd-parse-error', context=ctx, error_msg=StringLiteral.get(errormsg, ctx), name='', loc=errorloc)
       errop.insert_before(insert_before_op)
       continue

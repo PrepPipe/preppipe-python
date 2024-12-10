@@ -207,6 +207,13 @@ class PlaceholderImageLiteralExpr(BaseImageLiteralExpr, AssetPlaceholderTrait):
     bbox = IntTupleLiteral.get((0, 0, width, height), context=context)
     return PlaceholderImageLiteralExpr._get_literalexpr_impl((size, bbox, destliteral, desc), context)
 
+  def get_with_updated_sizes(self, size: tuple[int, int], bbox : tuple[int, int, int, int]):
+    sizetuple = IntTupleLiteral.get(size, context=self.context)
+    bboxtuple = IntTupleLiteral.get(bbox, context=self.context)
+    destvalue = self.get_value_tuple()[BaseImageLiteralExpr.DERIVED_DATA_START]
+    descriptionValue = self.get_value_tuple()[BaseImageLiteralExpr.DERIVED_DATA_START + 1]
+    return PlaceholderImageLiteralExpr._get_literalexpr_impl((sizetuple, bboxtuple, destvalue, descriptionValue), self.context)
+
 @IRObjectJsonTypeName('imagepack_image_le')
 class ImagePackElementLiteralExpr(BaseImageLiteralExpr, AssetDeclarationTrait):
   # 该图片是一个图片包中的一个组合
