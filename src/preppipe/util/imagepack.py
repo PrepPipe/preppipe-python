@@ -489,14 +489,9 @@ class ImagePack(NamedAssetClassBase):
 
     return base_data
 
-  TEXT_IMAGE_FONT_ASSET : typing.ClassVar[str] = AssetManager.ASSETREF_DEFAULT_FONT
-  TEXT_IMAGE_FONT_PATH : typing.ClassVar[str] = "SourceHanSerif-Regular.ttc"
-
   @staticmethod
   def get_font_for_text_image(fontsize : int) -> PIL.ImageFont.ImageFont | PIL.ImageFont.FreeTypeFont:
-    inst = AssetManager.get_instance()
-    if SourceHanSerif := inst.get_asset(ImagePack.TEXT_IMAGE_FONT_ASSET):
-      fontpath = os.path.join(SourceHanSerif.path, ImagePack.TEXT_IMAGE_FONT_PATH)
+    if fontpath := AssetManager.get_default_font_path():
       return PIL.ImageFont.truetype(fontpath, fontsize)
     return PIL.ImageFont.load_default()
 

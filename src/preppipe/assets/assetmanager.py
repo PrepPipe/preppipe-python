@@ -64,6 +64,7 @@ class AssetManager:
 
   # 以下列举所有在其他地方可能用到的内嵌素材
   ASSETREF_DEFAULT_FONT = "thirdparty_Adobe_SourceHanSerif"
+  ASSETREF_DEFAULT_FONT_FILE = "SourceHanSerif-Regular.ttc" # 应该在 ASSETREF_DEFAULT_FONT 目录下
 
   # 有引用时可以把它们放在这里，构建时会检查是否存在
   ASSETREF_CHECKLIST : typing.ClassVar[tuple[str]] = (
@@ -222,6 +223,13 @@ class AssetManager:
     # 获取素材，但不加载；用于在多线程环境下获取素材的句柄
     if info := self._assets.get(name, None):
       return info.handle
+    return None
+
+  @staticmethod
+  def get_default_font_path() -> str | None:
+    inst = AssetManager.get_instance()
+    if fontdir := inst.get_asset(AssetManager.ASSETREF_DEFAULT_FONT):
+      return os.path.join(fontdir.path, AssetManager.ASSETREF_DEFAULT_FONT_FILE)
     return None
 
   @staticmethod

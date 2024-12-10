@@ -34,7 +34,7 @@ class BackendASTVisitorBase:
 
 @irdataop.IROperationDataclass
 class BackendFileAssetOp(Symbol):
-  ref : OpOperand
+  ref : OpOperand # AssetData
   export_format : OpOperand[StringLiteral] # 如果非空，我们在导出时需要进行另存为
 
   def get_asset_value(self) -> Value:
