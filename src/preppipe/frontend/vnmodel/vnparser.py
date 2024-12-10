@@ -1564,7 +1564,7 @@ def cmd_expand_table(parser : VNParser, state : VNASTParsingState, commandop : G
   }
 })
 @CommandDecl(vn_command_ns, _imports, 'Comment')
-def cmd_comment(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, comment : typing.Any):
+def cmd_comment(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, comment : typing.Any = None):
   if rawstr := commandop.try_get_raw_arg():
     node = CommentOp.create(comment=StringLiteral.get(rawstr, state.context), name=commandop.name, loc=commandop.location)
     state.emit_md(node)
