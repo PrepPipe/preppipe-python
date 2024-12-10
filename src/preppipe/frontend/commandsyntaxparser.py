@@ -90,7 +90,7 @@ class CommandCallReferenceType(StatelessType):
 @IRObjectJsonTypeName("cmd_general_cmd_op")
 class GeneralCommandOp(Operation):
   # 所有能被识别的命令（能找到命令名以及参数列表）
-  _head_region : SymbolTableRegion # name + raw_args (raw args make life easier for commands with custom parsing)
+  _head_region : SymbolTableRegion # name + raw_args (raw args make life easier for commands with custom parsing), [parse_error]
   _positionalarg_region : Region # single block, list of values
   _positionalarg_block : Block
   _keywordarg_region : SymbolTableRegion
@@ -151,6 +151,10 @@ class GeneralCommandOp(Operation):
     rawarg_symbol = CMDValueSymbol.create('rawarg', rawarg_loc, rawarg_value)
     self._head_region.add(rawarg_symbol)
 
+  def set_parse_error(self, error_msg : Value, error_loc : Location):
+    parse_error_symbol = CMDValueSymbol.create("parse_error", error_loc, error_msg)
+    self._head_region.add(parse_error_symbol)
+
   def add_nested_call(self, call : GeneralCommandOp):
     self._nested_callexpr_block.push_back(call)
 
@@ -162,12 +166,17 @@ class GeneralCommandOp(Operation):
     if rawarg := self._head_region.get('rawarg'):
       return rawarg.value.get_string()
 
+  def try_get_parse_error(self) -> ErrorOp | None:
+    if parse_error := self._head_region.get('parse_error'):
+      return ErrorOp.create('cmd-parse-error', context=self.context, error_msg=parse_error.value, loc=parse_error.location)
+    return None
+
   def get_short_str(self) -> str:
     namesymbol = self._head_region.get('name')
     result = '[' + namesymbol.value.get_string()
     if rawarg := self._head_region.get('rawarg'):
-      result += ':' + rawarg.value.get_string()
-      return result + ']'
+      result += ':' + rawarg.value.get_string() + ']'
+      return result
     # 没有 rawarg 的话尝试自己组
     # 这个命令有可能没有参数（或是本来就没有，也可能是因为解析出错）
     is_arg_found = False
@@ -637,6 +646,12 @@ class _CommandParseVisitorImpl(CommandParseVisitor):
 # ------------------------------------------------------------------------------
 # 组装起来
 
+def _find_node_startcolumn(node) -> int:
+  if isinstance(node, antlr4.ParserRuleContext):
+    # 这不是一个 TerminalNode
+    return _find_node_startcolumn(node.getChild(0))
+  return node.getSymbol().start
+
 _tr_syntax_error = TR_parser.tr("syntax_error",
   en="Command \"{cmd}\" syntax error: {err}",
   zh_cn="命令 \"{cmd}\" 语法错误：{err}",
@@ -702,8 +717,30 @@ def _visit_command_block_impl(b : Block, ctx : Context, command_str : str, asset
       record = error_listener.get_error_record()
       errorloc = get_loc_at_offset(record.column)
       errormsg = _tr_syntax_error.format(cmd=command_str, err=record.msg)
-      errop = ErrorOp.create(error_code='cmd-parse-error', context=ctx, error_msg=StringLiteral.get(errormsg, ctx), name='', loc=errorloc)
-      errop.insert_before(insert_before_op)
+      # 如果此时 tree 还有子节点，我们还能尝试解析该命令，至少把原始参数给记下来
+      # 实际上，如果是注释的话，这里很可能会报错，但实际上这种错误完全没有问题。
+      # 应该是有 name, <可选> COMMANDSEP, <可选> argumentlist 三个参数
+      result_command_op = None
+      if tree.getChildCount() > 0:
+        name_node = tree.getChild(0)
+        cmd_name = name_node.getText()
+        cmd_name_loc = get_loc_at_offset(_find_node_startcolumn(name_node))
+        result_command_op = GeneralCommandOp.create('', loc=loc, name_value=StringLiteral.get(cmd_name, ctx), name_loc=cmd_name_loc)
+        if tree.getChildCount() > 1:
+          rawarg_node = tree.getChild(tree.getChildCount()-1)
+          rawarg_str = rawarg_node.getText()
+          # 去掉末尾的 <EOF> 标记
+          if rawarg_str.endswith("<EOF>"):
+            rawarg_str = rawarg_str[:-5]
+          rawarg_loc = get_loc_at_offset(_find_node_startcolumn(rawarg_node))
+          result_command_op.set_raw_arg(StringLiteral.get(rawarg_str, ctx), rawarg_loc)
+          result_command_op.set_parse_error(StringLiteral.get(errormsg, ctx), errorloc)
+        result_command_op.insert_before(insert_before_op)
+        last_command = result_command_op
+      if result_command_op is None:
+        # 没有新建命令，单独创建这个错误信息
+        errop = ErrorOp.create(error_code='cmd-parse-error', context=ctx, error_msg=StringLiteral.get(errormsg, ctx), name='', loc=errorloc)
+        errop.insert_before(insert_before_op)
       continue
     cmd_visitor = _CommandParseVisitorImpl(command_str, body_range_start, asset_map_dict, loc)
     cmd_visitor.visit(tree)
