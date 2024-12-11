@@ -186,6 +186,11 @@ class FrontendCommandDumper:
     zh_cn="内嵌音频",
     zh_hk="內嵌音頻",
   )
+  _tr_any = TR.tr("any",
+    en="Any content",
+    zh_cn="任意内容",
+    zh_hk="任意內容",
+  )
 
   def check_is_extended_arg(self, a) -> preppipe.language.Translatable | None:
     if issubclass(a, preppipe.frontend.commandsemantics.ExtendDataExprBase):
@@ -212,6 +217,8 @@ class FrontendCommandDumper:
         raise RuntimeError('List type should have exactly one argument specifying the element type (can be union though)')
       inner = self.get_type_annotation_str_impl(a.__args__[0], enumtr_list)
       return self._tr_vtype_list.format(inner=inner)
+    elif a is typing.Any:
+      return self._tr_any.get()
     if isinstance(a, type):
       if issubclass(a, preppipe.frontend.commandsemantics.CallExprOperand):
         return self._tr_vtype_callexpr.get()

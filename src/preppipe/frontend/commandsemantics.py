@@ -626,9 +626,10 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
     if isinstance(annotation, types.UnionType):
       # 这是 T1 | T2 | ...
       return [ty for ty in annotation.__args__ if issubclass(ty, ExtendDataExprBase)]
-    assert isinstance(annotation, type)
-    if issubclass(annotation, ExtendDataExprBase):
-      return [annotation]
+    if isinstance(annotation, type):
+      if issubclass(annotation, ExtendDataExprBase):
+        return [annotation]
+    # 如果是像 typing.Any 这种特殊类型的话也不算接受延伸参数
     return []
 
   _tr_special_param_name_conflict = TR_parser.tr("special_param_name_conflict",
