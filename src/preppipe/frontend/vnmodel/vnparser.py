@@ -27,8 +27,52 @@ from ...util.antlr4util import TextStringParsingUtil
 # ------------------------------------------------------------------------------
 
 TR_vnparse = TranslationDomain("vnparse")
+_tr_category_character = TR_vnparse.tr("category_character",
+  en="Character",
+  zh_cn="角色",
+  zh_hk="角色",
+)
+_tr_category_say = TR_vnparse.tr("category_say",
+  en="Dialogue and Narration",
+  zh_cn="对话、发言",
+  zh_hk="對話、發言",
+)
+_tr_category_scene = TR_vnparse.tr("category_scene",
+  en="Scene",
+  zh_cn="场景",
+  zh_hk="場景",
+)
+_tr_category_image = TR_vnparse.tr("category_image",
+  en="Image",
+  zh_cn="图片",
+  zh_hk="圖片",
+)
+_tr_category_music_sound = TR_vnparse.tr("category_music_sound",
+  en="Music and Sound",
+  zh_cn="音乐音效",
+  zh_hk="音樂音效",
+)
+_tr_category_controlflow = TR_vnparse.tr("category_controlflow",
+  en="Chapter and Branching (Control Flow)",
+  zh_cn="章节与分支（控制流）",
+  zh_hk="章節與分支（控制流）",
+)
+_tr_category_special = TR_vnparse.tr("category_special",
+  en="Special Commands",
+  zh_cn="特殊指令",
+  zh_hk="特殊指令",
+)
 
 vn_command_ns = FrontendCommandNamespace.create(None, 'vnmodel')
+vn_command_ns.set_category_tree([
+  _tr_category_character,
+  _tr_category_say,
+  _tr_category_scene,
+  _tr_category_image,
+  _tr_category_music_sound,
+  _tr_category_controlflow,
+  _tr_category_special,
+])
 
 @dataclasses.dataclass
 class VNParsingStateForSayer:
@@ -457,6 +501,7 @@ _imports = globals()
 # 内容声明命令
 # ------------------------------------------------------------------------------
 
+@CmdCategory(_tr_category_image)
 @CommandDecl(vn_command_ns, _imports, 'DeclImage')
 def cmd_image_decl_path(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str, path : str):
   warnings : list[tuple[str,str]] = []
@@ -506,6 +551,7 @@ vn_command_ns.set_command_alias("DeclImage", TR_vnparse, {
   },
 })
 
+@CmdHideInDoc
 @CmdAliasDecl(TR_vnparse, {
   "zh_cn": "声明变量",
   "zh_hk": "聲明變量",
@@ -558,6 +604,7 @@ _tr_chdecl_sayalternativename = TR_vnparse.tr("chdecl_say_alternative_name",
   zh_hk="發言別名",
 )
 
+@CmdCategory(_tr_category_character)
 @CmdAliasDecl(TR_vnparse, {
   "zh_cn": "声明角色",
   "zh_hk": "聲明角色",
@@ -707,6 +754,7 @@ setattr(_helper_parse_character_sayinfo, "keywords", [_tr_sayinfo_namecolor, _tr
   # （我们也可以支持表情标签的层级，永远从最右侧替换）
 #  pass
 
+@CmdHideInDoc
 @CmdAliasDecl(TR_vnparse, {
   "zh_cn": "设置临时发言属性",
   "zh_hk": "設置臨時發言屬性",
@@ -742,6 +790,7 @@ _tr_scenedecl_background = TR_vnparse.tr("scenedecl_background",
   zh_hk="背景",
 )
 
+@CmdCategory(_tr_category_scene)
 @CmdAliasDecl(TR_vnparse, {
   "zh_cn": "声明场景",
   "zh_hk": "聲明場景",
@@ -881,6 +930,7 @@ def _helper_parse_image_exprtree(parser : VNParser, state : VNASTParsingState, v
   # 给场景定义一个可显示状态，使得“切换场景”可以更改背景
 #  pass
 
+@CmdCategory(_tr_category_special)
 @CmdAliasDecl(TR_vnparse, {
   "zh_cn": "声明别名",
   "zh_hk": "聲明別名",
@@ -906,6 +956,7 @@ def cmd_alias_decl(parser : VNParser, state : VNASTParsingState, commandop : Gen
 # 内容操作命令
 # ------------------------------------------------------------------------------
 
+@CmdCategory(_tr_category_special)
 @CommandDecl(vn_command_ns, _imports, 'ASM')
 def cmd_asm_1(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, content : str, backend : str):
   # 单行内嵌后端命令
@@ -945,6 +996,7 @@ vn_command_ns.set_command_alias("ASM", TR_vnparse, {
   },
 })
 
+@CmdCategory(_tr_category_character)
 @CmdAliasDecl(TR_vnparse, {
   "zh_cn": "角色入场",
   "zh_hk": "角色入場",
@@ -977,6 +1029,7 @@ def cmd_character_entry(parser : VNParser, state: VNASTParsingState, commandop :
 #def cmd_wait_finish(parser : VNParser, commandop : GeneralCommandOp):
 #  pass
 
+@CmdCategory(_tr_category_character)
 @CmdAliasDecl(TR_vnparse, {
   "zh_cn": "角色退场",
   "zh_hk": "角色退場",
@@ -1003,6 +1056,7 @@ def cmd_character_exit(parser : VNParser, state : VNASTParsingState, commandop :
     node = VNASTCharacterExitNode.create(state.context, chname, name='', loc=commandop.location)
     transition.push_back(node)
 
+@CmdHideInDoc
 @CmdAliasDecl(TR_vnparse, {
   "zh_cn": "特效",
   "zh_hk": "特效",
@@ -1036,6 +1090,7 @@ def _helper_collect_scene_expr(parser : VNParser, state : VNASTParsingState, com
   # 这个和角色的一样，所以直接引用了
   return _helper_collect_character_expr(parser, state, commandop, expr)
 
+@CmdCategory(_tr_category_character)
 @CmdAliasDecl(TR_vnparse, {
   "zh_cn": "切换角色状态",
   "zh_hk": "切換角色狀態",
@@ -1066,6 +1121,7 @@ def cmd_switch_character_state(parser : VNParser, state : VNASTParsingState, com
   result = VNASTCharacterStateChangeNode.create(context=state.context, character=character, deststate=deststate, name=commandop.name, loc=commandop.location)
   state.emit_node(result)
 
+@CmdCategory(_tr_category_scene)
 @CmdAliasDecl(TR_vnparse, {
   "zh_cn": "切换场景",
   "zh_hk": "切換場景",
@@ -1086,6 +1142,7 @@ def cmd_switch_scene(parser : VNParser, state : VNASTParsingState, commandop : G
   node = VNASTSceneSwitchNode.create(context=state.context, destscene=scene.name, states=scenestates)
   transition.push_back(node)
 
+@CmdCategory(_tr_category_image)
 @CmdAliasDecl(TR_vnparse, {
   "zh_cn": "收起图片",
   "zh_hk": "收起圖片",
@@ -1106,6 +1163,7 @@ def cmd_hide_image(parser : VNParser, state : VNASTParsingState, commandop : Gen
   node = VNASTAssetReference.create(context=state.context, kind=VNASTAssetKind.KIND_IMAGE, operation=VNASTAssetIntendedOperation.OP_REMOVE, asset=ref, transition=VNDefaultTransitionType.DT_IMAGE_HIDE.get_enum_literal(state.context), name=commandop.name, loc=commandop.location)
   transition.push_back(node)
 
+@CmdCategory(_tr_category_music_sound)
 @CmdAliasDecl(TR_vnparse, {
   "zh_cn": "设置背景音乐",
   "zh_hk": "設置背景音樂",
@@ -1127,6 +1185,7 @@ def cmd_set_bgm(parser : VNParser, state : VNASTParsingState, commandop : Genera
 # ------------------------------------------------------------------------------
 # 控制流相关的命令
 # ------------------------------------------------------------------------------
+@CmdCategory(_tr_category_controlflow)
 @CmdAliasDecl(TR_vnparse, {
   "en": ["Function", "Section"],
   "zh_cn": ["函数", "章节"],
@@ -1159,6 +1218,7 @@ def cmd_set_function(parser : VNParser, state : VNASTParsingState, commandop : G
     state.emit_node(callnode)
   state.output_current_region = func
 
+@CmdCategory(_tr_category_controlflow)
 @CmdAliasDecl(TR_vnparse, {
   "zh_cn": ["调用函数", "调用章节"],
   "zh_hk": ["調用函數", "調用章節"],
@@ -1176,6 +1236,7 @@ def cmd_call_function(parser: VNParser, state : VNASTParsingState, commandop : G
   callnode = VNASTCallNode.create(context=state.context, callee=name)
   state.emit_node(callnode)
 
+@CmdCategory(_tr_category_controlflow)
 @CmdAliasDecl(TR_vnparse, {
   "zh_cn": ["转至函数", "转至章节"],
   "zh_hk": ["轉至函數", "轉至章節"],
@@ -1200,6 +1261,7 @@ _tr_jump_empty_name = TR_vnparse.tr("jump_empty_name",
   zh_hk="轉至標簽命令需要非空的目標標簽名。",
 )
 
+@CmdCategory(_tr_category_controlflow)
 @CmdAliasDecl(TR_vnparse, {
   "zh_cn": "转至标签",
   "zh_hk": "轉至標簽",
@@ -1222,6 +1284,7 @@ _tr_label_empty_name = TR_vnparse.tr("label_empty_name",
   zh_hk="標簽命令需要非空的標簽名。",
 )
 
+@CmdCategory(_tr_category_controlflow)
 @CmdAliasDecl(TR_vnparse, {
   "zh_cn": "标签",
   "zh_hk": "標簽",
@@ -1254,6 +1317,7 @@ class _SelectFinishActionEnum(enum.Enum):
   CONTINUE = 0 # 默认继续执行分支后的内容（默认值）
   LOOP = 1 # 循环到选项开始（用于类似Q/A，可以反复选择不同选项。可由跳出命令结束）
 
+@CmdCategory(_tr_category_controlflow)
 @CmdAliasDecl(TR_vnparse, {
   "zh_cn": "选项",
   "zh_hk": "選項",
@@ -1346,8 +1410,9 @@ def cmd_select(parser : VNParser, state : VNASTParsingState, commandop : General
           childstate.input_current_block = r.blocks.front
           while block := childstate.get_next_input_block():
             parser.handle_block(childstate, block)
-
   # 结束
+
+@CmdCategory(_tr_category_controlflow)
 @CmdAliasDecl(TR_vnparse, {
   "zh_cn": "跳出循环",
   "zh_hk": "跳出循環",
@@ -1359,6 +1424,7 @@ def cmd_exit_loop(parser : VNParser, state : VNASTParsingState, commandop : Gene
   node = VNASTBreakNode.create(state.context, name=commandop.name, loc=commandop.location)
   state.emit_node(node)
 
+@CmdCategory(_tr_category_controlflow)
 @CmdAliasDecl(TR_vnparse, {
   "en": ["Return", "FinishSection"],
   "zh_cn": ["章节结束","函数返回"],
@@ -1369,6 +1435,7 @@ def cmd_return(parser : VNParser, state : VNASTParsingState, commandop : General
   node = VNASTReturnNode.create(state.context, name=commandop.name, loc=commandop.location)
   state.emit_node(node)
 
+@CmdHideInDoc
 @CmdAliasDecl(TR_vnparse, {
   "zh_cn": "分支",
   "zh_hk": "分支",
@@ -1394,6 +1461,7 @@ def cmd_switch(parser : VNParser, commandop : GeneralCommandOp, ext : ListExprOp
 # 解析状态相关的命令
 # ------------------------------------------------------------------------------
 
+@CmdCategory(_tr_category_say)
 @CmdAliasDecl(TR_vnparse, {
   "zh_cn": "长发言",
   "zh_hk": "長發言",
@@ -1424,6 +1492,7 @@ def cmd_long_speech_mode(parser : VNParser, state : VNASTParsingState, commandop
         statechange = VNASTCharacterStateChangeNode.create(context=state.context, character=sayer.name, deststate=sayer.args, loc=commandop.location)
         state.emit_node(statechange)
 
+@CmdCategory(_tr_category_say)
 @CmdAliasDecl(TR_vnparse, {
   "zh_cn": "交替发言",
   "zh_hk": "交替發言",
@@ -1444,6 +1513,7 @@ def cmd_interleave_mode(parser : VNParser, state : VNASTParsingState, commandop 
   node = VNASTSayModeChangeNode.create(context=state.context, target_mode=VNASTSayMode.MODE_INTERLEAVED, specified_sayers=sayerlist)
   state.emit_node(node)
 
+@CmdCategory(_tr_category_say)
 @CmdAliasDecl(TR_vnparse, {
   "zh_cn": "默认发言模式",
   "zh_hk": "默認發言模式",
@@ -1487,6 +1557,7 @@ _tr_tableexpand_excessive_args = TR_vnparse.tr("tableexpand_excessive_args",
   zh_hk="第 {row} 行中第 {cols} 列應只有最多一個參數；多余的參數將被丟棄： ",
 )
 
+@CmdCategory(_tr_category_special)
 @CmdAliasDecl(TR_vnparse, {
   "zh_cn": "表格展开",
   "zh_hk": "表格展開",
@@ -1554,6 +1625,7 @@ def cmd_expand_table(parser : VNParser, state : VNASTParsingState, commandop : G
       state.emit_error('vnparser-tableexpand-excessive-args', msg, loc=commandop.location)
     parser.handle_command_op(state=state, op=cmd)
 
+@CmdCategory(_tr_category_special)
 @CmdAliasDecl(TR_vnparse, {
   "zh_cn": ["注释", "注"],
   "zh_hk": ["註釋", "註"],
