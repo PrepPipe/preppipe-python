@@ -40,6 +40,7 @@ class _DummyDocCreation(preppipe.pipeline.TransformBase):
 class OutputDestKind(enum.Enum):
   DOXYGEN = 0
   USER_LATEX = enum.auto()
+  USER_MARKDOWN = enum.auto()
 
 class FrontendCommandDumper:
   TR : preppipe.language.TranslationDomain = preppipe.language.TranslationDomain("ext_docs_frontend")
@@ -113,6 +114,10 @@ class FrontendCommandDumper:
     return s
 
   def escape_str_doxygen(self, s : str):
+    # TODO
+    return s
+
+  def escape_str_markdown(self, s : str):
     # TODO
     return s
 
@@ -317,6 +322,11 @@ class FrontendCommandDumper:
     zh_cn="额外关键字：",
     zh_hk="額外關鍵字：",
   )
+  _tr_cmd_uncategorized = TR.tr("cmd_uncategorized",
+    en="Uncategorized",
+    zh_cn="未分类",
+    zh_hk="未分類",
+  )
 
   # 这个后缀只为了在同时包含多个语言的页面时不至于起冲突
   pageref_suffix : str
@@ -351,8 +361,11 @@ class FrontendCommandDumper:
           pass
         case OutputDestKind.USER_LATEX:
           add_row('  '*level + r"\\begin{itemize}")
+        case OutputDestKind.USER_MARKDOWN:
+          # 添加空白行以开启新段落
+          add_row('')
         case _:
-          pass
+          raise NotImplementedError()
       for v in l:
         if isinstance(v, preppipe.language.Translatable):
           s = stringtize_tr(v)
@@ -363,8 +376,10 @@ class FrontendCommandDumper:
               add_row('  '*(level+1) + '- ' + s)
             case OutputDestKind.USER_LATEX:
               add_row('  '*level + "\\item" + s)
+            case OutputDestKind.USER_MARKDOWN:
+              add_row('  '*(level+1) + '* ' + s)
             case _:
-              pass
+              raise NotImplementedError()
         elif isinstance(v, tuple):
           head, inner = v
           s = stringtize_tr(head)
@@ -377,8 +392,11 @@ class FrontendCommandDumper:
             case OutputDestKind.USER_LATEX:
               add_row('  '*level + "\\item" + s)
               add_list(inner, level+1, dump_tr_path)
+            case OutputDestKind.USER_MARKDOWN:
+              add_row('  '*(level+1) + '* ' + s)
+              add_list(inner, level+1, dump_tr_path)
             case _:
-              pass
+              raise NotImplementedError()
         else:
           raise NotImplementedError()
       match dest:
@@ -386,6 +404,8 @@ class FrontendCommandDumper:
           pass
         case OutputDestKind.USER_LATEX:
           add_row('  '*level + r"\\end{itemize}")
+        case OutputDestKind.USER_MARKDOWN:
+          add_row('')
         case _:
           pass
 
@@ -399,141 +419,202 @@ class FrontendCommandDumper:
         add_row("/*!")
         add_row("\\page " + pageref + ' ' + self.get_title().get() + title_suffix)
       case OutputDestKind.USER_LATEX: # .tex file
-        add_row("\\subsection{" + title.get() + title_suffix + "}\\label{" + "sec:" + pageref + "}")
+        add_row("\\section{" + title.get() + title_suffix + "}\\label{" + "sec:" + pageref + "}")
+      case OutputDestKind.USER_MARKDOWN: # .md file
+        add_row("# " + title.get() + title_suffix)
       case _:
         raise NotImplementedError()
+
+    items_by_category : list[tuple[str, list[preppipe.frontend.commandsemantics.FrontendCommandInfo]]] = []
+    unknown_category_items : list[preppipe.frontend.commandsemantics.FrontendCommandInfo] = []
+
+    if ns._expanded_category_tree is not None:
+      category_index_dict : dict[int, list[preppipe.frontend.commandsemantics.FrontendCommandInfo]] = {}
+      for k, v in ns.items():
+        kind, data = v
+        match kind:
+          case preppipe.nameresolution.NamespaceNode.NameResolutionDataEntryKind.CanonicalEntry:
+            assert isinstance(data, preppipe.frontend.commandsemantics.FrontendCommandInfo)
+            assert data.cname == k
+            if data.category_index is None:
+              unknown_category_items.append(data)
+            else:
+              if data.category_index < 0:
+                # 这一项应该隐藏
+                continue
+              if data.category_index not in category_index_dict:
+                category_index_dict[data.category_index] = []
+              category_index_dict[data.category_index].append(data)
+          case _:
+            continue
+      for index in range(0, len(ns._expanded_category_tree)):
+        category_label = '/'.join([s.get() if isinstance(s, preppipe.language.Translatable) else s for s in ns._expanded_category_tree[index]])
+        category_items = category_index_dict[index] if index in category_index_dict else []
+        items_by_category.append((category_label, category_items))
+    else:
+      # 没有分类信息，全部塞到 unknown_category_items 中
+      for k, v in ns.items():
+        kind, data = v
+        match kind:
+          case preppipe.nameresolution.NamespaceNode.NameResolutionDataEntryKind.CanonicalEntry:
+            assert isinstance(data, preppipe.frontend.commandsemantics.FrontendCommandInfo)
+            assert data.cname == k
+            if data.category_index is not None and data.category_index < 0:
+              # 这一项应该隐藏
+              continue
+            unknown_category_items.append(data)
+          case _:
+            continue
+    if len(unknown_category_items) > 0:
+      items_by_category.append((self._tr_cmd_uncategorized.get(), unknown_category_items))
 
     def start_part(part_name : str, part_ref : str):
       add_row('')
       match dest:
         case OutputDestKind.DOXYGEN:
-          add_row("\\subsection " + part_ref + ' ' + part_name)
+          add_row("\\paragraph " + part_ref + ' ' + part_name)
         case OutputDestKind.USER_LATEX:
           add_row("\\paragraph{" + part_name + "}\\label{" + "sec:" + part_ref + "}")
+        case OutputDestKind.USER_MARKDOWN:
+          add_row("#### " + part_name)
         case _:
           raise NotImplementedError()
 
-    for k, v in ns.items():
-      kind, data = v
-      match kind:
-        case preppipe.nameresolution.NamespaceNode.NameResolutionDataEntryKind.CanonicalEntry:
-          assert isinstance(data, preppipe.frontend.commandsemantics.FrontendCommandInfo)
-          assert data.cname == k
-          # 进入命令
-          cmdsecref = pageref + '_' + data.cname
-          if data.name_tr is not None:
-            fmtname = data.name_tr.get()
-            all_cmdnames = data.name_tr.get_current_candidates()
-          else:
-            fmtname = data.cname
-            all_cmdnames = [data.cname]
-
-          add_row('')
-          match dest:
-            case OutputDestKind.DOXYGEN:
-              add_row("\\section " + cmdsecref + ' ' + fmtname)
-            case OutputDestKind.USER_LATEX:
-              add_row("\\subsubsection{" + fmtname + "}\\label{" + "sec:" + cmdsecref + "}")
-            case _:
-              raise NotImplementedError()
-
-          # 先把命令声明部分写清
-          part_name = self._tr_cmd_invocation.get()
-          part_ref = cmdsecref + '_cmd'
-          start_part(part_name, part_ref)
-          enumtr_list = []
-          # 假设命令是 [命令1：参数1，参数2]，我们把 handler_list 中各项的参数都匹配上去
-          # 如果命令名有多个名称（有可能），我们将后面的内容全都复制相应遍数
-          # 如果命令参数有多个名称（几乎没有），我们用括号把所有备选项括起来
-          # 命令主体部分写完之后再加
-          handler_index = 0
-          used_pnames : list[str] = []
-          for cb, sig in data.handler_list:
-            param_str = []
-            handler_index += 1
-            is_take_extended_arg : str | None = None
-            for p in sig.parameters.values():
-              # 名字(名字2，...) = <类型>
-              pname = p.name
-              if pname in data.param_tr:
-                if pname not in used_pnames:
-                  used_pnames.append(pname)
-                pname = stringtize_tr(data.param_tr[pname])
-              typestr = "<?>"
-              if p.annotation is not None:
-                typestr, isextarg = self.get_type_annotation_as_str(p.annotation, p.default, enumtr_list)
-                if typestr is None:
-                  # 如果该参数不是由用户提供的，我们在这里跳过这项参数
-                  continue
-                elif isextarg is True:
-                  # 这是一个拓展参数项
-                  is_take_extended_arg = typestr
-                  continue
-              param_str.append(pname + '=' + typestr)
-            body = self._tr_cmd_paramsep.get().join(param_str)
-            for cname in all_cmdnames:
-              cur_str = self._tr_cmdstart.get() + cname + self._tr_cmd_namesep.get() + body + self._tr_cmdend.get() + ' #' + str(handler_index)
-              if is_take_extended_arg:
-                cur_str += " (+" + is_take_extended_arg + ')'
-              add_paragraph(cur_str)
-          # 如果命令有引用额外的关键字，我们以树状结构把它们排上
-          if data.additional_keywords is not None and len(data.additional_keywords) > 0:
-            add_paragraph(self._tr_additiona_keywords.get())
-            add_list(data.additional_keywords, 0, False)
-
-          docs = self.get_docs(data.cname)
-          docs_text = [s.strip() for s in docs.get().splitlines()]
-
-          # 详细介绍部分
-          part_name = self._tr_cmd_docs.get()
-          part_ref = cmdsecref + '_docs'
-          start_part(part_name, part_ref)
-          match dest:
-            case OutputDestKind.DOXYGEN:
-              for row in docs_text:
-                add_paragraph(self.escape_str_doxygen(row))
-              if additional := self.get_additional_docs_doxygen(data.cname):
-                add_row(additional.get())
-            case OutputDestKind.USER_LATEX:
-              for row in docs_text:
-                add_paragraph(self.escape_str_latex(row))
-            case _:
-              rows.extend(docs_text)
-              add_row('')
-
-          # 翻译、别名部分
-          part_name = self._tr_cmd_tr.get()
-          part_ref = cmdsecref + '_tr'
-          start_part(part_name, part_ref)
-          # 首先是命令名
-          if data.name_tr is not None:
-            cur_str = self._tr_cmd_tr_cmdname.format(name=self._tr_cmd_paramsep.get().join(all_cmdnames)) + get_tr_path(data.name_tr)
-          else:
-            cur_str = self._tr_cmd_tr_cmdname_noentry.get()
-          add_paragraph(cur_str)
-          # 然后是所有参数
-          if len(used_pnames) > 0 or len(enumtr_list) > 0:
-            add_paragraph(self._tr_cmd_tr_params.get())
-            if len(used_pnames) > 0:
-              add_list([data.param_tr[pname] for pname in used_pnames], 0, True)
-            if len(enumtr_list) > 0:
-              add_list(enumtr_list, 0, True)
-          # 再然后是额外关键字
-          if data.additional_keywords is not None and len(data.additional_keywords) > 0:
-            add_paragraph(self._tr_cmd_tr_additional_keywords.get())
-            add_list(data.additional_keywords, 0, True)
-          # 结束命令
-          match dest:
-            case OutputDestKind.DOXYGEN:
-              add_row('')
-            case OutputDestKind.USER_LATEX:
-              add_row('')
-            case _:
-              raise NotImplementedError()
-
+    for category_index, (category_label, items) in enumerate(items_by_category):
+      add_row('')
+      category_ref = pageref + '_c' + str(category_index)
+      match dest:
+        case OutputDestKind.DOXYGEN:
+          add_row("\\section " + category_ref + ' ' + category_label)
+        case OutputDestKind.USER_LATEX:
+          add_row("\\subsection{" + category_label + "}\\label{" + "sec:" + category_ref + "}")
+        case OutputDestKind.USER_MARKDOWN:
+          add_row("## " + category_label)
         case _:
-          # 暂时忽略其他所有项
-          continue
+          raise NotImplementedError()
+
+      for data in items:
+        cmdsecref = category_ref + '_' + data.cname
+        if data.name_tr is not None:
+          fmtname = data.name_tr.get()
+          all_cmdnames = data.name_tr.get_current_candidates()
+        else:
+          fmtname = data.cname
+          all_cmdnames = [data.cname]
+
+        add_row('')
+        match dest:
+          case OutputDestKind.DOXYGEN:
+            add_row("\\subsection " + cmdsecref + ' ' + fmtname)
+          case OutputDestKind.USER_LATEX:
+            add_row("\\subsubsection{" + fmtname + "}\\label{" + "sec:" + cmdsecref + "}")
+          case OutputDestKind.USER_MARKDOWN:
+            add_row("### " + fmtname)
+          case _:
+            raise NotImplementedError()
+
+        # 先把命令声明部分写清
+        part_name = self._tr_cmd_invocation.get()
+        part_ref = cmdsecref + '_cmd'
+        start_part(part_name, part_ref)
+        enumtr_list = []
+        # 假设命令是 [命令1：参数1，参数2]，我们把 handler_list 中各项的参数都匹配上去
+        # 如果命令名有多个名称（有可能），我们将后面的内容全都复制相应遍数
+        # 如果命令参数有多个名称（几乎没有），我们用括号把所有备选项括起来
+        # 命令主体部分写完之后再加
+        handler_index = 0
+        used_pnames : list[str] = []
+        for cb, sig in data.handler_list:
+          param_str = []
+          handler_index += 1
+          is_take_extended_arg : str | None = None
+          for p in sig.parameters.values():
+            # 名字(名字2，...) = <类型>
+            pname = p.name
+            if pname in data.param_tr:
+              if pname not in used_pnames:
+                used_pnames.append(pname)
+              pname = stringtize_tr(data.param_tr[pname])
+            typestr = "<?>"
+            if p.annotation is not None:
+              typestr, isextarg = self.get_type_annotation_as_str(p.annotation, p.default, enumtr_list)
+              if typestr is None:
+                # 如果该参数不是由用户提供的，我们在这里跳过这项参数
+                continue
+              elif isextarg is True:
+                # 这是一个拓展参数项
+                is_take_extended_arg = typestr
+                continue
+            param_str.append(pname + '=' + typestr)
+          body = self._tr_cmd_paramsep.get().join(param_str)
+          for cname in all_cmdnames:
+            cur_str = self._tr_cmdstart.get() + cname
+            if len(body) > 0:
+              cur_str += self._tr_cmd_namesep.get() + body
+            cur_str += self._tr_cmdend.get()
+            if is_take_extended_arg:
+              cur_str += " (+" + is_take_extended_arg + ')'
+            add_paragraph(cur_str)
+        # 如果命令有引用额外的关键字，我们以树状结构把它们排上
+        if data.additional_keywords is not None and len(data.additional_keywords) > 0:
+          add_paragraph(self._tr_additiona_keywords.get())
+          add_list(data.additional_keywords, 0, False)
+
+        docs = self.get_docs(data.cname)
+        docs_text = [s.strip() for s in docs.get().splitlines()]
+
+        # 详细介绍部分
+        part_name = self._tr_cmd_docs.get()
+        part_ref = cmdsecref + '_docs'
+        start_part(part_name, part_ref)
+        match dest:
+          case OutputDestKind.DOXYGEN:
+            for row in docs_text:
+              add_paragraph(self.escape_str_doxygen(row))
+            if additional := self.get_additional_docs_doxygen(data.cname):
+              add_row(additional.get())
+          case OutputDestKind.USER_LATEX:
+            for row in docs_text:
+              add_paragraph(self.escape_str_latex(row))
+          case OutputDestKind.USER_MARKDOWN:
+            for row in docs_text:
+              add_paragraph(self.escape_str_markdown(row))
+          case _:
+            rows.extend(docs_text)
+            add_row('')
+
+        # 翻译、别名部分
+        part_name = self._tr_cmd_tr.get()
+        part_ref = cmdsecref + '_tr'
+        start_part(part_name, part_ref)
+        # 首先是命令名
+        if data.name_tr is not None:
+          cur_str = self._tr_cmd_tr_cmdname.format(name=self._tr_cmd_paramsep.get().join(all_cmdnames)) + get_tr_path(data.name_tr)
+        else:
+          cur_str = self._tr_cmd_tr_cmdname_noentry.get()
+        add_paragraph(cur_str)
+        # 然后是所有参数
+        if len(used_pnames) > 0 or len(enumtr_list) > 0:
+          add_paragraph(self._tr_cmd_tr_params.get())
+          if len(used_pnames) > 0:
+            add_list([data.param_tr[pname] for pname in used_pnames], 0, True)
+          if len(enumtr_list) > 0:
+            add_list(enumtr_list, 0, True)
+        # 再然后是额外关键字
+        if data.additional_keywords is not None and len(data.additional_keywords) > 0:
+          add_paragraph(self._tr_cmd_tr_additional_keywords.get())
+          add_list(data.additional_keywords, 0, True)
+        # 结束命令
+        match dest:
+          case OutputDestKind.DOXYGEN:
+            add_row('')
+          case OutputDestKind.USER_LATEX:
+            add_row('')
+          case OutputDestKind.USER_MARKDOWN:
+            add_row('')
+          case _:
+            raise NotImplementedError()
+      # 当前类别所有命令处理完毕
     # 结束文件
     match dest:
       case OutputDestKind.DOXYGEN:
@@ -582,9 +663,11 @@ def _main():
   parser.add_argument("--namespace", type=str, choices=_DUMPERS.keys(), required=True)
   parser.add_argument("--doxygen", type=str, nargs=1)
   parser.add_argument("--latex", type=str, nargs=1)
+  parser.add_argument("--markdown", type=str, nargs=1)
   args = parser.parse_args()
   doxygen_path : str | None = None
   latex_path : str | None = None
+  markdown_path : str | None = None
   is_output_set = False
   if args.doxygen:
     doxygen_path = args.doxygen[0]
@@ -593,6 +676,10 @@ def _main():
   if args.latex:
     latex_path = args.latex[0]
     assert isinstance(latex_path, str)
+    is_output_set = True
+  if args.markdown:
+    markdown_path = args.markdown[0]
+    assert isinstance(markdown_path, str)
     is_output_set = True
   if not is_output_set:
     parser.print_usage()
@@ -609,6 +696,10 @@ def _main():
   if latex_path:
     res = dumper.collect_docs(OutputDestKind.USER_LATEX)
     with open(latex_path, 'w', encoding="utf-8") as f:
+      f.write(res)
+  if markdown_path:
+    res = dumper.collect_docs(OutputDestKind.USER_MARKDOWN)
+    with open(markdown_path, 'w', encoding="utf-8") as f:
       f.write(res)
 
 if __name__ == "__main__":
