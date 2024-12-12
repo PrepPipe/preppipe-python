@@ -66,6 +66,23 @@ def CmdAliasDecl(TR: TranslationDomain,
     return func
   return decorator_aliasdecl
 
+def CmdCategory(*args : Translatable | str):
+  def decorator_category(func):
+    command_info : FrontendCommandInfo = getattr(func, "CMD_INFO")
+    category_index = command_info.parent.find_category_index(args)
+    if category_index is None:
+      raise PPInternalError("Unknown category")
+    if command_info.category_index is not None and command_info.category_index != category_index:
+      raise PPInternalError("Command already assigned to a different category")
+    command_info.category_index = category_index
+    return func
+  return decorator_category
+
+def CmdHideInDoc(func):
+  command_info : FrontendCommandInfo = getattr(func, "CMD_INFO")
+  command_info.category_index = -1
+  return func
+
 # 如果命令参数实质上是个枚举类型，命令可以定义该枚举类型，继承 enum.Enum，并且加上这个修饰符
 # 这个修饰符会添加一个 _translate() 的静态函数，用于把字符串转为枚举类型的值
 # 不同语言的别名也会在该函数中转换
@@ -171,12 +188,15 @@ class FrontendCommandInfo:
   param_tr : dict[str, Translatable] = dataclasses.field(default_factory=dict) # 命令参数的翻译、别名
   additional_keywords : list[Translatable | tuple[Translatable, list]] | None = None # 如果命令处理中用到了其他关键字，那么应该记录在这里。这可以是一个（递归的）树状结构
   get_keyword_cb : typing.Callable[[], list[Translatable | tuple[Translatable, list | typing.Callable]] | typing.Callable] | None = None # 延迟获取额外关键字的函数
+  category_index : int | None = None # 该命令属于哪个分类（FrontendCommandNamespace._expanded_category_tree 的下标，主要用于生成文档）; -1 表示隐藏
 
   def __hash__(self) -> int:
     return hash(self.cname)
 
 class FrontendCommandNamespace(NamespaceNode[FrontendCommandInfo]):
   _lateinit_aliases : set[FrontendCommandInfo]
+  _cateogry_tree : dict | list | None # 用以生成文档，结点全是 Translatable 或者 str （或者 None 占位）, 要组合时就用 list 或 dict
+  _expanded_category_tree : list[tuple[Translatable | str, ...]] | None
 
   @staticmethod
   def create(parent : FrontendCommandNamespace | None, cname : str) -> FrontendCommandNamespace:
@@ -187,11 +207,57 @@ class FrontendCommandNamespace(NamespaceNode[FrontendCommandInfo]):
   def __init__(self, tree: FrontendCommandRegistry, parent: FrontendCommandNamespace, cname: str | None) -> None:
     super().__init__(tree, parent, cname)
     self._lateinit_aliases = set()
+    self._cateogry_tree = None
+    self._expanded_category_tree = None
 
   def lookup_name(self, name: str):
     if len(self._lateinit_aliases) > 0:
       self.lateinit_command_aliases()
     return super().lookup_name(name)
+
+  def set_category_tree(self, tree : dict | list):
+    if self._cateogry_tree is not None:
+      raise PPInternalError("Declaring category tree more than once")
+    self._expanded_category_tree = []
+    def check_tree_recursive(parent : list[Translatable | str], node : dict | list):
+      def report_error(msg : str):
+        raise PPInternalError("Category tree at" + '/'.join([s.get() if isinstance(s, Translatable) else s for s in parent]) + ": " + msg)
+      def try_add_path(path : list[Translatable | str]):
+        path_tuple = tuple(path)
+        index = self.find_category_index(path_tuple)
+        if index is not None:
+          report_error("duplicated path")
+        assert self._expanded_category_tree is not None
+        self._expanded_category_tree.append(path_tuple)
+      if not isinstance(node, (dict, list)):
+        report_error("invalid node type " + str(type(node)))
+      if isinstance(node, dict):
+        for k, v in node.items():
+          if not isinstance(k, (Translatable, str)):
+            report_error("invalid key type " + str(type(k)))
+          curpath = parent + [k]
+          if isinstance(v, (dict, list)):
+            check_tree_recursive(curpath, v)
+          elif v is None:
+            try_add_path(curpath)
+          else:
+            report_error("invalid value type " + str(type(v)))
+      elif isinstance(node, list):
+        for k in node:
+          if not isinstance(k, (Translatable, str)):
+            report_error("invalid key type " + str(type(k)))
+          curpath = parent + [k]
+          try_add_path(curpath)
+    self._cateogry_tree = tree
+    check_tree_recursive([], tree)
+
+  def find_category_index(self, path : tuple[Translatable | str, ...]) -> int | None:
+    if self._expanded_category_tree is None:
+      return None
+    for index, l in enumerate(self._expanded_category_tree):
+      if path == l:
+        return index
+    return None
 
   def get_or_create_command_info(self, name : str) -> FrontendCommandInfo:
     command_info = self.lookup_name(name)
