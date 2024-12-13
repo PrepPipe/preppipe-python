@@ -11,6 +11,7 @@ from preppipe.irbase import Location, StringLiteral
 from ...irbase import *
 from ..commandsyntaxparser import *
 from ..commandsemantics import *
+from ..commanddocs import *
 from ...vnmodel import *
 from ...imageexpr import *
 from .vnast import *
@@ -1640,3 +1641,30 @@ def cmd_comment(parser : VNParser, state : VNASTParsingState, commandop : Genera
   if rawstr := commandop.try_get_raw_arg():
     node = CommentOp.create(comment=StringLiteral.get(rawstr, state.context), name=commandop.name, loc=commandop.location)
     state.emit_md(node)
+
+@FrontendDocsNSDecl("vn")
+class _VNFrontendCommandDumper(FrontendCommandDumper):
+  def get_command_ns(self):
+    return vn_command_ns
+
+  def get_parser_type(self):
+    return VNParser
+
+  tr : TranslationDomain = TranslationDomain("cmddocs_vn")
+
+  tr.tr("Comment",
+        en="Comments",zh_cn="内嵌注释")
+
+  _tr_title = tr.tr("title",
+    en="Visual Novel Commands Listing",
+    zh_cn="视觉小说命令列表",
+    zh_hk="視覺小說命令列表",
+  )
+
+  def get_title(self) -> Translatable:
+    return self._tr_title
+
+  def get_docs(self, cmdname: str) -> Translatable:
+    if doc := self.tr.elements.get(cmdname):
+      return doc
+    return super().get_docs(cmdname)
