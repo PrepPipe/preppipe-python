@@ -23,20 +23,6 @@ import preppipe.nameresolution
 # 2. 生成在 用户文档中的说明，偏用户
 # 我们在这里维护（不包含在语涵编译器主程序 wheel 内的）命令文档
 
-# 由于命令的翻译要在命令被执行时才用上，我们这里需要如下步骤：
-# 1. 生成一个临时的输入剧本，并且运行一遍前端命令解析代码
-# 2. 直接访问对应的类，从中读取命令列表
-# 3. 将列表中的每个命令对应到目前已有的命令文档中，没有对应文档的命令要有提示
-
-@preppipe.pipeline.FrontendDecl("test", input_decl=preppipe.pipeline.IODecl("<No Input>", nargs=0), output_decl=preppipe.inputmodel.IMDocumentOp)
-class _DummyDocCreation(preppipe.pipeline.TransformBase):
-  def run(self) -> preppipe.inputmodel.IMDocumentOp:
-    d = preppipe.inputmodel.IMDocumentOp.create("dummy", self.context.null_location)
-    b = d.body.create_block()
-    op = preppipe.frontend.commandsyntaxparser.GeneralCommandOp.create('', self.context.null_location, preppipe.irbase.StringLiteral.get('', self.context), self.context.null_location)
-    b.push_back(op)
-    return d
-
 class OutputDestKind(enum.Enum):
   DOXYGEN = 0
   USER_LATEX = enum.auto()
@@ -331,12 +317,19 @@ class FrontendCommandDumper:
   # 这个后缀只为了在同时包含多个语言的页面时不至于起冲突
   pageref_suffix : str
 
+  # 如果需要使用指定的标题的话，应该在这
+  title_override : str | None
+
+  # 如果未指定标题，用自带的标题且需要添加语言结尾（用来避免同时包含相同内容不同语言时出错），则设置此标记
+  flag_title_add_language_suffix : bool
+
   def __init__(self):
     self.pageref_suffix = ''
+    self.title_override = None
+    self.flag_title_add_language_suffix = False
 
   def collect_docs(self, dest: OutputDestKind) -> str:
     ns = self.get_command_ns()
-    title = self.get_title()
     rows = []
 
     def add_row(s : str):
@@ -410,18 +403,22 @@ class FrontendCommandDumper:
           pass
 
     pageref = "cmdref_" + '_'.join([s.strip() for s in ns.get_namespace_path()])
-    title_suffix = ''
     if len(self.pageref_suffix) > 0:
       pageref += '_' + self.pageref_suffix
-      title_suffix = '(' + self.pageref_suffix + ')'
+    if self.title_override is not None:
+      final_title = self.title_override
+    else:
+      final_title = self.get_title().get()
+      if self.flag_title_add_language_suffix:
+        final_title += ' (' + self.pageref_suffix + ')'
     match dest:
       case OutputDestKind.DOXYGEN: # .dox file
         add_row("/*!")
-        add_row("\\page " + pageref + ' ' + self.get_title().get() + title_suffix)
+        add_row("\\page " + pageref + ' ' + final_title)
       case OutputDestKind.USER_LATEX: # .tex file
-        add_row("\\section{" + title.get() + title_suffix + "}\\label{" + "sec:" + pageref + "}")
+        add_row("\\section{" + final_title + "}\\label{" + "sec:" + pageref + "}")
       case OutputDestKind.USER_MARKDOWN: # .md file
-        add_row("# " + title.get() + title_suffix)
+        add_row("# " + final_title)
       case _:
         raise NotImplementedError()
 
@@ -652,6 +649,14 @@ class _VNFrontendCommandDumper(FrontendCommandDumper):
   tr.tr("Comment",
         en="Comments",zh_cn="内嵌注释")
 
+  _tr_title = tr.tr("title",
+    en="Visual Novel Commands Listing",
+    zh_cn="视觉小说命令列表",
+    zh_hk="視覺小說命令列表",
+  )
+
+  def get_title(self) -> preppipe.pipeline.Translatable:
+    return self._tr_title
 
   def get_docs(self, cmdname: str) -> preppipe.language.Translatable:
     if doc := self.tr.elements.get(cmdname):
@@ -661,9 +666,11 @@ class _VNFrontendCommandDumper(FrontendCommandDumper):
 def _main():
   parser = argparse.ArgumentParser()
   parser.add_argument("--namespace", type=str, choices=_DUMPERS.keys(), required=True)
+  parser.add_argument("--title", type=str, nargs=1)
   parser.add_argument("--doxygen", type=str, nargs=1)
   parser.add_argument("--latex", type=str, nargs=1)
   parser.add_argument("--markdown", type=str, nargs=1)
+  parser.add_argument("--add-language-suffix-in-title", type=bool, default=False)
   args = parser.parse_args()
   doxygen_path : str | None = None
   latex_path : str | None = None
@@ -689,6 +696,9 @@ def _main():
   if lang := os.environ.get("PREPPIPE_LANGUAGE"):
     dumper.pageref_suffix = lang
     assert isinstance(dumper.pageref_suffix, str)
+  if args.title:
+    dumper.title_override = args.title[0]
+    assert isinstance(dumper.title_override, str)
   if doxygen_path:
     res = dumper.collect_docs(OutputDestKind.DOXYGEN)
     with open(doxygen_path, 'w', encoding="utf-8") as f:
