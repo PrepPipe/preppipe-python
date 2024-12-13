@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2024 PrepPipe's Contributors
+# SPDX-License-Identifier: Apache-2.0
+
 import typing
 import types
 import enum
@@ -6,16 +9,13 @@ import inspect
 import decimal
 import os
 
-import preppipe
-import preppipe.pipeline_cmd
-import preppipe.pipeline
-import preppipe.irbase
-import preppipe.inputmodel
-import preppipe.frontend.commandsyntaxparser
-import preppipe.frontend.commandsemantics
-import preppipe.frontend.vnmodel.vnparser
-import preppipe.language
-import preppipe.nameresolution
+from ..tooldecl import *
+from .commandsyntaxparser import *
+from .commandsemantics import *
+from ..language import *
+from ..nameresolution import *
+from ..irbase import *
+from ..inputmodel import *
 
 # 本脚本用于将注册在前端的命令以及所用的翻译等信息全都扒出来，用于文档生成
 # 我们需要生成两份内容：
@@ -28,8 +28,9 @@ class OutputDestKind(enum.Enum):
   USER_LATEX = enum.auto()
   USER_MARKDOWN = enum.auto()
 
+@ToolClassDecl("cmddocs")
 class FrontendCommandDumper:
-  TR : preppipe.language.TranslationDomain = preppipe.language.TranslationDomain("ext_docs_frontend")
+  TR : TranslationDomain = TranslationDomain("cmddocs_frontend")
   _tr_cmdref = TR.tr("cmdref",
     en="Frontend Command Reference",
     zh_cn="前端命令列表",
@@ -68,17 +69,20 @@ class FrontendCommandDumper:
     zh_hk="命令使用了以下額外關鍵字：",
   )
 
-  def get_command_ns(self) -> preppipe.frontend.commandsemantics.FrontendCommandNamespace:
+  def get_command_ns(self) -> FrontendCommandNamespace:
+    # 获取命令的命名空间
     raise NotImplementedError()
-  def run_pipeline(self)->None:
+  def get_parser_type(self) -> typing.Type[FrontendParserBase]:
+    # 解析类的具体类实例，用来判断命令参数是否是某些特殊类型
     raise NotImplementedError()
-  def get_parser_type(self) -> typing.Type[preppipe.frontend.commandsemantics.FrontendParserBase]:
-    raise NotImplementedError()
-  def get_title(self) -> preppipe.language.Translatable:
+  def get_title(self) -> Translatable:
+    # 用来生成文档页面的标题
     return FrontendCommandDumper._tr_cmdref
-  def get_docs(self, cmdname : str) -> preppipe.language.Translatable:
+  def get_docs(self, cmdname : str) -> Translatable:
+    # 用来获取命令的详细文档
     return self._tr_no_docs
-  def get_additional_docs_doxygen(self, cmdname : str) -> preppipe.language.Translatable | None:
+  def get_additional_docs_doxygen(self, cmdname : str) -> Translatable | None:
+    # 如果生成面向开发者的文档的话，我们附带什么额外内容
     return None
 
   LATEX_ESCAPES = {
@@ -183,17 +187,16 @@ class FrontendCommandDumper:
     zh_hk="任意內容",
   )
 
-  def check_is_extended_arg(self, a) -> preppipe.language.Translatable | None:
-    if issubclass(a, preppipe.frontend.commandsemantics.ExtendDataExprBase):
-      if issubclass(a, preppipe.frontend.commandsemantics.ListExprOperand):
+  def check_is_extended_arg(self, a) -> Translatable | None:
+    if issubclass(a, ExtendDataExprBase):
+      if issubclass(a, ListExprOperand):
         return self._tr_extarg_list
-      if issubclass(a, preppipe.frontend.commandsemantics.SpecialBlockOperand):
+      if issubclass(a, SpecialBlockOperand):
         return self._tr_extarg_specialblock
-      if issubclass(a, preppipe.frontend.commandsemantics.TableExprOperand):
+      if issubclass(a, TableExprOperand):
         return self._tr_extarg_table
       return self._tr_extarg_general
     raise RuntimeError("Unexpected annotation: "+str(a))
-    return None
 
   def get_type_annotation_str_impl(self, a, enumtr_list : list) -> str:
     if isinstance(a, types.UnionType):
@@ -211,20 +214,20 @@ class FrontendCommandDumper:
     elif a is typing.Any:
       return self._tr_any.get()
     if isinstance(a, type):
-      if issubclass(a, preppipe.frontend.commandsemantics.CallExprOperand):
+      if issubclass(a, CallExprOperand):
         return self._tr_vtype_callexpr.get()
-      if issubclass(a, (preppipe.irbase.StringLiteral, str)):
+      if issubclass(a, (StringLiteral, str)):
         return self._tr_vtype_str.get()
-      if issubclass(a, (preppipe.irbase.FloatLiteral, decimal.Decimal, float)):
+      if issubclass(a, (FloatLiteral, decimal.Decimal, float)):
         return self._tr_vtype_float.get()
-      if issubclass(a, (preppipe.irbase.IntLiteral, int)):
+      if issubclass(a, (IntLiteral, int)):
         return self._tr_vtype_int.get()
-      if issubclass(a, preppipe.irbase.ImageAssetData):
+      if issubclass(a, ImageAssetData):
         return self._tr_vtype_image.get()
-      if issubclass(a, preppipe.irbase.AudioAssetData):
+      if issubclass(a, AudioAssetData):
         return self._tr_vtype_audio.get()
       if issubclass(a, enum.Enum):
-        trdict : dict[str, preppipe.language.Translatable] = getattr(a, "_translation_src")
+        trdict : dict[str, Translatable] = getattr(a, "_translation_src")
         options = []
         for name, enumtr in trdict.items():
           options.append('"' + '","'.join(enumtr.get_current_candidates()) + '"')
@@ -235,7 +238,7 @@ class FrontendCommandDumper:
   def get_default_value_str(self, v) -> str:
     if isinstance(v, enum.Enum):
       # 如果是枚举值的话，尝试使用带翻译的名称
-      trdict : dict[str, preppipe.language.Translatable] = getattr(type(v), "_translation_src")
+      trdict : dict[str, Translatable] = getattr(type(v), "_translation_src")
       enumtr = trdict[v.name]
       return '"' + enumtr.get() + '"'
     return str(v)
@@ -246,7 +249,7 @@ class FrontendCommandDumper:
 
     # 第一个返回值是关于该标注的字符串类型的描述，第二个返回值指定这是否是拓展参数
     # 首先判断是否是拓展参数，对其特判
-    l = preppipe.frontend.commandsemantics.FrontendParserBase.check_is_extend_data(a)
+    l = FrontendParserBase.check_is_extend_data(a)
     if len(l) > 0:
       trlist = [self.check_is_extended_arg(t) for t in l]
       s = self._tr_extarg_sep.get().join([t.get() for t in trlist if t is not None])
@@ -255,12 +258,12 @@ class FrontendCommandDumper:
       return (s, True)
     # 剩下的情况下都不是拓展参数
     # 先排除几个特殊情况
-    if isinstance(a, type) and issubclass(a, preppipe.frontend.commandsemantics.FrontendParserBase):
+    if isinstance(a, type) and issubclass(a, FrontendParserBase):
       return (None, False)
     if a == self.get_parser_type().get_state_type():
       return (None, False)
-    if a in (preppipe.frontend.commandsyntaxparser.GeneralCommandOp,
-             preppipe.irbase.Context):
+    if a in (GeneralCommandOp,
+             Context):
       return (None, False)
     # 应该不是特殊情况而是正常参数了
     s = self.get_type_annotation_str_impl(a, enumtr_list)
@@ -339,13 +342,13 @@ class FrontendCommandDumper:
       rows.append('')
       rows.append(s)
 
-    def get_tr_path(t : preppipe.language.Translatable):
+    def get_tr_path(t : Translatable):
       return t.parent.name + '/' + t.code
 
-    def stringtize_tr(tr : preppipe.language.Translatable)->str:
+    def stringtize_tr(tr : Translatable)->str:
       return '|'.join(tr.get_current_candidates())
 
-    def add_list(l : list[preppipe.language.Translatable | tuple[preppipe.language.Translatable, list]], level: int, dump_tr_path : bool = False):
+    def add_list(l : list[Translatable | tuple[Translatable, list]], level: int, dump_tr_path : bool = False):
       nonlocal rows
       if len(l) == 0:
         return
@@ -360,7 +363,7 @@ class FrontendCommandDumper:
         case _:
           raise NotImplementedError()
       for v in l:
-        if isinstance(v, preppipe.language.Translatable):
+        if isinstance(v, Translatable):
           s = stringtize_tr(v)
           if dump_tr_path:
             s += ': ' + get_tr_path(v)
@@ -422,16 +425,16 @@ class FrontendCommandDumper:
       case _:
         raise NotImplementedError()
 
-    items_by_category : list[tuple[str, list[preppipe.frontend.commandsemantics.FrontendCommandInfo]]] = []
-    unknown_category_items : list[preppipe.frontend.commandsemantics.FrontendCommandInfo] = []
+    items_by_category : list[tuple[str, list[FrontendCommandInfo]]] = []
+    unknown_category_items : list[FrontendCommandInfo] = []
 
     if ns._expanded_category_tree is not None:
-      category_index_dict : dict[int, list[preppipe.frontend.commandsemantics.FrontendCommandInfo]] = {}
+      category_index_dict : dict[int, list[FrontendCommandInfo]] = {}
       for k, v in ns.items():
         kind, data = v
         match kind:
-          case preppipe.nameresolution.NamespaceNode.NameResolutionDataEntryKind.CanonicalEntry:
-            assert isinstance(data, preppipe.frontend.commandsemantics.FrontendCommandInfo)
+          case NamespaceNode.NameResolutionDataEntryKind.CanonicalEntry:
+            assert isinstance(data, FrontendCommandInfo)
             assert data.cname == k
             if data.category_index is None:
               unknown_category_items.append(data)
@@ -445,7 +448,7 @@ class FrontendCommandDumper:
           case _:
             continue
       for index in range(0, len(ns._expanded_category_tree)):
-        category_label = '/'.join([s.get() if isinstance(s, preppipe.language.Translatable) else s for s in ns._expanded_category_tree[index]])
+        category_label = '/'.join([s.get() if isinstance(s, Translatable) else s for s in ns._expanded_category_tree[index]])
         category_items = category_index_dict[index] if index in category_index_dict else []
         items_by_category.append((category_label, category_items))
     else:
@@ -453,8 +456,8 @@ class FrontendCommandDumper:
       for k, v in ns.items():
         kind, data = v
         match kind:
-          case preppipe.nameresolution.NamespaceNode.NameResolutionDataEntryKind.CanonicalEntry:
-            assert isinstance(data, preppipe.frontend.commandsemantics.FrontendCommandInfo)
+          case NamespaceNode.NameResolutionDataEntryKind.CanonicalEntry:
+            assert isinstance(data, FrontendCommandInfo)
             assert data.cname == k
             if data.category_index is not None and data.category_index < 0:
               # 这一项应该隐藏
@@ -621,96 +624,59 @@ class FrontendCommandDumper:
     add_row('')
     return '\n'.join(rows)
 
+  @staticmethod
+  def tool_main(args : list[str] | None = None):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--namespace", type=str, choices=_DUMPERS.keys(), required=True)
+    parser.add_argument("--title", type=str, nargs=1)
+    parser.add_argument("--doxygen", type=str, nargs=1)
+    parser.add_argument("--latex", type=str, nargs=1)
+    parser.add_argument("--markdown", type=str, nargs=1)
+    parser.add_argument("--add-language-suffix-in-title", action='store_true', default=False)
+    if args is None:
+      args = sys.argv[1:]
+    parsed_args = parser.parse_args(args)
+    is_output_set = False
+    def get_output_path(backend : str) -> str | None:
+      nonlocal is_output_set
+      if l := getattr(parsed_args, backend):
+        is_output_set = True
+        return l[0]
+      return None
+    doxygen_path :  str | None = get_output_path("doxygen")
+    latex_path :    str | None = get_output_path("latex")
+    markdown_path : str | None = get_output_path("markdown")
+    if not is_output_set:
+      parser.print_usage()
+      return
+    cls = _DUMPERS[parsed_args.namespace]
+    dumper = cls()
+    if len(Translatable.PREFERRED_LANG) > 0:
+      dumper.pageref_suffix = Translatable.PREFERRED_LANG[0]
+    if parsed_args.title:
+      dumper.title_override = parsed_args.title[0]
+    if parsed_args.add_language_suffix_in_title:
+      dumper.flag_title_add_language_suffix = True
+    if doxygen_path:
+      res = dumper.collect_docs(OutputDestKind.DOXYGEN)
+      with open(doxygen_path, 'w', encoding="utf-8") as f:
+        f.write(res)
+    if latex_path:
+      res = dumper.collect_docs(OutputDestKind.USER_LATEX)
+      with open(latex_path, 'w', encoding="utf-8") as f:
+        f.write(res)
+    if markdown_path:
+      res = dumper.collect_docs(OutputDestKind.USER_MARKDOWN)
+      with open(markdown_path, 'w', encoding="utf-8") as f:
+        f.write(res)
 
 _DUMPERS : dict[str, typing.Type[FrontendCommandDumper]] = {}
 
-def NSDecl(flag : str):
+def FrontendDocsNSDecl(flag : str):
   def decorator_dumper(cls : typing.Type[FrontendCommandDumper]):
     _DUMPERS[flag] = cls
     return cls
   return decorator_dumper
 
-@NSDecl("vn")
-class _VNFrontendCommandDumper(FrontendCommandDumper):
-  def get_command_ns(self):
-    return preppipe.frontend.vnmodel.vnparser.vn_command_ns
-
-  def run_pipeline(self):
-    preppipe.pipeline.pipeline_main([
-      "--test",
-      "--vnparse"
-    ])
-
-  def get_parser_type(self):
-    return preppipe.frontend.vnmodel.vnparser.VNParser
-
-  tr : preppipe.language.TranslationDomain = preppipe.language.TranslationDomain("ext_docs_vn")
-
-  tr.tr("Comment",
-        en="Comments",zh_cn="内嵌注释")
-
-  _tr_title = tr.tr("title",
-    en="Visual Novel Commands Listing",
-    zh_cn="视觉小说命令列表",
-    zh_hk="視覺小說命令列表",
-  )
-
-  def get_title(self) -> preppipe.pipeline.Translatable:
-    return self._tr_title
-
-  def get_docs(self, cmdname: str) -> preppipe.language.Translatable:
-    if doc := self.tr.elements.get(cmdname):
-      return doc
-    return super().get_docs(cmdname)
-
-def _main():
-  parser = argparse.ArgumentParser()
-  parser.add_argument("--namespace", type=str, choices=_DUMPERS.keys(), required=True)
-  parser.add_argument("--title", type=str, nargs=1)
-  parser.add_argument("--doxygen", type=str, nargs=1)
-  parser.add_argument("--latex", type=str, nargs=1)
-  parser.add_argument("--markdown", type=str, nargs=1)
-  parser.add_argument("--add-language-suffix-in-title", type=bool, default=False)
-  args = parser.parse_args()
-  doxygen_path : str | None = None
-  latex_path : str | None = None
-  markdown_path : str | None = None
-  is_output_set = False
-  if args.doxygen:
-    doxygen_path = args.doxygen[0]
-    assert isinstance(doxygen_path, str)
-    is_output_set = True
-  if args.latex:
-    latex_path = args.latex[0]
-    assert isinstance(latex_path, str)
-    is_output_set = True
-  if args.markdown:
-    markdown_path = args.markdown[0]
-    assert isinstance(markdown_path, str)
-    is_output_set = True
-  if not is_output_set:
-    parser.print_usage()
-    return
-  cls = _DUMPERS[args.namespace]
-  dumper = cls()
-  if lang := os.environ.get("PREPPIPE_LANGUAGE"):
-    dumper.pageref_suffix = lang
-    assert isinstance(dumper.pageref_suffix, str)
-  if args.title:
-    dumper.title_override = args.title[0]
-    assert isinstance(dumper.title_override, str)
-  if doxygen_path:
-    res = dumper.collect_docs(OutputDestKind.DOXYGEN)
-    with open(doxygen_path, 'w', encoding="utf-8") as f:
-      f.write(res)
-  if latex_path:
-    res = dumper.collect_docs(OutputDestKind.USER_LATEX)
-    with open(latex_path, 'w', encoding="utf-8") as f:
-      f.write(res)
-  if markdown_path:
-    res = dumper.collect_docs(OutputDestKind.USER_MARKDOWN)
-    with open(markdown_path, 'w', encoding="utf-8") as f:
-      f.write(res)
-
 if __name__ == "__main__":
-  _main()
+  FrontendCommandDumper.tool_main()
