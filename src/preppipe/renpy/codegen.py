@@ -111,8 +111,11 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
   def get_codegen_path(self, n: VNNamespace) -> str:
     return n.name
 
-  def get_unique_global_name(self, displayname : str) -> str:
-    codename = nameconvert.str2identifier(displayname)
+  def get_unique_global_name(self, displayname : str, use_abbreviation : bool = False) -> str:
+    if use_abbreviation:
+      codename = nameconvert.str2identifier(displayname, nameconvert.NameConvertStyle.ABBREVIATION)
+    else:
+      codename = nameconvert.str2identifier(displayname)
     if codename in self.global_name_dict:
       # 加一个后缀来避免命名冲突
       codename_base = codename + '_'
@@ -179,7 +182,7 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
       if codename in self.global_name_dict:
         raise RuntimeError('Duplicated codename: "' + codename + '"')
     else:
-      codename = self.get_unique_global_name(displayname)
+      codename = self.get_unique_global_name(displayname, True)
     # 如果是旁白的话，displayname 必须是 None
     if character.kind.get().value == VNCharacterKind.NARRATOR:
       displayname = None
