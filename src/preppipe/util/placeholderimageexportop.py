@@ -22,15 +22,13 @@ class PlaceholderImageExportOpSymbol(CacheableOperationSymbol):
   export_path : OpOperand[StringLiteral]
   placeholder : OpOperand[PlaceholderImageLiteralExpr]
 
-  _fontpath : typing.ClassVar[str | None] = None
-
   def get_export_file_list(self) -> list[str]:
     return [self.export_path.get().value]
 
   @classmethod
   def cls_prepare_export(cls, tp : concurrent.futures.ThreadPoolExecutor) -> None:
-    # 不管怎样都尝试载入一下字体
-    cls._fontpath = AssetManager.get_default_font_path()
+    # 尝试载入一下字体
+    AssetManager.get_font()
 
   def run_export(self, output_rootdir : str) -> None:
     # 执行这个操作的导出，output_rootdir 是输出根目录
@@ -54,9 +52,7 @@ class PlaceholderImageExportOpSymbol(CacheableOperationSymbol):
 
   @staticmethod
   def get_font_for_text_image(fontsize : int) -> PIL.ImageFont.ImageFont | PIL.ImageFont.FreeTypeFont:
-    if fontpath := AssetManager.get_default_font_path():
-      return PIL.ImageFont.truetype(fontpath, fontsize)
-    return PIL.ImageFont.load_default()
+    return AssetManager.get_font(fontsize)
 
   @staticmethod
   def get_image(v : PlaceholderImageLiteralExpr) -> PIL.Image.Image:
