@@ -32,7 +32,7 @@ from ..exceptions import *
 from ..tooldecl import ToolClassDecl
 from .assetclassdecl import _registered_asset_classes
 from ..util.message import MessageHandler
-from ..util.nameconvert import str2identifier
+from ..util.nameconvert import *
 from .. import __version__
 
 @dataclasses.dataclass
