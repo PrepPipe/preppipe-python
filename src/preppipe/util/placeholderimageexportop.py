@@ -47,8 +47,7 @@ class PlaceholderImageExportOpSymbol(CacheableOperationSymbol):
 
   @staticmethod
   def get_starting_font_point_size(width : int, height : int) -> int:
-    # 从 ImagePack.get_starting_font_point_size() 抄来
-    return max(24, int(width/30*0.75))
+    return int(width*0.75)
 
   @staticmethod
   def get_font_for_text_image(fontsize : int) -> PIL.ImageFont.ImageFont | PIL.ImageFont.FreeTypeFont:
@@ -70,6 +69,7 @@ class PlaceholderImageExportOpSymbol(CacheableOperationSymbol):
     left, top, right, bottom = v.bbox.value
     draw = PIL.ImageDraw.Draw(img)
 
+    draw.rectangle((0, 0, width, height), fill=None, outline=stroke_color, width=linewidth)
     draw.rectangle((left, top, right, bottom), fill=bg_color, outline=fg_color, width=linewidth)
     draw.line((left, top, right, bottom), fill=fg_color, width=linewidth)
     draw.line((left, bottom, right, top), fill=fg_color, width=linewidth)
