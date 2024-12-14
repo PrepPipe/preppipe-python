@@ -26,6 +26,7 @@ import dataclasses
 import pickle
 import collections
 import yaml
+import PIL.ImageFont
 from ..language import *
 from ..exceptions import *
 from ..tooldecl import ToolClassDecl
@@ -87,8 +88,12 @@ class AssetManager:
 
   _assets : dict[str, AssetPackInfo]
 
+  # 由于多个部分需要使用内嵌字体，我们在这里统一解决
+  _font : PIL.ImageFont.FreeTypeFont | None
+
   def __init__(self, load_manifest : bool = True) -> None:
     self._assets = {}
+    self._font = None
     if load_manifest:
       self.try_load_manifest()
 
@@ -226,11 +231,33 @@ class AssetManager:
     return None
 
   @staticmethod
-  def get_default_font_path() -> str | None:
+  def _get_font_index_for_current_lang() -> int:
+    # [jp, kr, zh_cn, zh_hk], 默认用 zh_cn 的字形
+    for l in Translatable.PREFERRED_LANG:
+      match l:
+        case "zh_cn":
+          return 2
+        case "zh_hk":
+          return 3
+        case "en":
+          return 2
+        case _:
+          pass
+    return 2
+
+  @staticmethod
+  def get_font(fontsize : float | None = None) -> PIL.ImageFont.FreeTypeFont | PIL.ImageFont.ImageFont:
     inst = AssetManager.get_instance()
-    if fontdir := inst.get_asset(AssetManager.ASSETREF_DEFAULT_FONT):
-      return os.path.join(fontdir.path, AssetManager.ASSETREF_DEFAULT_FONT_FILE)
-    return None
+    font_index = AssetManager._get_font_index_for_current_lang()
+    if inst._font is None:
+      if fontdir := inst.get_asset(AssetManager.ASSETREF_DEFAULT_FONT):
+        path = os.path.join(fontdir.path, AssetManager.ASSETREF_DEFAULT_FONT_FILE)
+        inst._font = PIL.ImageFont.FreeTypeFont(path, index=font_index)
+    if inst._font is not None:
+      if font_index == inst._font.index and fontsize is None:
+        return inst._font
+      return inst._font.font_variant(index=font_index, size=fontsize)
+    return PIL.ImageFont.load_default()
 
   @staticmethod
   def get_instance() -> "AssetManager":

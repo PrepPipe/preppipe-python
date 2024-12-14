@@ -491,9 +491,7 @@ class ImagePack(NamedAssetClassBase):
 
   @staticmethod
   def get_font_for_text_image(fontsize : int) -> PIL.ImageFont.ImageFont | PIL.ImageFont.FreeTypeFont:
-    if fontpath := AssetManager.get_default_font_path():
-      return PIL.ImageFont.truetype(fontpath, fontsize)
-    return PIL.ImageFont.load_default()
+    return AssetManager.get_font(fontsize)
 
   @staticmethod
   def create_text_image_for_mask(text : str, color : Color | None, start_points : int, size : tuple[int, int], background_color : Color | None) -> PIL.Image.Image:

@@ -100,8 +100,8 @@ class ImagePackExportOpSymbol(CacheableOperationSymbol):
     if cls._fully_loaded_imagepacks is not None:
       raise PPInternalError("ImagePackExportOpSymbol.cls_prepare_export() called twice")
     cls._fully_loaded_imagepacks = {}
-    # 不管怎样都尝试载入一下字体，反正字体也是到时按需载入
-    AssetManager.get_default_font_path()
+    # 不管怎样都尝试载入一下字体，可能会用到
+    AssetManager.get_font()
 
   def instance_prepare_export(self, tp : concurrent.futures.ThreadPoolExecutor) -> bool:
     if self._fully_loaded_imagepacks is None:
