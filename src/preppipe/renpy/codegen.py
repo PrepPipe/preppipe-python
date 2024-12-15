@@ -13,8 +13,36 @@ from ..util import nameconvert
 from ..enginecommon.codegen import BackendCodeGenHelperBase
 
 @dataclasses.dataclass
+class _RenPyScriptFileWrapper:
+  file : RenPyScriptFileOp
+  preamble : Block = dataclasses.field(init=False)
+  body : Block = dataclasses.field(init=False)
+  is_finalized : bool = False
+
+  def __post_init__(self):
+    self.preamble = Block.create('preamble', self.file.context)
+    self.body = Block.create('body', self.file.context)
+
+  def insert_at_top(self, node : RenPyNode):
+    if self.is_finalized:
+      raise PPInternalError()
+    self.preamble.push_back(node)
+
+  def push_back(self, node : RenPyNode):
+    if self.is_finalized:
+      raise PPInternalError()
+    self.body.push_back(node)
+
+  def finalize(self):
+    if self.is_finalized:
+      return
+    self.file.body.take_body_multiple([self.preamble, self.body])
+    self.is_finalized = True
+
+@dataclasses.dataclass
 class _FunctionCodeGenHelper:
   codename : StringLiteral = dataclasses.field(init=True, kw_only=True)
+  dest_script : _RenPyScriptFileWrapper = dataclasses.field(init=True, kw_only=True)
   numeric_blocks : int = 0
   local_labels : dict[str, RenPyLabelNode] = dataclasses.field(default_factory=dict)
   block_dict : dict[Block, RenPyLabelNode] = dataclasses.field(default_factory=dict)
@@ -72,10 +100,9 @@ class _RenPyCharacterInfo:
 
 class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
   cur_namespace : VNNamespace
-  cur_path_prefix : str
-  cur_mainscript : RenPyScriptFileOp | None
-  cur_toplevel_insertionpoint : RenPyNode | None
   result : RenPyModel
+  export_files_dict : dict[str, _RenPyScriptFileWrapper]
+  root_script : _RenPyScriptFileWrapper | None
 
   # 所有的全局状态（不论命名空间）
   char_dict : collections.OrderedDict[VNCharacterSymbol, collections.OrderedDict[_RenPyCharacterInfo, RenPyDefineNode]]
@@ -89,10 +116,9 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
   def __init__(self, model : VNModel) -> None:
     super().__init__(model=model, imagepack_handler=ImagePackExportDataBuilder())
     self.cur_namespace = None # type: ignore
-    self.cur_path_prefix = None # type: ignore
-    self.cur_mainscript = None
-    self.cur_toplevel_insertionpoint = None
     self.result = None # type: ignore
+    self.export_files_dict = {}
+    self.root_script = None
     self.char_dict = collections.OrderedDict()
     self.func_dict = collections.OrderedDict()
     self.canonical_char_dict = collections.OrderedDict()
@@ -126,6 +152,28 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
         codename = codename_base + str(num)
     return codename
 
+  def get_script(self, export_to_file : str) -> _RenPyScriptFileWrapper:
+    if not isinstance(self.root_script, _RenPyScriptFileWrapper):
+      raise PPInternalError("root script not initialized")
+    if export_to_file == '':
+      return self.root_script
+    if export_to_file in self.export_files_dict:
+      return self.export_files_dict[export_to_file]
+    # 尝试构建一个有效的输出路径
+    # 如果不行的话就复用 root_script
+    sanitized = self.sanitize_ascii_path(export_to_file)
+    if len(sanitized) == 0:
+      self.export_files_dict[export_to_file] = self.root_script
+      return self.root_script
+    script = RenPyScriptFileOp.create(self.model.context, sanitized)
+    self.result.add_script(script)
+    wrapper = _RenPyScriptFileWrapper(file=script)
+    self.export_files_dict[export_to_file] = wrapper
+    return wrapper
+
+  def get_script_for_symbol(self, symbol : VNSymbol | None) -> _RenPyScriptFileWrapper:
+    return self.get_script('' if symbol is None else symbol.get_export_to_file())
+
   #def handle_device(self, dev : VNDeviceSymbol):
     # 目前什么都不干
     #pass
@@ -152,14 +200,14 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
         if codename_l in self.global_name_dict:
           raise RuntimeError("Global name conflict: \"" + codename + '"')
       self.global_name_dict[codename] = func
-      self.func_dict[func] = _FunctionCodeGenHelper(codename = codename_l)
+      self.func_dict[func] = _FunctionCodeGenHelper(codename = codename_l, dest_script=self.get_script(func.get_export_to_file()))
 
   def handle_asset(self, asset : VNAssetValueSymbol):
     codename = asset.name
     if not self.check_identifier(codename):
       codename = self.get_unique_global_name(codename)
     image = asset.get_value()
-    self.try_set_imspec_for_asset(image, (codename,))
+    self.try_set_imspec_for_asset(image, (codename,), asset)
 
   def _populate_imspec_from_assetdecl(self, basename : str, symbolname : str, prefix : str | None = None):
     imspec_list = [nameconvert.str2identifier(v) for v in symbolname.split(',') if len(v) > 0]
@@ -170,7 +218,6 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
 
   def handle_character(self, character : VNCharacterSymbol):
     # 为角色生成 character 对象
-    ms = self.get_mainscript()
     displayname = character.name
     if len(displayname) == 0:
       raise RuntimeError("Empty display name for character")
@@ -187,7 +234,7 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
     if character.kind.get().value == VNCharacterKind.NARRATOR:
       displayname = None
     definenode, charexpr = RenPyDefineNode.create_character(self.context, varname=codename, displayname=displayname)
-    ms.body.push_back(definenode)
+    self.get_script(character.get_export_to_file()).insert_at_top(definenode)
 
     # charexpr.image.set_operand(0, StringLiteral.get(codename, self.context))
     # 如果这是旁白且我们并没有覆盖任何设置，就把这个结点去掉
@@ -213,10 +260,10 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
       self._populate_renpy_characterexpr_from_textstyle(charexpr, textstyle)
       is_change_made = True
     for img in character.sprites:
-      self.try_set_imspec_for_asset(img, self._populate_imspec_from_assetdecl(codename, img.name))
+      self.try_set_imspec_for_asset(img, self._populate_imspec_from_assetdecl(codename, img.name), character)
       is_change_made = True
     for img in character.sideimages:
-      self.try_set_imspec_for_asset(img, self._populate_imspec_from_assetdecl(codename + '_side', img.name))
+      self.try_set_imspec_for_asset(img, self._populate_imspec_from_assetdecl(codename + '_side', img.name), character)
       is_change_made = True
     # 暂时不支持其他项
     if character.kind.get().value == VNCharacterKind.NARRATOR:
@@ -235,7 +282,7 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
   def handle_scene(self, scene : VNSceneSymbol):
     scenename = nameconvert.str2identifier(scene.name)
     for bg in scene.backgrounds:
-      self.try_set_imspec_for_asset(bg, self._populate_imspec_from_assetdecl(scenename, bg.name, 'bg'))
+      self.try_set_imspec_for_asset(bg, self._populate_imspec_from_assetdecl(scenename, bg.name, 'bg'), scene)
     # 目前不需要其他操作
     return
 
@@ -759,6 +806,8 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
     # （比如某物件的图片在屏幕上出现两次，第二个显示命令处会发现该图片已有一个使用中的句柄）
     # 则我们需要安排一个不一样的句柄（show 命令中的 as 参数）
 
+    helper = self.func_dict[func]
+
     # 呃。。首先把函数前的错误信息给加上
     prebody : Block | None = None
     postbody : Block | None = None
@@ -775,7 +824,6 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
       # 我们把这些 ErrorOp 转为注释
       # 如果是全局的 ASM 则按照要求输出
       # 虽然我们可以保留 MetadataOp 直到输出时，不过他们的输出会有所不同
-      destblock = self.get_mainscript().body
       def copy_and_add(op : Operation):
         if isinstance(op, ErrorOp):
           code = op.error_code
@@ -785,9 +833,9 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
           asm_rows = [StringLiteral.get('# ' + v, self.context) for v in content_rows]
           asm = StringListLiteral.get(self.context, asm_rows)
           node = RenPyASMNode.create(context=self.context, asm=asm, name=op.name, loc=op.location)
-          destblock.push_back(node)
+          helper.dest_script.push_back(node)
           return
-        destblock.push_back(op.clone())
+        helper.dest_script.push_back(op.clone())
       for op in block.body:
         # 先对类似 ASM 这样的内容特判
         if isinstance(op, VNBackendInstructionGroup):
@@ -806,8 +854,6 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
         write_md_block(postbody)
       return
 
-    helper = self.func_dict[func]
-
     # 第一步
     # 由于某些块已经有名称，我们把所有的块走两遍：
     # 1. 第一遍把已经有名称的块加进去（所有的局部名冲突是错误），
@@ -818,15 +864,13 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
 
     entry_block = func.get_entry_block()
     entry_label = helper.create_entry_block_label(entry_block, helper.codename.get_string())
-    self.get_mainscript().body.push_back(entry_label)
-    if self.cur_toplevel_insertionpoint is None:
-      self.cur_toplevel_insertionpoint = entry_label
+    helper.dest_script.push_back(entry_label)
 
     for b in func.body.blocks:
       if b is entry_block:
         continue
       label = helper.create_block_local_label(b)
-      self.get_mainscript().body.push_back(label)
+      helper.dest_script.push_back(label)
 
     # 第二步
     for b in func.body.blocks:
@@ -836,8 +880,10 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
       if entry != 'main':
         raise RuntimeError('Unrecognized entry point')
       if self.func_dict[func].codename.get_string() != 'start':
+        if self.root_script is None:
+          raise PPInternalError()
         start = RenPyLabelNode.create(self.context, codename='start')
-        self.insert_at_top(start)
+        self.root_script.insert_at_top(start)
         start.body.push_back(RenPyJumpNode.create(self.context, target=self.func_dict[func].codename))
 
     # 第三步暂时不做
@@ -890,7 +936,7 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
     canonical = self.canonical_char_dict[vncharacter]
     canonicalvarname = canonical.varname.get().get_string()
     definenode, charexpr = RenPyDefineNode.create_character(self.context, varname=self.generate_varname(canonicalvarname), displayname=sayername)
-    self.insert_at_top(definenode)
+    self.get_script(vncharacter.get_export_to_file()).insert_at_top(definenode)
     charexpr.kind.set_operand(0, StringLiteral.get(canonicalvarname, self.context))
     if mode != 'adv':
       charexpr.kind.set_operand(0, StringLiteral.get(mode, self.context))
@@ -902,9 +948,10 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
     self.global_name_dict[definenode.varname.get().get_string()] = definenode
     return definenode
 
-  def _gen_asmexpr(self, v : Value, user_hint : VNStandardDeviceKind | None = None) -> str:
+  def _gen_asmexpr(self, v : Value, user_hint : VNStandardDeviceKind | None = None, referenced_by : VNSymbol | None = None) -> str:
     if isinstance(v, VNAssetValueSymbol):
-      return self._gen_asmexpr(v.get_value(), user_hint)
+      new_referenced_by = v if referenced_by is None else referenced_by
+      return self._gen_asmexpr(v.get_value(), user_hint, new_referenced_by)
     if isinstance(v, AssetData):
       return '"' + self.add_assetdata(v, user_hint) + '"'
     if isinstance(v, PlaceholderImageLiteralExpr):
@@ -912,7 +959,7 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
     if isinstance(v, ImageAssetLiteralExpr):
       return '"' + self.add_assetdata(v.image, user_hint) + '"'
     if isinstance(v, ImagePackElementLiteralExpr):
-      ref = self.imagepack_handler.add_value(v)
+      ref = self.imagepack_handler.add_value(v, referenced_by=referenced_by)
       if isinstance(ref, str):
         return '"' + ref + '"'
       elif isinstance(ref, ImagePackExportDataBuilder.ImagePackElementReferenceInfo):
@@ -950,8 +997,10 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
 
     # 需要创建一个 image 结点
     # 先定名称
+    referenced_by : VNSymbol | None = None
     if isinstance(v, VNSymbol):
       codename = self.get_unique_global_name(v.name)
+      referenced_by = v
     else:
       codename = 'anonimg_' + str(self.numeric_image_index)
       self.numeric_image_index += 1
@@ -959,16 +1008,16 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
         codename = 'anonimg_' + str(self.numeric_image_index)
         self.numeric_image_index += 1
     # 再取值
-    expr = self._gen_asmexpr(v, user_hint=user_hint)
-
+    expr = self._gen_asmexpr(v, user_hint=user_hint, referenced_by=referenced_by)
     resultnode = RenPyImageNode.create(self.context, codename=codename, displayable=expr)
-    self.insert_at_top(resultnode)
+    dest_script = self.get_script_for_symbol(referenced_by)
+    dest_script.insert_at_top(resultnode)
     self.global_name_dict[codename] = resultnode
     resultimspec = (StringLiteral.get(codename, self.context),)
     self.imspec_dict[v] = resultimspec
     return resultimspec
 
-  def try_set_imspec_for_asset(self, v : Value, imspec : tuple[str, ...]):
+  def try_set_imspec_for_asset(self, v : Value, imspec : tuple[str, ...], parent_symbol : VNSymbol | None = None):
     if v in self.imspec_dict:
       return
 
@@ -977,10 +1026,13 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
       return
 
     # 可以建
-    expr = self._gen_asmexpr(v, None)
+    expr = self._gen_asmexpr(v, None, parent_symbol)
 
     resultnode = RenPyImageNode.create(self.context, codename=stringtized, displayable=expr)
-    self.insert_at_top(resultnode)
+    dest_script = self.root_script if parent_symbol is None else self.get_script(parent_symbol.get_export_to_file())
+    if dest_script is None:
+      raise PPInternalError
+    dest_script.insert_at_top(resultnode)
     self.global_name_dict[stringtized] = resultnode
     resultimspec = tuple([StringLiteral.get(v, self.context) for v in imspec])
     self.imspec_dict[v] = resultimspec
@@ -995,28 +1047,11 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
 
   def move_to_ns(self, n : VNNamespace):
     self.cur_namespace = n
-    self.cur_path_prefix = self.get_codegen_path(n)
-    self.cur_mainscript = None
-    self.cur_toplevel_insertionpoint = None
     # 以下状态不应该清空
     # self.char_dict.clear()
     # self.func_dict.clear()
     # self.canonical_char_dict.clear()
     # self.global_name_dict.clear()
-
-  def insert_at_top(self, node : RenPyNode):
-    ms = self.get_mainscript()
-    if self.cur_toplevel_insertionpoint is None:
-      ms.body.push_back(node)
-    else:
-      node.insert_before(self.cur_toplevel_insertionpoint)
-
-  def get_mainscript(self):
-    if self.cur_mainscript is not None:
-      return self.cur_mainscript
-    self.cur_mainscript = RenPyScriptFileOp.create(self.model.context, 'script')
-    self.result.add_script(self.cur_mainscript)
-    return self.cur_mainscript
 
   def write_imagepack_instances(self, imagepacks : dict[str, ImagePackExportDataBuilder.InstanceExportInfo]):
     # 对于每个图片包实例，我们：
@@ -1041,13 +1076,17 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
         lines.append(composite)
       asm = StringListLiteral.get(self.context, [StringLiteral.get(v, self.context) for v in lines])
       asmnode = RenPyASMNode.create(self.context, asm=asm, name=pack_id)
-      self.insert_at_top(asmnode)
+      self.get_script_for_symbol(info.first_referenced_by).insert_at_top(asmnode)
 
   def run(self) -> RenPyModel:
     # 所有在 / 命名空间下的资源都会组织在根目录下，其他命名空间的资源会在 dlc/<命名空间路径> 下
     # 我们需要按排好序的名称进行生成，这样可以保证子命名空间在父命名空间之后生成
     assert self.result is None
     self.result = RenPyModel.create(self.model.context)
+    rootscript = RenPyScriptFileOp.create(self.context, 'script')
+    self.result.add_script(rootscript)
+    self.root_script = _RenPyScriptFileWrapper(rootscript)
+    self.export_files_dict[''] = self.root_script
     for k in sorted(self.model.namespace.keys()):
       n = self.model.namespace.get(k)
       assert isinstance(n, VNNamespace)
@@ -1056,19 +1095,21 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
       self.label_all_functions()
       self.handle_all_values()
 
-      for c in n.characters:
+      for c in self.sorted_symbols(n.characters):
         self.handle_character(c)
-      for a in n.assets:
+      for a in self.sorted_symbols(n.assets):
         self.handle_asset(a)
-      for s in n.scenes:
+      for s in self.sorted_symbols(n.scenes):
         self.handle_scene(s)
-      for f in n.functions:
+      for f in self.sorted_symbols(n.functions):
         self.handle_function(f)
 
     imagepacks = self.imagepack_handler.finalize(self.result._cacheable_export_region) # pylint: disable=protected-access
     if len(imagepacks) > 0:
       self.write_imagepack_instances(imagepacks)
 
+    for w in self.export_files_dict.values():
+      w.finalize()
     return self.result
 
 def codegen_renpy(m : VNModel) -> RenPyModel:
