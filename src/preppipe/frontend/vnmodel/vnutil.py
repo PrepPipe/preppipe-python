@@ -635,8 +635,10 @@ setattr(parse_image_placer_config, "keywords", [
 ])
 
 def infer_placeholder_sizes(t : SymbolTableRegion[VNASTNamespaceSwitchableValueSymbol], default_size : tuple[int, int], default_bbox : tuple[int, int, int, int]):
+  # 原来只是为了给 PlaceholderImageLiteralExpr 推导大小，现在所有没设置大小的都进行推导
   value_uses : list[Use] = []
-  has_placeholder_uses = False
+  has_unsized_uses = False
+  exprs_requiring_size_inference = (PlaceholderImageLiteralExpr, DeclaredImageLiteralExpr, ColorImageLiteralExpr)
   for s in t:
     if not isinstance(s, VNASTNamespaceSwitchableValueSymbol):
       raise PPInternalError()
@@ -646,13 +648,13 @@ def infer_placeholder_sizes(t : SymbolTableRegion[VNASTNamespaceSwitchableValueS
       for use in operand.operanduses():
         if isinstance(use.value, BaseImageLiteralExpr):
           value_uses.append(use)
-          if isinstance(use.value, PlaceholderImageLiteralExpr) and use.value.size.value == (0,0):
-            has_placeholder_uses = True
+          if isinstance(use.value, exprs_requiring_size_inference) and use.value.size.value == (0,0):
+            has_unsized_uses = True
         elif isinstance(use.value, StringLiteral):
           continue
         else:
           raise PPInternalError("Unexpected image value type: " + str(type(use.value)))
-  if not has_placeholder_uses:
+  if not has_unsized_uses:
     return
   # 我们只保留画幅面积最大(w*h 最大)的 bbox
   cur_bbox_xmin = 0
@@ -667,7 +669,7 @@ def infer_placeholder_sizes(t : SymbolTableRegion[VNASTNamespaceSwitchableValueS
     if not isinstance(expr, BaseImageLiteralExpr):
       raise PPInternalError()
     w, h = expr.size.value
-    if isinstance(expr, PlaceholderImageLiteralExpr) and expr.size.value == (0,0):
+    if isinstance(expr, exprs_requiring_size_inference) and expr.size.value == (0,0):
       placeholder_uses.append(u)
     if w * h > cur_width * cur_height:
       # 如果画幅更大，则完全替换之前的结果
@@ -686,9 +688,11 @@ def infer_placeholder_sizes(t : SymbolTableRegion[VNASTNamespaceSwitchableValueS
     cur_bbox_xmin, cur_bbox_ymin, cur_bbox_xmax, cur_bbox_ymax = default_bbox
   for u in placeholder_uses:
     expr = u.value
-    if not isinstance(expr, PlaceholderImageLiteralExpr):
+    if not isinstance(expr, exprs_requiring_size_inference):
       raise PPInternalError()
     newexpr = expr.get_with_updated_sizes(size=(cur_width, cur_height), bbox=(cur_bbox_xmin, cur_bbox_ymin, cur_bbox_xmax, cur_bbox_ymax))
+    if not type(expr) is type(newexpr):
+      raise PPInternalError()
     u.set_value(newexpr)
 
 def parse_postprocessing_update_placeholder_imagesizes(ast : VNAST):

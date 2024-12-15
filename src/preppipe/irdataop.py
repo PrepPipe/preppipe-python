@@ -288,10 +288,13 @@ def _process_class(cls : type[_OperationVT], vty : type | None) -> type[_Operati
     assert isinstance(base_type, type)
     if value_annotation is not None:
       if not isinstance(value_annotation, type):
-        assert isinstance(value_annotation, (types.GenericAlias, typing._GenericAlias))
-        value_annotation_params = value_annotation.__args__
-        value_annotation = value_annotation.__origin__
-        assert value_annotation is irbase.EnumLiteral
+        if isinstance(value_annotation, (types.GenericAlias, typing._GenericAlias)):
+          value_annotation_params = value_annotation.__args__
+          value_annotation = value_annotation.__origin__
+          assert value_annotation is irbase.EnumLiteral
+        elif isinstance(value_annotation, typing.TypeVar):
+          # 如果用了 typevar, 我们将其视为参数是 typevar 指定的基类
+          value_annotation = value_annotation.__bound__
     if isinstance(default, OpField):
       f = default
     else:
