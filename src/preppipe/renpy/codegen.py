@@ -1086,7 +1086,10 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
     rootscript = RenPyScriptFileOp.create(self.context, 'script')
     self.result.add_script(rootscript)
     self.root_script = _RenPyScriptFileWrapper(rootscript)
+    # 保证 script.rpy 既作为默认的目标，又可以作为用户指定的目标
+    # （让用户可以指定把内容写到 script.rpy 里）
     self.export_files_dict[''] = self.root_script
+    self.export_files_dict['script'] = self.root_script
     for k in sorted(self.model.namespace.keys()):
       n = self.model.namespace.get(k)
       assert isinstance(n, VNNamespace)

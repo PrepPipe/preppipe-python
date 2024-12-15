@@ -6,7 +6,7 @@ from __future__ import annotations
 import copy
 import re
 
-from preppipe.irbase import Location, StringLiteral
+import pathvalidate
 
 from ...irbase import *
 from ..commandsyntaxparser import *
@@ -58,6 +58,11 @@ _tr_category_controlflow = TR_vnparse.tr("category_controlflow",
   zh_cn="章节与分支（控制流）",
   zh_hk="章節與分支（控制流）",
 )
+_tr_category_setting = TR_vnparse.tr("category_setting",
+  en="Options and Settings",
+  zh_cn="选项、设置",
+  zh_hk="選項、設置",
+)
 _tr_category_special = TR_vnparse.tr("category_special",
   en="Special Commands",
   zh_cn="特殊指令",
@@ -72,6 +77,7 @@ vn_command_ns.set_category_tree([
   _tr_category_image,
   _tr_category_music_sound,
   _tr_category_controlflow,
+  _tr_category_setting,
   _tr_category_special,
 ])
 
@@ -1523,6 +1529,34 @@ def cmd_interleave_mode(parser : VNParser, state : VNASTParsingState, commandop 
 def cmd_default_say_mode(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp):
   node = VNASTSayModeChangeNode.create(context=state.context, target_mode=VNASTSayMode.MODE_DEFAULT)
   state.emit_node(node)
+
+# ------------------------------------------------------------------------------
+# 选项、设置
+# ------------------------------------------------------------------------------
+
+_tr_invalid_filepath = TR_vnparse.tr("invalid_filepath",
+  en="File path \"{path}\" invalid: {err}",
+  zh_cn="文件路径 \"{path}\" 无效：{err}",
+  zh_hk="文件路徑 \"{path}\" 無效：{err}",
+)
+
+@CmdCategory(_tr_category_setting)
+@CmdAliasDecl(TR_vnparse, {
+  "zh_cn": "导出到文件",
+  "zh_hk": "導出到文件",
+}, {
+  "filepath": {
+    "zh_cn": "文件路径",
+    "zh_hk": "文件路徑",
+  }
+})
+@CommandDecl(vn_command_ns, _imports, 'ExportToFile')
+def cmd_export_to_file(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, filepath : str):
+  try:
+    pathvalidate.validate_filepath(filepath, platform=pathvalidate.Platform.UNIVERSAL, check_reserved=True)
+    state.output_current_file.export_script_name.set_operand(0, StringLiteral.get(filepath, parser.context))
+  except pathvalidate.ValidationError as e:
+    state.emit_error("vnparse-invalid-filepath", _tr_invalid_filepath.format(path=filepath, err=str(e)), loc=commandop.location)
 
 # ------------------------------------------------------------------------------
 # 其他命令
