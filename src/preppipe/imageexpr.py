@@ -116,6 +116,12 @@ class ColorImageLiteralExpr(BaseImageLiteralExpr):
     bbox = IntTupleLiteral.get((0, 0, width, height), context=context)
     return ColorImageLiteralExpr._get_literalexpr_impl((size, bbox, color), context)
 
+  def get_with_updated_sizes(self, size: tuple[int, int], bbox : tuple[int, int, int, int]):
+    sizetuple = IntTupleLiteral.get(size, context=self.context)
+    bboxtuple = IntTupleLiteral.get(bbox, context=self.context)
+    color = self.get_value_tuple()[BaseImageLiteralExpr.DERIVED_DATA_START]
+    return ColorImageLiteralExpr._get_literalexpr_impl((sizetuple, bboxtuple, color), self.context)
+
 @IRObjectJsonTypeName('text_image_le')
 class TextImageLiteralExpr(BaseImageLiteralExpr):
   # 该图片是一个文本图片，仅由文本内容和字体样式构成
@@ -169,6 +175,12 @@ class DeclaredImageLiteralExpr(BaseImageLiteralExpr, AssetDeclarationTrait):
     width, height = size.value
     bbox = IntTupleLiteral.get((0, 0, width, height), context=context)
     return DeclaredImageLiteralExpr._get_literalexpr_impl((size, bbox, decl), context)
+
+  def get_with_updated_sizes(self, size: tuple[int, int], bbox : tuple[int, int, int, int]):
+    sizetuple = IntTupleLiteral.get(size, context=self.context)
+    bboxtuple = IntTupleLiteral.get(bbox, context=self.context)
+    decl = self.get_value_tuple()[BaseImageLiteralExpr.DERIVED_DATA_START]
+    return DeclaredImageLiteralExpr._get_literalexpr_impl((sizetuple, bboxtuple, decl), self.context)
 
 @IRWrappedStatelessClassJsonName("image_placeholder_dest_e")
 class ImageExprPlaceholderDest(enum.Enum):
