@@ -831,7 +831,8 @@ class VNASTFileInfo(VNASTNodeBase):
     if s := self.export_script_name.try_get_value():
       return s.get_string()
     if s := self.location.get_file_path():
-      return os.path.splitext(s)[0]
+      # 只取文件名，忽略路径
+      return os.path.splitext(os.path.basename(s))[0]
     return ''
 
   @staticmethod
