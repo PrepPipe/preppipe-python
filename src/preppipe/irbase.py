@@ -1940,6 +1940,10 @@ class Block(Value, IListNode):
   def take_body(self, src : Block):
     src._ops.merge_into(self._ops)
 
+  def take_body_multiple(self, srclist : typing.Iterable[Block]):
+    for src in srclist:
+      src._ops.merge_into(self._ops)
+
   def get_next_node(self) -> Block:
     return self.next
 

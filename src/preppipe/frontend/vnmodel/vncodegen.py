@@ -173,6 +173,7 @@ class VNCodeGen:
   _global_parsecontext : ParseContext
   _global_say_index : int
   _global_character_index : int
+  _anon_symbol_sort_order_dict : dict[type, int]
 
   def __init__(self, ast : VNAST) -> None:
     self.ast = ast
@@ -194,6 +195,7 @@ class VNCodeGen:
     self._global_parsecontext = VNCodeGen.ParseContext(parent=None, narrator=narrator)
     self._global_say_index = 0
     self._global_character_index = 0
+    self._anon_symbol_sort_order_dict = {}
 
     # 初始化根命名空间
     # 主要是把设备信息弄好
@@ -361,6 +363,18 @@ class VNCodeGen:
     zh_hk="重名的函數/章節定義將被忽略： {file}: {function} (第一個定義位於： {existingloc})",
   )
 
+  def _setup_export_dest_attrs(self, symb : VNSymbol, export_file : str, sort_order : int = -1):
+    # 把要导出的目标文件的路径和顺序复制给新的 VNSymbol
+    # 如果 sort_order < 0，那么就是一个临时创建的对象，需要自己决定 sort_order
+    if len(export_file) > 0:
+      symb.set_attr(VNSymbol.ATTR_EXPORT_TO_FILE, export_file)
+    ty = type(symb)
+    if sort_order < 0:
+      sort_order = self._anon_symbol_sort_order_dict.get(ty, 0)
+    if self._anon_symbol_sort_order_dict.get(ty, -1) <= sort_order:
+      self._anon_symbol_sort_order_dict[ty] = sort_order + 1
+    symb.set_attr(VNSymbol.ATTR_EXPORT_SORT_ORDER, sort_order)
+
   def collect_functions(self):
     # 找到所有的函数，创建对应的命名空间，并把函数加到记录中
     # 做这步的目的是为了提前创建好所有 VNFunction, 这样其他函数可以直接生成对其的调用
@@ -373,7 +387,8 @@ class VNCodeGen:
       if ns := file.namespace.try_get_value():
         namespace = VNNamespace.expand_namespace_str(ns.get_string())
       nsnode = self.get_or_create_ns(namespace)
-      for func in file.functions.body:
+      export_file = file.get_export_script_name()
+      for funcindex, func in enumerate(file.functions.body):
         if not isinstance(func, VNASTFunction):
           raise PPAssertionError
         if func.name not in self._func_map:
@@ -389,6 +404,7 @@ class VNCodeGen:
           postbody.push_back(err)
           continue
         function = VNFunction.create(self.context, func.name, func.location)
+        self._setup_export_dest_attrs(function, export_file, funcindex)
         nsnode.add_function(function)
         self._all_functions[func] = function
         funcdict[namespace] = func
@@ -423,14 +439,16 @@ class VNCodeGen:
   def emit_assetnotfound(self, loc : Location | None, dest : Block):
     self.emit_error("vncodegen-asset-notfound-general", self.context.get_file_auditor().get_asset_not_found_errmsg(), loc=loc, dest=dest)
 
-  def create_unknown_sayer(self, sayname : str, from_namespace : tuple[str,...]) -> VNCharacterSymbol:
+  def create_unknown_sayer(self, sayname : str, from_namespace : tuple[str,...], export_to_file : str) -> VNCharacterSymbol:
     ch = VNCharacterSymbol.create(context=self.context, kind=VNCharacterKind.NORMAL, name=sayname)
+    self._setup_export_dest_attrs(ch, export_to_file)
     ns = self.get_or_create_ns(from_namespace)
     ns.add_character(ch)
     return ch
 
-  def create_unknown_scene(self, scenename : str, from_namespace : tuple[str,...]) -> VNSceneSymbol:
+  def create_unknown_scene(self, scenename : str, from_namespace : tuple[str,...], export_to_file : str) -> VNSceneSymbol:
     scene = VNSceneSymbol.create(context=self.context, name=scenename)
+    self._setup_export_dest_attrs(scene, export_to_file)
     ns = self.get_or_create_ns(from_namespace)
     ns.add_scene(scene)
     return scene
@@ -438,12 +456,30 @@ class VNCodeGen:
   @dataclasses.dataclass
   class _NonlocalCodegenHelper(VNASTVisitor):
     codegen : VNCodeGen
-    namespace_tuple : tuple[str, ...]
-    basepath : str
+    srcfile : VNASTFileInfo
     parsecontext : VNCodeGen.ParseContext
     warningdest : Block
 
+    # 后续要用的，可以从 srcfile 读取
+    namespace_tuple : tuple[str, ...] = dataclasses.field(init=False)
+    basepath : str = dataclasses.field(init=False)
+    export_path : str = dataclasses.field(init=False)
+
     # 如果可以处理命令则返回 True, 否则返回 False
+
+    def __post_init__(self):
+      self.namespace_tuple = self.codegen.get_file_nstuple(self.srcfile)
+      self.basepath = self.srcfile.location.get_file_path()
+      self.export_path = self.srcfile.get_export_script_name()
+
+    def create_unknown_sayer(self, sayname : str, from_namespace : tuple[str,...]) -> VNCharacterSymbol:
+      return self.codegen.create_unknown_sayer(sayname=sayname, from_namespace=from_namespace, export_to_file=self.export_path)
+
+    def create_unknown_scene(self, scenename : str, from_namespace : tuple[str,...]) -> VNSceneSymbol:
+      return self.codegen.create_unknown_scene(scenename=scenename, from_namespace=from_namespace, export_to_file=self.export_path)
+
+    def add_symbol_ondemand(self, symb : VNSymbol):
+      self.codegen._setup_export_dest_attrs(symb, self.srcfile.get_export_script_name())
 
     def visit_default_handler(self, node: VNASTNodeBase):
       return False
@@ -498,7 +534,7 @@ class VNCodeGen:
           # 在这里我们除了报错之外还需要生成一个默认的发言者，这样不至于令后续所有发言者错位
           msg = self._tr_say_mode_change_char_not_found.format(character=sayerstr)
           self.codegen.emit_error(code='vncodegen-character-nameresolution-failed', msg=msg, loc=node.location, dest=self.warningdest)
-          ch = self.codegen.create_unknown_sayer(sayname, ns)
+          ch = self.create_unknown_sayer(sayname, ns)
         t = (sayname, ch)
         specified_sayers.append(t)
       # 检查指定的发言者数量，如果不对的话作出调整
@@ -534,7 +570,7 @@ class VNCodeGen:
     # 有部分结点既可以在文件域出现也可以在函数域出现，并且对它们的处理也是一样的
     # 我们就用这一个函数来同时处理这两种情况
     # 如果结点可以处理就返回 True，结点没有处理（不是所列举的情况）就返回 False
-    helper = VNCodeGen._NonlocalCodegenHelper(codegen=self, namespace_tuple=self.get_file_nstuple(file), basepath=file.location.get_file_path(), parsecontext=parsecontext, warningdest=warningdest)
+    helper = VNCodeGen._NonlocalCodegenHelper(codegen=self, srcfile=file, parsecontext=parsecontext, warningdest=warningdest)
     return helper.visit(op)
 
   _tr_functionlocal_node_in_globalscope = TR_vn_codegen.tr("functionlocal_node_in_globalscope",
@@ -1204,7 +1240,7 @@ class VNCodeGen:
           # 如果没找到发言者，我们在当前命名空间创建一个新的发言者
           msg = self._tr_implicit_sayer.format(sayname=sayname)
           self.codegen.emit_error(code='vncodegen-sayer-implicit-decl', msg=msg, loc=node.location, dest=self.warningdest)
-          ch = self.codegen.create_unknown_sayer(sayname, self.namespace_tuple)
+          ch = self.create_unknown_sayer(sayname, self.namespace_tuple)
         sayertuple = (sayname, ch)
       else:
         if self.parsecontext.say_mode == VNASTSayMode.MODE_LONG_SPEECH:
@@ -1488,6 +1524,7 @@ class VNCodeGen:
               if len(description) > 0:
                 name = "undeclared_" + '_'.join(description)
                 symb = VNAssetValueSymbol.create(context=self.context, value=content, name=name, loc=node.location)
+                self.add_symbol_ondemand(symb)
                 self.codegen.get_or_create_ns(self.namespace_tuple).add_asset(symb)
             case VNASTAssetIntendedOperation.OP_REMOVE:
               content = self._create_image_expr(assetdata) if assetdata is not None else None
@@ -1707,7 +1744,7 @@ class VNCodeGen:
       if scene is None:
         msg = self._tr_sceneswitch_scene_notfound.format(scene=destscene)
         self.codegen.emit_error(code='vncodegen-scene-notfound', msg=msg, loc=node.location, dest=self.destblock)
-        scene = self.codegen.create_unknown_scene(scenename=destscene, from_namespace=self.namespace_tuple)
+        scene = self.create_unknown_scene(scenename=destscene, from_namespace=self.namespace_tuple)
       else:
         # 尝试匹配场景的状态
         if scene in self.codegen._scene_state_matcher:
@@ -1845,8 +1882,7 @@ class VNCodeGen:
         loopexitblock = self.loopexitblock
       VNCodeGen._FunctionCodegenHelper.run_codegen_for_region(
         codegen=self.codegen,
-        namespace_tuple=self.namespace_tuple,
-        basepath=self.basepath,
+        srcfile=self.srcfile,
         functioncontext=self.functioncontext,
         baseparsecontext=self.parsecontext,
         basescenecontext=self.scenecontext,
@@ -1983,15 +2019,14 @@ class VNCodeGen:
         self.run_default_terminate()
 
     @staticmethod
-    def run_codegen_for_region(codegen : VNCodeGen, namespace_tuple : tuple[str,...], basepath : str, functioncontext : VNCodeGen.FunctionCodegenContext, baseparsecontext : VNCodeGen.ParseContext, basescenecontext : VNCodeGen.SceneContext | None, srcregion : VNASTCodegenRegion, dest : Block, deststarttime : Value, convergeblock : Block | None = None, loopexitblock : Block | None = None):
+    def run_codegen_for_region(codegen : VNCodeGen, srcfile : VNASTFileInfo, functioncontext : VNCodeGen.FunctionCodegenContext, baseparsecontext : VNCodeGen.ParseContext, basescenecontext : VNCodeGen.SceneContext | None, srcregion : VNASTCodegenRegion, dest : Block, deststarttime : Value, convergeblock : Block | None = None, loopexitblock : Block | None = None):
       parsecontext = VNCodeGen.ParseContext.forkfrom(baseparsecontext)
       scenecontext = VNCodeGen.SceneContext.forkfrom(basescenecontext) if basescenecontext is not None else VNCodeGen.SceneContext()
       if not isinstance(deststarttime.valuetype, VNTimeOrderType):
         raise PPAssertionError
       helper = VNCodeGen._FunctionCodegenHelper(
         codegen=codegen,
-        namespace_tuple=namespace_tuple,
-        basepath=basepath,
+        srcfile=srcfile,
         parsecontext=parsecontext,
         srcregion=srcregion,
         warningdest=dest,
@@ -2026,7 +2061,7 @@ class VNCodeGen:
     entry = dest.create_block('Entry')
     starttime = entry.get_argument('start')
     functioncontext = VNCodeGen.FunctionCodegenContext(destfunction=dest)
-    VNCodeGen._FunctionCodegenHelper.run_codegen_for_region(codegen=self, namespace_tuple=self.get_file_nstuple(srcfile), basepath=srcfile.location.get_file_path(), functioncontext=functioncontext, baseparsecontext=filecontext, basescenecontext=None, srcregion=src, dest=entry, deststarttime=starttime)
+    VNCodeGen._FunctionCodegenHelper.run_codegen_for_region(codegen=self, srcfile=srcfile, functioncontext=functioncontext, baseparsecontext=filecontext, basescenecontext=None, srcregion=src, dest=entry, deststarttime=starttime)
     # 最后检查所有创建的基本块，看看有没有基本块没有被用上
     # （有的话大概是跳转的时候目标点名字错了）
     # 所有没内容的基本块都塞上错误信息
@@ -2073,7 +2108,8 @@ class VNCodeGen:
         raise PPAssertionError
       nstuple = self.get_file_nstuple(file)
       ns = self.get_or_create_ns(nstuple)
-      for asset in file.assetdecls:
+      export_file = file.get_export_script_name()
+      for assetindex, asset in enumerate(file.assetdecls):
         if not isinstance(asset, VNASTAssetDeclSymbol):
           raise PPAssertionError
         name = asset.name
@@ -2093,6 +2129,7 @@ class VNCodeGen:
             # 其他资源暂不支持
             raise PPNotImplementedError("TODO")
         if symb:
+          self._setup_export_dest_attrs(symb, export_file, assetindex)
           ns.add_asset(symb)
     # 然后处理角色、场景声明
     for file in self.ast.files.body:
@@ -2100,10 +2137,12 @@ class VNCodeGen:
         raise PPAssertionError
       nstuple = self.get_file_nstuple(file)
       ns = self.get_or_create_ns(nstuple)
-      for scene in file.scenes:
+      export_file = file.get_export_script_name()
+      for sceneindex, scene in enumerate(file.scenes):
         if not isinstance(scene, VNASTSceneSymbol):
           raise PPAssertionError
         symb = VNSceneSymbol.create(context=self.context, name=scene.name, loc=scene.location)
+        self._setup_export_dest_attrs(symb, export_file, sceneindex)
         matcher = PartialStateMatcher()
         self._scene_parent_map[symb] = scene
         self._scene_state_matcher[symb] = matcher
@@ -2120,6 +2159,7 @@ class VNCodeGen:
           if not isinstance(bg_img, BaseImageLiteralExpr):
             raise PPNotImplementedError
           bg_entry = VNAssetValueSymbol.create(context=self.context, value=bg_img, name=bg.name, loc=scene.location)
+          self._setup_export_dest_attrs(bg_entry, export_file, sceneindex)
           symb.backgrounds.add(bg_entry)
           bg_map[bg.name] = bg_entry
           matcher.add_valid_state(tuple(bg.name.split(',')))
@@ -2129,7 +2169,7 @@ class VNCodeGen:
             matcher.add_valid_state(tuple(aliasname.split(',')))
         matcher.finish_init()
 
-      for character in file.characters:
+      for characterindex, character in enumerate(file.characters):
         if not isinstance(character, VNASTCharacterSymbol):
           raise PPAssertionError
         # 如果用户尝试定义一个已存在的角色，那么我们忽略，除非这个角色是初始化时默认创建的旁白
@@ -2155,6 +2195,7 @@ class VNCodeGen:
             return
         chkind = VNCharacterKind.NORMAL if obsolete_old_narrator is None else VNCharacterKind.NARRATOR
         symb = VNCharacterSymbol.create(self.context, kind=chkind, name=character.name, loc=character.location)
+        self._setup_export_dest_attrs(symb, export_file, characterindex)
         matcher = PartialStateMatcher()
         self._char_parent_map[symb] = character
         self._char_state_matcher[symb] = matcher
@@ -2195,6 +2236,7 @@ class VNCodeGen:
           if not isinstance(sprite_img, BaseImageLiteralExpr):
             raise PPNotImplementedError
           sprite_entry = VNAssetValueSymbol.create(context=self.context, value=sprite_img, name=sprite.name, loc=character.location)
+          self._setup_export_dest_attrs(sprite_entry, export_file, characterindex)
           symb.sprites.add(sprite_entry)
           sprite_map[sprite.name] = sprite_entry
           matcher.add_valid_state(tuple(sprite.name.split(',')))
@@ -2214,6 +2256,7 @@ class VNCodeGen:
           if not isinstance(sideimage_img, BaseImageLiteralExpr):
             raise PPNotImplementedError
           sideimage_entry = VNAssetValueSymbol.create(context=self.context, value=sideimage_img, name=sideimage.name, loc=character.location)
+          self._setup_export_dest_attrs(sideimage_entry, export_file, characterindex)
           symb.sideimages.add(sideimage_entry)
           sideimage_map[sideimage.name] = sideimage_entry
           for use in sideimage.aliases.operanduses():

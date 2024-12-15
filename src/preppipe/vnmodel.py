@@ -228,6 +228,30 @@ class VNSymbol(Symbol, Value):
   # 有些内容（比如预设的转场效果等）主要是代码，参数部分很少，我们可以为它们新定义字面值(Literal)，然后用常量表达式来表示对它们的引用
   codename : OpOperand[StringLiteral]
 
+  # 如果该内容可以指定导出到哪里，就用这个属性来保存
+  # 应该是不含文件后缀名的字符串，不一定是纯字母数字
+  # 此属性只用于指定导出声明、定义的位置（比如 RenPy 的 label, 各种 define 等），不适用于资源文件等
+  ATTR_EXPORT_TO_FILE : typing.ClassVar[str] = "ExportToFile"
+
+  # 用来区分同一类下（比如同是章节、同是资源等）的导出顺序，值越小的排得越前
+  # 这个值不一定连续，不一定从 0 或 1 开始，且只表示同分类下的顺序，不同分类下的顺序无法保证。
+  # 如果是 VNAssetValueSymbol 的话我们一般只用父节点（比如其之上的 VNCharacterSymbol 等）上的值
+  ATTR_EXPORT_SORT_ORDER : typing.ClassVar[str] = "ExportSortOrder"
+
+  def get_export_to_file(self) -> str:
+    if attr := self.get_attr(VNSymbol.ATTR_EXPORT_TO_FILE):
+      if not isinstance(attr, str):
+        raise PPInternalError
+      return attr
+    return ''
+
+  def get_sort_order(self) -> int:
+    if attr := self.get_attr(VNSymbol.ATTR_EXPORT_SORT_ORDER):
+      if not isinstance(attr, int):
+        raise PPInternalError
+      return attr
+    return 0
+
 
 @IRObjectJsonTypeName("vn_cexpr_record_op")
 class VNAssetValueSymbol(VNSymbol):
@@ -845,7 +869,6 @@ class VNFunction(VNSymbol):
   # 函数属性标记
   ATTR_ENTRYPOINT : typing.ClassVar[str] = "EntryPoint" # 表示该函数应当作为引擎的某个入口。带一个字符串参数，表示是什么入口。
   ATTRVAL_ENTRYPOINT_MAIN : typing.ClassVar[str] = "main"
-  ATTR_SRCFILE : typing.ClassVar[str] = "SourceFile" # 函数所在的源文件名(不包含后缀) TODO:添加对这个属性的支持；应该给其他对象也加上这个属性
 
   NAME_PREBODY  : typing.ClassVar[str] = "prebody"
   NAME_POSTBODY : typing.ClassVar[str] = "postbody"

@@ -250,11 +250,11 @@ class ImagePackExportDataBuilder:
     instance_id : str
     composite_code : str
 
-  def add_value(self, value : ImagePackElementLiteralExpr, is_require_merged_image : bool = False) -> ImagePackElementReferenceInfo | str:
+  def add_value(self, value : ImagePackElementLiteralExpr, is_require_merged_image : bool = False, referenced_by : typing.Any | None = None) -> ImagePackElementReferenceInfo | str:
     # 添加一个图片包元素到 builder 中
     # 如果 is_require_merged_image 为 True，那么我们生成时会保证生成一个单独的图片，路径是返回值
     # 否则我们会尝试使用差分的方式来表示这个图片，返回值是 ImagePackElementReferenceInfo
-    return self._add_value_impl(value, is_require_merged_image)
+    return self._add_value_impl(value, is_require_merged_image, referenced_by)
 
   @dataclasses.dataclass
   class LayerExportInfo:
@@ -269,6 +269,7 @@ class ImagePackExportDataBuilder:
   class InstanceExportInfo:
     layer_exports : list # list[LayerExportInfo]
     composites : dict[str, tuple[int, ...]] # 差分组合的编码 -> 各个组成图层的编号
+    first_referenced_by : typing.Any | None = None
 
   def finalize(self, dest : SymbolTableRegion[ImagePackExportOpSymbol]) -> dict[str, InstanceExportInfo]:
     # 完成添加图片包元素的操作，生成 ImagePackExportOpSymbol 并整理所有的图片包实例信息
@@ -285,6 +286,7 @@ class ImagePackExportDataBuilder:
     instance_path : str
     op : ImagePackExportOpSymbol
     descriptor : ImagePackDescriptor
+    first_referenced_by : typing.Any | None = None
     # 为了保持 ImagePackExportOpSymbol 输出内容的稳定性，我们需要在加入导出内容前对其进行排序
     # 以下是用于记录已经导出的内容，以便 (1) 在加新值时复用结果，(2) 在 finalize() 中填充 ImagePackExportOpSymbol 时保持顺序
     composite_export_dict : dict[tuple[int, tuple[int, int]], str] = dataclasses.field(default_factory=dict) # (composite_index, target_size -> path)
@@ -298,7 +300,7 @@ class ImagePackExportDataBuilder:
     self.instance_map = {}
     self.global_instance_count = 0
 
-  def _add_value_impl(self, value : ImagePackElementLiteralExpr, is_require_merged_image : bool = False) -> ImagePackElementReferenceInfo | str:
+  def _add_value_impl(self, value : ImagePackElementLiteralExpr, is_require_merged_image : bool = False, referenced_by : typing.Any | None = None) -> ImagePackElementReferenceInfo | str:
     pack_id = value.pack_id.get_string()
     pack_map = None
     if pack_id in self.instance_map:
@@ -322,7 +324,7 @@ class ImagePackExportDataBuilder:
       descriptor = ImagePack.get_descriptor_by_id(pack_id)
       if not isinstance(descriptor, ImagePackDescriptor):
         raise PPInternalError("Image pack descriptor not found: " + pack_id)
-      instance_info = ImagePackExportDataBuilder.ImagePackInstanceInfo(instance_id=instance_id, instance_path=instance_path, op=op, descriptor=descriptor)
+      instance_info = ImagePackExportDataBuilder.ImagePackInstanceInfo(instance_id=instance_id, instance_path=instance_path, op=op, descriptor=descriptor, first_referenced_by=referenced_by)
       pack_map[fork_params] = instance_info
     target_size_tuple = (value.size.value[0], value.size.value[1])
     composite_code = value.composite_name.value
@@ -375,7 +377,7 @@ class ImagePackExportDataBuilder:
           composite_code = reference_info.composite_code
           layers = tuple(info.descriptor.get_layers_from_composite_index(composite_index))
           composite_exports[composite_code] = layers
-        instance_export_info = ImagePackExportDataBuilder.InstanceExportInfo(layer_exports=layer_exports, composites=composite_exports)
+        instance_export_info = ImagePackExportDataBuilder.InstanceExportInfo(layer_exports=layer_exports, composites=composite_exports, first_referenced_by=info.first_referenced_by)
         resultdict[info.instance_id] = instance_export_info
     return resultdict
 
