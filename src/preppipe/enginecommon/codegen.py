@@ -6,7 +6,7 @@ from .ast import *
 from ..irbase import *
 from ..vnmodel import *
 from ..util.imagepackexportop import *
-from ..util.placeholderimageexportop import *
+from ..util.imageexprexportop import *
 from ..util.nameconvert import *
 
 SelfType = typing.TypeVar('SelfType', bound='BackendCodeGenHelperBase') # pylint: disable=invalid-name
@@ -333,13 +333,19 @@ class BackendCodeGenHelperBase(typing.Generic[NodeType]):
     self.get_result().add_asset(file)
     return path
 
-  def lower_placeholder_image(self, v : PlaceholderImageLiteralExpr, user_hint : VNStandardDeviceKind | None = None) -> str:
+  def lower_imageexpr_image_impl(self, exportopty : typing.Type[CacheableOperationSymbol], v : BaseImageLiteralExpr, user_hint : VNStandardDeviceKind | None = None) -> str:
     rootdir = self.get_asset_rootpath_impl(ImageAssetData, user_hint)
 
     path = self.get_asset_export_path_impl(parentdir=rootdir, export_format_ext=None, baseext='png', duplicate_check_item=v, asset_loc=None)
-    exportop = PlaceholderImageExportOpSymbol.create(context=v.context, v=v, path=StringLiteral.get(path, v.context))
+    exportop = exportopty.create(context=v.context, v=v, path=StringLiteral.get(path, v.context))
     self.get_result().add_cacheable_export(exportop)
     return path
+
+  def lower_placeholder_image(self, v : PlaceholderImageLiteralExpr, user_hint : VNStandardDeviceKind | None = None) -> str:
+    return self.lower_imageexpr_image_impl(PlaceholderImageExportOpSymbol, v, user_hint)
+
+  def lower_colorimage_image(self, v : ColorImageLiteralExpr, user_hint : VNStandardDeviceKind | None = None) -> str:
+    return self.lower_imageexpr_image_impl(ColorImageExportOpSymbol, v, user_hint)
 
   def _add_asset_name(self, v : Value, info : NamedAssetInfo):
     if v not in self.asset_decl_info_dict:

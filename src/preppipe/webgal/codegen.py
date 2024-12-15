@@ -100,6 +100,9 @@ class _WebGalCodeGenHelper(BackendCodeGenHelperBase[WebGalNode]):
       AudioAssetData : ["mp3", "wav", "ogg"],
     })
 
+  def get_result(self) -> WebGalModel:
+    return self.result
+
   def _assign_function_labels(self, n : VNNamespace):
     for f in n.functions:
       srcfile = f.get_attr(VNFunction.ATTR_EXPORT_TO_FILE)
@@ -213,34 +216,33 @@ class _WebGalCodeGenHelper(BackendCodeGenHelperBase[WebGalNode]):
         raise PPInternalError("Named asset having unexpected internal data type")
       return asset_ref.internal_data
 
-    if isinstance(v, ImageAssetLiteralExpr):
-      path = self.add_assetdata(v.image, user_hint)
+    def wrapup(path : str):
       refpath = self.strip_asset_rootdir(path)
       if asset_ref is not None:
         asset_ref.internal_data = refpath
         asset_ref.used = True
       return refpath
 
+    if isinstance(v, ImageAssetLiteralExpr):
+      return wrapup(self.add_assetdata(v.image, user_hint))
+
     if isinstance(v, AssetData):
-      path = self.add_assetdata(v, user_hint)
-      refpath = self.strip_asset_rootdir(path)
-      if asset_ref is not None:
-        asset_ref.internal_data = refpath
-        asset_ref.used = True
-      return refpath
+      return wrapup(self.add_assetdata(v, user_hint))
 
     if isinstance(v, ImagePackElementLiteralExpr):
       ref = self.imagepack_handler.add_value(v, True)
       if isinstance(ref, str):
-        refpath = self.strip_asset_rootdir(ref)
-        if asset_ref is not None:
-          asset_ref.internal_data = refpath
-          asset_ref.used = True
-        return refpath
+        return wrapup(ref)
       elif isinstance(ref, ImagePackExportDataBuilder.ImagePackElementReferenceInfo):
         raise PPInternalError("WebGal does not support layered image combined ref")
       else:
         raise PPInternalError('Unknown image pack reference type')
+
+    if isinstance(v, PlaceholderImageLiteralExpr):
+      return wrapup(self.lower_placeholder_image(v, user_hint))
+
+    if isinstance(v, ColorImageLiteralExpr):
+      return wrapup(self.lower_colorimage_image(v, user_hint))
 
     raise PPInternalError("Unexpected value type")
 
