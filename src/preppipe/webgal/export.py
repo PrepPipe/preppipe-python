@@ -45,7 +45,7 @@ class WebGalExportVisitor(BackendASTVisitorBase):
         else:
           content = str(op)
         for s in content.split('\n'):
-          self.dest.write('; ' + s)
+          self.dest.write('; ' + s + '\n')
       else:
         raise NotImplementedError("TODO")
 
