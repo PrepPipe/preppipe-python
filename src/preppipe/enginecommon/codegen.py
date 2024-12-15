@@ -7,9 +7,11 @@ from ..irbase import *
 from ..vnmodel import *
 from ..util.imagepackexportop import *
 from ..util.placeholderimageexportop import *
+from ..util.nameconvert import *
 
 SelfType = typing.TypeVar('SelfType', bound='BackendCodeGenHelperBase') # pylint: disable=invalid-name
 NodeType = typing.TypeVar('NodeType', bound=BackendASTNodeBase) # pylint: disable=invalid-name
+VNSymbolType = typing.TypeVar("VNSymbolType", bound=VNSymbol) # pylint: disable=invalid-name
 class BackendCodeGenHelperBase(typing.Generic[NodeType]):
   # 这里我们提供标准的从 Block 末尾往前生成代码的接口
   # 我们使用 CODEGEN_MATCH_TREE 来组织代码生成的逻辑
@@ -229,6 +231,32 @@ class BackendCodeGenHelperBase(typing.Generic[NodeType]):
         # 否则我们继续匹配
         continue
       return (instrs, match_result)
+
+  def sorted_symbols(self, symbols : typing.Iterable[VNSymbolType]) -> typing.Generator[VNSymbolType, None, None]:
+    # 用来确保输出内容时能够遵照输入顺序
+    all_items : dict[str, list[tuple[int, VNSymbolType]]] = {}
+    for s in symbols:
+      export_to_file = s.get_export_to_file()
+      sort_order = s.get_sort_order()
+      if export_to_file not in all_items:
+        all_items[export_to_file] = []
+      all_items[export_to_file].append((sort_order, s))
+    for k, v in all_items.items():
+      v.sort(key=lambda x: x[0])
+      for _, s in v:
+        yield s
+
+  def sanitize_ascii_path(self, path : str) -> str:
+    # 确保输入的相对路径的每个部分都是有效的纯 ASCII 路径
+    path_components = re.split('[\\/]', path)
+    cleaned_components = []
+    for c in path_components:
+      if not c.isascii():
+        c = str2pathcomponent(c)
+      if len(c) == 0:
+        continue
+      cleaned_components.append(c)
+    return '/'.join(cleaned_components)
 
   def get_asset_rootpath(self, v : AssetData, user_hint : VNStandardDeviceKind | None) -> str:
     return self.get_asset_rootpath_impl(ty = type(v), user_hint=user_hint)

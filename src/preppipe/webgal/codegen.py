@@ -102,7 +102,7 @@ class _WebGalCodeGenHelper(BackendCodeGenHelperBase[WebGalNode]):
 
   def _assign_function_labels(self, n : VNNamespace):
     for f in n.functions:
-      srcfile = f.get_attr(VNFunction.ATTR_SRCFILE)
+      srcfile = f.get_attr(VNFunction.ATTR_EXPORT_TO_FILE)
       if srcfile is not None:
         assert isinstance(srcfile, str)
       else:

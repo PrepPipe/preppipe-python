@@ -799,12 +799,15 @@ class VNASTFileInfo(VNASTNodeBase):
   variables : SymbolTableRegion[VNASTVariableDeclSymbol] # 在该文件中声明的变量
   scenes : SymbolTableRegion[VNASTSceneSymbol]
   pending_content : Block # VNASTNodeBase | MetadataOp
+  export_script_name : OpOperand[StringLiteral] # 如果用户要求此文件内的章节、角色声明等应该保存在特定的文件里（比如在 RenPy 中指定输出脚本的名称），就放这里
   # 现在我们把别名直接存储到被起别名的对象上
 
   def get_short_str(self, indent : int = 0) -> str:
     result = 'File "' + self.name + '"'
     if ns := self.namespace.try_get_value():
       result += ' NS: ' + ns.get_string()
+    if s := self.export_script_name.get():
+      result += " ExportTo: \"" + s.get_string() + '"'
 
     def dump_table(r : SymbolTableRegion, header : str):
       nonlocal result
@@ -823,6 +826,13 @@ class VNASTFileInfo(VNASTNodeBase):
     for func in self.functions.body:
       result += '\n' + '  '*indent + self.get_target_str(func, indent)
     return result
+
+  def get_export_script_name(self) -> str:
+    if s := self.export_script_name.try_get_value():
+      return s.get_string()
+    if s := self.location.get_file_path():
+      return os.path.splitext(s)[0]
+    return ''
 
   @staticmethod
   def create(name : str, loc : Location, namespace : StringLiteral | str | None = None):
