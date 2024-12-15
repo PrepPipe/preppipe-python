@@ -261,9 +261,12 @@ class _WebGalCodeGenHelper(BackendCodeGenHelperBase[WebGalNode]):
       return refpath
     raise PPInternalError("Unexpected value type")
 
-  def get_asset_instance_id(self, v : Value) -> str:
+  def get_or_create_asset_instance_id(self, v : Value) -> str:
     if self.cur_function_state is None:
       raise PPInternalError("Requesting asset instance id without function state")
+    if v not in self.cur_function_state.handle_ids:
+      self.cur_function_state.handle_ids[v] = "handle_" + str(self.cur_function_state.handle_num)
+      self.cur_function_state.handle_num += 1
     return self.cur_function_state.handle_ids[v]
 
   def collect_say_text(self, src : OpOperand) -> list[Value]:
@@ -285,7 +288,6 @@ class _WebGalCodeGenHelper(BackendCodeGenHelperBase[WebGalNode]):
     voice_volume : int | None = None # 暂不支持
     flag_concat = False
     flag_notend = isNoWait
-    is_sayername_specified = False
     mode='adv'
     for op in say.body.body:
       assert isinstance(op, VNInstruction)
@@ -311,7 +313,8 @@ class _WebGalCodeGenHelper(BackendCodeGenHelperBase[WebGalNode]):
               sayername_str = sayername.get_string()
             else:
               raise RuntimeError("Unexpected sayername type: " + str(type(sayername)))
-            is_sayername_specified = True
+            # 不支持其他效果，现在就把发言者复制过去结束
+            sayer = sayername_str
           case VNStandardDeviceKind.O_SAY_TEXT_TEXT:
             what = self.collect_say_text(op.content)
             for s in what:
@@ -399,9 +402,7 @@ class _WebGalCodeGenHelper(BackendCodeGenHelperBase[WebGalNode]):
         changeFigure.set_flag_next()
         changeFigure.insert_before(insert_before)
         if isinstance(instr, VNCreateInst):
-          id_str = "handle_" + str(self.cur_function_state.handle_num)
-          self.cur_function_state.handle_num += 1
-          self.cur_function_state.handle_ids[instr] = id_str
+          id_str = self.get_or_create_asset_instance_id(instr)
           changeFigure.id_str.set_operand(0, StringLiteral.get(id_str, context=self.context))
         return changeFigure
       case VNStandardDeviceKind.O_BACKGROUND_DISPLAY:
@@ -418,9 +419,7 @@ class _WebGalCodeGenHelper(BackendCodeGenHelperBase[WebGalNode]):
         playEffect.set_flag_next()
         playEffect.insert_before(insert_before)
         if isinstance(instr, VNCreateInst):
-          id_str = "handle_" + str(self.cur_function_state.handle_num)
-          self.cur_function_state.handle_num += 1
-          self.cur_function_state.handle_ids[instr] = id_str
+          id_str = self.get_or_create_asset_instance_id(instr)
           playEffect.id_str.set_operand(0, StringLiteral.get(id_str, context=self.context))
         return playEffect
       case VNStandardDeviceKind.O_BGM_AUDIO:
@@ -456,7 +455,7 @@ class _WebGalCodeGenHelper(BackendCodeGenHelperBase[WebGalNode]):
           newnode.insert_before(insert_before)
           return newnode
         case VNStandardDeviceKind.O_FOREGROUND_DISPLAY:
-          id_str = self.get_asset_instance_id(roothandle)
+          id_str = self.get_or_create_asset_instance_id(roothandle)
           newvalue = instr.content.get()
           newexpr = self.get_image_expr(newvalue, devkind)
           newnode = WebGalChangeFigureNode.create(context=self.context, figure=newexpr, loc=instr.location)
@@ -481,7 +480,7 @@ class _WebGalCodeGenHelper(BackendCodeGenHelperBase[WebGalNode]):
           if kind == VNStandardDeviceKind.O_BACKGROUND_DISPLAY:
             node = WebGalChangeBGNode.create(context=self.context, bg="none", loc=instr.location)
           else:
-            image_id = self.get_asset_instance_id(roothandle)
+            image_id = self.get_or_create_asset_instance_id(roothandle)
             id_str = StringLiteral.get(image_id, context=self.context)
             node = WebGalChangeFigureNode.create(context=self.context, figure="none", loc=instr.location)
             node.id_str.set_operand(0, id_str)
