@@ -21,6 +21,7 @@ from .transform import passes as vnmodel_transform_passes
 from .analysis import passes as vnmodel_analysis_passes
 from . import testbench
 from .util import imagepack
+from .util import imagepackrecolortester
 from .assets import imports as asset_imports
 
 if __name__ == "__main__":
