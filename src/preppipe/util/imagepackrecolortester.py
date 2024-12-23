@@ -10,11 +10,13 @@ import typing
 import io
 import argparse
 import concurrent.futures
+import collections
 
 import PIL
 import PIL.Image
 import PIL.ImageDraw
 import xlsxwriter
+import psd_tools
 
 from ..exceptions import *
 from ..commontypes import Color
@@ -353,7 +355,8 @@ class ImagePackRecolorTester:
     workbook.close()
 
   @staticmethod
-  def scan_colors() -> typing.Generator[Color, None, None]:
+  def scan_colors(use_narrow_range : bool = False) -> typing.Generator[Color, None, None]:
+    # use_narrow_range==True 时不改 s 和 v
     for value in range(100, 10, -30):
       v = value / 100.0
       for hue in range(0, 360, 30):
@@ -363,23 +366,114 @@ class ImagePackRecolorTester:
           r, g, b = colorsys.hsv_to_rgb(h, s, v)
           color = Color.get((int(r*255), int(g*255), int(b*255)))
           yield color
+          if use_narrow_range:
+            break
+      if use_narrow_range:
+        break
+
+  @staticmethod
+  def get_images_from_psd(path : str) -> collections.OrderedDict[str, PIL.Image.Image]:
+    psd = psd_tools.PSDImage.open(path)
+    results = collections.OrderedDict()
+    for layer in psd:
+      results[layer.name] = layer.composite()
+    return results
+
+  @staticmethod
+  def get_basecolor_from_image(image : PIL.Image.Image) -> Color:
+    # https://stackoverflow.com/questions/3241929/how-to-find-the-dominant-most-common-color-in-an-image
+    # 首先，如果图片太大，就先缩小
+    smallimage = image.crop(image.getbbox())
+    if smallimage.width > 256 or smallimage.height > 256:
+      scale = 256 / max(smallimage.width, smallimage.height)
+      smallimage = smallimage.resize((int(smallimage.width * scale), int(smallimage.height * scale)), PIL.Image.LANCZOS)
+    paletted = smallimage.convert('P', palette=PIL.Image.ADAPTIVE, colors=4)
+    palette = paletted.getpalette()
+    if palette is None:
+      raise ValueError("Cannot get palette from image")
+    color_counts = sorted(paletted.getcolors(), reverse=True)
+    for i in range(4):
+      palette_index = color_counts[i][1]
+      if not isinstance(palette_index, int):
+        raise ValueError("Invalid palette index")
+      dominant_color = palette[palette_index*3:palette_index*3+3]
+      if dominant_color[0] == 0 and dominant_color[1] == 0 and dominant_color[2] == 0:
+        continue
+      return Color.get(tuple(dominant_color))
 
   @staticmethod
   def tool_main(args : list[str] | None = None):
     parser = argparse.ArgumentParser(description="ImagePack Recoloring Tester")
+    parser.add_argument("--psd", type=str, help="PSD file to load")
+    parser.add_argument("--loaddir", type=str, help="Directory to load images")
+    parser.add_argument("--srcscale", type=float, default=1.0, help="Scale factor for source images")
+    parser.add_argument("--mask", type=str, nargs="+", help="Layer names to use as masks")
+    parser.add_argument("--minimal", action="store_true", help="Use narrow color range")
     parser.add_argument("--xlsx-export", type=str, help="Output XLSX file")
     if args is None:
       args = sys.argv[1:]
     parsed_args = parser.parse_args(args)
     if parsed_args.xlsx_export is None:
       raise ValueError("No output file specified")
-    dest_colors = []
+    dest_colors = [color for color in ImagePackRecolorTester.scan_colors(use_narrow_range=parsed_args.minimal)]
+
+    baselayernames = []
+    basecolors = {}
+    if parsed_args.mask is not None:
+      mask_exprs : list[str] = [] # <layername>[=<color>]
+      for s in parsed_args.mask:
+        mask_exprs.extend(s.split(","))
+      for expr in mask_exprs:
+        parts = expr.split("=")
+        name = parts[0]
+        baselayernames.append(name)
+        if len(parts) > 1:
+          basecolors[name] = Color.get(parts[1])
+
     imagepacks = []
-    size = (600, 200)
-    for color in ImagePackRecolorTester.scan_colors():
-      dest_colors.append(color)
-      pack = ImagePackRecolorTester.prepare_imagepack_colorbar(size=size, main_color=color)
-      imagepacks.append(pack)
+    if parsed_args.psd or parsed_args.loaddir:
+      if len(baselayernames) == 0:
+        raise ValueError("No mask layers specified")
+      images : collections.OrderedDict[str, PIL.Image.Image] = collections.OrderedDict()
+      if parsed_args.psd:
+        images = ImagePackRecolorTester.get_images_from_psd(parsed_args.psd)
+      elif parsed_args.loaddir:
+        for root, _, files in os.walk(parsed_args.loaddir):
+          for file in sorted(files):
+            if not file.lower().endswith(".png"):
+              continue
+            basename = os.path.splitext(file)[0]
+            images[basename] = PIL.Image.open(os.path.join(root, file))
+      else:
+        raise RuntimeError()
+      mask_info = []
+      imagelist = []
+      imagenames = []
+      for name, img in images.items():
+        if parsed_args.srcscale != 1.0:
+          img = img.resize((int(img.width * parsed_args.srcscale), int(img.height * parsed_args.srcscale)), PIL.Image.LANCZOS)
+        imagelist.append(img)
+        imagenames.append(name)
+      for name in baselayernames:
+        if name not in images:
+          raise ValueError("Cannot find layer " + name)
+        cur_image = images[name]
+        cur_base_color = None
+        if name in basecolors:
+          cur_base_color = basecolors[name]
+        if cur_base_color is None:
+          cur_base_color = ImagePackRecolorTester.get_basecolor_from_image(cur_image)
+        mask_info.append((imagenames.index(name), cur_base_color))
+      for info in mask_info:
+        pack = ImagePackRecolorTester.get_test_imagepack_from_layers(imagelist, info[0], info[1])
+        imagepacks.append(pack)
+    else:
+      size = (600, 200)
+      for color in dest_colors:
+        pack = ImagePackRecolorTester.prepare_imagepack_colorbar(size=size, main_color=color)
+        imagepacks.append(pack)
+    if len(imagepacks) == 0:
+      raise ValueError("No imagepack created")
     result = ImagePackRecolorTester.create_report(imagepacks, dest_colors)
     if xlsx := parsed_args.xlsx_export:
       ImagePackRecolorTester.export_xlsx(result, xlsx)
