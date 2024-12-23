@@ -19,5 +19,7 @@ def ToolClassDecl(name : str): # pylint: disable=invalid-name
     # 确认该类有一个叫 tool_main(args : list[str] | None) 的静态方法
     assert hasattr(cls, "tool_main"), f"Tool {name} must have a static method tool_main(args : list[str] | None)"
     _registered_tools[name] = cls
+    # 设置一个 TOOL_NAME 属性，方便在其他地方获取
+    setattr(cls, "TOOL_NAME", name)
     return cls
   return decorator
