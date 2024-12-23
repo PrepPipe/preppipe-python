@@ -168,6 +168,9 @@ class Color:
   def to_tuple_rgb(self):
     return (self.r, self.g, self.b)
 
+  def get_tuple_rgb(self):
+    return self.to_tuple_rgb()
+
   def to_float_tuple_rgb(self):
     return (self.r / 255.0, self.g / 255.0, self.b / 255.0)
 
