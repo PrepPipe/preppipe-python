@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import enum
+import sys
 import time
 import threading
 
@@ -28,6 +29,12 @@ class MessageHandler:
   _instance = None
   _starttime = time.time()
   _mutex = threading.Lock()
+
+  # 默认使用 utf-8 编码。Windows 上有时只使用环境变量的话不起作用，所以这里再手动设置一次。
+  if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding='utf-8')
+  if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding='utf-8')
 
   @staticmethod
   def install_message_handler(handler):

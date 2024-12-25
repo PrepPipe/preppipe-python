@@ -9,6 +9,7 @@ from .analysis.icfg import *
 from .analysis.vnmodel.timemodel import *
 from .analysis.vnmodel.assetusage import AssetUsage
 
+# 这是开发早期用来创建测试用 VNModel 的代码，现在已经不需要这些了。
 @FrontendDecl('test-vnmodel-build', input_decl=IODecl(description='<No Input>', nargs=0), output_decl=VNModel)
 class _TestVNModelBuild(TransformBase):
   def run(self) -> VNModel:
