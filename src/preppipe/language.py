@@ -257,6 +257,12 @@ class Translatable:
     return self.get().format(*args, **kwargs)
 
   @staticmethod
+  def _sanitize_for_print(s : str | typing.Any) -> str:
+    if not isinstance(s, str):
+      s = str(s)
+    return s.encode("ascii", "replace").decode("ascii")
+
+  @staticmethod
   def language_update_preferred_langs(language_list : list[str]):
     supported_langs : dict[str, list[str]] = {
       "en" : [],
@@ -290,7 +296,7 @@ class Translatable:
             lang, region = l
         else:
           # 无法识别的语言
-          print("Unsupported language: " + lang)
+          print("Unsupported language: " + Translatable._sanitize_for_print(lang))
           continue
       assert lang in supported_langs
       region_list = supported_langs[lang]
@@ -322,7 +328,7 @@ class Translatable:
         lang = t[0]
         if lang is not None:
           if not isinstance(lang, str):
-            print("Language from locale is not a string: " + str(lang) + " (locale: " + str(t) + ')')
+            print("Language from locale is not a string: " + Translatable._sanitize_for_print(lang) + " (locale: " + Translatable._sanitize_for_print(t) + ')')
           else:
             language_list = [lang]
       except: # pylint: disable=bare-except
@@ -330,9 +336,11 @@ class Translatable:
     if language_list:
       Translatable.language_update_preferred_langs(language_list)
 
-  @staticmethod
-  def print_lang_list():
-    print(Translatable._tr_lang_list.format(lang=str(Translatable.PREFERRED_LANG)))
+  # 目前没有代码用这一部分
+  # 我们也不希望因为 print 非 ASCII 字符串而报错
+  #@staticmethod
+  #def print_lang_list():
+  #  print(Translatable._tr_lang_list.format(lang=str(Translatable.PREFERRED_LANG)))
 
   # 声明要在 Translatable 内，方便隐藏名称、避免名称冲突
   _tr_lang_list : typing.ClassVar[Translatable] = None # type: ignore
