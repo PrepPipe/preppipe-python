@@ -53,9 +53,7 @@ _tr_vn_util_image_verify_failed = _TR_vn_util.tr("image_verify_failed",
   zh_hk="圖片文件 {path} 校驗失敗，無法用作圖片。",
 )
 
-def emit_image_expr_from_path(context : Context, pathexpr : str, basepath : str, warnings : list[tuple[str, str]]) -> BaseImageLiteralExpr | None:
-  # 如果提供了图片路径，则当场读取图片内容，创建 ImageAssetLiteralExpr
-  # 如果是占位、声明这种，则根据情况特判
+def _read_image_helper(context : Context, pathexpr : str, basepath : str, warnings : list[tuple[str, str]]) -> ImageAssetData | None:
   def _try_open_image(p : str) -> tuple[str, str] | None:
     nonlocal warnings
     try:
@@ -78,6 +76,12 @@ def emit_image_expr_from_path(context : Context, pathexpr : str, basepath : str,
   if t := context.get_file_auditor().search(querypath=pathexpr, basepath=basepath, filecheckCB=_try_open_image):
     path, fmt = t
     asset = context.get_or_create_image_asset_data_external(path, fmt)
+    return asset
+  return None
+
+def emit_image_expr_from_path(context : Context, pathexpr : str, basepath : str, warnings : list[tuple[str, str]]) -> BaseImageLiteralExpr | None:
+  # 如果提供了图片路径，则当场读取图片内容，创建 ImageAssetLiteralExpr
+  if asset := _read_image_helper(context, pathexpr, basepath, warnings):
     data = asset.load()
     assert data is not None
     bbox = ImageAssetLiteralExpr.prepare_bbox(context=context, imagedata=data)
@@ -183,7 +187,8 @@ _tr_composite_not_found = _TR_vn_util.tr("composite_not_found",
   zh_cn="未找到差分组合 {composite}",
   zh_hk="未找到差分組合 {composite}",
 )
-def emit_image_expr_from_callexpr(context : Context, call : CallExprOperand, placeholderdest : ImageExprPlaceholderDest, placeholderdesc: str,
+def emit_image_expr_from_callexpr(context : Context, call : CallExprOperand, basepath : str,
+                                  placeholderdest : ImageExprPlaceholderDest, placeholderdesc: str,
                                   warnings : list[tuple[str, str]],
                                   children_out : list[tuple[list[str], BaseImageLiteralExpr, list[list[str]]]] | None = None,
                                   curstate_is_child : list[str] | None = None
@@ -238,7 +243,10 @@ def emit_image_expr_from_callexpr(context : Context, call : CallExprOperand, pla
               elif isinstance(value, Color):
                 converted_arg = ColorLiteral.get(value, context)
               elif isinstance(value, str):
-                converted_arg = StringLiteral.get(value, context)
+                if asset := _read_image_helper(context, value, "", warnings):
+                  converted_arg = asset
+                else:
+                  converted_arg = StringLiteral.get(value, context)
               else:
                 raise PPInternalError("Unknown type of mask param")
             case ImagePackDescriptor.MaskParamType.COLOR:
@@ -326,7 +334,7 @@ def emit_image_expr_from_str(context : Context, s : str, basepath : str,  placeh
   if cmd := try_parse_value_expr(s, context.null_location):
     if isinstance(cmd, GeneralCommandOp):
       callexpr = FrontendParserBase.parse_commandop_as_callexpr(cmd)
-      return emit_image_expr_from_callexpr(context=context, call=callexpr, placeholderdest=placeholderdest, placeholderdesc=placeholderdesc, warnings=warnings, children_out=children_out)
+      return emit_image_expr_from_callexpr(context=context, call=callexpr, basepath=basepath, placeholderdest=placeholderdest, placeholderdesc=placeholderdesc, warnings=warnings, children_out=children_out)
     s = cmd
   if result := emit_image_expr_from_path(context=context, pathexpr=s, basepath=basepath, warnings=warnings):
     return result

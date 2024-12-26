@@ -178,7 +178,11 @@ class ImagePackExportOpSymbol(CacheableOperationSymbol):
             args.append((text, color))
         elif isinstance(value, ColorLiteral):
           args.append(value.value)
+        elif isinstance(value, ImageAssetData):
+          image = value.load()
+          args.append(image)
         elif isinstance(value, ImageAssetLiteralExpr):
+          # 应该不会出现
           image = value.image.load()
           args.append(image)
         elif isinstance(value, ColorImageLiteralExpr):
