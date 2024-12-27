@@ -1172,8 +1172,9 @@ def cmd_hide_image(parser : VNParser, state : VNASTParsingState, commandop : Gen
 
 @CmdCategory(_tr_category_music_sound)
 @CmdAliasDecl(TR_vnparse, {
-  "zh_cn": "设置背景音乐",
-  "zh_hk": "設置背景音樂",
+  "en": ["SetBGM", "BGM"],
+  "zh_cn": ["设置背景音乐", "背景音乐"],
+  "zh_hk": ["設置背景音樂", "背景音樂"],
 }, {
   "bgm": {
     "zh_cn": "音乐",
