@@ -147,35 +147,10 @@ _tr_composite_name = _TR_vn_util.tr("composite_name",
   zh_cn="差分组合",
   zh_hk="差分組合",
 )
-_tr_screen = _TR_vn_util.tr("screen",
-  en="Screen",
-  zh_cn="屏幕",
-  zh_hk="屏幕",
-)
-_tr_color_indicator = _TR_vn_util.tr("color_indicator",
-  en="IndicatorColor",
-  zh_cn="指示色",
-  zh_hk="指示色",
-)
 _tr_imagepreset_character = _TR_vn_util.tr("imagepreset_character",
   en="CharacterPreset",
   zh_cn="预设角色",
   zh_hk="預設角色",
-)
-_tr_color_cloth = _TR_vn_util.tr("color_cloth",
-  en="ClothColor",
-  zh_cn="衣服颜色",
-  zh_hk="衣服顏色",
-)
-_tr_color_hair = _TR_vn_util.tr("color_hair",
-  en="HairColor",
-  zh_cn="发色",
-  zh_hk="髮色",
-)
-_tr_color_decorate = _TR_vn_util.tr("color_decorate",
-  en="DecorateColor",
-  zh_cn="装饰色",
-  zh_hk="裝飾色",
 )
 _tr_image_template_not_found = _TR_vn_util.tr("image_template_not_found",
   en="Image template not found: {template}",
@@ -186,6 +161,11 @@ _tr_composite_not_found = _TR_vn_util.tr("composite_not_found",
   en="Composite not found: {composite}",
   zh_cn="未找到差分组合 {composite}",
   zh_hk="未找到差分組合 {composite}",
+)
+_tr_image_template_parameter_not_supported = _TR_vn_util.tr("image_template_parameter_not_supported",
+  en="Image \"{template}\" does not support parameter \"{param}\"",
+  zh_cn="图片 \"{template}\" 不支持参数 \"{param}\"",
+  zh_hk="圖片 \"{template}\" 不支持參數 \"{param}\"",
 )
 def emit_image_expr_from_callexpr(context : Context, call : CallExprOperand, basepath : str,
                                   placeholderdest : ImageExprPlaceholderDest, placeholderdesc: str,
@@ -258,7 +238,10 @@ def emit_image_expr_from_callexpr(context : Context, call : CallExprOperand, bas
       if converted_arg is not None:
         is_having_arg = True
     if len(args) > 0:
-      raise PPInternalError("Some arguments are not used")
+      for mask in args.keys():
+        template_str = str(descriptor.get_name())
+        parameter_str = str(mask.trname)
+        warnings.append(("vnutil-image-template-parameter-not-supported", _tr_image_template_parameter_not_supported.format(template=template_str, param=parameter_str)))
     if is_having_arg:
       return result
     return None
@@ -286,31 +269,51 @@ def emit_image_expr_from_callexpr(context : Context, call : CallExprOperand, bas
     warnings.append(("vnutil-composite-not-found", _tr_composite_not_found.format(composite=composite)))
     return ImagePackElementLiteralExpr.get(context=context, pack=descriptor.get_pack_id(), element=descriptor.get_default_composite(), size=converted_size, mask_operands=args)
 
-  def handle_imagepreset_background_expr(template : str, *, composite : str = '', screen : ImageAssetData | str = '', indicator : Color | None = None, resolution : FrontendParserBase.Resolution | None = None) -> ImagePackElementLiteralExpr:
+  def handle_imagepreset_background_expr(template : str, *, composite : str = '', screen : ImageAssetData | str | None = None, indicator : Color | None = None, resolution : FrontendParserBase.Resolution | None = None) -> ImagePackElementLiteralExpr:
     descriptor = _helper_get_descriptor(template, ImagePackDescriptor.ImagePackType.BACKGROUND, "background-A0-T0")
-    converted_args = _helper_prepare_fork_arguments(descriptor, {
-      ImagePackDescriptor.MaskType.BACKGROUND_SCREEN: screen,
-      ImagePackDescriptor.MaskType.BACKGROUND_COLOR_1: indicator,
-    })
+    rawargs = {}
+    if screen is not None:
+      rawargs[ImagePackDescriptor.MaskType.BACKGROUND_SCREEN] = screen
+    if indicator is not None:
+      rawargs[ImagePackDescriptor.MaskType.BACKGROUND_COLOR_INDICATOR] = indicator
+    converted_args = _helper_prepare_fork_arguments(descriptor, rawargs)
     # ImagePackElementLiteralExpr 支持从 ImagePackDescriptor 直接读取图片大小等信息
     resolution_v = resolution.resolution if resolution is not None else None
     return _helper_finalize_imagepreset_expr(descriptor, composite, converted_args, resolution_v)
 
   def handle_imagepreset_character_expr(template : str, *, composite : str = '', cloth : Color | None = None, hair : Color | None = None, decorate : Color | None = None, resolution : FrontendParserBase.Resolution | None = None) -> ImagePackElementLiteralExpr:
     descriptor = _helper_get_descriptor(template, ImagePackDescriptor.ImagePackType.CHARACTER, "character-A0-T0")
-    converted_args = _helper_prepare_fork_arguments(descriptor, {
-      ImagePackDescriptor.MaskType.CHARACTER_COLOR_1: cloth,
-      ImagePackDescriptor.MaskType.CHARACTER_COLOR_2: hair,
-      ImagePackDescriptor.MaskType.CHARACTER_COLOR_3: decorate,
-    })
+    rawargs = {}
+    if cloth is not None:
+      rawargs[ImagePackDescriptor.MaskType.CHARACTER_COLOR_CLOTH] = cloth
+    if hair is not None:
+      rawargs[ImagePackDescriptor.MaskType.CHARACTER_COLOR_HAIR] = hair
+    if decorate is not None:
+      rawargs[ImagePackDescriptor.MaskType.CHARACTER_COLOR_DECORATE] = decorate
+    converted_args = _helper_prepare_fork_arguments(descriptor, rawargs)
     resolution_v = resolution.resolution if resolution is not None else None
     return _helper_finalize_imagepreset_expr(descriptor, composite, converted_args, resolution_v)
 
   candidates_from_preset = []
   if placeholderdest == ImageExprPlaceholderDest.DEST_SCENE_BACKGROUND:
-    candidates_from_preset.append(([_tr_imagepreset, _tr_imagepreset_background], handle_imagepreset_background_expr, {'template': _tr_template, 'composite': _tr_composite_name, 'screen': _tr_screen, 'indicator': _tr_color_indicator, 'resolution': _tr_resolution}))
+    candidates_from_preset.append(([_tr_imagepreset, _tr_imagepreset_background],
+      handle_imagepreset_background_expr, {
+        'template': _tr_template,
+        'composite': _tr_composite_name,
+        'screen': ImagePackDescriptor.MaskType.BACKGROUND_SCREEN.trname,
+        'indicator': ImagePackDescriptor.MaskType.BACKGROUND_COLOR_INDICATOR.trname,
+        'resolution': _tr_resolution
+      }))
   elif placeholderdest == ImageExprPlaceholderDest.DEST_CHARACTER_SPRITE:
-    candidates_from_preset.append(([_tr_imagepreset, _tr_imagepreset_character], handle_imagepreset_character_expr, {'template': _tr_template, 'composite': _tr_composite_name, 'cloth': _tr_color_cloth, 'hair': _tr_color_hair, 'decorate': _tr_color_decorate, 'resolution': _tr_resolution}))
+    candidates_from_preset.append(([_tr_imagepreset, _tr_imagepreset_character],
+      handle_imagepreset_character_expr, {
+        'template': _tr_template,
+        'composite': _tr_composite_name,
+        'cloth': ImagePackDescriptor.MaskType.CHARACTER_COLOR_CLOTH.trname,
+        'hair': ImagePackDescriptor.MaskType.CHARACTER_COLOR_HAIR.trname,
+        'decorate': ImagePackDescriptor.MaskType.CHARACTER_COLOR_DECORATE.trname,
+        'resolution': _tr_resolution
+      }))
 
   imageexpr = FrontendParserBase.resolve_call(call, [
     (_tr_placeholder, handle_placeholder_expr, {'desc': _tr_description, 'resolution': _tr_resolution}),
