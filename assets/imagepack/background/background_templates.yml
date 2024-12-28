@@ -1,7 +1,0 @@
-imagepack:
-  Koala-interior-private:
-    yamlpath: "{srcpath}/A0-考拉Koala/T0-小型室内/config.yml"
-  Koala-interior-public:
-    yamlpath: "{srcpath}/A0-考拉Koala/T1-大型室内/config.yml"
-  Koala-exterior:
-    yamlpath: "{srcpath}/A0-考拉Koala/T2-室外/config.yml"

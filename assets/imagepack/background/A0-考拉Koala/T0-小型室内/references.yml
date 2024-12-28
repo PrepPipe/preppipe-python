@@ -1,4 +1,4 @@
-include: "../references_template.yml"
+include: "../T_references_common.yml"
 reference:
   en: "Interior-Private"
   zh_cn: "小型室内"

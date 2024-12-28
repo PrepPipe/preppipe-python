@@ -1,0 +1,17 @@
+imagepack:
+  A0P1:
+    yamlpath: "{srcpath}/A0-考拉Koala/P1-小卧室/config.yml"
+  A0P3:
+    yamlpath: "{srcpath}/A0-考拉Koala/P3-教室/config.yml"
+  A0P4:
+    yamlpath: "{srcpath}/A0-考拉Koala/P4-学校走廊/config.yml"
+  A0P6:
+    yamlpath: "{srcpath}/A0-考拉Koala/P6-单位大门/config.yml"
+  A0P7:
+    yamlpath: "{srcpath}/A0-考拉Koala/P7-公园/config.yml"
+  A0T0:
+    yamlpath: "{srcpath}/A0-考拉Koala/T0-小型室内/config.yml"
+  A0T1:
+    yamlpath: "{srcpath}/A0-考拉Koala/T1-大型室内/config.yml"
+  A0T2:
+    yamlpath: "{srcpath}/A0-考拉Koala/T2-室外/config.yml"

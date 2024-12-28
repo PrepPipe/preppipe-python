@@ -1,0 +1,5 @@
+include: "../P_references_common.yml"
+reference:
+  en: "OrganizationGate"
+  zh_cn: "单位大门"
+  zh_hk: "單位大門"
