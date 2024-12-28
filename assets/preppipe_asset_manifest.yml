@@ -1,4 +1,4 @@
 subdirs:
-  - imagepack/background/background_templates.yml
+  - imagepack/background/backgrounds.yml
   - thirdparty/thirdparty.yml
   - gui/gui.yml

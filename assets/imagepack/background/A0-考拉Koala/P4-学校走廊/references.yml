@@ -1,0 +1,5 @@
+include: "../P_references_common.yml"
+reference:
+  en: "SchoolHallway"
+  zh_cn: "学校走廊"
+  zh_hk: "學校走廊"

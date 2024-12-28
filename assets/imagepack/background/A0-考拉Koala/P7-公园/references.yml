@@ -1,0 +1,5 @@
+include: "../P_references_common.yml"
+reference:
+  en: "Park"
+  zh_cn: "公园"
+  zh_hk: "公園"

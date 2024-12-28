@@ -1058,188 +1058,220 @@ class ImagePack(NamedAssetClassBase):
     return PIL.Image.fromarray(ra, "L").convert("1", dither=PIL.Image.Dither.NONE)
 
   @staticmethod
+  def load_yaml(yamlpath : str) -> dict[str, typing.Any]:
+    # 除了读取 yaml 之外，我们还把一些共通的特性（比如 include）给实现了
+    def read_yaml_dict(yamlpath : str) -> dict:
+      with open(yamlpath, "r", encoding="utf-8") as f:
+        result = yaml.safe_load(f)
+        if not isinstance(result, dict):
+          raise PPInternalError("Invalid yaml config: " + yamlpath)
+        return result
+    def handle_include_resursive(include_path : str, cur_path : str) -> dict[str, typing.Any]:
+      if not os.path.isabs(include_path):
+        include_path = os.path.join(os.path.dirname(cur_path), include_path)
+      if not os.path.exists(include_path):
+        raise PPInternalError("Cannot find included file: " + include_path)
+      result = read_yaml_dict(include_path)
+      if "include" in result:
+        next_include_path = result["include"]
+        child = handle_include_resursive(next_include_path, include_path)
+        child.update(result)
+        result = child
+      return result
+    result = {}
+    if os.path.exists(yamlpath):
+      result = read_yaml_dict(yamlpath)
+      if "include" in result:
+        child = handle_include_resursive(result["include"], yamlpath)
+        child.update(result)
+        result = child
+    # 为了避免检查是否有未用到的字段时因为 include 而出错，我们在这把 include 字段去掉
+    if "include" in result:
+      del result["include"]
+    return result
+
+  @staticmethod
   def build_image_pack_from_yaml(yamlpath : str):
     basepath = os.path.dirname(os.path.abspath(yamlpath))
-    with open(yamlpath, "r", encoding="utf-8") as f:
-      yamlobj = yaml.safe_load(f)
-      result = ImagePack(0, 0)
-      layers = None
-      masks = None
-      composites = None
-      metadata = None
-      generation = None
-      for k in yamlobj.keys():
-        if k in ImagePack.TR_imagepack_yamlparse_layers.get_all_candidates():
-          layers = yamlobj[k]
-        elif k in ImagePack.TR_imagepack_yamlparse_masks.get_all_candidates():
-          masks = yamlobj[k]
-        elif k in ImagePack.TR_imagepack_yamlparse_composites.get_all_candidates():
-          composites = yamlobj[k]
-        elif k in ImagePack.TR_imagepack_yamlparse_metadata.get_all_candidates():
-          metadata = yamlobj[k]
-        elif k in ImagePack.TR_imagepack_yamlparse_generation.get_all_candidates():
-          generation = yamlobj[k]
+    yamlobj = ImagePack.load_yaml(yamlpath)
+    result = ImagePack(0, 0)
+    layers = None
+    masks = None
+    composites = None
+    metadata = None
+    generation = None
+    for k in yamlobj.keys():
+      if k in ImagePack.TR_imagepack_yamlparse_layers.get_all_candidates():
+        layers = yamlobj[k]
+      elif k in ImagePack.TR_imagepack_yamlparse_masks.get_all_candidates():
+        masks = yamlobj[k]
+      elif k in ImagePack.TR_imagepack_yamlparse_composites.get_all_candidates():
+        composites = yamlobj[k]
+      elif k in ImagePack.TR_imagepack_yamlparse_metadata.get_all_candidates():
+        metadata = yamlobj[k]
+      elif k in ImagePack.TR_imagepack_yamlparse_generation.get_all_candidates():
+        generation = yamlobj[k]
+      else:
+        raise PPInternalError("Unknown key: " + k + "(supported keys: "
+                              + str(ImagePack.TR_imagepack_yamlparse_layers.get_all_candidates()) + ", "
+                              + str(ImagePack.TR_imagepack_yamlparse_masks.get_all_candidates()) + ", "
+                              + str(ImagePack.TR_imagepack_yamlparse_composites.get_all_candidates()) + ", "
+                              + str(ImagePack.TR_imagepack_yamlparse_metadata.get_all_candidates()) + ", "
+                              + str(ImagePack.TR_imagepack_yamlparse_generation.get_all_candidates())
+                              + ")")
+    if generation is not None:
+      layers, masks, composites, metadata = ImagePack.handle_yaml_generation(generation, layers, masks, composites, metadata)
+    if layers is None:
+      raise PPInternalError("No layers in " + yamlpath)
+    layer_dict : dict[str, int] = {}
+    for imgpathbase, d in layers.items():
+      imgpath = imgpathbase + ".png"
+      layerindex = len(result.layers)
+      layer_dict[imgpathbase] = layerindex
+      flag_base = False
+      flag_toggle = False
+      def add_flag(flag : str):
+        nonlocal flag_base
+        nonlocal flag_toggle
+        if not isinstance(flag, str):
+          raise PPInternalError("Invalid flag in " + yamlpath + ": " + str(flag))
+        if flag in ImagePack.TR_imagepack_yamlparse_base.get_all_candidates():
+          flag_base = True
+        elif flag in ImagePack.TR_imagepack_yamlparse_toggle.get_all_candidates():
+          flag_toggle = True
         else:
-          raise PPInternalError("Unknown key: " + k + "(supported keys: "
-                                + str(ImagePack.TR_imagepack_yamlparse_layers.get_all_candidates()) + ", "
-                                + str(ImagePack.TR_imagepack_yamlparse_masks.get_all_candidates()) + ", "
-                                + str(ImagePack.TR_imagepack_yamlparse_composites.get_all_candidates()) + ", "
-                                + str(ImagePack.TR_imagepack_yamlparse_metadata.get_all_candidates()) + ", "
-                                + str(ImagePack.TR_imagepack_yamlparse_generation.get_all_candidates())
-                                + ")")
-      if generation is not None:
-        layers, masks, composites, metadata = ImagePack.handle_yaml_generation(generation, layers, masks, composites, metadata)
-      if layers is None:
-        raise PPInternalError("No layers in " + yamlpath)
-      layer_dict : dict[str, int] = {}
-      for imgpathbase, d in layers.items():
-        imgpath = imgpathbase + ".png"
-        layerindex = len(result.layers)
-        layer_dict[imgpathbase] = layerindex
-        flag_base = False
-        flag_toggle = False
-        def add_flag(flag : str):
-          nonlocal flag_base
-          nonlocal flag_toggle
-          if not isinstance(flag, str):
-            raise PPInternalError("Invalid flag in " + yamlpath + ": " + str(flag))
-          if flag in ImagePack.TR_imagepack_yamlparse_base.get_all_candidates():
-            flag_base = True
-          elif flag in ImagePack.TR_imagepack_yamlparse_toggle.get_all_candidates():
-            flag_toggle = True
+          raise PPInternalError("Unknown flag: " + flag + "(supported flags: "
+                                + str(ImagePack.TR_imagepack_yamlparse_base.get_all_candidates()) + ", "
+                                + str(ImagePack.TR_imagepack_yamlparse_toggle.get_all_candidates()) + ")")
+      if isinstance(d, dict):
+        for key, value in d.items():
+          if key in ImagePack.TR_imagepack_yamlparse_flags.get_all_candidates():
+            if isinstance(value, str):
+              add_flag(value)
+            elif isinstance(value, list):
+              for flag in value:
+                add_flag(flag)
+      if not os.path.exists(os.path.join(basepath, imgpath)):
+        raise PPInternalError("Image file not found: " + imgpath)
+      patch = ImageWrapper.create_untrusted(os.path.join(basepath, imgpath))
+      img = patch.get()
+      if result.width == 0 and result.height == 0:
+        result.width = img.width
+        result.height = img.height
+      if img.width != result.width or img.height != result.height:
+        raise PPInternalError("Image size mismatch: " + str((img.width, img.height)) + " != " + str((result.width, result.height)))
+      # 尝试缩小图片本体，如果有大片空白的话只截取有内容的部分
+      offset_x = 0
+      offset_y = 0
+      bbox = img.getbbox()
+      if bbox is not None:
+        offset_x, offset_y, xmax, ymax = bbox
+        if offset_x != 0 or offset_y != 0 or xmax != img.width or ymax != img.height:
+          img = img.crop(bbox)
+          patch = ImageWrapper(image=img)
+      newlayer = ImagePack.LayerInfo(patch,
+                                      offset_x=offset_x, offset_y=offset_y,
+                                      width=img.width, height=img.height,
+                                      base=flag_base, toggle=flag_toggle, basename=imgpathbase)
+      result.layers.append(newlayer)
+    if composites is None:
+      for i, layer in enumerate(result.layers):
+        result.composites.append(ImagePack.CompositeInfo([i], layer.basename))
+    else:
+      for stack_name, stack_list in composites.items():
+        stack = []
+        if stack_list is None:
+          stack.append(layer_dict[stack_name])
+        elif isinstance(stack_list, list):
+          stack = [layer_dict[s] for s in stack_list]
+        result.composites.append(ImagePack.CompositeInfo(stack, stack_name))
+
+    if masks is not None:
+      for imgpathbase, maskinfo in masks.items():
+        applyon : list[int] | None = None
+        maskcolor : Color | None = None
+        projective_vertices_result : tuple[tuple[int,int],tuple[int,int],tuple[int,int],tuple[int,int]] | None = None
+        if not isinstance(maskinfo, dict):
+          raise PPInternalError("Invalid mask in " + yamlpath + ": expecting a dict but got " + str(maskinfo))
+        for key, value in maskinfo.items():
+          if key in ImagePack.TR_imagepack_yamlparse_maskcolor.get_all_candidates():
+            maskcolor = Color.get(value)
+          elif key in ImagePack.TR_imagepack_yamlparse_applyon.get_all_candidates():
+            applyon = []
+            if isinstance(value, str):
+              applyon.append(layer_dict[value])
+            elif isinstance(value, list):
+              for entry in value:
+                applyon.append(layer_dict[entry])
+            else:
+              raise PPInternalError("Invalid applyon in " + yamlpath + ": expecting a list or str but got " + str(value))
+            if len(applyon) == 0:
+              applyon = None
+          elif key in ImagePack.TR_imagepack_yamlparse_projective.get_all_candidates():
+            if not isinstance(value, dict):
+              raise PPInternalError("Invalid projective in " + yamlpath + ": expecting a dict but got " + str(value))
+            topleft : tuple[int, int] | None = None
+            topright : tuple[int, int] | None = None
+            bottomleft : tuple[int, int] | None = None
+            bottomright : tuple[int, int] | None = None
+            def read_2int_tuple(v) -> tuple[int, int]:
+              if not isinstance(v, list) or len(v) != 2:
+                raise PPInternalError("Invalid projective vertex in " + yamlpath + ": expecting a list of 2 but got " + str(v))
+              x, y = v
+              if not isinstance(x, int) or not isinstance(y, int):
+                raise PPInternalError("Invalid projective vertex in " + yamlpath + ": expecting a list of 2 int but got " + str(v))
+              return (x, y)
+            for k, v in value.items():
+              if k in ImagePack.TR_imagepack_yamlparse_topleft.get_all_candidates():
+                topleft = read_2int_tuple(v)
+              elif k in ImagePack.TR_imagepack_yamlparse_topright.get_all_candidates():
+                topright = read_2int_tuple(v)
+              elif k in ImagePack.TR_imagepack_yamlparse_bottomleft.get_all_candidates():
+                bottomleft = read_2int_tuple(v)
+              elif k in ImagePack.TR_imagepack_yamlparse_bottomright.get_all_candidates():
+                bottomright = read_2int_tuple(v)
+              else:
+                raise PPInternalError("Invalid projective in " + yamlpath + ": unknown key " + k + "(supported keys: "
+                                      + str(ImagePack.TR_imagepack_yamlparse_topleft.get_all_candidates()) + ", "
+                                      + str(ImagePack.TR_imagepack_yamlparse_topright.get_all_candidates()) + ", "
+                                      + str(ImagePack.TR_imagepack_yamlparse_bottomleft.get_all_candidates()) + ", "
+                                      + str(ImagePack.TR_imagepack_yamlparse_bottomright.get_all_candidates()) + ")")
+            if topleft is None or topright is None or bottomleft is None or bottomright is None:
+              raise PPInternalError("Invalid projective in " + yamlpath + ": missing values")
+            projective_vertices_result = (topleft, topright, bottomleft, bottomright)
           else:
-            raise PPInternalError("Unknown flag: " + flag + "(supported flags: "
-                                  + str(ImagePack.TR_imagepack_yamlparse_base.get_all_candidates()) + ", "
-                                  + str(ImagePack.TR_imagepack_yamlparse_toggle.get_all_candidates()) + ")")
-        if isinstance(d, dict):
-          for key, value in d.items():
-            if key in ImagePack.TR_imagepack_yamlparse_flags.get_all_candidates():
-              if isinstance(value, str):
-                add_flag(value)
-              elif isinstance(value, list):
-                for flag in value:
-                  add_flag(flag)
-        if not os.path.exists(os.path.join(basepath, imgpath)):
-          raise PPInternalError("Image file not found: " + imgpath)
-        patch = ImageWrapper.create_untrusted(os.path.join(basepath, imgpath))
-        img = patch.get()
-        if result.width == 0 and result.height == 0:
-          result.width = img.width
-          result.height = img.height
-        if img.width != result.width or img.height != result.height:
-          raise PPInternalError("Image size mismatch: " + str((img.width, img.height)) + " != " + str((result.width, result.height)))
-        # 尝试缩小图片本体，如果有大片空白的话只截取有内容的部分
+            raise PPInternalError("Unknown key: " + key + "(supported keys: "
+                                  + str(ImagePack.TR_imagepack_yamlparse_maskcolor.get_all_candidates()) + ", "
+                                  + str(ImagePack.TR_imagepack_yamlparse_applyon.get_all_candidates()) + ", "
+                                  + str(ImagePack.TR_imagepack_yamlparse_projective.get_all_candidates()) + ")")
+        if maskcolor is None:
+          raise PPInternalError("Invalid mask in " + yamlpath + ": missing maskcolor")
+        maskimgpath = os.path.join(basepath, imgpathbase + ".png")
+        # 读取选区图并将其转化为黑白图片
+        original_mask = PIL.Image.open(maskimgpath)
+        maskimg = ImagePack.convert_mask_image(original_mask)
+        if maskimg.width != result.width or maskimg.height != result.height:
+          raise PPInternalError("Mask size mismatch: " + str((maskimg.width, maskimg.height)) + " != " + str((result.width, result.height)))
         offset_x = 0
         offset_y = 0
-        bbox = img.getbbox()
+        bbox = maskimg.getbbox()
         if bbox is not None:
           offset_x, offset_y, xmax, ymax = bbox
-          if offset_x != 0 or offset_y != 0 or xmax != img.width or ymax != img.height:
-            img = img.crop(bbox)
-            patch = ImageWrapper(image=img)
-        newlayer = ImagePack.LayerInfo(patch,
-                                       offset_x=offset_x, offset_y=offset_y,
-                                       width=img.width, height=img.height,
-                                       base=flag_base, toggle=flag_toggle, basename=imgpathbase)
-        result.layers.append(newlayer)
-      if composites is None:
-        for i, layer in enumerate(result.layers):
-          result.composites.append(ImagePack.CompositeInfo([i], layer.basename))
-      else:
-        for stack_name, stack_list in composites.items():
-          stack = []
-          if stack_list is None:
-            stack.append(layer_dict[stack_name])
-          elif isinstance(stack_list, list):
-            stack = [layer_dict[s] for s in stack_list]
-          result.composites.append(ImagePack.CompositeInfo(stack, stack_name))
+          maskimg = maskimg.crop(bbox)
+        newmask = ImagePack.MaskInfo(mask=ImageWrapper(image=maskimg),
+                                      mask_color=maskcolor,
+                                      offset_x=offset_x, offset_y=offset_y,
+                                      width=maskimg.width, height=maskimg.height,
+                                      projective_vertices=projective_vertices_result, basename=imgpathbase, applyon=applyon)
+        result.masks.append(newmask)
 
-      if masks is not None:
-        for imgpathbase, maskinfo in masks.items():
-          applyon : list[int] | None = None
-          maskcolor : Color | None = None
-          projective_vertices_result : tuple[tuple[int,int],tuple[int,int],tuple[int,int],tuple[int,int]] | None = None
-          if not isinstance(maskinfo, dict):
-            raise PPInternalError("Invalid mask in " + yamlpath + ": expecting a dict but got " + str(maskinfo))
-          for key, value in maskinfo.items():
-            if key in ImagePack.TR_imagepack_yamlparse_maskcolor.get_all_candidates():
-              maskcolor = Color.get(value)
-            elif key in ImagePack.TR_imagepack_yamlparse_applyon.get_all_candidates():
-              applyon = []
-              if isinstance(value, str):
-                applyon.append(layer_dict[value])
-              elif isinstance(value, list):
-                for entry in value:
-                  applyon.append(layer_dict[entry])
-              else:
-                raise PPInternalError("Invalid applyon in " + yamlpath + ": expecting a list or str but got " + str(value))
-              if len(applyon) == 0:
-                applyon = None
-            elif key in ImagePack.TR_imagepack_yamlparse_projective.get_all_candidates():
-              if not isinstance(value, dict):
-                raise PPInternalError("Invalid projective in " + yamlpath + ": expecting a dict but got " + str(value))
-              topleft : tuple[int, int] | None = None
-              topright : tuple[int, int] | None = None
-              bottomleft : tuple[int, int] | None = None
-              bottomright : tuple[int, int] | None = None
-              def read_2int_tuple(v) -> tuple[int, int]:
-                if not isinstance(v, list) or len(v) != 2:
-                  raise PPInternalError("Invalid projective vertex in " + yamlpath + ": expecting a list of 2 but got " + str(v))
-                x, y = v
-                if not isinstance(x, int) or not isinstance(y, int):
-                  raise PPInternalError("Invalid projective vertex in " + yamlpath + ": expecting a list of 2 int but got " + str(v))
-                return (x, y)
-              for k, v in value.items():
-                if k in ImagePack.TR_imagepack_yamlparse_topleft.get_all_candidates():
-                  topleft = read_2int_tuple(v)
-                elif k in ImagePack.TR_imagepack_yamlparse_topright.get_all_candidates():
-                  topright = read_2int_tuple(v)
-                elif k in ImagePack.TR_imagepack_yamlparse_bottomleft.get_all_candidates():
-                  bottomleft = read_2int_tuple(v)
-                elif k in ImagePack.TR_imagepack_yamlparse_bottomright.get_all_candidates():
-                  bottomright = read_2int_tuple(v)
-                else:
-                  raise PPInternalError("Invalid projective in " + yamlpath + ": unknown key " + k + "(supported keys: "
-                                        + str(ImagePack.TR_imagepack_yamlparse_topleft.get_all_candidates()) + ", "
-                                        + str(ImagePack.TR_imagepack_yamlparse_topright.get_all_candidates()) + ", "
-                                        + str(ImagePack.TR_imagepack_yamlparse_bottomleft.get_all_candidates()) + ", "
-                                        + str(ImagePack.TR_imagepack_yamlparse_bottomright.get_all_candidates()) + ")")
-              if topleft is None or topright is None or bottomleft is None or bottomright is None:
-                raise PPInternalError("Invalid projective in " + yamlpath + ": missing values")
-              projective_vertices_result = (topleft, topright, bottomleft, bottomright)
-            else:
-              raise PPInternalError("Unknown key: " + key + "(supported keys: "
-                                    + str(ImagePack.TR_imagepack_yamlparse_maskcolor.get_all_candidates()) + ", "
-                                    + str(ImagePack.TR_imagepack_yamlparse_applyon.get_all_candidates()) + ", "
-                                    + str(ImagePack.TR_imagepack_yamlparse_projective.get_all_candidates()) + ")")
-          if maskcolor is None:
-            raise PPInternalError("Invalid mask in " + yamlpath + ": missing maskcolor")
-          maskimgpath = os.path.join(basepath, imgpathbase + ".png")
-          # 读取选区图并将其转化为黑白图片
-          original_mask = PIL.Image.open(maskimgpath)
-          maskimg = ImagePack.convert_mask_image(original_mask)
-          if maskimg.width != result.width or maskimg.height != result.height:
-            raise PPInternalError("Mask size mismatch: " + str((maskimg.width, maskimg.height)) + " != " + str((result.width, result.height)))
-          offset_x = 0
-          offset_y = 0
-          bbox = maskimg.getbbox()
-          if bbox is not None:
-            offset_x, offset_y, xmax, ymax = bbox
-            maskimg = maskimg.crop(bbox)
-          newmask = ImagePack.MaskInfo(mask=ImageWrapper(image=maskimg),
-                                       mask_color=maskcolor,
-                                       offset_x=offset_x, offset_y=offset_y,
-                                       width=maskimg.width, height=maskimg.height,
-                                       projective_vertices=projective_vertices_result, basename=imgpathbase, applyon=applyon)
-          result.masks.append(newmask)
+    if metadata is not None:
+      if not isinstance(metadata, dict):
+        raise PPInternalError("Invalid metadata in " + yamlpath + ": expecting a dict but got " + str(metadata))
+      result.opaque_metadata.update(metadata)
 
-      if metadata is not None:
-        if not isinstance(metadata, dict):
-          raise PPInternalError("Invalid metadata in " + yamlpath + ": expecting a dict but got " + str(metadata))
-        result.opaque_metadata.update(metadata)
-
-      result.optimize_masks()
-      return result
+    result.optimize_masks()
+    return result
 
   TR_imagepack_yamlgen_parts = TR_imagepack.tr("parts",
     en="parts",
@@ -2389,9 +2421,9 @@ class _ImagePackHTMLExport:
           else:
             dst.write(line)
 
-
 @ImagePack._descriptor
 class ImagePackDescriptor:
+  # 这是只给素材引用的翻译域，只有根据素材动态生成的内容才能放这。其余还是用 ImagePack.TR_imagepack
   TR_ref = TranslationDomain("imagepack-reference")
 
   class ImagePackType(enum.Enum):
@@ -2403,11 +2435,43 @@ class ImagePackDescriptor:
     COLOR = enum.auto() # 颜色选区
 
   class MaskType(enum.Enum):
-    BACKGROUND_SCREEN = enum.auto() # 屏幕
-    BACKGROUND_COLOR_1 = enum.auto() # 指示色
-    CHARACTER_COLOR_1 = enum.auto() # 衣服颜色
-    CHARACTER_COLOR_2 = enum.auto() # 发色
-    CHARACTER_COLOR_3 = enum.auto() # 装饰色
+    BACKGROUND_SCREEN = enum.auto(), ImagePack.TR_imagepack.tr("maskparam_screen",
+      en="Screen",
+      zh_cn="屏幕",
+      zh_hk="屏幕",
+    )
+    BACKGROUND_COLOR_INDICATOR = enum.auto(), ImagePack.TR_imagepack.tr("maskparam_color_indicator",
+      en="IndicatorColor",
+      zh_cn="指示色",
+      zh_hk="指示色",
+    )
+    CHARACTER_COLOR_CLOTH = enum.auto(), ImagePack.TR_imagepack.tr("maskparam_color_cloth",
+      en="ClothColor",
+      zh_cn="衣服颜色",
+      zh_hk="衣服顏色",
+    )
+    CHARACTER_COLOR_HAIR = enum.auto(), ImagePack.TR_imagepack.tr("maskparam_color_hair",
+      en="HairColor",
+      zh_cn="发色",
+      zh_hk="髮色",
+    )
+    CHARACTER_COLOR_DECORATE = enum.auto(), ImagePack.TR_imagepack.tr("maskparam_color_decorate",
+      en="DecorateColor",
+      zh_cn="装饰色",
+      zh_hk="裝飾色",
+    )
+
+    def __new__(cls, *args, **kwds):
+      obj = object.__new__(cls)
+      obj._value_ = args[0]
+      return obj
+
+    def __init__(self, _, trname : Translatable):
+      self._trname_ = trname
+
+    @property
+    def trname(self) -> Translatable:
+      return self._trname_
 
     def get_param_type(self) -> "ImagePackDescriptor.MaskParamType":
       if self == ImagePackDescriptor.MaskType.BACKGROUND_SCREEN:
@@ -2561,17 +2625,17 @@ class ImagePackDescriptor:
         if mask.projective_vertices is not None:
           masktypelist.append(ImagePackDescriptor.MaskType.BACKGROUND_SCREEN)
         else:
-          masktypelist.append(ImagePackDescriptor.MaskType.BACKGROUND_COLOR_1)
+          masktypelist.append(ImagePackDescriptor.MaskType.BACKGROUND_COLOR_INDICATOR)
     else:
       self.packtype = ImagePackDescriptor.ImagePackType.CHARACTER
       for mask in pack.masks:
         match len(masktypelist):
           case 0:
-            masktypelist.append(ImagePackDescriptor.MaskType.CHARACTER_COLOR_1)
+            masktypelist.append(ImagePackDescriptor.MaskType.CHARACTER_COLOR_CLOTH)
           case 1:
-            masktypelist.append(ImagePackDescriptor.MaskType.CHARACTER_COLOR_2)
+            masktypelist.append(ImagePackDescriptor.MaskType.CHARACTER_COLOR_HAIR)
           case _:
-            masktypelist.append(ImagePackDescriptor.MaskType.CHARACTER_COLOR_3)
+            masktypelist.append(ImagePackDescriptor.MaskType.CHARACTER_COLOR_DECORATE)
     self.masktypes = tuple(masktypelist)
     # 从图片包组合的名称中提取编号
     regex_pattern = re.compile(r'^(?P<code>[A-Z0-9]+)(?:-.+)?$')
@@ -2606,29 +2670,7 @@ class ImagePackDescriptor:
     self.bbox = (xmin, ymin, xmax, ymax)
 
     # 默认的初始化完毕，开始读取 references.yml
-    def handle_include_resursive(include_path : str, cur_path : str) -> dict[str, typing.Any]:
-      if not os.path.isabs(include_path):
-        include_path = os.path.join(os.path.dirname(cur_path), include_path)
-      if not os.path.exists(include_path):
-        raise PPInternalError("Cannot find included file: " + include_path)
-      with open(include_path, "r", encoding="utf-8") as f:
-        result = yaml.safe_load(f)
-        if "include" in result:
-          next_include_path = result["include"]
-          child = handle_include_resursive(next_include_path, include_path)
-          child.update(result)
-          result = child
-        return result
-    references = {}
-    if os.path.exists(references_path):
-      with open(references_path, "r", encoding="utf-8") as f:
-        references = yaml.safe_load(f)
-        if not isinstance(references, dict):
-          raise PPInternalError("Invalid references file: " + references_path)
-        if "include" in references:
-          child = handle_include_resursive(references["include"], references_path)
-          child.update(references)
-          references = child
+    references = ImagePack.load_yaml(references_path)
     if len(references) == 0:
       return
     # 为检查是否有没用上的项

@@ -1,7 +1,7 @@
 kind: BACKGROUND
 masks:
   - BACKGROUND_SCREEN
-  - BACKGROUND_COLOR_1
+  - BACKGROUND_COLOR_INDICATOR
 composites:
   L0:
     en: "Daytime"

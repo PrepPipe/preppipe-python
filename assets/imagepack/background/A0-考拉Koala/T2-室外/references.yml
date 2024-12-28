@@ -1,4 +1,4 @@
-include: "../references_template.yml"
+include: "../T_references_common.yml"
 reference:
   en: "Exterior"
   zh_cn: "室外"
