@@ -269,7 +269,7 @@ class ImagePackRecolorTester:
       if width > max_width:
         ratio = max_width / float(width)
         new_height = int(height * ratio)
-        pil_image = pil_image.resize((max_width, new_height), PIL.Image.LANCZOS)
+        pil_image = pil_image.resize((max_width, new_height), PIL.Image.Resampling.LANCZOS)
         max_image_width = max_width
         max_image_height = max(max_image_height, new_height)
       else:
@@ -386,7 +386,7 @@ class ImagePackRecolorTester:
     smallimage = image.crop(image.getbbox())
     if smallimage.width > 256 or smallimage.height > 256:
       scale = 256 / max(smallimage.width, smallimage.height)
-      smallimage = smallimage.resize((int(smallimage.width * scale), int(smallimage.height * scale)), PIL.Image.LANCZOS)
+      smallimage = smallimage.resize((int(smallimage.width * scale), int(smallimage.height * scale)), PIL.Image.Resampling.LANCZOS)
     paletted = smallimage.convert('P', palette=PIL.Image.ADAPTIVE, colors=4)
     palette = paletted.getpalette()
     if palette is None:
@@ -451,7 +451,7 @@ class ImagePackRecolorTester:
       imagenames = []
       for name, img in images.items():
         if parsed_args.srcscale != 1.0:
-          img = img.resize((int(img.width * parsed_args.srcscale), int(img.height * parsed_args.srcscale)), PIL.Image.LANCZOS)
+          img = img.resize((int(img.width * parsed_args.srcscale), int(img.height * parsed_args.srcscale)), PIL.Image.Resampling.LANCZOS)
         imagelist.append(img)
         imagenames.append(name)
       for name in baselayernames:

@@ -12,6 +12,8 @@ import base64
 import math
 import itertools
 import collections
+import copy
+import decimal
 import PIL.Image
 import PIL.ImageDraw
 import PIL.ImageFont
@@ -22,6 +24,11 @@ import matplotlib
 import matplotlib.colors
 import cv2
 import yaml
+import yaml.resolver
+import yaml.constructor
+import yaml.scanner
+import yaml.parser
+import yaml.composer
 import dataclasses
 import enum
 import unicodedata
@@ -126,6 +133,20 @@ class ImagePack(NamedAssetClassBase):
       if width == 0 or height == 0:
         raise RuntimeError("Zero-sized mask?")
 
+    def get_shrinked(self, ratio : decimal.Decimal):
+      newwidth = int(self.width * ratio)
+      newheight = int(self.height * ratio)
+      newmask = ImageWrapper(self.mask.get().resize((newwidth, newheight), resample=PIL.Image.Resampling.NEAREST)) if self.mask is not None else None
+      newprojective = None
+      if self.projective_vertices is not None:
+        newprojective = tuple((int(x * ratio), int(y * ratio)) for x, y in self.projective_vertices)
+      return ImagePack.MaskInfo(mask=newmask,
+                                offset_x=int(self.offset_x * ratio),
+                                offset_y=int(self.offset_y * ratio),
+                                width=newwidth, height=newheight,
+                                projective_vertices=newprojective, # type: ignore
+                                basename=self.basename, applyon=self.applyon, mask_color=self.mask_color)
+
   class LayerInfo:
     # 保存时每个图层的信息
     patch : ImageWrapper # RGBA uint8 图片
@@ -156,6 +177,16 @@ class ImagePack(NamedAssetClassBase):
       if width == 0 or height == 0:
         raise RuntimeError("Zero-sized layer?")
 
+    def get_shrinked(self, ratio : decimal.Decimal):
+      newwidth = int(self.width * ratio)
+      newheight = int(self.height * ratio)
+      newpatch = self.patch.get().resize((newwidth, newheight), resample=PIL.Image.Resampling.LANCZOS)
+      return ImagePack.LayerInfo(patch=ImageWrapper(image=newpatch),
+                                offset_x=int(self.offset_x * ratio),
+                                offset_y=int(self.offset_y * ratio),
+                                width=newwidth, height=newheight,
+                                base=self.base, toggle=self.toggle, basename=self.basename)
+
   class CompositeInfo:
     # 保存时每个差分的信息
     basename : str
@@ -185,10 +216,16 @@ class ImagePack(NamedAssetClassBase):
   #   "author": str, 作者
   #   "license": str, 发布许可（没有的话就是仅限内部使用）
   #     - "cc0": CC0 1.0 Universal
-  #   "overview_scale" : float, 用于生成预览图的缩放比例
+  #   "overview_scale" : decimal.Decimal, 用于生成预览图的缩放比例
   #   "diff_croprect": tuple[int,int,int,int], 用于生成差分图的裁剪矩形
-  #   "forked": bool, 用于标注是否已修改选区
+  #   "modified": bool, 用于标注是否已修改选区
+  #   "original_size": tuple[int,int], 用于标注原始大小，只在第一次改变大小时设置
+  # 如果新加的元数据需要在图缩小时更新，记得改 fork_and_shrink()
   opaque_metadata : dict[str, typing.Any]
+
+  OPAQUE_METADATA_DECIMALS : typing.ClassVar[list[str]] = [
+    "overview_scale",
+  ]
 
   def __init__(self, width : int, height : int) -> None:
     self.width = width
@@ -296,10 +333,26 @@ class ImagePack(NamedAssetClassBase):
 
     # metadata
     if len(self.opaque_metadata) > 0:
-      jsonout["metadata"] = self.opaque_metadata
+      jsonout["metadata"] = ImagePack.get_metadata_dict_for_serialization(self.opaque_metadata)
 
     with open(os.path.join(path, "manifest.json"), "w", encoding="utf-8") as f:
       json.dump(jsonout, f, ensure_ascii=False, indent=None, separators=(',', ':'))
+
+  @staticmethod
+  def get_metadata_dict_for_serialization(metadata : dict[str, typing.Any]) -> dict[str, typing.Any]:
+    metadata = copy.deepcopy(metadata)
+    for k in ImagePack.OPAQUE_METADATA_DECIMALS:
+      if k in metadata:
+        metadata[k] = metadata[k].as_tuple()
+    return metadata
+
+  @staticmethod
+  def recover_metadata_from_dict_serialized(metadata : dict[str, typing.Any]) -> dict[str, typing.Any]:
+    metadata = copy.deepcopy(metadata)
+    for k in ImagePack.OPAQUE_METADATA_DECIMALS:
+      if k in metadata:
+        metadata[k] = decimal.Decimal(metadata[k])
+    return metadata
 
   @staticmethod
   def create_from_path(path : str):
@@ -380,7 +433,7 @@ class ImagePack(NamedAssetClassBase):
 
     # metadata
     if "metadata" in manifest:
-      self.opaque_metadata = manifest["metadata"]
+      self.opaque_metadata = ImagePack.recover_metadata_from_dict_serialized(manifest["metadata"])
 
   def get_composed_image(self, index : int) -> ImageWrapper:
     if not self.is_imagedata_loaded():
@@ -628,8 +681,8 @@ class ImagePack(NamedAssetClassBase):
 
     # 除了 mask 和 layers, 其他都照搬
     resultpack.composites = self.composites
-    resultpack.opaque_metadata = self.opaque_metadata.copy()
-    resultpack.opaque_metadata["forked"] = True
+    resultpack.opaque_metadata = copy.deepcopy(self.opaque_metadata)
+    resultpack.opaque_metadata["modified"] = True
 
     # 开始搬运 layers
     forkinglayers : dict[int, list[tuple[ImagePack.MaskInfo, Color | PIL.Image.Image | str | tuple[str, Color] | None]]] = {}
@@ -680,6 +733,54 @@ class ImagePack(NamedAssetClassBase):
         raise PPInternalError("layer not computed")
       resultpack.layers.append(newlayer)
     return resultpack
+
+  def fork_and_shrink(self, ratio : decimal.Decimal, enable_parallelization : bool = False):
+    # 创建一个新的 imagepack, 把该图包按 ratio 缩小
+    # ratio 必须在 (0, 1) 之间
+    if not self.is_imagedata_loaded():
+      raise PPInternalError("Cannot fork without loading the data")
+    if ratio <= 0 or ratio >= 1:
+      raise PPInternalError("Invalid ratio: " + str(ratio) + ", must be in (0, 1)")
+    target_width = int(self.width * ratio)
+    target_height = int(self.height * ratio)
+    resultpack = ImagePack(target_width, target_height)
+
+    # composites 可以直接搬
+    resultpack.composites = self.composites
+
+    # 其他的元数据也可以直接搬，部分需要修改
+    resultpack.opaque_metadata = copy.deepcopy(self.opaque_metadata)
+    if "original_size" not in self.opaque_metadata:
+      resultpack.opaque_metadata["original_size"] = (self.width, self.height)
+    if "diff_croprect" in self.opaque_metadata:
+      x1, y1, x2, y2 = self.opaque_metadata["diff_croprect"]
+      resultpack.opaque_metadata["diff_croprect"] = (int(x1 * ratio), int(y1 * ratio), int(x2 * ratio), int(y2 * ratio))
+    if "overview_scale" in self.opaque_metadata:
+      # resultpack.opaque_metadata["overview_scale"] = self.opaque_metadata["overview_scale"] / ratio
+      # 现在我们直接把这个值改成 1.0，因为原值只是为了在生成预览图时用，一般图片包整个缩小之后会以其他方式生成预览，不再需要这个值
+      resultpack.opaque_metadata["overview_scale"] = decimal.Decimal(1.0)
+
+    newlayers = []
+    def shrink_layer(l : ImagePack.LayerInfo, ratio : decimal.Decimal) -> ImagePack.LayerInfo:
+      return l.get_shrinked(ratio)
+    if len(self.layers) > 1 and enable_parallelization:
+      futures = []
+      with concurrent.futures.ThreadPoolExecutor() as executor:
+        for l in self.layers:
+          futureobj = executor.submit(shrink_layer, l, ratio)
+          futures.append(futureobj)
+      for f in futures:
+        newlayers.append(f.result())
+    else:
+      for l in self.layers:
+        newlayers.append(shrink_layer(l, ratio))
+    resultpack.layers = newlayers
+    if len(self.masks) > 0:
+      resultpack.masks = []
+      for m in self.masks:
+        resultpack.masks.append(m.get_shrinked(ratio))
+    return resultpack
+
 
   @staticmethod
   def inverse_pasting(base : PIL.Image.Image, result : PIL.Image.Image) -> np.ndarray | None:
@@ -856,7 +957,7 @@ class ImagePack(NamedAssetClassBase):
     result = ImagePackSummary()
     overview_scale = self.opaque_metadata.get("overview_scale", None)
     if overview_scale is not None:
-      if not isinstance(overview_scale, (int, float)) or overview_scale <= 0 or overview_scale > 1:
+      if not isinstance(overview_scale, decimal.Decimal) or overview_scale <= 0 or overview_scale > 1:
         raise PPInternalError("Invalid overview_scale")
     for image, name in zip(bases, basenames):
       if overview_scale is not None:
@@ -935,9 +1036,10 @@ class ImagePack(NamedAssetClassBase):
     if author := self.opaque_metadata.get("author", None):
       first_line += self.TR_imagepack_overview_author.format(name=author)
       summary.pngmetadata["Author"] = author
-    first_line += self.TR_imagepack_overview_size_note.format(width=str(self.width), height=str(self.height))
+    original_width, original_height = self.opaque_metadata.get("original_size", (self.width, self.height))
+    first_line += self.TR_imagepack_overview_size_note.format(width=str(original_width), height=str(original_height))
     first_line += self.TR_imagepack_overview_complexity_note.format(numlayers=str(len(self.layers)), numcomposites=str(len(self.composites)))
-    if self.opaque_metadata.get("forked", False):
+    if self.opaque_metadata.get("modified", False):
       first_line += self.TR_imagepack_overview_forked.get()
     summary.comments.append(first_line)
     # 许可信息
@@ -1057,12 +1159,46 @@ class ImagePack(NamedAssetClassBase):
     ra = np.uint8(maxchannel > 0) * 255
     return PIL.Image.fromarray(ra, "L").convert("1", dither=PIL.Image.Dither.NONE)
 
+  # https://stackoverflow.com/questions/47340294/pyyaml-load-number-as-decimal
+  @staticmethod
+  def _decimal_constructor(loader, node):
+    return decimal.Decimal(loader.construct_scalar(node))
+
+  class ImagePackYamlResolver(yaml.resolver.BaseResolver):
+    pass
+
+  ImagePackYamlResolver.add_implicit_resolver(
+          '!decimal',
+          re.compile(r'''^(?:[-+]?(?:[0-9][0-9_]*)\.[0-9_]*(?:[eE][-+][0-9]+)?
+                      |\.[0-9_]+(?:[eE][-+][0-9]+)?
+                      |[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+\.[0-9_]*
+                      |[-+]?\.(?:inf|Inf|INF)
+                      |\.(?:nan|NaN|NAN))$''', re.X),
+          list('-+0123456789.'))
+
+  for ch, vs in yaml.resolver.Resolver.yaml_implicit_resolvers.items():
+    ImagePackYamlResolver.yaml_implicit_resolvers.setdefault(ch, []).extend(
+        (tag, regexp) for tag, regexp in vs
+        if not tag.endswith('float')
+    )
+
+  class ImagePackYamlLoader(yaml.reader.Reader, yaml.scanner.Scanner, yaml.parser.Parser, yaml.composer.Composer, yaml.constructor.SafeConstructor, ImagePackYamlResolver):
+    def __init__(self, stream):
+      yaml.reader.Reader.__init__(self, stream)
+      yaml.scanner.Scanner.__init__(self)
+      yaml.parser.Parser.__init__(self)
+      yaml.composer.Composer.__init__(self)
+      yaml.constructor.SafeConstructor.__init__(self)
+      ImagePack.ImagePackYamlResolver.__init__(self)
+
+  yaml.add_constructor('!decimal', _decimal_constructor, ImagePackYamlLoader)
+
   @staticmethod
   def load_yaml(yamlpath : str) -> dict[str, typing.Any]:
-    # 除了读取 yaml 之外，我们还把一些共通的特性（比如 include）给实现了
+    # 读取 yaml 文件，支持 include，且所有 float 全都解析为 decimal.Decimal
     def read_yaml_dict(yamlpath : str) -> dict:
       with open(yamlpath, "r", encoding="utf-8") as f:
-        result = yaml.safe_load(f)
+        result = yaml.load(f, Loader=ImagePack.ImagePackYamlLoader) # type: ignore
         if not isinstance(result, dict):
           raise PPInternalError("Invalid yaml config: " + yamlpath)
         return result
@@ -1707,7 +1843,7 @@ class ImagePack(NamedAssetClassBase):
       result["composites"] = composites
     # 如果有元数据，就把所有元数据放进去
     if len(self.opaque_metadata) > 0:
-      result["metadata"] = self.opaque_metadata
+      result["metadata"] = ImagePack.get_metadata_dict_for_serialization(self.opaque_metadata)
     # 如果有 Descriptor，就把 Descriptor 中的信息也放进去
     if descriptor := self.get_descriptor_by_id(name):
       result["descriptor"] = descriptor.dump_asset_info_json()
@@ -1722,6 +1858,7 @@ class ImagePack(NamedAssetClassBase):
     parser.add_argument("--load", metavar="<zip>", help="Load an existing image pack from a zip file")
     parser.add_argument("--asset", metavar="<name>", help="Load an existing image pack from embedded assets")
     parser.add_argument("--save", metavar="<zip>", help="Save the image pack to a zip file")
+    parser.add_argument("--shrink", metavar="<ratio>", help="Shrink the image pack by the specified ratio (0-1)")
     parser.add_argument("--fork", nargs="*", metavar="[args]", help="Fork the image pack with the given arguments")
     parser.add_argument("--export", metavar="<dir>", help="Export the image pack to a directory")
     parser.add_argument("--export-overview", metavar="<path>", help="Export a single overview image to the specified path")
@@ -1777,6 +1914,16 @@ class ImagePack(NamedAssetClassBase):
       if current_pack is None:
         raise PPInternalError("Cannot save without input")
       current_pack.write_to_path(parsed_args.save)
+
+    if parsed_args.shrink is not None:
+      # 缩小 imagepack
+      ImagePack.print_executing_command("--shrink")
+      if current_pack is None:
+        raise PPInternalError("Cannot shrink without input")
+      ratio = decimal.Decimal(parsed_args.shrink)
+      if ratio <= 0 or ratio >= 1:
+        raise PPInternalError("Invalid shrink ratio: " + str(ratio))
+      current_pack = current_pack.fork_and_shrink(ratio)
 
     if parsed_args.fork is not None:
       # 创建一个新的 imagepack, 将 mask 所影响的部分替换掉
