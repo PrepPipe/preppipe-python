@@ -44,7 +44,7 @@ from ..exceptions import *
 from ..commontypes import Color
 from ..language import *
 from ..tooldecl import ToolClassDecl
-from ..assets.assetclassdecl import AssetClassDecl, NamedAssetClassBase
+from ..assets.assetclassdecl import *
 from ..assets.assetmanager import AssetManager
 from ..assets.fileasset import FileAssetPack
 from .message import MessageHandler
@@ -216,7 +216,7 @@ class ImagePack(NamedAssetClassBase):
   #   "author": str, 作者
   #   "license": str, 发布许可（没有的话就是仅限内部使用）
   #     - "cc0": CC0 1.0 Universal
-  #   "overview_scale" : decimal.Decimal, 用于生成预览图的缩放比例
+  #   "overview_scale" : decimal.Decimal, 用于生成预览图或是文档时的缩放比例
   #   "diff_croprect": tuple[int,int,int,int], 用于生成差分图的裁剪矩形
   #   "modified": bool, 用于标注是否已修改选区
   #   "original_size": tuple[int,int], 用于标注原始大小，只在第一次改变大小时设置
@@ -2908,6 +2908,146 @@ class ImagePackDescriptor:
         reference_dict[k] = v.dump_candidates_json()
       result["composites_references"] = reference_dict
     return result
+
+@AssetDocsDumperDecl(ImagePack)
+class ImagePackDocsDumper(AssetDocsDumperBase):
+  TR_docs = TranslationDomain("imagepack-docs")
+  _tr_type_heading = TR_docs.tr("type_heading",
+    en="Image Packs",
+    zh_cn="图片包",
+    zh_hk="圖片包",
+  )
+  @classmethod
+  def get_heading_for_type(cls) -> str:
+    return cls._tr_type_heading.get()
+
+  _tr_heading_background_template = TR_docs.tr("heading_background_template",
+    en="Background Template",
+    zh_cn="背景模板",
+    zh_hk="背景模板",
+  )
+  _tr_heading_background = TR_docs.tr("heading_background",
+    en="Background",
+    zh_cn="背景",
+    zh_hk="背景",
+  )
+
+  heading_list = [
+    _tr_heading_background_template,
+    _tr_heading_background,
+  ]
+
+  @classmethod
+  def get_heading_for_sort_order(cls, sort_order : int) -> str:
+    return cls.heading_list[sort_order].get()
+
+  def try_claim_asset(self, name : str, asset : NamedAssetClassBase) -> int:
+    if not isinstance(asset, ImagePack):
+      return -1
+    descriptor : ImagePackDescriptor = ImagePack.get_descriptor_by_id(name)
+    if not isinstance(descriptor, ImagePackDescriptor):
+      raise PPInternalError()
+    match descriptor.packtype:
+      case ImagePackDescriptor.ImagePackType.BACKGROUND:
+        return self.export_background_common(name, asset, descriptor)
+      case ImagePackDescriptor.ImagePackType.CHARACTER:
+        # TODO
+        return -1
+      case _:
+        return -1
+
+  def resize_for_docs(self, asset : ImagePack) -> ImagePack:
+    if "overview_scale" in asset.opaque_metadata:
+      scale = asset.opaque_metadata["overview_scale"]
+      return asset.fork_and_shrink(scale)
+    return asset
+
+  @dataclasses.dataclass
+  class BackgroundExportInfo:
+    composites_filepaths : list[str]
+    masks_filepaths : list[str]
+
+  _backgrounds : dict[str, BackgroundExportInfo]
+
+  def __init__(self, *args, **kwargs):
+    super().__init__(*args, **kwargs)
+    self._backgrounds = {}
+
+  def export_background_common(self, name : str, asset : ImagePack, descriptor : ImagePackDescriptor) -> int:
+    asset = self.resize_for_docs(asset)
+    composites_filepaths = []
+    masks_filepaths = []
+    export_basepath = os.path.join(self.dumpinfo.base_path, self.dumpinfo.common_export_path, name)
+    export_refpath = os.path.join(self.dumpinfo.base_path_ref, self.dumpinfo.common_export_path, name)
+    os.makedirs(export_basepath, exist_ok=True)
+    for index in range(len(asset.composites)):
+      code = descriptor.composites_code[index]
+      filename = code + ".png"
+      actual_path = os.path.join(export_basepath, filename)
+      refpath = os.path.join(export_refpath, filename)
+      asset.get_composed_image(index).save_png(actual_path)
+      composites_filepaths.append(refpath)
+    for index in range(len(asset.masks)):
+      filename = f"mask_{index}.png"
+      actual_path = os.path.join(export_basepath, filename)
+      refpath = os.path.join(export_refpath, filename)
+      fork_args : list[Color | None] = [None] * len(asset.masks)
+      fork_args[index] = Color.get((0,0,0))
+      forked = asset.fork_applying_mask(args=fork_args) # type: ignore
+      forked.get_composed_image(0).save_png(actual_path)
+      masks_filepaths.append(refpath)
+    info = self.BackgroundExportInfo(composites_filepaths, masks_filepaths)
+    self._backgrounds[name] = info
+    if len(masks_filepaths) > 0:
+      return 0 # 背景模板
+    return 1 # 背景
+
+  _tr_mask = TR_docs.tr("mask",
+    en="Mask: {name}",
+    zh_cn="选区：{name}",
+    zh_hk="選區：{name}",
+  )
+
+  def dump_background(self, dest : typing.TextIO, name : str, asset : ImagePack, descriptor : ImagePackDescriptor):
+    info = self._backgrounds[name]
+    dest.write(f"#### {str(descriptor.topref)}\n\n")
+    def write_image(label : str, refpath : str):
+      dest.write(f"=== \"{label}\"\n\n")
+      dest.write(f"    ![{label}]({refpath})\n\n")
+    for index, refpath in enumerate(info.composites_filepaths):
+      code = descriptor.composites_code[index]
+      label = code
+      if tr := descriptor.try_get_composite_name(code):
+        label = tr.get()
+      write_image(label, refpath)
+    for index, refpath in enumerate(info.masks_filepaths):
+      masktype = descriptor.masktypes[index]
+      label = self._tr_mask.format(name=masktype.trname.get())
+      write_image(label, refpath)
+    original_width = asset.width
+    original_height = asset.height
+    if "original_size" in asset.opaque_metadata:
+      original_width, original_height = asset.opaque_metadata["original_size"]
+    author_note = ''
+    if author := asset.opaque_metadata.get("author", None):
+      author_note = ImagePack.TR_imagepack_overview_author.format(name=author)
+    size_note = ImagePack.TR_imagepack_overview_size_note.format(width=str(original_width), height=str(original_height))
+    complexity_note = ImagePack.TR_imagepack_overview_complexity_note.format(numlayers=str(len(asset.layers)), numcomposites=str(len(asset.composites)))
+    additional_notes = [author_note, size_note, complexity_note]
+    dest.write("\n")
+    for note in additional_notes:
+      if len(note) > 0:
+        dest.write("* " + note + "\n")
+    dest.write("\n")
+  def dump(self, dest : typing.TextIO, name : str, asset : NamedAssetClassBase, sort_order : int) -> None:
+    descriptor : ImagePackDescriptor = ImagePack.get_descriptor_by_id(name)
+    if not isinstance(descriptor, ImagePackDescriptor):
+      raise PPInternalError()
+    if not isinstance(asset, ImagePack):
+      raise PPInternalError()
+    match sort_order:
+      case 0 | 1:
+        self.dump_background(dest, name, asset, descriptor)
 
 if __name__ == "__main__":
   # 由于这个模块会被其他模块引用，所以如果这是 __main__，其他地方再引用该模块，模块内的代码会被执行两次，导致出错
