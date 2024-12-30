@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: 2024 PrepPipe's Contributors
 # SPDX-License-Identifier: Apache-2.0
 
+import dataclasses
 import shutil
 import typing
 from ..language import *
@@ -131,3 +132,57 @@ class NamedAssetClassBase:
         os.unlink(os.path.join(root, f))
       for d in dirs:
         shutil.rmtree(os.path.join(root, d))
+
+@dataclasses.dataclass
+class AssetDocsDumpInfo:
+  base_path : str # 以下所有相对路径的起始路径
+  base_path_ref : str # 当生成对保存的内容的引用（比如到共通部分）时，使用的起始路径（即导出的文件中应该使用 base_path_ref 来替代 base_path）
+  common_export_path : str # 共通部分、语言无关内容（比如图片本体）的导出路径
+  language_specific_docs : dict[str, str] # 语言相关内容的导出路径
+
+class AssetDocsDumperBase:
+  # 用于输出面向用户的文档 (Markdown, mkdocs)
+  dumpinfo : AssetDocsDumpInfo
+  _classdict : typing.ClassVar[dict[int, type]] = {}
+  _TARGET_CLASS : typing.ClassVar[typing.Type[NamedAssetClassBase]]
+
+  def __init__(self, dumpinfo : AssetDocsDumpInfo):
+    self.dumpinfo = dumpinfo
+
+  @classmethod
+  def get_targeting_asset_class(cls) -> typing.Type[NamedAssetClassBase]:
+    return cls._TARGET_CLASS
+
+  def try_claim_asset(self, name : str, asset : NamedAssetClassBase) -> int:
+    # 返回一个表示顺序的整数，如果不处理则返回 -1
+    # 该整数应该表示某种优先级，越小越优先，我们也会给每个值输出一个标题
+    # 如果需要处理，那么这个函数应该完成所有需要的准备工作，比如导出共通的部分
+    return -1
+
+  @classmethod
+  def get_heading_for_type(cls) -> str:
+    # 应该是某个 Translatable 的 .get() 结果
+    raise PPNotImplementedError()
+
+  @classmethod
+  def get_heading_for_sort_order(cls, sort_order : int) -> str:
+    # 应该是某个 Translatable 的 .get() 结果
+    raise PPNotImplementedError()
+
+  def dump(self, dest : typing.TextIO, name : str, asset : NamedAssetClassBase, sort_order : int) -> None:
+    # 将一个素材的文档输出到目标文件
+    # 这个函数可能会执行不止一次，有多少种语言输出就会执行多少次
+    pass
+
+def AssetDocsDumperDecl(target : typing.Type[NamedAssetClassBase], sort_order : int | None = None): # pylint: disable=invalid-name
+  def decorator(cls : typing.Type[AssetDocsDumperBase]):
+    # pylint: disable=protected-access
+    if not issubclass(cls, AssetDocsDumperBase):
+      raise ValueError("AssetDocsDumperDecl can only be used on subclasses of AssetDocsDumperBase")
+    cls._TARGET_CLASS = target
+    sort_order_value = sort_order if sort_order is not None else len(AssetDocsDumperBase._classdict)
+    if sort_order_value in AssetDocsDumperBase._classdict:
+      raise ValueError(f"Duplicate sort order {sort_order_value}")
+    AssetDocsDumperBase._classdict[sort_order_value] = cls
+    return cls
+  return decorator
