@@ -31,6 +31,7 @@ from ..language import *
 from ..exceptions import *
 from ..tooldecl import ToolClassDecl
 from .assetclassdecl import _registered_asset_classes
+from .assetclassdecl import *
 from ..util.message import MessageHandler
 from ..util.nameconvert import *
 from .. import __version__
@@ -444,6 +445,76 @@ class AssetManager:
     install_base = AssetManager.get_extra_asset_install_path(srcpath)
     self.build_assets_impl(srcpath, install_base, manifest_src)
 
+  _tr_assetlistings_title = TR_assetmanager.tr("assetlistings_title",
+    en="Embedded Assets",
+    zh_cn="内嵌素材",
+    zh_hk="內嵌素材",
+  )
+  def export_assets_docs(self, yamlpath : str):
+    if len(AssetDocsDumperBase._classdict) == 0:
+      return
+    with open(yamlpath, "r", encoding="utf-8") as f:
+      yamlobj = yaml.safe_load(f)
+      # 解析为 AssetDocsDumpInfo
+      base_path = yamlobj["base_path"]
+      base_path_ref = yamlobj["base_path_ref"]
+      common_export_path = yamlobj["common_export_path"]
+      language_specific_docs = yamlobj["language_specific_docs"]
+      dumpinfo = AssetDocsDumpInfo(
+        base_path=base_path,
+        base_path_ref=base_path_ref,
+        common_export_path=common_export_path,
+        language_specific_docs=language_specific_docs
+      )
+
+    asset_export_dict = collections.OrderedDict()
+    dumpers = {}
+    for sort_order, cls in sorted(AssetDocsDumperBase._classdict.items()): # pylint: disable=protected-access
+      index = len(dumpers)
+      dumper = cls(dumpinfo)
+      dumpers[index] = dumper
+      asset_export_dict[index] = collections.OrderedDict()
+
+    common_export_path_complete = os.path.join(base_path, common_export_path)
+    if not os.path.isdir(common_export_path_complete):
+      os.makedirs(common_export_path_complete, exist_ok=True)
+    for name, info in sorted(self._assets.items()):
+      if info.handle is None:
+        self._load_asset(info)
+      for index, dumper in dumpers.items():
+        if isinstance(info.handle, dumper.get_targeting_asset_class()):
+          order = dumper.try_claim_asset(name, info.handle)
+          if order < 0:
+            continue
+          dumper_asset_dict = asset_export_dict[index]
+          if order not in dumper_asset_dict:
+            dumper_asset_dict[order] = []
+          dumper_asset_dict[order].append(name)
+          break
+    for lang, path in language_specific_docs.items():
+      lang_export_path = os.path.join(base_path, path)
+      lang_export_dir = os.path.dirname(lang_export_path)
+      if not os.path.isdir(lang_export_dir):
+        os.makedirs(lang_export_dir, exist_ok=True)
+      Translatable.language_update_preferred_langs([lang])
+      with open(lang_export_path, "w", encoding="utf-8") as f:
+        f.write(f"# {AssetManager._tr_assetlistings_title.get()}\n\n")
+        for index, dumper in dumpers.items():
+          dumper_asset_dict = asset_export_dict[index]
+          if len(dumper_asset_dict) == 0:
+            continue
+          type_heading = dumper.get_heading_for_type()
+          f.write(f"## {type_heading}\n\n")
+          for sort_order, names in dumper_asset_dict.items():
+            sort_order_heading = dumper.get_heading_for_sort_order(sort_order)
+            f.write(f"### {sort_order_heading}\n\n")
+            for name in names:
+              asset = self.get_asset(name)
+              if asset is None:
+                raise PPInternalError(f"Asset {name} not found")
+              dumper.dump(f, name, asset, sort_order)
+            f.write("\n")
+
   @staticmethod
   def init():
     AssetManager.get_instance()
@@ -463,6 +534,7 @@ class AssetManager:
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
     parser.add_argument("--build-embedded", metavar="<dir>", help="Build the embedded asset pack from the specified directory")
     parser.add_argument("--build-extra", metavar="<dir>", nargs="*", help="Build the extra asset pack from the specified directory")
+    parser.add_argument("--export-docs", metavar="<yml>", help="Export asset documentation accoding to the specified YAML file")
     parser.add_argument("--dump-json", action="store_true", help="Dump all asset info as a JSON string")
     if args is None:
       args = sys.argv[1:]
@@ -478,6 +550,10 @@ class AssetManager:
           AssetManager.get_instance().build_assets_extra(p)
     else:
       AssetManager.get_instance().try_load_manifest()
+
+    if parsed_args.export_docs is not None:
+      AssetManager.get_instance().export_assets_docs(parsed_args.export_docs)
+
     if parsed_args.dump_json:
       inst = AssetManager.get_instance()
       inst.load_all_assets()
