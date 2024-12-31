@@ -4,6 +4,7 @@
 
 PrepPipe Compiler is a (work-in-progress) Python program that generates visual novel project files from rich-text input. We currently support the following formats out of the box:
   * [Ren'Py](https://www.renpy.org/) project files
+  * [WebGal](https://www.openwebgal.com/) project files
   * Plain text dumps. This is intended for external programs / scripts. Note that the text dump does not support all features; you would need to implement a Python plugin for complete functionalities.
 
 Currently, the program supports the following list of input formats:
