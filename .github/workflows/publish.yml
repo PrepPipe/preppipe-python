@@ -4,15 +4,23 @@ on: [workflow_dispatch]
 
 jobs:
   publish:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/preppipe/
+    permissions:
+      id-token: write  # IMPORTANT: this permission is mandatory for trusted publishing
     steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/build
+      - name: "Download release"
+        id: download_main
+        uses: robinraju/release-downloader@v1.10
+        with:
+          tag: "latest-main"
+          fileName: "*.whl"
+          tarBall: false
+          zipBall: false
+          out-file-path: "dist"
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          user: __token__
-          password: ${{ secrets.PYPI_API_TOKEN }}
           verbose: true
+          print-hash: true
