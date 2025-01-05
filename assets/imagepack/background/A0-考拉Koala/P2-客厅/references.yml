@@ -1,0 +1,5 @@
+include: "../P_references_common.yml"
+reference:
+  en: "LivingRoom"
+  zh_cn: "客厅"
+  zh_hk: "客廳"

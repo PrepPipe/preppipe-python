@@ -1,6 +1,8 @@
 imagepack:
   A0P1:
     yamlpath: "{srcpath}/A0-考拉Koala/P1-小卧室/config.yml"
+  A0P2:
+    yamlpath: "{srcpath}/A0-考拉Koala/P2-客厅/config.yml"
   A0P3:
     yamlpath: "{srcpath}/A0-考拉Koala/P3-教室/config.yml"
   A0P4:
