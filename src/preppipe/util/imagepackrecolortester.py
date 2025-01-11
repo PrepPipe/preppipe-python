@@ -406,6 +406,7 @@ class ImagePackRecolorTester:
     parser = argparse.ArgumentParser(description="ImagePack Recoloring Tester")
     parser.add_argument("--psd", type=str, help="PSD file to load")
     parser.add_argument("--loaddir", type=str, help="Directory to load images")
+    parser.add_argument("--yaml", type=str, help="ImagePack YAML file to load")
     parser.add_argument("--srcscale", type=float, default=1.0, help="Scale factor for source images")
     parser.add_argument("--mask", type=str, nargs="+", help="Layer names to use as masks")
     parser.add_argument("--minimal", action="store_true", help="Use narrow color range")
@@ -467,6 +468,24 @@ class ImagePackRecolorTester:
       for info in mask_info:
         pack = ImagePackRecolorTester.get_test_imagepack_from_layers(imagelist, info[0], info[1])
         imagepacks.append(pack)
+    elif parsed_args.yaml:
+      pack = ImagePack.build_image_pack_from_yaml(parsed_args.yaml)
+      if parsed_args.srcscale != 1.0:
+        pack = pack.fork_and_shrink(decimal.Decimal(parsed_args.srcscale))
+      else:
+        pack = pack.shrink_for_overview()
+      if len(pack.masks) > 1:
+        # 给每个选区都生成一个独立的图片包
+        nummasks = len(pack.masks)
+        fork_args = [None] * nummasks
+        for i in range(0, nummasks):
+          curpack = pack.fork_applying_mask(fork_args) # type: ignore
+          curpack.masks.append(pack.masks[i])
+          imagepacks.append(curpack)
+      elif len(pack.masks) == 1:
+        imagepacks.append(pack)
+      else:
+        raise ValueError("No mask found in ImagePack")
     else:
       size = (600, 200)
       for color in dest_colors:
