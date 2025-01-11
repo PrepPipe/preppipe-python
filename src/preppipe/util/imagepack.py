@@ -781,6 +781,10 @@ class ImagePack(NamedAssetClassBase):
         resultpack.masks.append(m.get_shrinked(ratio))
     return resultpack
 
+  def shrink_for_overview(self):
+    if overview_scale := self.opaque_metadata.get("overview_scale", None):
+      return self.fork_and_shrink(overview_scale)
+    return self
 
   @staticmethod
   def inverse_pasting(base : PIL.Image.Image, result : PIL.Image.Image) -> np.ndarray | None:
@@ -1383,21 +1387,33 @@ class ImagePack(NamedAssetClassBase):
         if maskcolor is None:
           raise PPInternalError("Invalid mask in " + yamlpath + ": missing maskcolor")
         maskimgpath = os.path.join(basepath, imgpathbase + ".png")
-        # 读取选区图并将其转化为黑白图片
-        original_mask = PIL.Image.open(maskimgpath)
-        maskimg = ImagePack.convert_mask_image(original_mask)
-        if maskimg.width != result.width or maskimg.height != result.height:
-          raise PPInternalError("Mask size mismatch: " + str((maskimg.width, maskimg.height)) + " != " + str((result.width, result.height)))
+        curmask = None
         offset_x = 0
         offset_y = 0
-        bbox = maskimg.getbbox()
-        if bbox is not None:
-          offset_x, offset_y, xmax, ymax = bbox
-          maskimg = maskimg.crop(bbox)
-        newmask = ImagePack.MaskInfo(mask=ImageWrapper(image=maskimg),
+        maskwidth = result.width
+        maskheight = result.height
+        # 读取选区图并将其转化为黑白图片
+        # 如果该选区图不存在，我们默认其覆盖全图（这种情况下应该已经限定生效的基地图层）
+        if os.path.exists(maskimgpath):
+          original_mask = PIL.Image.open(maskimgpath)
+          maskimg = ImagePack.convert_mask_image(original_mask)
+          if maskimg.width != result.width or maskimg.height != result.height:
+            raise PPInternalError("Mask size mismatch: " + str((maskimg.width, maskimg.height)) + " != " + str((result.width, result.height)))
+          bbox = maskimg.getbbox()
+          if bbox is not None:
+            offset_x, offset_y, xmax, ymax = bbox
+            maskimg = maskimg.crop(bbox)
+          curmask = ImageWrapper(image=maskimg)
+          maskwidth = maskimg.width
+          maskheight = maskimg.height
+        else:
+          # 覆盖全图时不指定文件名
+          imgpathbase = None
+        # 到这里的话，有无选区图的情况都处理完毕，开始写回
+        newmask = ImagePack.MaskInfo(mask=curmask,
                                       mask_color=maskcolor,
                                       offset_x=offset_x, offset_y=offset_y,
-                                      width=maskimg.width, height=maskimg.height,
+                                      width=maskwidth, height=maskheight,
                                       projective_vertices=projective_vertices_result, basename=imgpathbase, applyon=applyon)
         result.masks.append(newmask)
 
