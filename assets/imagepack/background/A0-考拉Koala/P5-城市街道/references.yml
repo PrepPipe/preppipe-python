@@ -1,0 +1,5 @@
+include: "../P_references_common.yml"
+reference:
+  en: "StreetView"
+  zh_cn: "城市街道"
+  zh_hk: "城市街道"
