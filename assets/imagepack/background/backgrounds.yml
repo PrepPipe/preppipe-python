@@ -7,6 +7,8 @@ imagepack:
     yamlpath: "{srcpath}/A0-考拉Koala/P3-教室/config.yml"
   A0P4:
     yamlpath: "{srcpath}/A0-考拉Koala/P4-学校走廊/config.yml"
+  A0P5:
+    yamlpath: "{srcpath}/A0-考拉Koala/P5-城市街道/config.yml"
   A0P6:
     yamlpath: "{srcpath}/A0-考拉Koala/P6-单位大门/config.yml"
   A0P7:
