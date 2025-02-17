@@ -39,7 +39,7 @@ class VNASTImageExprSource(enum.Enum):
 def emit_default_placeholder(context : Context, dest : ImageExprPlaceholderDest, description : StringLiteral | None = None) -> PlaceholderImageLiteralExpr:
   if description is None:
     description = StringLiteral.get('', context)
-  placeholder = PlaceholderImageLiteralExpr.get(context=context, dest=dest, desc=description, size=IntTupleLiteral.get((0,0), context))
+  placeholder = PlaceholderImageLiteralExpr.get(context=context, dest=dest, desc=description, size=IntTuple2DLiteral.get((0,0), context))
   return placeholder
 
 _tr_vn_util_image_open_failed = _TR_vn_util.tr("image_open_failed",
@@ -85,7 +85,7 @@ def emit_image_expr_from_path(context : Context, pathexpr : str, basepath : str,
     data = asset.load()
     assert data is not None
     bbox = ImageAssetLiteralExpr.prepare_bbox(context=context, imagedata=data)
-    return ImageAssetLiteralExpr.get(context, image=asset, size=IntTupleLiteral.get(data.size, context), bbox=bbox)
+    return ImageAssetLiteralExpr.get(context, image=asset, size=IntTuple2DLiteral.get(data.size, context), bbox=bbox)
   return None
 
 _tr_placeholder = _TR_vn_util.tr("placeholder",
@@ -185,15 +185,15 @@ def emit_image_expr_from_callexpr(context : Context, call : CallExprOperand, bas
     resolution_v = resolution.resolution if resolution is not None else (0,0)
     if len(desc) == 0:
       desc = placeholderdesc
-    return PlaceholderImageLiteralExpr.get(context=context, dest=placeholderdest, desc=StringLiteral.get(desc, context), size=IntTupleLiteral.get(resolution_v, context))
+    return PlaceholderImageLiteralExpr.get(context=context, dest=placeholderdest, desc=StringLiteral.get(desc, context), size=IntTuple2DLiteral.get(resolution_v, context))
 
   def handle_decl_expr(ref : str, *, resolution : FrontendParserBase.Resolution | None = None) -> DeclaredImageLiteralExpr:
     resolution_v = resolution.resolution if resolution is not None else (0,0)
-    return DeclaredImageLiteralExpr.get(context=context, decl=StringLiteral.get(ref, context), size=IntTupleLiteral.get(resolution_v, context))
+    return DeclaredImageLiteralExpr.get(context=context, decl=StringLiteral.get(ref, context), size=IntTuple2DLiteral.get(resolution_v, context))
 
   def handle_colorfill_expr(color : Color, *, resolution : FrontendParserBase.Resolution | None = None) -> ColorImageLiteralExpr:
     resolution_v = resolution.resolution if resolution is not None else (0,0)
-    return ColorImageLiteralExpr.get(context=context, color=ColorLiteral.get(color, context), size=IntTupleLiteral.get(resolution_v, context))
+    return ColorImageLiteralExpr.get(context=context, color=ColorLiteral.get(color, context), size=IntTuple2DLiteral.get(resolution_v, context))
 
   # 关于图片模板的辅助函数
   def _helper_get_descriptor(template : str, type : ImagePackDescriptor.ImagePackType, default_id : str) -> ImagePackDescriptor:
@@ -249,7 +249,7 @@ def emit_image_expr_from_callexpr(context : Context, call : CallExprOperand, bas
   def _helper_finalize_imagepreset_expr(descriptor : ImagePackDescriptor, composite : str, args : list[ImageAssetData | ColorLiteral | StringLiteral] | None, size : tuple[int,int] | None) -> ImagePackElementLiteralExpr:
     converted_size = None
     if size is not None:
-      converted_size = IntTupleLiteral.get(size, context)
+      converted_size = IntTuple2DLiteral.get(size, context)
     if len(composite) == 0 and children_out is not None:
       composite = descriptor.get_default_composite()
       # 我们需要把该图片包中的所有差分组合都加到 children_out 中
@@ -501,9 +501,9 @@ def resolve_placer_callexpr(context : Context, placer : CallExprOperand, default
       result_anchorcoord = defaultconf.parameters.get(2).value if defaultconf.parameters.get_num_operands() > 2 else None
     else:
       result_anchorcoord = VNASTImagePlacerKind.get_additional_default_params(VNASTImagePlacerKind.ABSOLUTE) if is_fillall else None
-    params = [IntTupleLiteral.get(result_anchor, context), FloatLiteral.get(result_scale, context)]
+    params = [IntTuple2DLiteral.get(result_anchor, context), FloatLiteral.get(result_scale, context)]
     if result_anchorcoord is not None:
-      params.append(IntTupleLiteral.get(result_anchorcoord, context))
+      params.append(IntTuple2DLiteral.get(result_anchorcoord, context))
     return callback(VNASTImagePlacerKind.ABSOLUTE, params)
 
   def handle_placer_sprite(baseheight : decimal.Decimal | None = None,
@@ -558,7 +558,7 @@ def resolve_placer_expr(context : Context, expr : ListExprTreeNode, defaultconf 
       case VNASTImagePlacerKind.ABSOLUTE:
         anchor = defaultconf.parameters.get(0).value
         scale = defaultconf.parameters.get(1).value
-        anchorcoord = defaultconf.parameters.get(2).value if defaultconf.parameters.get_num_operands() > 2 else IntTupleLiteral.get(anchorcoord_default_value, context)
+        anchorcoord = defaultconf.parameters.get(2).value if defaultconf.parameters.get_num_operands() > 2 else IntTuple2DLiteral.get(anchorcoord_default_value, context)
         return (VNASTImagePlacerKind.ABSOLUTE, [anchor, scale, anchorcoord])
       case VNASTImagePlacerKind.SPRITE:
         baseheight = defaultconf.parameters.get(0).value

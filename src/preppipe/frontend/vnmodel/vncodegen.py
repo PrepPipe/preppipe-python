@@ -1463,7 +1463,7 @@ class VNCodeGen:
       data = v.load()
       size = data.size
       bbox = ImageAssetLiteralExpr.prepare_bbox(context=self.context, imagedata=data)
-      sizetuple = IntTupleLiteral.get(value=size, context=self.context)
+      sizetuple = IntTuple2DLiteral.get(value=size, context=self.context)
       return ImageAssetLiteralExpr.get(context=self.context, image=v, size=sizetuple, bbox=bbox)
 
     _tr_assetref_asset_not_inuse = TR_vn_codegen.tr("assetref_asset_not_inuse",
