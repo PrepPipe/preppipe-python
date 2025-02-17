@@ -258,6 +258,7 @@ def _process_class(cls : type[_OperationVT], vty : type | None) -> type[_Operati
     # correctly.
     globals = {}
 
+  globals[cls.__name__] = cls
   cls_annotations = inspect.get_annotations(cls, globals=globals, eval_str=True)
   cls_fields : collections.OrderedDict[str, OpField] = collections.OrderedDict()
 

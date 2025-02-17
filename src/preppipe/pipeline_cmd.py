@@ -23,6 +23,7 @@ from . import testbench
 from .util import imagepack
 from .util import imagepackrecolortester
 from .assets import imports as asset_imports
+from .uiassetgen import toolentry as uiassetgen_toolentry
 
 if __name__ == "__main__":
   pipeline_main()

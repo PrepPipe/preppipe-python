@@ -26,22 +26,71 @@ class UIAssetElementDrawingData:
   description : Translatable | str | None = None # 该图的描述，用于调试；应该描述画的算法（比如渐变填充）而不是该图是什么（比如按钮背景）
   anchor : tuple[int, int] = (0, 0) # 锚点在当前结果中的位置（像素距离）
 
+  def sanity_check(self):
+    # 有异常就报错
+    pass
+
 @IROperationDataclassWithValue(UIAssetElementType)
 class UIAssetElementNodeOp(Operation, Value):
   # 该类用于表述任意 UI 素材的元素，包括点、线、面等
   # 所有的坐标、大小都以像素为单位
+  # 除非特殊情况，否则所有元素的锚点都应该是左上角顶点（不管留白或是延伸的特效（如星星延伸出的光效等））
 
   # 子节点的信息，越往后则越晚绘制
   child_positions : OpOperand[IntTuple2DLiteral] # 子元素的锚点在本图层内的位置（相对像素位置）
-  child_refs : OpOperand[Value] # 子元素的引用
+  child_refs : OpOperand[UIAssetElementNodeOp] # 子元素的引用
   child_zorders : OpOperand[IntLiteral] # 子元素的 Z 轴顺序(相对于本元素，越大越靠前、越晚画)
-  children : Block # 存放子元素，不过它们可能会被引用不止一次
 
-  def get_bbox(self) -> tuple[int, int, int, int]:
-    raise PPNotImplementedError()
+  def get_bbox(self) -> tuple[int, int, int, int] | None:
+    # 只返回该元素的 bbox，不包括子元素
+    return None
 
   def draw(self, drawctx : UIAssetDrawingContext) -> UIAssetElementDrawingData:
-    raise PPNotImplementedError()
+    return UIAssetElementDrawingData()
+
+  def add_child(self, ref : UIAssetElementNodeOp, pos : tuple[int, int], zorder : int):
+    self.child_refs.add_operand(ref)
+    self.child_positions.add_operand(IntTuple2DLiteral.get(pos, context=self.context))
+    self.child_zorders.add_operand(IntLiteral.get(zorder, context=self.context))
+
+  def get_child_bbox(self) -> tuple[int, int, int, int] | None:
+    cur_bbox = None
+    numchildren = self.child_refs.get_num_operands()
+    for i in range(numchildren):
+      child = self.child_refs.get_operand(i)
+      if not isinstance(child, UIAssetElementNodeOp):
+        raise PPInternalError(f"Unexpected child type: {type(child)}")
+      child_bbox = child.get_bbox()
+      child_child_bbox = child.get_child_bbox()
+      if child_bbox is not None:
+        left, top, right, bottom = child_bbox
+        if child_child_bbox is not None:
+          c_left, c_top, c_right, c_bottom = child_child_bbox
+          left = min(left, c_left)
+          top = min(top, c_top)
+          right = max(right, c_right)
+          bottom = max(bottom, c_bottom)
+      elif child_child_bbox is not None:
+        left, top, right, bottom = child_child_bbox
+      else:
+        continue
+      offset_x, offset_y = self.child_positions.get_operand(i).value
+      left += offset_x
+      right += offset_x
+      top += offset_y
+      bottom += offset_y
+      if cur_bbox is None:
+        cur_bbox = (left, top, right, bottom)
+      else:
+        cur_bbox = (min(cur_bbox[0], left), min(cur_bbox[1], top), max(cur_bbox[2], right), max(cur_bbox[3], bottom))
+    return cur_bbox
+
+@IROperationDataclassWithValue(UIAssetElementType)
+class UIAssetElementGroupOp(UIAssetElementNodeOp):
+  # 自身不含任何需要画的内容，仅用于组织其他元素（比如方便复用）
+  @staticmethod
+  def create(context : Context):
+    return UIAssetElementGroupOp(init_mode=IRObjectInitMode.CONSTRUCT, context=context)
 
 @IROperationDataclass
 class UIAssetDrawingResultElementOp(Operation):
@@ -70,6 +119,7 @@ class UIAssetDrawingContext:
     if result := self.drawing_cache.get(node):
       return result
     result = node.draw(self)
+    result.sanity_check()
     imagedata = None
     if result.image is not None:
       imagedata = TemporaryImageData.create(node.context, result.image)
@@ -122,10 +172,52 @@ class UIAssetEntrySymbol(Symbol):
   # 如果需要额外的元数据（比如该需求对应一个滚动条，我们想知道滚动条的边框大小），请使用 Attributes
   kind : OpOperand[EnumLiteral[UIAssetKind]]
   body : Block # UIAssetDrawingResultElementOp 的列表
+  canvas_size : OpOperand[IntTuple2DLiteral] # 画布大小
+  origin_pos : OpOperand[IntTuple2DLiteral] # 原点在画布中的位置
+
+  def take_image_layers(self, layers : list[UIAssetDrawingResultElementOp]):
+    xmin = 0
+    ymin = 0
+    xmax = 0
+    ymax = 0
+    for op in layers:
+      if not isinstance(op, UIAssetDrawingResultElementOp):
+        raise PPInternalError(f"Unexpected type: {type(op)}")
+      self.body.push_back(op)
+      x, y = op.image_pos.get().value
+      imagedata = op.image_patch.get()
+      if not isinstance(imagedata, TemporaryImageData):
+        raise PPInternalError(f"Unexpected type: {type(imagedata)}")
+      w, h = imagedata.value.size
+      xmin = min(xmin, x)
+      ymin = min(ymin, y)
+      xmax = max(xmax, x + w)
+      ymax = max(ymax, y + h)
+    total_width = xmax - xmin
+    total_height = ymax - ymin
+    self.canvas_size.set_operand(0, IntTuple2DLiteral.get((total_width, total_height), context=self.context))
+    self.origin_pos.set_operand(0, IntTuple2DLiteral.get((-xmin, -ymin), context=self.context))
+
+  def save_png(self, path : str):
+    size_tuple = self.canvas_size.get().value
+    origin_tuple = self.origin_pos.get().value
+    image = PIL.Image.new('RGBA', size_tuple, (0,0,0,0))
+    for op in self.body.body:
+      if not isinstance(op, UIAssetDrawingResultElementOp):
+        raise PPInternalError(f"Unexpected type: {type(op)}")
+      imagedata = op.image_patch.get()
+      if not isinstance(imagedata, TemporaryImageData):
+        raise PPInternalError(f"Unexpected type: {type(imagedata)}")
+      x, y = op.image_pos.get().value
+      curlayer = PIL.Image.new('RGBA', size_tuple, (0,0,0,0))
+      curlayer.paste(imagedata.value, (x + origin_tuple[0], y + origin_tuple[1]))
+      image = PIL.Image.alpha_composite(image, curlayer)
+    image.save(path)
 
   @staticmethod
-  def save_png(path : str):
-    pass
+  def create(context : Context, kind : UIAssetKind, name : str, loc : Location | None = None) -> UIAssetEntrySymbol:
+    kind_value = EnumLiteral.get(value=kind, context=context)
+    return UIAssetEntrySymbol(init_mode=IRObjectInitMode.CONSTRUCT, context=context, name=name, loc=loc, kind=kind_value)
 
 class UIAssetStyleData:
   # 用于描述基础样式（比如颜色组合）
