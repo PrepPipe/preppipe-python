@@ -841,7 +841,7 @@ class VNASTFileInfo(VNASTNodeBase):
 
 @IROperationDataclass
 class VNAST(Operation):
-  screen_resolution : OpOperand[IntTupleLiteral]
+  screen_resolution : OpOperand[IntTuple2DLiteral]
   files : Block # VNASTFileInfo
 
   def get_short_str(self, indent : int = 0) -> str:
@@ -852,7 +852,7 @@ class VNAST(Operation):
     return result
 
   @staticmethod
-  def create(name : str, screen_resolution : IntTupleLiteral, context : Context):
+  def create(name : str, screen_resolution : IntTuple2DLiteral, context : Context):
     return VNAST(init_mode=IRObjectInitMode.CONSTRUCT, context=context, name=name, screen_resolution=screen_resolution)
 
 class UnrecognizedCommandOp(ErrorOp):
