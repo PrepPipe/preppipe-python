@@ -30,6 +30,7 @@ from .commontypes import TextAttribute, Color
 from . import __version__
 from .util.audit import *
 from .exceptions import *
+from .language import *
 
 # ------------------------------------------------------------------------------
 # ADT needed for IR
@@ -817,9 +818,12 @@ class IRJsonExporter:
       ClassLiteral,
       IntLiteral,
       IntTupleLiteral,
+      IntTuple2DLiteral,
+      IntTuple4DLiteral,
       BoolLiteral,
       FloatLiteral,
       FloatTupleLiteral,
+      FloatTuple2DLiteral,
       StringLiteral,
       ColorLiteral,
       TextStyleLiteral,
@@ -2758,6 +2762,45 @@ class AudioAssetData(AssetData[pydub.AudioSegment, str]):
   def get_pretty_name(cls) -> str:
     return cls._tr_audiosassetdata_name.get()
 
+class TemporaryAssetData(Value, typing.Generic[_DataTV]):
+  # 当我们需要存一些临时生成的资源（比如UI素材图层）并且不希望它们存到文件系统中时，可以使用该类
+  # 该类的值不视为 Literal，不属于 Context ，不一定 immutable, 使用者需要管理好它的生命周期
+  # __slots__ = ('_value')
+  _value : _DataTV
+
+  def construct_init(self, *, context : Context, value : _DataTV, **kwargs) -> None:
+    ty = VoidType.get(context)
+    super().construct_init(ty=ty, **kwargs)
+    self._value = value
+
+  def json_import_init(self, *, importer: IRJsonImporter, init_src: dict, **kwargs) -> None:
+    raise PPNotImplementedError('Subclass should override this')
+
+  @staticmethod
+  def get_fixed_value_type():
+    return VoidType
+
+  @property
+  def value(self) -> _DataTV:
+    return self._value
+
+  def get_context(self) -> Context:
+    return super().valuetype.context
+
+  def __str__(self) -> str:
+    return self.__class__.__name__
+
+  def export(self, dest_path : str) -> None:
+    raise PPNotImplementedError()
+
+class TemporaryImageData(TemporaryAssetData[PIL.Image.Image]):
+  def export(self, dest_path : str) -> None:
+    self._value.save(dest_path)
+
+  @staticmethod
+  def create(context : Context, img : PIL.Image.Image) -> TemporaryImageData:
+    return TemporaryImageData(init_mode=IRObjectInitMode.CONSTRUCT, context=context, value=img)
+
 @IRWrappedStatelessClassJsonName('asset_placeholder_trait')
 class AssetPlaceholderTrait:
   # 如果某个值表示占位资源，则应继承自该类来告诉其余代码
@@ -2868,7 +2911,7 @@ class IntLiteral(Literal):
 
 @IRObjectJsonTypeName('int_tuple_l')
 class IntTupleLiteral(Literal):
-  # 整数元组，一般用于像素坐标或大小
+  # 整数元组，只在不定长时使用
   def construct_init(self, *, context : Context, value: tuple[int, ...], **kwargs) -> None:
     return super().construct_init(ty=VoidType.get(context), value=value, **kwargs)
 
@@ -2883,6 +2926,46 @@ class IntTupleLiteral(Literal):
   @staticmethod
   def get(value : tuple[int, ...], context : Context) -> IntTupleLiteral:
     return Literal._get_literal_impl(IntTupleLiteral, value, context)
+
+@IRObjectJsonTypeName('int_tuple_2d_l')
+class IntTuple2DLiteral(Literal):
+  # [2 x int]，用于坐标、大小等
+  def construct_init(self, *, context : Context, value: tuple[int, int], **kwargs) -> None:
+    if not isinstance(value, tuple) or len(value) != 2:
+      raise PPInternalError("IntTuple2DLiteral value must be a 2-tuple of integers")
+    return super().construct_init(ty=VoidType.get(context), value=value, **kwargs)
+
+  @staticmethod
+  def get_fixed_value_type():
+    return VoidType
+
+  @property
+  def value(self) -> tuple[int, int]:
+    return super().value
+
+  @staticmethod
+  def get(value : tuple[int, int], context : Context) -> IntTuple2DLiteral:
+    return Literal._get_literal_impl(IntTuple2DLiteral, value, context)
+
+@IRObjectJsonTypeName('int_tuple_4d_l')
+class IntTuple4DLiteral(Literal):
+  # [4 x int]，主要用于 bbox
+  def construct_init(self, *, context : Context, value: tuple[int, int, int, int], **kwargs) -> None:
+    if not isinstance(value, tuple) or len(value) != 4:
+      raise PPInternalError("IntTuple4DLiteral value must be a 4-tuple of integers")
+    return super().construct_init(ty=VoidType.get(context), value=value, **kwargs)
+
+  @staticmethod
+  def get_fixed_value_type():
+    return VoidType
+
+  @property
+  def value(self) -> tuple[int, int, int, int]:
+    return super().value
+
+  @staticmethod
+  def get(value : tuple[int, int, int, int], context : Context) -> IntTuple4DLiteral:
+    return Literal._get_literal_impl(IntTuple4DLiteral, value, context)
 
 @IRObjectJsonTypeName('bool_l')
 class BoolLiteral(Literal):
@@ -2927,6 +3010,9 @@ class FloatLiteral(Literal):
 class FloatTupleLiteral(Literal):
   # 浮点数元组，用于描述锚点位置等
   def construct_init(self, *, context : Context, value: tuple[decimal.Decimal, ...], **kwargs) -> None:
+    assert isinstance(value, tuple)
+    for v in value:
+      assert isinstance(v, decimal.Decimal)
     return super().construct_init(ty=VoidType.get(context), value=value, **kwargs)
 
   @staticmethod
@@ -2940,6 +3026,27 @@ class FloatTupleLiteral(Literal):
   @staticmethod
   def get(value : tuple[decimal.Decimal, ...], context : Context) -> FloatTupleLiteral:
     return Literal._get_literal_impl(FloatTupleLiteral, value, context)
+
+@IRObjectJsonTypeName('float_tuple_2d_l')
+class FloatTuple2DLiteral(Literal):
+  # 坐标或大小等二维浮点数元组
+  def construct_init(self, *, context : Context, value: tuple[decimal.Decimal, decimal.Decimal], **kwargs) -> None:
+    assert isinstance(value, tuple) and len(value) == 2
+    for v in value:
+      assert isinstance(v, decimal.Decimal)
+    return super().construct_init(ty=VoidType.get(context), value=value, **kwargs)
+
+  @staticmethod
+  def get_fixed_value_type():
+    return VoidType
+
+  @property
+  def value(self) -> tuple[decimal.Decimal, decimal.Decimal]:
+    return super().value
+
+  @staticmethod
+  def get(value : tuple[decimal.Decimal, decimal.Decimal], context : Context) -> FloatTuple2DLiteral:
+    return Literal._get_literal_impl(FloatTuple2DLiteral, value, context)
 
 @IRObjectJsonTypeName('str_l')
 class StringLiteral(Literal):
@@ -2967,6 +3074,36 @@ class StringLiteral(Literal):
   @staticmethod
   def get(value : str, context : Context) -> StringLiteral:
     return Literal._get_literal_impl(StringLiteral, value, context)
+
+@IRObjectJsonTypeName('tr_l')
+class TranslatableLiteral(Literal):
+  # 将 Translatable 打包为字面值的类
+
+  def construct_init(self, *, context : Context, value: tuple[str, str], **kwargs) -> None:
+    ty = StringType.get(context)
+    tr = TranslationDomain.ALL_DOMAINS[value[0]].get(value[1])
+    super().construct_init(ty=ty, value=tr, **kwargs)
+
+  @staticmethod
+  def get_fixed_value_type():
+    return StringType
+
+  @property
+  def value(self) -> Translatable:
+    return super().value
+
+  def get_string(self) -> str:
+    return self.value.get()
+
+  def __str__(self) -> str:
+    return self.get_string()
+
+  @staticmethod
+  def get(value : Translatable, context : Context) -> TranslatableLiteral:
+    if not isinstance(value, Translatable):
+      raise PPInternalError("Value for TranslatableLiteral.get() not a Translatable")
+    encoded = (value.parent.name, value.code)
+    return Literal._get_literal_impl(TranslatableLiteral, encoded, context)
 
 @IRObjectJsonTypeName('color_l')
 class ColorLiteral(Literal):

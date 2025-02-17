@@ -41,21 +41,21 @@ class BaseImageLiteralExpr(LiteralExpr):
     # bbox 是图片非透明部分的 <左, 上, 右, 下> 边界
     # 如果图片完全透明，则为 <0, 0, 0, 0>
     # 如果图片完全不透明，则为 <0, 0, w, h>
-    assert isinstance(value_tuple[0], IntTupleLiteral)
-    assert isinstance(value_tuple[1], IntTupleLiteral)
+    assert isinstance(value_tuple[0], IntTuple2DLiteral)
+    assert isinstance(value_tuple[1], IntTuple4DLiteral)
     return super().construct_init(ty=ImageType.get(context), value_tuple=value_tuple, **kwargs)
 
   @property
-  def size(self) -> IntTupleLiteral:
+  def size(self) -> IntTuple2DLiteral:
     return self.get_value_tuple()[0] # type: ignore
 
   @property
-  def bbox(self) -> IntTupleLiteral:
+  def bbox(self) -> IntTuple4DLiteral:
     return self.get_value_tuple()[1] # type: ignore
 
   @staticmethod
-  def _validate_size(size : IntTupleLiteral) -> None:
-    assert isinstance(size, IntTupleLiteral)
+  def _validate_size(size : IntTuple2DLiteral) -> None:
+    assert isinstance(size, IntTuple2DLiteral)
     # 有两种情况是允许的：
     # 1. 两个都是0
     # 2. 两个都是正数
@@ -81,17 +81,17 @@ class ImageAssetLiteralExpr(BaseImageLiteralExpr):
     return self.get_value_tuple()[BaseImageLiteralExpr.DERIVED_DATA_START] # type: ignore
 
   @staticmethod
-  def get(context : Context, image : ImageAssetData, size : IntTupleLiteral, bbox : IntTupleLiteral) -> ImageAssetLiteralExpr:
+  def get(context : Context, image : ImageAssetData, size : IntTuple2DLiteral, bbox : IntTuple4DLiteral) -> ImageAssetLiteralExpr:
     assert isinstance(image, ImageAssetData)
     BaseImageLiteralExpr._validate_size(size)
     return ImageAssetLiteralExpr._get_literalexpr_impl((size, bbox, image), context)
 
   @staticmethod
-  def prepare_bbox(context : Context, imagedata : PIL.Image.Image) -> IntTupleLiteral:
+  def prepare_bbox(context : Context, imagedata : PIL.Image.Image) -> IntTuple4DLiteral:
     bbox = imagedata.getbbox()
     if bbox is None:
-      return IntTupleLiteral.get((0, 0, 0, 0), context=context)
-    return IntTupleLiteral.get(bbox, context=context)
+      return IntTuple4DLiteral.get((0, 0, 0, 0), context=context)
+    return IntTuple4DLiteral.get(bbox, context=context)
 
   def __str__(self) -> str:
     width, height = self.size.value
@@ -109,16 +109,16 @@ class ColorImageLiteralExpr(BaseImageLiteralExpr):
     return self.color.value.get_string() + '[' + str(width) + '*' + str(height) + ']'
 
   @staticmethod
-  def get(context : Context, color : ColorLiteral, size : IntTupleLiteral) -> ColorImageLiteralExpr:
+  def get(context : Context, color : ColorLiteral, size : IntTuple2DLiteral) -> ColorImageLiteralExpr:
     assert isinstance(color, ColorLiteral)
     BaseImageLiteralExpr._validate_size(size)
     width, height = size.value
-    bbox = IntTupleLiteral.get((0, 0, width, height), context=context)
+    bbox = IntTuple4DLiteral.get((0, 0, width, height), context=context)
     return ColorImageLiteralExpr._get_literalexpr_impl((size, bbox, color), context)
 
   def get_with_updated_sizes(self, size: tuple[int, int], bbox : tuple[int, int, int, int]):
-    sizetuple = IntTupleLiteral.get(size, context=self.context)
-    bboxtuple = IntTupleLiteral.get(bbox, context=self.context)
+    sizetuple = IntTuple2DLiteral.get(size, context=self.context)
+    bboxtuple = IntTuple4DLiteral.get(bbox, context=self.context)
     color = self.get_value_tuple()[BaseImageLiteralExpr.DERIVED_DATA_START]
     return ColorImageLiteralExpr._get_literalexpr_impl((sizetuple, bboxtuple, color), self.context)
 
@@ -136,7 +136,7 @@ class TextImageLiteralExpr(BaseImageLiteralExpr):
     return ''.join(strlist)
 
   @staticmethod
-  def get(context : Context, font : StringLiteral | None, text : TextFragmentLiteral | StringLiteral | str | typing.Iterable[TextFragmentLiteral | StringLiteral | str], size : IntTupleLiteral) -> TextImageLiteralExpr:
+  def get(context : Context, font : StringLiteral | None, text : TextFragmentLiteral | StringLiteral | str | typing.Iterable[TextFragmentLiteral | StringLiteral | str], size : IntTuple2DLiteral) -> TextImageLiteralExpr:
     textlist = []
     if isinstance(text, (TextFragmentLiteral, StringLiteral, str)):
       if isinstance(text, str):
@@ -153,7 +153,7 @@ class TextImageLiteralExpr(BaseImageLiteralExpr):
       if not isinstance(font, StringLiteral):
         raise ValueError("Invalid font value")
     width, height = size.value
-    bbox = IntTupleLiteral.get((0, 0, width, height), context=context)
+    bbox = IntTuple4DLiteral.get((0, 0, width, height), context=context)
     return TextImageLiteralExpr._get_literalexpr_impl((size, bbox, font, *textlist), context)
 
 @IRObjectJsonTypeName('decl_image_le')
@@ -169,16 +169,16 @@ class DeclaredImageLiteralExpr(BaseImageLiteralExpr, AssetDeclarationTrait):
     return '[' + str(width) + '*' + str(height) + '] ' + self.declaration.get_string()
 
   @staticmethod
-  def get(context : Context, decl : StringLiteral, size : IntTupleLiteral) -> DeclaredImageLiteralExpr:
+  def get(context : Context, decl : StringLiteral, size : IntTuple2DLiteral) -> DeclaredImageLiteralExpr:
     assert isinstance(decl, StringLiteral)
     BaseImageLiteralExpr._validate_size(size)
     width, height = size.value
-    bbox = IntTupleLiteral.get((0, 0, width, height), context=context)
+    bbox = IntTuple4DLiteral.get((0, 0, width, height), context=context)
     return DeclaredImageLiteralExpr._get_literalexpr_impl((size, bbox, decl), context)
 
   def get_with_updated_sizes(self, size: tuple[int, int], bbox : tuple[int, int, int, int]):
-    sizetuple = IntTupleLiteral.get(size, context=self.context)
-    bboxtuple = IntTupleLiteral.get(bbox, context=self.context)
+    sizetuple = IntTuple2DLiteral.get(size, context=self.context)
+    bboxtuple = IntTuple4DLiteral.get(bbox, context=self.context)
     decl = self.get_value_tuple()[BaseImageLiteralExpr.DERIVED_DATA_START]
     return DeclaredImageLiteralExpr._get_literalexpr_impl((sizetuple, bboxtuple, decl), self.context)
 
@@ -213,18 +213,18 @@ class PlaceholderImageLiteralExpr(BaseImageLiteralExpr, AssetPlaceholderTrait):
     return '[' + str(width) + '*' + str(height) + '] ' + self._tr_placeholder_name.get() +' ' + self.dest.name + (' ' + self.description.get_string() if len(self.description.get_string()) > 0 else '')
 
   @staticmethod
-  def get(context : Context, dest : ImageExprPlaceholderDest, desc : StringLiteral, size : IntTupleLiteral) -> PlaceholderImageLiteralExpr:
+  def get(context : Context, dest : ImageExprPlaceholderDest, desc : StringLiteral, size : IntTuple2DLiteral) -> PlaceholderImageLiteralExpr:
     assert isinstance(dest, ImageExprPlaceholderDest)
     assert isinstance(desc, StringLiteral)
     BaseImageLiteralExpr._validate_size(size)
     destliteral = EnumLiteral.get(context=context, value=dest)
     width, height = size.value
-    bbox = IntTupleLiteral.get((0, 0, width, height), context=context)
+    bbox = IntTuple4DLiteral.get((0, 0, width, height), context=context)
     return PlaceholderImageLiteralExpr._get_literalexpr_impl((size, bbox, destliteral, desc), context)
 
   def get_with_updated_sizes(self, size: tuple[int, int], bbox : tuple[int, int, int, int]):
-    sizetuple = IntTupleLiteral.get(size, context=self.context)
-    bboxtuple = IntTupleLiteral.get(bbox, context=self.context)
+    sizetuple = IntTuple2DLiteral.get(size, context=self.context)
+    bboxtuple = IntTuple4DLiteral.get(bbox, context=self.context)
     destvalue = self.get_value_tuple()[BaseImageLiteralExpr.DERIVED_DATA_START]
     descriptionValue = self.get_value_tuple()[BaseImageLiteralExpr.DERIVED_DATA_START + 1]
     return PlaceholderImageLiteralExpr._get_literalexpr_impl((sizetuple, bboxtuple, destvalue, descriptionValue), self.context)
@@ -252,7 +252,7 @@ class ImagePackElementLiteralExpr(BaseImageLiteralExpr, AssetDeclarationTrait):
     return self.get_value_tuple()[BaseImageLiteralExpr.DERIVED_DATA_START + 2:] # type: ignore
 
   @staticmethod
-  def get(context : Context, pack : str, element : str, size : IntTupleLiteral | None = None, bbox : IntTupleLiteral | None = None, mask_operands : typing.Iterable[ImageAssetData | ColorLiteral | StringLiteral] | None = None):
+  def get(context : Context, pack : str, element : str, size : IntTuple2DLiteral | None = None, bbox : IntTuple4DLiteral | None = None, mask_operands : typing.Iterable[ImageAssetData | ColorLiteral | StringLiteral] | None = None):
     # 先检查图片包的基础信息
     descriptor = ImagePack.get_descriptor_by_id(pack)
     if descriptor is None:
@@ -301,25 +301,25 @@ class ImagePackElementLiteralExpr(BaseImageLiteralExpr, AssetDeclarationTrait):
     if size is not None:
       BaseImageLiteralExpr._validate_size(size)
     else:
-      size = IntTupleLiteral.get(std_size, context=context)
+      size = IntTuple2DLiteral.get(std_size, context=context)
     if bbox is not None:
-      if not isinstance(bbox, IntTupleLiteral) or len(bbox.value) != 4:
+      if not isinstance(bbox, IntTuple4DLiteral):
         raise ValueError("Invalid bbox value")
     else:
       # 我们需要自行计算 bbox
       # 如果图片被缩放，那么我们也要根据原来的 bbox 把缩放后的 bbox 计算出来
       if size.value == std_size:
-        bbox = IntTupleLiteral.get(std_bbox, context=context)
+        bbox = IntTuple4DLiteral.get(std_bbox, context=context)
       else:
         if std_bbox == (0, 0, 0, 0):
-          bbox = IntTupleLiteral.get((0, 0, 0, 0), context=context)
+          bbox = IntTuple4DLiteral.get((0, 0, 0, 0), context=context)
         elif std_bbox == (0, 0, std_size[0], std_size[1]):
-          bbox = IntTupleLiteral.get((0, 0, size.value[0], size.value[1]), context=context)
+          bbox = IntTuple4DLiteral.get((0, 0, size.value[0], size.value[1]), context=context)
         else:
           x_scale = size.value[0] / std_size[0]
           y_scale = size.value[1] / std_size[1]
           left, top, right, bottom = std_bbox
-          bbox = IntTupleLiteral.get((int(left * x_scale), int(top * y_scale), int(right * x_scale), int(bottom * y_scale)), context=context)
+          bbox = IntTuple4DLiteral.get((int(left * x_scale), int(top * y_scale), int(right * x_scale), int(bottom * y_scale)), context=context)
     pack_str = StringLiteral.get(pack, context=context)
     element_str = StringLiteral.get(element, context=context)
     return ImagePackElementLiteralExpr._get_literalexpr_impl((size, bbox, pack_str, element_str, *cur_operands), context)

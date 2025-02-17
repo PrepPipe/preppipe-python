@@ -1165,7 +1165,7 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
       coodstr = coord.get_string()
       if result := re.match(r"""^\s*[\(\uFF08]\s*(?P<x>\d+)\s*[,\uFF0C]\s*(?P<y>\d+)\s*[\)\uFF09]\s*$""", coodstr):
         return FrontendParserBase.Coordinate2D(x=int(result.group("x")), y=int(result.group("y")))
-    elif isinstance(coord, IntTupleLiteral):
+    elif isinstance(coord, (IntTupleLiteral, IntTuple2DLiteral)):
       if len(coord.value) == 2:
         return FrontendParserBase.Coordinate2D(x=coord.value[0], y=coord.value[1])
     return None

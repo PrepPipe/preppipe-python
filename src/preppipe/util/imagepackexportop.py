@@ -22,7 +22,7 @@ class ImagePackExportOpSymbol(CacheableOperationSymbol):
   # 以下用于描述图层组合的导出，各项的数量应该一致
   _composites_export_indices : OpOperand[IntLiteral] # 导出的图层组合的下标
   _composites_export_paths : OpOperand[StringLiteral] # 导出的路径
-  _composites_target_sizes : OpOperand[IntTupleLiteral] # 如果要缩放大小的话，这里存放目标大小（如果不缩放的话应该和原图大小一致）
+  _composites_target_sizes : OpOperand[IntTuple2DLiteral] # 如果要缩放大小的话，这里存放目标大小（如果不缩放的话应该和原图大小一致）
   _fully_loaded_imagepacks : typing.ClassVar[dict[str, list[concurrent.futures.Future]] | None] = None # 用于记录已经加载过的图片包，避免重复加载
 
   _tr_imagepack_not_found = ImagePack.TR_imagepack.tr("export_op_imagepack_not_found",
@@ -69,7 +69,7 @@ class ImagePackExportOpSymbol(CacheableOperationSymbol):
     self._layers_export_indices.add_operand(index)
     self._layers_export_paths.add_operand(path)
 
-  def add_composite_export(self, index : IntLiteral, path : StringLiteral, target_size : IntTupleLiteral) -> None:
+  def add_composite_export(self, index : IntLiteral, path : StringLiteral, target_size : IntTuple2DLiteral) -> None:
     self._composites_export_indices.add_operand(index)
     self._composites_export_paths.add_operand(path)
     self._composites_target_sizes.add_operand(target_size)
@@ -364,7 +364,7 @@ class ImagePackExportDataBuilder:
         for key_tuple, path in sorted(info.composite_export_dict.items()):
           converted_index = IntLiteral.get(key_tuple[0], info.op.context)
           converted_path = StringLiteral.get(path, info.op.context)
-          converted_target_size = IntTupleLiteral.get(key_tuple[1], info.op.context)
+          converted_target_size = IntTuple2DLiteral.get(key_tuple[1], info.op.context)
           info.op.add_composite_export(converted_index, converted_path, converted_target_size)
         info.op.finish_init()
         dest.add(info.op)
