@@ -1,0 +1,19 @@
+from preppipe.language import *
+from .toolwidgetinterface import *
+
+# 部分内容不止在 MainWindow 中使用，所以放在这里
+TR_gui_mainwindow = TranslationDomain("gui_mainwindow")
+
+class MainWindowInterface:
+  def __init__(self, *args, **kwargs):
+    super().__init__(*args, **kwargs)
+
+  def requestOpen(self, info : ToolWidgetInfo) -> None:
+    raise NotImplementedError("Subclasses must implement the addTab() method.")
+
+  def requestOpenWithType(self, widget : type[ToolWidgetInterface]) -> None:
+    info = widget.getToolInfo()
+    self.requestOpen(info)
+
+  def handleLanguageChange(self) -> None:
+    raise NotImplementedError("Subclasses must implement the handleLanguageChange() method.")

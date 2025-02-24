@@ -157,6 +157,9 @@ _antlr_generated
 # generated asset packs
 src/preppipe/assets/_install
 
+# generated ui forms
+src/preppipe_gui_pyside6/forms/generated
+
 # gui settings
 *.settings.db
 *.settings.db.*
