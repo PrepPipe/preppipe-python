@@ -1,6 +1,8 @@
 from __future__ import annotations
-from PySide6.QtWidgets import QMainWindow
+import webbrowser
 from PySide6.QtCore import *
+from PySide6.QtWidgets import *
+from PySide6.QtGui import *
 from .forms.generated.ui_mainwindow import Ui_MainWindow
 from .navigatorwidget import *
 from .toolwidgets.home import *
@@ -12,9 +14,26 @@ class MainWindow(QMainWindow, MainWindowInterface):
     super(MainWindow, self).__init__()
     self.ui = Ui_MainWindow()
     self.ui.setupUi(self)
-    self.setWindowTitle(Translatable.tr_program_name.get())
+    self.updateTextForLanguage()
     self.requestOpenWithType(NavigatorWidget)
     self.requestOpenWithType(HomeWidget)
+    self.ui.actionOpenDocumentation.triggered.connect(self.openDocumentHomePage)
+    self.ui.actionOpenDocumentation.setShortcut(QKeySequence(QKeySequence.HelpContents))
+
+  _tr_help = TR_gui_mainwindow.tr("help",
+    en="Help",
+    zh_cn="帮助",
+    zh_hk="幫助",
+  )
+  _tr_open_documentation = TR_gui_mainwindow.tr("open_documentation",
+    en="Open Documentation",
+    zh_cn="打开文档",
+    zh_hk="打開文檔",
+  )
+  def updateTextForLanguage(self):
+    self.setWindowTitle(Translatable.tr_program_name.get())
+    self.ui.menuHelp.setTitle(self._tr_help.get())
+    self.ui.actionOpenDocumentation.setText(self._tr_open_documentation.get())
 
   def requestOpen(self, info : ToolWidgetInfo) -> None:
     if info.widget is None:
@@ -57,8 +76,60 @@ class MainWindow(QMainWindow, MainWindowInterface):
       curtab.update_text()
       self.ui.tabWidget.setTabText(i, curtab.windowTitle())
       self.ui.tabWidget.setTabToolTip(i, curtab.toolTip())
-    self.setWindowTitle(Translatable.tr_program_name.get())
+    self.updateTextForLanguage()
     return
+
+
+  _tr_documentation_not_found_title = TR_gui_mainwindow.tr("documentation_not_found_title",
+    en="Documentation not found",
+    zh_cn="文档未找到",
+    zh_hk="文檔未找到",
+  )
+  _tr_documentation_not_found_details_dir = TR_gui_mainwindow.tr("documentation_not_found_details_dir",
+    en="Document directory {dir} not found. Please check the integrity of the installation.",
+    zh_cn="文档目录 {dir} 未找到，请检查安装是否完整。",
+    zh_hk="文檔目錄 {dir} 未找到，請檢查安裝是否完整。",
+  )
+  _tr_documentation_not_found_details_file = TR_gui_mainwindow.tr("documentation_not_found_details_file",
+    en="Document page {page} not found. Please check the integrity of the installation.",
+    zh_cn="文档页面 {page} 未找到，请检查安装是否完整。",
+    zh_hk="文檔頁面 {page} 未找到，請檢查安裝是否完整。",
+  )
+  def requestOpenDocument(self, relpath : str | None = None) -> None:
+    docs_root = ''
+    if docs := os.environ.get("PREPPIPE_DOCS"):
+      docs_root = os.path.abspath(docs)
+    if len(docs_root) == 0:
+      docs_root = os.path.join(get_executable_base_dir(), 'docs')
+    if not os.path.isdir(docs_root):
+      QMessageBox.critical(self, self._tr_documentation_not_found_title.get(), self._tr_documentation_not_found_details_dir.format(dir=docs_root))
+      return
+    language_subdir = ""
+    for lang_tag in Translatable.PREFERRED_LANG:
+      match lang_tag:
+        case "zh_cn":
+          language_subdir = ""
+          break
+        case "en":
+          language_subdir = "en"
+          break
+        case "zh_hk":
+          language_subdir = "zh-Hant"
+          break
+        case _:
+          continue
+    if len(language_subdir) > 0:
+      docs_root = os.path.join(docs_root, language_subdir)
+    requested_page_relpath = relpath if relpath is not None else 'index.html'
+    requested_page_path = os.path.join(docs_root, requested_page_relpath)
+    if not os.path.isfile(requested_page_path):
+      QMessageBox.critical(self, self._tr_documentation_not_found_title.get(), self._tr_documentation_not_found_details_file.format(page=requested_page_path))
+      return
+    webbrowser.open_new_tab('file:///' + requested_page_path)
+
+  @Slot()
+  def openDocumentHomePage(self):
+    self.requestOpenDocument(None)
 
   @staticmethod
   def initialize():
