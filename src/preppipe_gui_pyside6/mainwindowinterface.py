@@ -15,5 +15,8 @@ class MainWindowInterface:
     info = widget.getToolInfo()
     self.requestOpen(info)
 
+  def requestOpenDocument(self, relpath : str | None) -> None:
+    raise NotImplementedError("Subclasses must implement the requestOpenDocument() method.")
+
   def handleLanguageChange(self) -> None:
     raise NotImplementedError("Subclasses must implement the handleLanguageChange() method.")
