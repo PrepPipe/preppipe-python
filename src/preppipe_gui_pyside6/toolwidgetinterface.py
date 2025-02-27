@@ -68,6 +68,14 @@ class ToolWidgetInterface:
     # 3. 直接返回 ToolWidgetInfo，这样没有子节点了
     return None
 
+  def canClose(self) -> bool:
+    # 返回 True 表示可以关闭
+    return True
+
+  def closeHandler(self) -> None:
+    # 如果关闭时有待完成的操作，可以在这里完成
+    pass
+
   # 用于应对语言切换
 
   @staticmethod

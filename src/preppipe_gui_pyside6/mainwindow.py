@@ -19,6 +19,7 @@ class MainWindow(QMainWindow, MainWindowInterface):
     self.requestOpenWithType(HomeWidget)
     self.ui.actionOpenDocumentation.triggered.connect(self.openDocumentHomePage)
     self.ui.actionOpenDocumentation.setShortcut(QKeySequence(QKeySequence.HelpContents))
+    self.ui.tabWidget.tabCloseRequested.connect(self.handleTabCloseRequest)
 
   _tr_help = TR_gui_mainwindow.tr("help",
     en="Help",
@@ -77,6 +78,16 @@ class MainWindow(QMainWindow, MainWindowInterface):
       self.ui.tabWidget.setTabText(i, curtab.windowTitle())
       self.ui.tabWidget.setTabToolTip(i, curtab.toolTip())
     self.updateTextForLanguage()
+    return
+
+  @Slot(int)
+  def handleTabCloseRequest(self, tabindex : int):
+    tab = self.ui.tabWidget.widget(tabindex)
+    if not isinstance(tab, ToolWidgetInterface):
+      raise PPInternalError(f"Tab {tabindex} is not a ToolWidgetInterface")
+    if tab.canClose():
+      tab.closeHandler()
+      self.ui.tabWidget.removeTab(tabindex)
     return
 
 
