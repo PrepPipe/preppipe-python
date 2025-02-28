@@ -20,3 +20,24 @@ class MainWindowInterface:
 
   def handleLanguageChange(self) -> None:
     raise NotImplementedError("Subclasses must implement the handleLanguageChange() method.")
+
+  tr_toolname_maininput = TR_gui_mainwindow.tr("toolname_maininput",
+    en="Main Pipeline Entry",
+    zh_cn="主管线入口",
+    zh_hk="主管線入口",
+  )
+  tr_toolname_analysis = TR_gui_mainwindow.tr("toolname_analysis",
+    en="Analysis Tools",
+    zh_cn="分析工具",
+    zh_hk="分析工具",
+  )
+  tr_toolname_export_renpy = TR_gui_mainwindow.tr("toolname_export_renpy",
+    en="Ren'Py Export",
+    zh_cn="Ren'Py 导出",
+    zh_hk="Ren'Py 導出",
+  )
+  tr_toolname_export_webgal = TR_gui_mainwindow.tr("toolname_export_webgal",
+    en="WebGal Export",
+    zh_cn="WebGal 导出",
+    zh_hk="WebGal 導出",
+  )

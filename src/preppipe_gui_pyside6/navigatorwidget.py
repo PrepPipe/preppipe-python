@@ -11,6 +11,7 @@ from .guiassets import *
 from .mainwindowinterface import *
 from .toolwidgets.imagepack import *
 from .toolwidgets.setting import *
+from .toolwidgets.maininput import *
 
 class ToolNode:
   info : ToolWidgetInfo | None
@@ -22,6 +23,7 @@ class ToolNode:
   ]
   NAVIGATION_LIST : typing.ClassVar[list] = [
     SettingWidget,
+    MainInputWidget,
     ImagePackBackgroundTool,
   ]
 
