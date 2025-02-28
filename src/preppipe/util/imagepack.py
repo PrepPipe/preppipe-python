@@ -2222,7 +2222,8 @@ class ImagePackSummary:
         equiv_rows = base_consumed_equivalent_diff_rows
         max_diffs_in_right_side = base_consumed_equivalent_diff_rows * equiv_columns
       # 先把右侧的填满
-      for i in range(max_diffs_in_right_side):
+      num_diffs_at_right = min(max_diffs_in_right_side, len(self.diffs))
+      for i in range(num_diffs_at_right):
         if self.layout_diff_transpose:
           # 先列后行
           row = i % equiv_rows
@@ -2235,8 +2236,8 @@ class ImagePackSummary:
           diff_order[row][col + base_consumed_equivalent_diff_cols] = i
       # 再把下方的填满
       bottom_rows = best_numdiffrows - equiv_rows
-      for i in range(max_diffs_in_right_side, len(self.diffs)):
-        equiv_index = i - max_diffs_in_right_side
+      for i in range(num_diffs_at_right, len(self.diffs)):
+        equiv_index = i - num_diffs_at_right
         if self.layout_diff_transpose:
           # 先列后行
           row = equiv_index % bottom_rows
