@@ -1533,6 +1533,11 @@ class ImagePack(NamedAssetClassBase):
     zh_cn="依赖",
     zh_hk="依賴",
   )
+  TR_imagepack_yamlgen_abbreviation_base = TR_imagepack.tr("abbreviation_base",
+    en="base_abbreviation",
+    zh_cn="基底简写",
+    zh_hk="基底簡寫",
+  )
 
   @dataclasses.dataclass
   class CharacterSpritePartsBased_PartsDecl:
@@ -1552,20 +1557,24 @@ class ImagePack(NamedAssetClassBase):
     # 为了支持立绘在使用相同表情时能有不同的基底（比如不同的衣服样式），我们也有基底间的排列组合，这些标签会被用于生成基底的组合
     base_tags : list[str] = []
 
+    # 为了避免基底所用的名称太长（比如每个选区都有独立的图层、立绘有部分需要拆成独立的置顶的图层），我们支持定义基底组合的简称，如果有简称的话所有基底组合都必须有简称
+    base_abbreviation : dict[str, tuple[str,...]] | None = None
+
     kinds_enum_map : dict[str, ImagePack.CharacterSpritePartsBased_PartKind] = {}
 
     # 除了装饰部件以外，每种部件类型最多只能声明一次
     used_part_kinds : set[ImagePack.CharacterSpritePartsBased_PartKind] = set()
 
+    def parse_dep_liststr(s : str) -> tuple[str]:
+      # 把形如 "M1Y1" 的 str 转换为形如 ("M1", "Y1") 的 tuple
+      # 我们使用正则表达式进行匹配，每个部件代号由一个或多个大写字母和一个或多个数字组成
+      pattern = r'[A-Z]+\d+'
+      matches = re.findall(pattern, s)
+      return tuple(matches)
+
     def get_translated_partiallists(srclist : list[str]) -> list[tuple[str]]:
       # 把形如 ["M1Y1", "M2Y2"] 的依赖列表转换为形如 [("M1", "Y1"), ("M2", "Y2")] 的列表
-      result = []
-      for s in srclist:
-        # 我们使用正则表达式进行匹配，每个部件代号由一个或多个大写字母和一个或多个数字组成
-        pattern = r'[A-Z]+\d+'
-        matches = re.findall(pattern, s)
-        result.append(tuple(matches))
-      return result
+      return [parse_dep_liststr(s) for s in srclist]
 
     for k, v in data.items():
       if k in ImagePack.TR_imagepack_yamlgen_parts_kind.get_all_candidates():
@@ -1579,7 +1588,7 @@ class ImagePack(NamedAssetClassBase):
             if kind_enum == ImagePack.CharacterSpritePartsBased_PartKind.UNKNOWN:
               raise PPInternalError("Custom part kind is not implemented yet: " + kind_raw_tr)
             elif kind_enum != ImagePack.CharacterSpritePartsBased_PartKind.DECORATION:
-              if kind_enum in used_part_kinds:
+              if kind_enum in used_part_kinds and kind_enum != ImagePack.CharacterSpritePartsBased_PartKind.BASE:
                 raise PPInternalError("Duplicate part kind: " + kind_name)
               used_part_kinds.add(kind_enum)
           elif isinstance(kind_raw_tr, dict):
@@ -1644,6 +1653,14 @@ class ImagePack(NamedAssetClassBase):
                                         + str(ImagePack.TR_imagepack_yamlgen_tags.get_all_candidates()) + ", "
                                         + str(ImagePack.TR_imagepack_yamlgen_parts_exclusions.get_all_candidates()) + ", "
                                         + str(ImagePack.TR_imagepack_yamlgen_parts_depends.get_all_candidates()) + ")")
+      elif k in ImagePack.TR_imagepack_yamlgen_abbreviation_base.get_all_candidates():
+        if not isinstance(v, dict):
+          raise PPInternalError("Invalid abbreviation_base in generation: expecting a dict but got " + str(v) + " (type: " + str(type(v)) + ")")
+        base_abbreviation = {}
+        for abbr_name, abbr_list in v.items():
+          if not isinstance(abbr_list, str):
+            raise PPInternalError("Invalid abbreviation list in generation: expecting a str but got " + str(abbr_list) + " (type: " + str(type(abbr_list)) + ")")
+          base_abbreviation[abbr_name] = parse_dep_liststr(abbr_list)
       else:
         raise PPInternalError("Unknown key in generation: " + k + "(supported keys: "
                               + str(ImagePack.TR_imagepack_yamlgen_parts.get_all_candidates()) + ", "
@@ -1790,8 +1807,23 @@ class ImagePack(NamedAssetClassBase):
     result_composites : dict[str, list[str]] = {}
     if composites is not None:
       raise PPInternalError("Manually-specified composites are not supported in this generation algorithm")
+
+    # base_abbreviation: "B0" -> ("L1", "L2", "L3", "L4", "L5")
+    # base_abbreviation_reverse_dict: ("L1", "L2", "L3", "L4", "L5") -> "B0"
+    base_abbreviation_reverse_dict : dict[tuple[str,...], str] | None = None
+    if base_abbreviation is not None:
+      base_abbreviation_reverse_dict = {}
+      for abbr_name, abbr_list in base_abbreviation.items():
+        base_abbreviation_reverse_dict[abbr_list] = abbr_name
+
     for base_combination in base_parts_combinations.keys():
-      combination_codename_base = "".join(base_combination)
+      # base_abbreviation_reverse_dict 非空的话必须包含所有基底组合
+      if base_abbreviation_reverse_dict is None:
+        combination_codename_base = "".join(base_combination)
+      else:
+        if base_combination not in base_abbreviation_reverse_dict:
+          raise PPInternalError("Base combination " + str(base_combination) + " does not have an abbreviation")
+        combination_codename_base = base_abbreviation_reverse_dict[base_combination]
       combination_layers_base = [parts[part].name for part in base_combination]
       for nonbase_combination in nonbase_parts_combinations:
         combination_codename = combination_codename_base + "".join(nonbase_combination)
