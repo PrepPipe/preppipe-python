@@ -101,7 +101,7 @@ class ImagePack(NamedAssetClassBase):
 
   class MaskInfo:
     mask : ImageWrapper | None # 如果为 None 则表示该 mask 覆盖所有适用的基底图层
-    basename : str # 保存时使用的名称（不含后缀）
+    basename : str | None # 保存时使用的名称（不含后缀）
     offset_x : int
     offset_y : int
     width : int
@@ -117,7 +117,7 @@ class ImagePack(NamedAssetClassBase):
                  offset_x : int = 0, offset_y : int = 0,
                  width : int = 0, height : int = 0,
                  projective_vertices : tuple[tuple[int,int],tuple[int,int],tuple[int,int],tuple[int,int]] | None = None,
-                 basename : str = '', applyon : typing.Iterable[int] | None = None) -> None:
+                 basename : str | None = None, applyon : typing.Iterable[int] | None = None) -> None:
       self.mask = mask
       self.mask_color = mask_color
       self.offset_x = offset_x
@@ -266,7 +266,7 @@ class ImagePack(NamedAssetClassBase):
       json_masks = []
       for m in self.masks:
         basename = m.basename
-        if basename != "None":
+        if basename is not None:
           if len(basename) == 0:
             basename = 'm' + str(len(json_masks))
           filename = basename + ".png"
@@ -917,7 +917,7 @@ class ImagePack(NamedAssetClassBase):
               break
       if isFullyCovers:
         m.mask = None
-        m.basename = "None"
+        m.basename = None
 
   def get_summary_no_variations(self, descriptor : 'ImagePackDescriptor') -> 'ImagePackSummary':
     # 在该图片组没有使用基底图变体时生成 ImagePackSummary

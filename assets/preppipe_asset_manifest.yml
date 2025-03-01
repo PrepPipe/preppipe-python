@@ -1,4 +1,5 @@
 subdirs:
+  - imagepack/charactersprite/charactersprites.yml
   - imagepack/background/backgrounds.yml
   - thirdparty/thirdparty.yml
   - gui/gui.yml

@@ -1,0 +1,72 @@
+选区:
+  M1-头发:
+    基础颜色: "#886F64"
+    适用于: L7-头发
+  M2-衣服:
+    基础颜色: "#8C6E5F"
+    适用于: ["L3-衣服","L5-裙蝴蝶结","L10-帽蝴蝶结"]
+  M3-裙子:
+    基础颜色: "#FCFAF9"
+    适用于: ["L2-裙子","L4-内搭","L6-衣扣蝴蝶结","L9-帽子"]
+  M4-围巾装饰:
+    基础颜色: "#FFBCC3"
+    适用于: L8-围巾装饰
+生成:
+  charactersprite_parts_based:
+    部件类型:
+      B1: preset_kind_base
+      B2: preset_kind_base
+      M: preset_kind_eyebrow
+      #Y: preset_kind_eye
+      K: preset_kind_mouth
+      #Q: preset_kind_fullface
+      DA: preset_kind_decoration
+      DB: preset_kind_decoration
+    标签:
+      通用: preset_tag_general
+      笑容: preset_tag_smile
+      愤怒: preset_tag_angry
+      悲伤: preset_tag_sad
+      惊讶: preset_tag_surprised
+      困惑: preset_tag_confused
+      害怕: preset_tag_scared
+      基底: preset_tag_base
+    部件:
+      B1:
+        L1-底图: 基底
+        L2-裙子: 基底
+        L3-衣服: 基底
+        L4-内搭: 基底
+        L5-裙蝴蝶结: 基底
+        L6-衣扣蝴蝶结: 基底
+      M:
+        M0-正常: ["通用", "笑容", "惊讶", "困惑", "害怕"]
+        M1-悲伤: 悲伤
+        M2-生气: 愤怒
+      K:
+        K0-正常: ["通用","害怕","愤怒","惊讶","困惑","笑容"]
+        K1-圆张嘴: ["通用","害怕","困惑","笑容"]
+        K2-闭嘴: ["通用","害怕","愤怒","困惑","笑容"]
+        K3-纠结: 害怕
+        K4-欢呼: 笑容
+        K5-撇嘴: 愤怒
+        K6-尴尬嘴: 害怕
+        K7-张嘴扁: 笑容
+        K8-悲伤嘴: 悲伤
+        K9-嘟嘴: ["通用","愤怒"]
+      B2:
+        L7-头发: 基底
+        L8-围巾装饰: 基底
+        L9-帽子: 基底
+        L10-帽蝴蝶结: 基底
+      DA:
+        D1-眼泪: {标签: ["害怕","悲伤"], 互斥: ["K0"], 依赖: ["K8"]}
+        D2-流汗: ["通用","害怕","笑容"]
+      DB:
+        D3-眼镜框: ["通用","害怕","愤怒","悲伤","惊讶","困惑","笑容"]
+    基底简写:
+      B0: L1L2L3L4L5L6L7L8L9L10
+元数据:
+    author: "秋襟"
+    overview_scale: 0.2
+    diff_croprect: [1885, 905, 2685, 1705]

@@ -23,6 +23,7 @@ from ..commontypes import Color
 from ..language import *
 from ..tooldecl import ToolClassDecl
 from .imagepack import *
+from ..assets.assetmanager import AssetManager
 
 @ToolClassDecl("imagepackrecolortester")
 class ImagePackRecolorTester:
@@ -407,6 +408,7 @@ class ImagePackRecolorTester:
     parser.add_argument("--psd", type=str, help="PSD file to load")
     parser.add_argument("--loaddir", type=str, help="Directory to load images")
     parser.add_argument("--yaml", type=str, help="ImagePack YAML file to load")
+    parser.add_argument("--asset", type=str, help="Asset ID to load")
     parser.add_argument("--srcscale", type=float, default=1.0, help="Scale factor for source images")
     parser.add_argument("--mask", type=str, nargs="+", help="Layer names to use as masks")
     parser.add_argument("--minimal", action="store_true", help="Use narrow color range")
@@ -432,6 +434,20 @@ class ImagePackRecolorTester:
           basecolors[name] = Color.get(parts[1])
 
     imagepacks = []
+    def add_forkable_pack(pack : ImagePack):
+      nonlocal imagepacks
+      if len(pack.masks) > 1:
+        # 给每个选区都生成一个独立的图片包
+        nummasks = len(pack.masks)
+        fork_args = [None] * nummasks
+        for i in range(0, nummasks):
+          curpack = pack.fork_applying_mask(fork_args) # type: ignore
+          curpack.masks.append(pack.masks[i])
+          imagepacks.append(curpack)
+      elif len(pack.masks) == 1:
+        imagepacks.append(pack)
+      else:
+        raise ValueError("No mask found in ImagePack")
     if parsed_args.psd or parsed_args.loaddir:
       if len(baselayernames) == 0:
         raise ValueError("No mask layers specified")
@@ -474,18 +490,16 @@ class ImagePackRecolorTester:
         pack = pack.fork_and_shrink(decimal.Decimal(parsed_args.srcscale))
       else:
         pack = pack.shrink_for_overview()
-      if len(pack.masks) > 1:
-        # 给每个选区都生成一个独立的图片包
-        nummasks = len(pack.masks)
-        fork_args = [None] * nummasks
-        for i in range(0, nummasks):
-          curpack = pack.fork_applying_mask(fork_args) # type: ignore
-          curpack.masks.append(pack.masks[i])
-          imagepacks.append(curpack)
-      elif len(pack.masks) == 1:
-        imagepacks.append(pack)
+      add_forkable_pack(pack)
+    elif parsed_args.asset:
+      am = AssetManager.get_instance()
+      if pack := am.get_asset(parsed_args.asset):
+        add_forkable_pack(pack)
       else:
-        raise ValueError("No mask found in ImagePack")
+        am.load_all_assets()
+        json_dump = am.get_assets_json()
+        available_assets = [k for k in json_dump.keys() if k.startswith("imagepack")]
+        raise ValueError("Cannot find asset " + parsed_args.asset + ". Available assets: " + ", ".join(available_assets))
     else:
       size = (600, 200)
       for color in dest_colors:
