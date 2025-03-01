@@ -1,0 +1,75 @@
+选区:
+  M1-头发:
+    基础颜色: "#a55556"
+    适用于: ["L1-后发", "L10-前发"]
+  M2-衣服:
+    基础颜色: "#e6c8ad"
+    适用于: L6-衣服
+  M3-裙摆:
+    基础颜色: "#f2dcd0"
+    适用于: L3-裙摆
+  M4-衬衫:
+    基础颜色: "#fdf2f2"
+    适用于: L4-衬衫
+  M5-蝴蝶结:
+    基础颜色: "#e19698"
+    适用于: L8-蝴蝶结
+  M6-领口腰带:
+    基础颜色: "#fcf1f2"
+    适用于: ["L5-衣领口","L7-腰带格纹"]
+  M7-袖口:
+    基础颜色: "#f7ebe0"
+    适用于: L9-袖口
+生成:
+  charactersprite_parts_based:
+    部件类型:
+      B1: preset_kind_base
+      B2: preset_kind_base
+      M: preset_kind_eyebrow
+      #Y: preset_kind_eye
+      K: preset_kind_mouth
+      #Q: preset_kind_fullface
+      D: preset_kind_decoration
+    标签:
+      通用: preset_tag_general
+      笑容: preset_tag_smile
+      愤怒: preset_tag_angry
+      悲伤: preset_tag_sad
+      惊讶: preset_tag_surprised
+      困惑: preset_tag_confused
+      害怕: preset_tag_scared
+      基底: preset_tag_base
+    部件:
+      B1:
+        L1-后发: 基底
+        L2-底图: 基底
+        L3-裙摆: 基底
+        L4-衬衫: 基底
+        L5-衣领口: 基底
+        L6-衣服: 基底
+        L7-腰带格纹: 基底
+        L8-蝴蝶结: 基底
+        L9-袖口: 基底
+      M:
+        M0-正常: ["通用", "笑容", "惊讶", "困惑", "害怕"]
+        M1-悲伤: 悲伤
+        M2-生气: 愤怒
+      K:
+        K0-微笑: ["笑容"]
+        K1-张嘴笑: ["笑容"]
+        K2-纠结: ["通用","害怕","愤怒","惊讶","困惑"]
+        K3-尴尬: ["害怕","笑容"]
+        K4-撇嘴: 愤怒
+        K5-不高兴: ["通用","害怕","悲伤","愤怒","困惑"]
+        K6-张嘴: ["通用","害怕","困惑","笑容"]
+      B2:
+        L10-前发: 基底
+        L11-上层: 基底
+      D:
+        D1-眼泪: {标签: ["害怕","悲伤"], 互斥: ["K3"]}
+    基底简写:
+      B0: L1L2L3L4L5L6L7L8L9L10L11
+元数据:
+    author: "秋襟"
+    overview_scale: 0.2
+    diff_croprect: [2214, 783, 3014, 1583]

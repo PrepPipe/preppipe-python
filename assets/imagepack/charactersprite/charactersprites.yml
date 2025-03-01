@@ -1,3 +1,5 @@
 imagepack:
   A0DT1:
     yamlpath: "{srcpath}/A0-秋襟/DT1-短发女生/config.yml"
+  A0DT2:
+    yamlpath: "{srcpath}/A0-秋襟/DT2-长发女生/config.yml"
