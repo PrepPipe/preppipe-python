@@ -178,7 +178,21 @@ class ExecutionObject(QObject):
       self.tmpdir = None
 
   def get_final_commands(self):
-    return [sys.executable, sys.argv[0]] + self.composed_args
+    # 这里有两种情况：
+    # 1. 执行的是脚本， sys.executable 指向 Python 解释器， sys.argv[0] 指向脚本路径
+    # 2. 执行的是打包好的可执行文件， sys.executable 和 sys.argv[0] 都指向可执行文件路径
+    # 如果执行的是打包好的可执行文件， 我们优先选择相同目录下的 preppipe_cli[.exe]，避免闪过窗口
+    executable_basename = os.path.basename(sys.executable)
+    argv0_basename = os.path.basename(sys.argv[0])
+    if executable_basename != argv0_basename:
+      # 情况1
+      return [sys.executable, sys.argv[0]] + self.composed_args
+    # 情况2，尝试寻找 preppipe_cli[.exe]
+    executable_base, executable_ext = os.path.splitext(executable_basename)
+    cli_executable_path = os.path.join(os.path.dirname(sys.executable), executable_base + '_cli' + executable_ext)
+    if os.path.isfile(cli_executable_path):
+      return [cli_executable_path] + self.composed_args
+    return [sys.executable] + self.composed_args
 
   def launch(self, wait : bool = False):
     if self.state == ExecutionState.FAILED_TEMPDIR_CREATION:
