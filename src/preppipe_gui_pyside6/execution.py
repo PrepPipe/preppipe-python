@@ -203,13 +203,17 @@ class ExecutionObject(QObject):
     self.outputs = []
     commands = self.get_final_commands()
     self.state = ExecutionState.RUNNING
+    creationflags = 0
+    if platform.system() == 'Windows':
+      creationflags = subprocess.CREATE_NO_WINDOW
     try:
       self.proc = subprocess.Popen(
         commands,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         env=self.composed_envs,
-        universal_newlines=False
+        universal_newlines=False,
+        creationflags=creationflags
       )
     except Exception as e:
       self.state = ExecutionState.FAILED_LAUNCH
