@@ -7,6 +7,7 @@ from .forms.generated.ui_mainwindow import Ui_MainWindow
 from .navigatorwidget import *
 from .toolwidgets.home import *
 from .toolwidgets.setting import *
+from .toolwidgets.execute import *
 from .mainwindowinterface import *
 
 class MainWindow(QMainWindow, MainWindowInterface):
@@ -61,6 +62,7 @@ class MainWindow(QMainWindow, MainWindowInterface):
     if not isinstance(widget, ToolWidgetInterface):
       raise PPInternalError(f"Widget {widget} is not a ToolWidgetInterface")
     widget.setWidgetIdentificationInfo(info)
+    setattr(widget, 'mainWindowHandle', self)
     if info.data is not None:
       widget.setData(**info.data)
     else:
@@ -141,6 +143,14 @@ class MainWindow(QMainWindow, MainWindowInterface):
   @Slot()
   def openDocumentHomePage(self):
     self.requestOpenDocument(None)
+
+  def requestExecution(self, info : ExecutionInfo) -> None:
+    toolinfo = ExecuteWidget.getToolInfo()
+    toolinfo.data = {
+      "execinfo" : info,
+    }
+    self.requestOpen(toolinfo)
+    return
 
   @staticmethod
   def initialize():

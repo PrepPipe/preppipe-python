@@ -21,7 +21,11 @@ runs:
         git describe --tags
       shell: bash
     - name: install dependencies
-      run: pip install --upgrade build twine
+      run: pip install --upgrade build twine pyside6
+      shell: bash
+    - name: compile Qt UI files
+      run: |
+        cd src/preppipe_gui_pyside6/forms ; make ; cd ../../..
       shell: bash
     - name: build
       run: python3 -X utf8 -m build

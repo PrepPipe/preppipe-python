@@ -6,6 +6,7 @@ from ..forms.generated.ui_maininputwidget import Ui_MainInputWidget
 from preppipe.language import *
 from ..componentwidgets.filelistinputwidget import *
 from ..guiassets import *
+from ..execution import *
 
 class MainInputWidget(QWidget, ToolWidgetInterface):
   ui : Ui_MainInputWidget
@@ -44,6 +45,21 @@ class MainInputWidget(QWidget, ToolWidgetInterface):
     zh_cn="支持的文件类型 (*.odt *.docx *.md *.txt)",
     zh_hk="支持的文件類型 (*.odt *.docx *.md *.txt)",
   )
+  _tr_unable_to_execute = TR_gui_mainwindow.tr("unable_to_execute",
+    en="Unable to execute",
+    zh_cn="无法执行",
+    zh_hk="無法執行",
+  )
+  _tr_input_required = TR_gui_mainwindow.tr("input_required",
+    en="Please specify input files first",
+    zh_cn="请先指定输入文件",
+    zh_hk="請先指定輸入文件",
+  )
+  _tr_export_path = TR_gui_mainwindow.tr("export_path",
+    en="Export Path",
+    zh_cn="导出路径",
+    zh_hk="導出路徑",
+  )
 
   def __init__(self, parent: QWidget):
     super(MainInputWidget, self).__init__(parent)
@@ -64,11 +80,11 @@ class MainInputWidget(QWidget, ToolWidgetInterface):
     input_layout.setSpacing(0)
     self.ui.inputGroupBox.setLayout(input_layout)
     self.build_operation_groupbox(self.ui.analysisGroupBox, [
-      (MainWindowInterface.tr_toolname_analysis, None, MainInputWidget.request_analysis),
+      (MainWindowInterface.tr_toolname_analysis, None, self.request_analysis),
     ])
     self.build_operation_groupbox(self.ui.exportGroupBox, [
-      (MainWindowInterface.tr_toolname_export_renpy, "vnengines/renpy.png", MainInputWidget.request_export_renpy),
-      (MainWindowInterface.tr_toolname_export_webgal, "vnengines/webgal.png", MainInputWidget.request_export_webgal),
+      (MainWindowInterface.tr_toolname_export_renpy, "vnengines/renpy.png", self.request_export_renpy),
+      (MainWindowInterface.tr_toolname_export_webgal, "vnengines/webgal.png", self.request_export_webgal),
     ])
 
   def build_operation_groupbox(self, group : QGroupBox, entry_list : list):
@@ -93,7 +109,15 @@ class MainInputWidget(QWidget, ToolWidgetInterface):
 
   @Slot()
   def request_export_renpy(self):
-    pass
+    filelist = self.filelist.getCurrentList()
+    if not filelist:
+      QMessageBox.critical(self, self._tr_unable_to_execute.get(), self._tr_input_required.get())
+      return
+    info = ExecutionInfo.init_main_pipeline(filelist)
+    info.args.append("--renpy-codegen")
+    info.args.append("--renpy-export")
+    info.add_output_unspecified(self._tr_export_path, "game", is_dir=True)
+    MainWindowInterface.getHandle(self).requestExecution(info)
 
   @Slot()
   def request_export_webgal(self):
