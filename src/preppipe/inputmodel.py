@@ -31,8 +31,6 @@
 # @~chinese @brief 请从 preppipe.inputmodel 查看文档
 # @~
 
-# from tabnanny import check
-# from tkinter.font import names
 import typing
 import PIL.Image
 import importlib
