@@ -10,7 +10,6 @@ TR_gui_setting = TranslationDomain("gui_setting")
 
 class SettingWidget(QWidget, ToolWidgetInterface):
   ui : Ui_SettingWidget
-  mainWindowHandle : MainWindowInterface
 
   _tr_toolname = TR_gui_setting.tr("toolname",
     en="Setting",
@@ -39,13 +38,12 @@ class SettingWidget(QWidget, ToolWidgetInterface):
     super(SettingWidget, self).__init__(parent)
     self.ui = Ui_SettingWidget()
     self.ui.setupUi(self)
-    self.mainWindowHandle = parent
     self.bind_text(lambda s : self.ui.tabWidget.setTabText(0, s), self._tr_tab_general)
     self.bind_text(self.ui.languageLabel.setText, self._tr_general_language)
     self.ui.languageComboBox.clear()
     for lang_code, lang_name in self._langs_dict.items():
       self.ui.languageComboBox.addItem(lang_name, lang_code)
-    self.ui.languageComboBox.setCurrentIndex(self.ui.languageComboBox.findData(self._get_current_language()))
+    self.ui.languageComboBox.setCurrentIndex(self.ui.languageComboBox.findData(self.get_current_language()))
     self.ui.languageComboBox.currentIndexChanged.connect(self.on_languageComboBox_currentIndexChanged)
 
   def on_languageComboBox_currentIndexChanged(self, index):
@@ -65,7 +63,8 @@ class SettingWidget(QWidget, ToolWidgetInterface):
     if lang := SettingsDict.instance().get("language"):
       SettingWidget.setLanguage(lang)
 
-  def _get_current_language(self) -> str:
+  @staticmethod
+  def get_current_language() -> str:
     if lang := SettingsDict.instance().get("language"):
       return lang
     for candidate in Translatable.PREFERRED_LANG:
@@ -76,16 +75,16 @@ class SettingWidget(QWidget, ToolWidgetInterface):
   def get_initial_value(self, key : str):
     match key:
       case "language":
-        return self._get_current_language()
+        return self.get_current_language()
       case _:
         raise RuntimeError("Unexpected key")
 
   def language_updated(self, lang):
-    if lang == self._get_current_language():
+    if lang == self.get_current_language():
       return
     SettingWidget.setLanguage(lang)
     SettingsDict.instance()["language"] = lang
-    self.mainWindowHandle.handleLanguageChange()
+    MainWindowInterface.getHandle(self).handleLanguageChange()
 
   @staticmethod
   def setLanguage(lang_code : str) -> None:
