@@ -98,6 +98,7 @@ class ExecuteWidget(QWidget, ToolWidgetInterface):
     for key, value in execinfo.envs.items():
       self.appendPlainText(f"{key}={value}\n")
     self.appendPlainText(' '.join(self.exec.get_final_commands()) + '\n')
+    self.appendPlainText('='*20 + '\n')
     self.exec.outputAvailable.connect(self.handleOutput)
 
     for out in execinfo.specified_outputs:
@@ -135,6 +136,9 @@ class ExecuteWidget(QWidget, ToolWidgetInterface):
 
   @Slot()
   def handle_process_finished(self):
+    if self.exec is None:
+      raise RuntimeError("ExecuteWidget handle_process_finished() called before setData()")
+    self.appendPlainText('='*20 + '\n')
     if result := self.exec.result:
       exitcode = result.returncode
       if exitcode == 0:
