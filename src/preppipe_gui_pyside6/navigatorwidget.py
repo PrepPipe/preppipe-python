@@ -131,13 +131,9 @@ class ToolModel(QAbstractItemModel):
 class NavigatorWidget(QWidget, ToolWidgetInterface):
   ui : Ui_NavigatorWidget
   model : ToolModel
-  mainWindowHandle : MainWindowInterface
 
   def __init__(self, parent : QWidget):
     super(NavigatorWidget, self).__init__(parent)
-    if not isinstance(parent, MainWindowInterface):
-      raise ValueError("Parent must be an instance of MainWindowInterface.")
-    self.mainWindowHandle = parent
     self.ui = Ui_NavigatorWidget()
     self.ui.setupUi(self)
     ToolNode.build_tree()
@@ -153,7 +149,7 @@ class NavigatorWidget(QWidget, ToolWidgetInterface):
     info = index.internalPointer().info
     if info is None:
       return
-    self.mainWindowHandle.requestOpen(info)
+    MainWindowInterface.getHandle(self).requestOpen(info)
 
   _tr_toolname_navigator = TR_gui_mainwindow.tr("toolname_navigator",
     en="Navigator",

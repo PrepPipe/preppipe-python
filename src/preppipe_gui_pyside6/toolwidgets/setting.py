@@ -33,17 +33,15 @@ class SettingWidget(QWidget, ToolWidgetInterface):
   }
 
   def __init__(self, parent : QWidget):
-    if not isinstance(parent, MainWindowInterface):
-      raise TypeError("SettingWidget must be created with a MainWindowInterface instance as parent")
     super(SettingWidget, self).__init__(parent)
     self.ui = Ui_SettingWidget()
     self.ui.setupUi(self)
     self.bind_text(lambda s : self.ui.tabWidget.setTabText(0, s), self._tr_tab_general)
     self.bind_text(self.ui.languageLabel.setText, self._tr_general_language)
     self.ui.languageComboBox.clear()
-    for lang_code, lang_name in self._langs_dict.items():
+    for lang_code, lang_name in SettingsDict._langs_dict.items():
       self.ui.languageComboBox.addItem(lang_name, lang_code)
-    self.ui.languageComboBox.setCurrentIndex(self.ui.languageComboBox.findData(self.get_current_language()))
+    self.ui.languageComboBox.setCurrentIndex(self.ui.languageComboBox.findData(SettingsDict.get_current_language()))
     self.ui.languageComboBox.currentIndexChanged.connect(self.on_languageComboBox_currentIndexChanged)
 
   def on_languageComboBox_currentIndexChanged(self, index):
@@ -63,24 +61,15 @@ class SettingWidget(QWidget, ToolWidgetInterface):
     if lang := SettingsDict.instance().get("language"):
       SettingWidget.setLanguage(lang)
 
-  @staticmethod
-  def get_current_language() -> str:
-    if lang := SettingsDict.instance().get("language"):
-      return lang
-    for candidate in Translatable.PREFERRED_LANG:
-      if candidate in SettingWidget._langs_dict:
-        return candidate
-    return "en"
-
   def get_initial_value(self, key : str):
     match key:
       case "language":
-        return self.get_current_language()
+        return SettingsDict.get_current_language()
       case _:
         raise RuntimeError("Unexpected key")
 
   def language_updated(self, lang):
-    if lang == self.get_current_language():
+    if lang == SettingsDict.get_current_language():
       return
     SettingWidget.setLanguage(lang)
     SettingsDict.instance()["language"] = lang

@@ -8,6 +8,7 @@ import shelve
 import threading
 import collections
 import collections.abc
+from preppipe.language import *
 
 def get_executable_base_dir() -> str:
   if getattr(sys, 'frozen', False):
@@ -22,9 +23,11 @@ class SettingsDict(collections.abc.MutableMapping):
   shelf : shelve.Shelf
 
   @staticmethod
-  def instance():
+  def instance() -> 'SettingsDict':
     if SettingsDict._settings_instance is None:
       SettingsDict._settings_instance = SettingsDict(os.path.join(SettingsDict._executable_base_dir, "preppipe_gui.settings.db"))
+      if SettingsDict._settings_instance is None:
+        raise RuntimeError("SettingsDict instance failed to initialize")
     return SettingsDict._settings_instance
 
   @staticmethod
@@ -114,3 +117,19 @@ class SettingsDict(collections.abc.MutableMapping):
 
   def __exit__(self, exc_type, exc_val, exc_tb):
     self.close()
+
+  # 为了避免循环依赖，我们在这里把其他获取当前设置值的函数放在这里
+  _langs_dict = {
+    "en": "English",
+    "zh_cn": "中文（简体）",
+    "zh_hk": "中文（繁體）",
+  }
+  @staticmethod
+  def get_current_language() -> str:
+    if inst := SettingsDict.instance():
+      if lang := inst.get("language"):
+        return lang
+    for candidate in Translatable.PREFERRED_LANG:
+      if candidate in SettingsDict._langs_dict:
+        return candidate
+    return "en"
