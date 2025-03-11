@@ -8,7 +8,7 @@ import threading
 import time
 from PySide6.QtCore import *
 from preppipe.language import *
-from .toolwidgets.setting import SettingWidget
+from .settingsdict import *
 
 @dataclasses.dataclass
 class SpecifiedOutputInfo:
@@ -49,7 +49,7 @@ class ExecutionInfo:
 
   @staticmethod
   def init_common():
-    lang = SettingWidget.get_current_language()
+    lang = SettingsDict.get_current_language()
     return ExecutionInfo(envs={
       'PREPPIPE_LANGUAGE': lang,
     })
