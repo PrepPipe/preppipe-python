@@ -6,6 +6,7 @@ from PySide6.QtGui import *
 from ..forms.generated.ui_filelistinputwidget import Ui_FileListInputWidget
 from preppipe.language import *
 from ..translatablewidgetinterface import *
+from ..util.fileopen import FileOpenHelper
 
 class FileListInputWidget(QWidget, TranslatableWidgetInterface):
   listChanged = Signal()
@@ -61,6 +62,7 @@ class FileListInputWidget(QWidget, TranslatableWidgetInterface):
     self.ui.removeButton.clicked.connect(self.itemRemove)
     self.ui.moveUpButton.clicked.connect(self.itemMoveUp)
     self.ui.moveDownButton.clicked.connect(self.itemMoveDown)
+    self.ui.openContainingDirectoryButton.clicked.connect(self.itemOpenContainingDirectory)
     self.setAcceptDrops(True)
 
   def setDirectoryMode(self, v: bool):
@@ -136,6 +138,13 @@ class FileListInputWidget(QWidget, TranslatableWidgetInterface):
       self.ui.listWidget.insertItem(curRow + 1, item)
       self.ui.listWidget.setCurrentRow(curRow + 1)
       self.listChanged.emit()
+
+  @Slot()
+  def itemOpenContainingDirectory(self):
+    curRow = self.ui.listWidget.currentRow()
+    if curRow >= 0:
+      path = self.ui.listWidget.item(curRow).text()
+      FileOpenHelper.open_containing_directory(self, path)
 
   _tr_select_dialog_title = TR_gui_filelistinputwidget.tr("select_dialog_title",
     en="Please select {field}",
