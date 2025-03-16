@@ -93,21 +93,28 @@
        </property>
       </widget>
      </item>
+     <item>
+      <widget class="QPushButton" name="openContainingDirectoryButton">
+       <property name="text">
+        <string>打开所在目录</string>
+       </property>
+      </widget>
+     </item>
     </layout>
    </item>
    <item>
     <widget class="QListWidget" name="listWidget">
      <property name="verticalScrollBarPolicy">
-      <enum>Qt::ScrollBarAlwaysOn</enum>
+      <enum>Qt::ScrollBarPolicy::ScrollBarAlwaysOn</enum>
      </property>
      <property name="dragEnabled">
       <bool>true</bool>
      </property>
      <property name="dragDropMode">
-      <enum>QAbstractItemView::InternalMove</enum>
+      <enum>QAbstractItemView::DragDropMode::InternalMove</enum>
      </property>
      <property name="selectionBehavior">
-      <enum>QAbstractItemView::SelectRows</enum>
+      <enum>QAbstractItemView::SelectionBehavior::SelectRows</enum>
      </property>
     </widget>
    </item>

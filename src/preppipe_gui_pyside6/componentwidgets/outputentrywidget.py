@@ -6,6 +6,7 @@ from PySide6.QtGui import QDesktopServices
 from preppipe.language import *
 from ..forms.generated.ui_outputentrywidget import Ui_OutputEntryWidget
 from ..translatablewidgetinterface import *
+from ..util.fileopen import FileOpenHelper
 
 class OutputEntryWidget(QWidget, TranslatableWidgetInterface):
   TR_gui_outputentrywidget = TranslationDomain("gui_outputentrywidget")
@@ -38,16 +39,6 @@ class OutputEntryWidget(QWidget, TranslatableWidgetInterface):
     en="Not Generated Yet",
     zh_cn="尚未生成",
     zh_hk="尚未生成",
-  )
-  _tr_not_supported = TR_gui_outputentrywidget.tr("not_supported",
-    en="Not Supported",
-    zh_cn="暂不支持",
-    zh_hk="暫不支持",
-  )
-  _tr_not_supporting_open_directory = TR_gui_outputentrywidget.tr("not_supporting_open_directory",
-    en="Sorry, we do not support opening directories in the current system yet.",
-    zh_cn="抱歉，我们暂不支持在当前系统下打开目录。",
-    zh_hk="抱歉，我們暫不支持在當前系統下打開目錄。",
   )
 
   ui : Ui_OutputEntryWidget
@@ -119,28 +110,8 @@ class OutputEntryWidget(QWidget, TranslatableWidgetInterface):
       self.bind_text(self.ui.statusLabel.setText, self._tr_filestate_not_generated_yet)
 
   def requestOpenContainingDirectory(self):
-    if not os.path.exists(self.path):
-      return
-
-    if sys.platform.startswith('win'):
-      # Windows
-      explorer = 'explorer'
-      path = os.path.normpath(self.path)
-      subprocess.Popen([explorer, '/select,', path])
-    elif sys.platform.startswith('darwin'):
-      # macOS
-      subprocess.Popen(['open', '-R', self.path])
-    elif sys.platform.startswith('linux'):
-      # Linux
-      try:
-        subprocess.Popen(['xdg-open', os.path.dirname(self.path)])
-      except Exception:
-        QMessageBox.warning(self, self._tr_not_supported.get(), self._tr_not_supporting_open_directory.get())
-    else:
-      QMessageBox.warning(self, self._tr_not_supported.get(), self._tr_not_supporting_open_directory.get())
+    FileOpenHelper.open_containing_directory(self, self.path)
 
   def requestOpen(self):
-    """Opens the target file or directory using the default system handler."""
-    info = QFileInfo(self.path)
-    if info.exists():
-      QDesktopServices.openUrl(QUrl.fromLocalFile(self.path))
+    FileOpenHelper.open(self, self.path)
+
