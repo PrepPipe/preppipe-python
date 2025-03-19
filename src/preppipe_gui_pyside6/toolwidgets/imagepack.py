@@ -83,6 +83,10 @@ class ImagePackTool(QWidget, ToolWidgetInterface):
     self.descriptor = ImagePack.get_descriptor_by_id(packid)
     if not isinstance(self.descriptor, ImagePackDescriptor):
       raise PPInternalError(f"Unexpected descriptor type {type(self.descriptor)}")
+    QMetaObject.invokeMethod(self, "initializeImage", Qt.QueuedConnection)
+
+  @Slot()
+  def initializeImage(self):
     self.set_image(self.pack.get_composed_image(0))
 
   def set_image(self, image: PIL.Image.Image | ImageWrapper):
@@ -94,6 +98,7 @@ class ImagePackTool(QWidget, ToolWidgetInterface):
     else:
       pixmap = QPixmap.fromImage(PIL.ImageQt.ImageQt(image))
     self.viewer.setImage(pixmap)
+    self.viewer.fit_to_view()
 
   def populate_image_rightclick_menu(self, menu: QMenu):
     # TODO
