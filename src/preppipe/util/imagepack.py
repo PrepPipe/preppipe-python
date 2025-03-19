@@ -2975,15 +2975,20 @@ class ImagePackDocsDumper(AssetDocsDumperBase):
     zh_cn="背景模板",
     zh_hk="背景模板",
   )
-  _tr_heading_background = TR_docs.tr("heading_background",
+  tr_heading_background = TR_docs.tr("heading_background",
     en="Background",
     zh_cn="背景",
     zh_hk="背景",
   )
+  tr_heading_charactersprite = TR_docs.tr("heading_charactersprite",
+    en="Character Sprite",
+    zh_cn="立绘",
+    zh_hk="立繪",
+  )
 
   heading_list = [
     _tr_heading_background_template,
-    _tr_heading_background,
+    tr_heading_background,
   ]
 
   @classmethod
