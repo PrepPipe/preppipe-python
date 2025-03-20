@@ -37,6 +37,9 @@ class ImageViewerWidget(QGraphicsView):
     # When zooming out below this threshold, we will switch to a downscaled version.
     self._downscale_threshold = 1.0
 
+    # flag to rescale the image when the widget is resized
+    self.is_follow_resize = False
+
     # Transformation anchor for smooth zooming.
     self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
     self.setDragMode(QGraphicsView.NoDrag)  # we implement our own panning
@@ -106,6 +109,7 @@ class ImageViewerWidget(QGraphicsView):
       new_cursorpos = QPointF(cursorpos.x() / capped_old_scale, cursorpos.y() / capped_old_scale) * scale_for_updating_center
       curcursorpos = self.mapToScene(self.mapFromGlobal(QCursor.pos()))
       self.moveView(new_cursorpos.x() - curcursorpos.x(), new_cursorpos.y() - curcursorpos.y())
+    self.is_follow_resize = False
 
   def wheelEvent(self, event: QWheelEvent):
     # Show the slider
@@ -150,6 +154,7 @@ class ImageViewerWidget(QGraphicsView):
   def moveView(self, dx: int, dy: int):
     self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - dx)
     self.verticalScrollBar().setValue(self.verticalScrollBar().value() - dy)
+    self.is_follow_resize = False
 
   def mouseReleaseEvent(self, event: QMouseEvent):
     if event.button() == Qt.LeftButton:
@@ -188,9 +193,10 @@ class ImageViewerWidget(QGraphicsView):
   def fit_to_view(self):
     if self._original_pixmap is None:
       return
-    ratio_x = self.width() / self._original_pixmap.width()
-    ratio_y = self.height() / self._original_pixmap.height()
+    ratio_x = self.viewport().width() / self._original_pixmap.width()
+    ratio_y = self.viewport().height() / self._original_pixmap.height()
     self.set_zoom(max(min(ratio_x, ratio_y), self.slider.minimum() / 100))
+    self.is_follow_resize = True
 
   def _update_displayed_pixmap(self, center: QPointF | None = None):
     """
@@ -248,3 +254,9 @@ class ImageViewerWidget(QGraphicsView):
         file_path += ".png"
       # Save the original QPixmap.
       self._original_pixmap.save(file_path, "PNG")
+
+  def resizeEvent(self, event: QResizeEvent):
+    super().resizeEvent(event)
+    if self.is_follow_resize:
+      # Use delayed invocation to avoid flickering.
+      QMetaObject.invokeMethod(self, "fit_to_view", Qt.QueuedConnection)
