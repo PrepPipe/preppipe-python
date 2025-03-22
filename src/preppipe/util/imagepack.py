@@ -436,9 +436,16 @@ class ImagePack(NamedAssetClassBase):
       self.opaque_metadata = ImagePack.recover_metadata_from_dict_serialized(manifest["metadata"])
 
   def get_composed_image(self, index : int) -> ImageWrapper:
+    # 仅使用单个组合标号来获取
     if not self.is_imagedata_loaded():
       raise PPInternalError("Cannot compose images without loading the data")
     layer_indices = self.composites[index].layers
+    return self.get_composed_image_lower(layer_indices)
+
+  def get_composed_image_lower(self, layer_indices : list[int]) -> ImageWrapper:
+    # 指定图层组合，可以是原来没有的图层
+    if not self.is_imagedata_loaded():
+      raise PPInternalError("Cannot compose images without loading the data")
     if len(layer_indices) == 0:
       raise PPInternalError("Empty composition? some thing is probably wrong")
     if len(layer_indices) == 1:
