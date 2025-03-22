@@ -1,3 +1,4 @@
+import functools
 import PIL.ImageQt
 from ..toolwidgetinterface import *
 from PySide6.QtWidgets import *
@@ -7,6 +8,7 @@ from preppipe.assets.assetmanager import *
 from preppipe.util.imagepack import *
 from ..forms.generated.ui_imagepackwidget import Ui_ImagePackWidget
 from ..componentwidgets.imageviewerwidget import ImageViewerWidget
+from ..componentwidgets.maskinputwidget import MaskInputWidget
 
 TR_gui_tool_imagepack = TranslationDomain("gui_tool_imagepack")
 
@@ -62,6 +64,13 @@ class ImagePackTool(QWidget, ToolWidgetInterface):
   # 在 setData() 中初始化
   pack : ImagePack
   descriptor : ImagePackDescriptor
+  # 如果有加选区参数，那么这里就是修改后的图片包，否则就是原来的
+  current_pack : ImagePack
+
+  # 当前的组合、选区参数
+  current_index : int | list[int] | None = None
+  current_mask_params : list[typing.Any] | None = None
+  mask_param_widgets : list[MaskInputWidget]
 
   def __init__(self, parent: QWidget):
     super(ImagePackTool, self).__init__(parent)
@@ -69,7 +78,15 @@ class ImagePackTool(QWidget, ToolWidgetInterface):
     self.ui.setupUi(self)
     self.viewer = ImageViewerWidget(self, context_menu_callback=self.populate_image_rightclick_menu)
     self.ui.viewerLayout.addWidget(self.viewer)
+    self.current_index = None
+    self.current_mask_params = None
+    self.mask_param_widgets = []
 
+  _tr_no_mask = TR_gui_tool_imagepack.tr("no_mask",
+    en="This image pack contains no customizable mask regions.",
+    zh_cn="该图片包没有可修改的选区。",
+    zh_hk="該圖片包沒有可修改的選區。",
+  )
 
   def setData(self, packid : str | None = None, category_kind : ImagePackDescriptor.ImagePackType | None = None):
     if category_kind is not None:
@@ -83,11 +100,60 @@ class ImagePackTool(QWidget, ToolWidgetInterface):
     self.descriptor = ImagePack.get_descriptor_by_id(packid)
     if not isinstance(self.descriptor, ImagePackDescriptor):
       raise PPInternalError(f"Unexpected descriptor type {type(self.descriptor)}")
-    QMetaObject.invokeMethod(self, "initializeImage", Qt.QueuedConnection)
+    self.current_pack = pack
+    if len(self.descriptor.masktypes) > 0:
+      self.current_mask_params = [None] * len(self.descriptor.masktypes)
+      layout = QFormLayout()
+      self.ui.forkParamGroupBox.setLayout(layout)
+      for index, mask in enumerate(self.descriptor.masktypes):
+        nameLabel = QLabel(mask.trname.get())
+        self.bind_text(nameLabel.setText, mask.trname)
+        inputWidget = MaskInputWidget()
+        match mask.get_param_type():
+          case ImagePackDescriptor.MaskParamType.IMAGE:
+            inputWidget.setIsColorOnly(False)
+          case ImagePackDescriptor.MaskParamType.COLOR:
+            inputWidget.setIsColorOnly(True)
+          case _:
+            raise NotImplementedError(f"Mask param type {mask.get_param_type()} is not supported")
+        layout.addRow(nameLabel, inputWidget)
+        self.add_translatable_widget_child(inputWidget)
+        self.mask_param_widgets.append(inputWidget)
+        inputWidget.valueChanged.connect(functools.partial(self.handleMaskParamUpdate, index), Qt.QueuedConnection)
+    else:
+      layout = QVBoxLayout()
+      label = QLabel(self._tr_no_mask.get())
+      self.bind_text(label.setText, self._tr_no_mask)
+      label.setWordWrap(True)
+      layout.addWidget(label)
+      self.ui.forkParamGroupBox.setLayout(layout)
+    # setData() 需要尽快返回，让组件先显示出来，后续再更新内容
+    QMetaObject.invokeMethod(self, "updateCurrentImage", Qt.QueuedConnection)
+
+  @Slot(int)
+  def handleMaskParamUpdate(self, index : int):
+    if self.current_mask_params is None:
+      raise RuntimeError("current_mask_params is None")
+    widget = self.mask_param_widgets[index]
+    self.current_mask_params[index] = widget.getValue()
+    self.updateCurrentPack()
 
   @Slot()
-  def initializeImage(self):
-    self.set_image(self.pack.get_composed_image(0))
+  def updateCurrentPack(self):
+    if self.current_mask_params is None or all(param is None for param in self.current_mask_params):
+      self.current_pack = self.pack
+    else:
+      self.current_pack = self.pack.fork_applying_mask(self.current_mask_params, enable_parallelization=True)
+    QMetaObject.invokeMethod(self, "updateCurrentImage", Qt.QueuedConnection)
+
+  @Slot()
+  def updateCurrentImage(self):
+    if isinstance(self.current_index, list):
+      img = self.current_pack.get_composed_image_lower(self.current_index)
+    else:
+      index = self.current_index if self.current_index is not None else 0
+      img = self.current_pack.get_composed_image(index)
+    self.set_image(img)
 
   def set_image(self, image: PIL.Image.Image | ImageWrapper):
     if isinstance(image, ImageWrapper):
