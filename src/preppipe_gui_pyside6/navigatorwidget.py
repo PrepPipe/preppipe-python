@@ -24,8 +24,8 @@ class ToolNode:
   NAVIGATION_LIST : typing.ClassVar[list] = [
     SettingWidget,
     MainInputWidget,
-    (ImagePackTool, {"category_kind": ImagePackDescriptor.ImagePackType.BACKGROUND}),
-    (ImagePackTool, {"category_kind": ImagePackDescriptor.ImagePackType.CHARACTER}),
+    (ImagePackWidget, {"category_kind": ImagePackDescriptor.ImagePackType.BACKGROUND}),
+    (ImagePackWidget, {"category_kind": ImagePackDescriptor.ImagePackType.CHARACTER}),
   ]
 
   def __init__(self, /, info: ToolWidgetInfo | None, parent: ToolNode | None = None):
