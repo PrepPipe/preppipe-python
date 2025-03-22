@@ -12,7 +12,7 @@ from ..componentwidgets.maskinputwidget import MaskInputWidget
 
 TR_gui_tool_imagepack = TranslationDomain("gui_tool_imagepack")
 
-class ImagePackTool(QWidget, ToolWidgetInterface):
+class ImagePackWidget(QWidget, ToolWidgetInterface):
   @classmethod
   def getToolInfo(cls, packid : str | None = None, category_kind : ImagePackDescriptor.ImagePackType | None = None) -> ToolWidgetInfo:
     if packid is None and category_kind is None:
@@ -55,7 +55,7 @@ class ImagePackTool(QWidget, ToolWidgetInterface):
         raise PPInternalError(f"Unexpected descriptor type {type(descriptor)}")
       if descriptor.packtype != category_kind:
         continue
-      result.append((ImagePackTool, {"packid": descriptor.pack_id}))
+      result.append((ImagePackWidget, {"packid": descriptor.pack_id}))
     return result
 
   ui : Ui_ImagePackWidget
@@ -73,7 +73,7 @@ class ImagePackTool(QWidget, ToolWidgetInterface):
   mask_param_widgets : list[MaskInputWidget]
 
   def __init__(self, parent: QWidget):
-    super(ImagePackTool, self).__init__(parent)
+    super(ImagePackWidget, self).__init__(parent)
     self.ui = Ui_ImagePackWidget()
     self.ui.setupUi(self)
     self.viewer = ImageViewerWidget(self, context_menu_callback=self.populate_image_rightclick_menu)
