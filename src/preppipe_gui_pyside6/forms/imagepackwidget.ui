@@ -73,7 +73,7 @@
           </sizepolicy>
          </property>
          <property name="title">
-          <string>图片选择</string>
+          <string>差分选择</string>
          </property>
         </widget>
        </item>
@@ -86,7 +86,7 @@
           </sizepolicy>
          </property>
          <property name="title">
-          <string>选区参数</string>
+          <string>选区修改参数</string>
          </property>
         </widget>
        </item>
