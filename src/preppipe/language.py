@@ -74,6 +74,18 @@ class TranslationDomain:
   def get(self, code : str) -> Translatable:
     return self.elements[code]
 
+  @staticmethod
+  def create_if_not_registered(domain : str, code : str, candidates : dict[str, list[str]]) -> Translatable:
+    # pickle 时用到
+    domaininst = TranslationDomain.ALL_DOMAINS.get(domain)
+    if domaininst is None:
+      raise RuntimeError("Unknown domain: " + domain)
+    if code in domaininst.elements:
+      return domaininst.elements[code]
+    result = Translatable(candidates=candidates, parent=domaininst, code=code)
+    domaininst.add_unpickled_translatable(result)
+    return result
+
   def add_unpickled_translatable(self, t : Translatable):
     assert t.parent is self
     assert t.code not in self.elements
@@ -164,7 +176,6 @@ class Translatable:
   PREFERRED_LANG_VER : typing.ClassVar[int] = 0 # 每次修改 PREFERRED_LANG 时加1
 
   def __init__(self, candidates : dict[str, list[str]], parent : TranslationDomain, code : str) -> None:
-    assert "en" in candidates
     self.candidates = candidates
     self.parent = parent
     self.code = code
@@ -172,17 +183,8 @@ class Translatable:
     self.cached_allcandidates = None
     self.cached_ver = 0
 
-  def __getstate__(self):
-    return {"candidates": self.candidates, "parent": self.parent.name, "code": self.code}
-
-  def __setstate__(self, state):
-    self.candidates = state["candidates"]
-    self.parent = TranslationDomain.ALL_DOMAINS[state["parent"]]
-    self.code = state["code"]
-    self.cached_str = None
-    self.cached_allcandidates = None
-    self.cached_ver = 0
-    self.parent.add_unpickled_translatable(self)
+  def __reduce__(self):
+    return (TranslationDomain.create_if_not_registered, (self.parent.name, self.code, self.candidates))
 
   def get(self) -> str:
     if self.cached_str is not None and self.cached_ver == self.PREFERRED_LANG_VER:
