@@ -1,0 +1,5 @@
+include: "../P_references_common.yml"
+reference:
+  en: "CommunityPath"
+  zh_cn: "小区步道"
+  zh_hk: "小區步道"

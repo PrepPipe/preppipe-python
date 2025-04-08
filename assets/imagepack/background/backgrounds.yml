@@ -13,6 +13,20 @@ imagepack:
     yamlpath: "{srcpath}/A0-考拉Koala/P6-单位大门/config.yml"
   A0P7:
     yamlpath: "{srcpath}/A0-考拉Koala/P7-公园/config.yml"
+  A0P8B:
+    yamlpath: "{srcpath}/A0-考拉Koala/P8B-厨房2/config.yml"
+  A0P9:
+    yamlpath: "{srcpath}/A0-考拉Koala/P9-小区步道/config.yml"
+  A0P10:
+    yamlpath: "{srcpath}/A0-考拉Koala/P10-学校办公室/config.yml"
+  A0P11:
+    yamlpath: "{srcpath}/A0-考拉Koala/P11-企业办公室/config.yml"
+  A0P12:
+    yamlpath: "{srcpath}/A0-考拉Koala/P12-食堂/config.yml"
+  A0P13:
+    yamlpath: "{srcpath}/A0-考拉Koala/P13-阅览室/config.yml"
+  A0P14:
+    yamlpath: "{srcpath}/A0-考拉Koala/P14-公交站台/config.yml"
   A0T0:
     yamlpath: "{srcpath}/A0-考拉Koala/T0-小型室内/config.yml"
   A0T1:

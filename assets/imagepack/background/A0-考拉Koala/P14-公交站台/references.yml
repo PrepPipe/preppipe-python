@@ -1,0 +1,5 @@
+include: "../P_references_common.yml"
+reference:
+  en: "BusStop"
+  zh_cn: "公交站台"
+  zh_hk: "公車站台"

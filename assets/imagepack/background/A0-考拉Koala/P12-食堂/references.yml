@@ -1,0 +1,5 @@
+include: "../P_references_common.yml"
+reference:
+  en: "DiningHall"
+  zh_cn: "食堂"
+  zh_hk: "食堂"

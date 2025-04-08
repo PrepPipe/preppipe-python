@@ -1,0 +1,5 @@
+include: "../P_references_common.yml"
+reference:
+  en: "Kitchen2"
+  zh_cn: "厨房2"
+  zh_hk: "厨房2"

@@ -1,0 +1,5 @@
+include: "../P_references_common.yml"
+reference:
+  en: "SchoolOffice"
+  zh_cn: "学校办公室"
+  zh_hk: "學校辦公室"

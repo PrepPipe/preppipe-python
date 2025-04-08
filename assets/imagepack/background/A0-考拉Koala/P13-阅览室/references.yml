@@ -1,0 +1,5 @@
+include: "../P_references_common.yml"
+reference:
+  en: "ReadingRoom"
+  zh_cn: "阅览室"
+  zh_hk: "閱覽室"
