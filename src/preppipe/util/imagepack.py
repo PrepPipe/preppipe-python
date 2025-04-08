@@ -220,6 +220,7 @@ class ImagePack(NamedAssetClassBase):
   #   "diff_croprect": tuple[int,int,int,int], 用于生成差分图的裁剪矩形
   #   "modified": bool, 用于标注是否已修改选区
   #   "original_size": tuple[int,int], 用于标注原始大小，只在第一次改变大小时设置
+  #   "charactersprite_gen": dict, 如果该图片包是立绘且图层信息使用生成规则生成，那么这里包含生成规则的参数
   # 如果新加的元数据需要在图缩小时更新，记得改 fork_and_shrink()
   opaque_metadata : dict[str, typing.Any]
 
@@ -1583,6 +1584,29 @@ class ImagePack(NamedAssetClassBase):
       # 把形如 ["M1Y1", "M2Y2"] 的依赖列表转换为形如 [("M1", "Y1"), ("M2", "Y2")] 的列表
       return [parse_dep_liststr(s) for s in srclist]
 
+    def add_parsed_info_to_metadata():
+      # 把解析出来的信息写回 metadata，后续在显示图片包时会用到
+      nonlocal metadata
+      charactersprite_gen_metadata = {}
+      bases = {}
+      if base_abbreviation is not None:
+        bases = base_abbreviation
+      else:
+        concatenated = ''.join(base_tags)
+        bases[concatenated] = base_tags
+      charactersprite_gen_metadata["bases"] = bases
+      parts_digested = {}
+      for kind_str, kind_enum in kinds_enum_map.items():
+        if kind_enum.name not in parts_digested:
+          parts_digested[kind_enum.name] = {}
+        parts_digested[kind_enum.name][kind_str] = []
+      for part in parts.values():
+        parts_digested[kinds_enum_map[part.kind].name][part.kind].append(part.codename)
+      charactersprite_gen_metadata["parts"] = parts_digested
+      if metadata is None:
+        metadata = {}
+      metadata["charactersprite_gen"] = charactersprite_gen_metadata
+
     for k, v in data.items():
       if k in ImagePack.TR_imagepack_yamlgen_parts_kind.get_all_candidates():
         if not isinstance(v, dict):
@@ -1601,7 +1625,7 @@ class ImagePack(NamedAssetClassBase):
           elif isinstance(kind_raw_tr, dict):
             tr_code = "parts_kind_tr_" + kind_name
             kind_name_tr = ImagePack.TR_imagepack.tr(tr_code, **kind_raw_tr)
-            part_kinds[kind_name]
+            part_kinds[kind_name] = kind_name_tr
             raise PPNotImplementedError("Custom part kind is not implemented yet")
           else:
             raise PPInternalError("Invalid parts_kind value (" + kind_name + ") in generation: expecting a str or dict but got " + str(kind_raw_tr) + " (type: " + str(type(kind_raw_tr)) + ")")
@@ -1673,6 +1697,8 @@ class ImagePack(NamedAssetClassBase):
                               + str(ImagePack.TR_imagepack_yamlgen_parts.get_all_candidates()) + ", "
                               + str(ImagePack.TR_imagepack_yamlgen_parts_kind.get_all_candidates()) + ", "
                               + str(ImagePack.TR_imagepack_yamlgen_tags.get_all_candidates()) + ")")
+    # 初步解析完毕，我们将解析结果写入 metadata
+    add_parsed_info_to_metadata()
     # 检查一下输入有没有问题，所有标签是否都有定义，所有部件是否都有定义
     # 同时我们也将对象分类
     base_parts_by_tag : dict[str, list[str]] = {}
@@ -2473,6 +2499,8 @@ class _ImagePackHTMLExport:
     if not isinstance(descriptor, ImagePackDescriptor):
       raise PPInternalError("HTML export requires descriptor (cannot be used on temporarily created imagepack)")
 
+    # 注：以下代码在 ImagePack.opaque_metadata["charactersprite_gen"] 引入之前就已经存在
+    # 该信息引入之后部分操作（比如推导部件类型间的关系）已经不再需要
     imgdata : list[str] = [] # html img elements
     layer_pos_size_info : list[tuple[int,int,int,int]] = [] # x, y, w, h
     layer_codenames : list[str] = [] # 应该都是代码名 (L0, ...)

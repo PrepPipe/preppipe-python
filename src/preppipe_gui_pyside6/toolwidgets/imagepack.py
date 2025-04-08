@@ -73,6 +73,11 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
   current_mask_params : list[typing.Any] | None = None
   mask_param_widgets : list[MaskInputWidget]
   background_radio_buttons : list[QRadioButton] | None = None
+  charactersprite_layer_widgets : list[tuple[QCheckBox, QComboBox]] | None = None
+
+  # 方便立绘视图根据启用的图层找差分序号，只在立绘视图中使用
+  composites_reverse_dict : dict[tuple[int, ...], int] | None = None
+  composite_code_to_index : dict[str, int] | None = None
 
   _tr_composition_selection = TR_gui_tool_imagepack.tr("composition_selection",
     en="Composition Selection",
@@ -97,6 +102,9 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
     self.current_mask_params = None
     self.mask_param_widgets = []
     self.background_radio_buttons = None
+    self.charactersprite_layer_widgets = None
+    self.composites_reverse_dict = None
+    self.composite_code_to_index = None
 
   _tr_no_mask = TR_gui_tool_imagepack.tr("no_mask",
     en="This image pack contains no customizable regions.",
@@ -107,6 +115,21 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
     en="This image pack contains no compositions.",
     zh_cn="该图片包没有差分组合。",
     zh_hk="該圖片包沒有差分組合。",
+  )
+  _tr_preset_label = TR_gui_tool_imagepack.tr("preset_label",
+    en="Preset",
+    zh_cn="预设",
+    zh_hk="預設",
+  )
+  _tr_no_preset_prompt = TR_gui_tool_imagepack.tr("no_preset_prompt",
+    en="(None)",
+    zh_cn="（无预设）",
+    zh_hk="（無預設）",
+  )
+  _tr_apply = TR_gui_tool_imagepack.tr("apply",
+    en="Apply",
+    zh_cn="应用",
+    zh_hk="應用",
   )
 
   def setData(self, packid : str | None = None, category_kind : ImagePackDescriptor.ImagePackType | None = None):
@@ -164,8 +187,87 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
             layout.addWidget(radio_button)
           self.ui.sourceGroupBox.setLayout(layout)
         case ImagePackDescriptor.ImagePackType.CHARACTER:
-          # TODO
-          pass
+          self.composites_reverse_dict = {}
+          self.composite_code_to_index = {}
+          for index, (layers, code) in enumerate(zip(self.descriptor.composites_layers, self.descriptor.composites_code)):
+            self.composites_reverse_dict[tuple(layers)] = index
+            self.composite_code_to_index[code] = index
+          '''pack_id : str # 图片组的 ID
+  topref : Translatable | str # 所对应资源的名称
+  authortags : tuple[str, ...] # 作者标签，如果有多个作者同时提供了相同名称的素材，可以用这个来区分
+  packtype : ImagePackType # 图片组的类型
+  masktypes : tuple[MaskType, ...] # 有几个选区、各自的类型
+  composites_code : list[str] # 各个差分组合的编号（字母数字组合）
+  composites_layers : list[list[int]] # 各个差分组合所用的图层
+  composites_references : dict[str, Translatable] # 如果某些差分组合有（非编号的）名称，那么它们的名称存在这里
+  layer_info : list[LayerInfo] # 各个图层的信息
+  size : tuple[int, int] # 整体大小
+  bbox : tuple[int, int, int, int] # 边界框'''
+          # 立绘视图的差分选择有两部分，第一部分是预设，单行，第二部分是基于图层组的差分自选，有多少图层组就有多少行
+          # 第一部分分三列（预设的标签，下拉菜单选择预设，再加“应用”按钮），第二部分分两列（左边是复选框，右边是下拉菜单）
+          # 我们统一使用 QGridLayout
+          grid_widgets = []
+          # 预设部分
+          preset_label = QLabel(self._tr_preset_label.get())
+          self.bind_text(preset_label.setText, self._tr_preset_label)
+          preset_combo = QComboBox()
+          apply_button = QPushButton(self._tr_apply.get())
+          self.bind_text(apply_button.setText, self._tr_apply)
+          if len(self.descriptor.composites_references) == 0:
+            preset_combo.addItem(self._tr_no_preset_prompt.get())
+            preset_combo.setEnabled(False)
+            apply_button.setEnabled(False)
+          else:
+            for code, name in self.descriptor.composites_references.items():
+              preset_combo.addItem(name.get(), code)
+          grid_widgets.append((preset_label, preset_combo, apply_button))
+          # 图层组部分（需要 charactersprite_gen 元数据）
+          if charactersprite_gen := self.pack.opaque_metadata.get("charactersprite_gen", None):
+            # 首先，基底部分一定得有
+            base_options = charactersprite_gen["bases"]
+            _, preset_kind_base_tr = ImagePack.PRESET_YAMLGEN_PARTS_KIND_PRESETS["preset_kind_base"]
+            base_checkbox = QCheckBox(preset_kind_base_tr.get())
+            base_checkbox.setChecked(True)
+            base_checkbox.setEnabled(False)
+            self.bind_text(base_checkbox.setText, preset_kind_base_tr)
+            base_combo = QComboBox()
+            for k, v in base_options.items():
+              base_combo.addItem(k, v)
+            grid_widgets.append((base_checkbox, base_combo, None))
+            # 然后是各种差分
+            parts = charactersprite_gen["parts"]
+            for kind_enum, kind_tr in ImagePack.PRESET_YAMLGEN_PARTS_KIND_PRESETS.values():
+              if kind_enum == ImagePack.CharacterSpritePartsBased_PartKind.BASE:
+                continue
+              parts_info = parts.get(kind_enum.name, None)
+              if parts_info is None:
+                continue
+              def add_row(kind_tr, parts_list):
+                kind_checkbox = QCheckBox(kind_tr.get())
+                self.bind_text(kind_checkbox.setText, kind_tr)
+                kind_combo = QComboBox()
+                for part in parts_list:
+                  kind_combo.addItem(part)
+                grid_widgets.append((kind_checkbox, kind_combo, None))
+              if kind_enum == ImagePack.CharacterSpritePartsBased_PartKind.DECORATION:
+                # 该类型下每个子类都可独立选择
+                for subkind_name, subkind_list in parts_info.items():
+                  add_row(kind_tr, subkind_list)
+              else:
+                # 将所有子类别的选项合并
+                all_parts = []
+                for subkind_list in parts_info.values():
+                  all_parts.extend(subkind_list)
+                add_row(kind_tr, all_parts)
+          layout = QGridLayout()
+          for row, widgets in enumerate(grid_widgets):
+            for col, widget in enumerate(widgets):
+              if widget is None:
+                continue
+              layout.addWidget(widget, row, col)
+          self.charactersprite_layer_widgets = []
+          # TODO charactersprite_layer_widgets
+          self.ui.sourceGroupBox.setLayout(layout)
         case _:
           raise NotImplementedError(f"Pack type {self.descriptor.packtype} is not supported")
     else:
