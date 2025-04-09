@@ -10,6 +10,11 @@ class ImageViewerWidget(QGraphicsView):
     zh_cn="导出为 PNG",
     zh_hk="匯出為 PNG",
   )
+  _tr_png_filter = TR_gui_imageviewerwidget.tr("png_filter",
+    en="PNG Files (*.png)",
+    zh_cn="PNG 文件 (*.png)",
+    zh_hk="PNG 文件 (*.png)",
+  )
   _tr_fit_to_view = TR_gui_imageviewerwidget.tr("fit_to_view",
     en="Fit View",
     zh_cn="自动缩放",
@@ -248,12 +253,16 @@ class ImageViewerWidget(QGraphicsView):
     """Open a file dialog to export the current image as a PNG file."""
     if self._original_pixmap is None:
       return
-    file_path, _ = QFileDialog.getSaveFileName(self, "Save Image", "", "PNG Files (*.png)")
+    if file_path := self.get_png_save_path(self._tr_export_as_png.get()):
+      self._original_pixmap.save(file_path, "PNG")
+
+  def get_png_save_path(self, title : str):
+    file_path, _ = QFileDialog.getSaveFileName(self, title, "", self._tr_png_filter.get())
     if file_path:
       if not file_path.lower().endswith(".png"):
         file_path += ".png"
-      # Save the original QPixmap.
-      self._original_pixmap.save(file_path, "PNG")
+      return file_path
+    return None
 
   def resizeEvent(self, event: QResizeEvent):
     super().resizeEvent(event)
