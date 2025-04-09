@@ -330,7 +330,20 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
     self.viewer.setImage(pixmap)
     self.viewer.fit_to_view()
 
+  _tr_save_overview_image = TR_gui_tool_imagepack.tr("save_overview_image",
+    en="Save Overview Image",
+    zh_cn="保存概览图",
+    zh_hk="保存概覽圖",
+  )
+  @Slot()
+  def requestSaveOverviewImage(self):
+    if self.current_pack is None:
+      return
+    if file_path := self.viewer.get_png_save_path(self._tr_save_overview_image.get()):
+      self.current_pack.write_overview_image(file_path, self.descriptor, None)
   def populate_image_rightclick_menu(self, menu: QMenu):
-    # TODO
-    custom_action = menu.addAction("Custom Operation")
-    custom_action.triggered.connect(lambda: print("Custom operation executed."))
+    menu.addSeparator()
+    action_save_overview_image = menu.addAction(self._tr_save_overview_image.get())
+    action_save_overview_image.triggered.connect(self.requestSaveOverviewImage)
+    if self.current_pack is None:
+      action_save_overview_image.setEnabled(False)
