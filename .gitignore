@@ -147,8 +147,9 @@ cython_debug/
 # Local History for Visual Studio Code
 .history/
 
-# doxygen export
-docs/doxygen_build/
+# document export
+docs_doxygen/doxygen_build/
+docs_mkdocs/
 
 # antlr generated files
 .antlr

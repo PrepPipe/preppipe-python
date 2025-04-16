@@ -22,7 +22,7 @@ jobs:
         id: vars
         shell: bash
         run: |
-          echo "version_tag=$(python3 ./.github/workflows/printversion.py)" >> $GITHUB_OUTPUT
+          echo "version_tag=$(python3 ./ci/printversion.py)" >> $GITHUB_OUTPUT
       - name: Print version
         run: echo "${{ steps.vars.outputs.version_tag }}"
       - name: install pyinstaller
@@ -35,6 +35,10 @@ jobs:
         run: |
           pyinstaller preppipe.spec
           cd dist/preppipe     && 7z.exe a -t7z -mx=9 ../preppipe-windows-x64.7z *     && cd ../..
+      - name: generate documentation files
+        run: |
+          python3 ci/mkdocsgen.py
+          cd docs_mkdocs && 7z.exe a -t7z -mx=9 ../dist/preppipe-docs-overlay.7z docs && cd ..
       - uses: "marvinpinto/action-automatic-releases@latest"
         with:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
@@ -43,6 +47,7 @@ jobs:
           title: "${{ steps.vars.outputs.version_tag }} 最新版本 (Latest build) - ${{ env.BRANCH_NAME }}"
           files: |
             dist/preppipe-windows-x64.7z
+            dist/preppipe-docs-overlay.7z
             dist/*.whl
             dist/builtin-assets.zip
 
