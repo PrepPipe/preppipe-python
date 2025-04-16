@@ -852,6 +852,17 @@ class _PipelineManager:
                 modulename = plugin_modulebase + pluginname
                 _PipelineManager._load_module(modulename, filepath)
 
+def invoke_tool_main(toolname : str, args : list[str]):
+  # 该函数一般用于本仓库内的辅助脚本(比如 CI)
+  if toolname == "pipeline":
+    # 直接调用管线
+    _PipelineManager.pipeline_main(args)
+    return
+  if toolname in _registered_tools:
+    _registered_tools[toolname].tool_main(args)
+    return
+  raise RuntimeError("Tool name " + toolname + " not registered")
+
 def _check_is_using_tool() -> type | None:
   # 如果环境变量 PREPPIPE_TOOL 有给出：
   # (1) 如果该名称有类注册了，那么返回该类
