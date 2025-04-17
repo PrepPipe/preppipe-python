@@ -174,6 +174,12 @@ class AssetDocsDumperBase:
     # 这个函数可能会执行不止一次，有多少种语言输出就会执行多少次
     pass
 
+  # 给子类用的函数
+  @classmethod
+  def refpath(cls, path : str) -> str:
+    '''Replace backslashes with slashes in a path.'''
+    return path.replace('\\', '/')
+
 def AssetDocsDumperDecl(target : typing.Type[NamedAssetClassBase], sort_order : int | None = None): # pylint: disable=invalid-name
   def decorator(cls : typing.Type[AssetDocsDumperBase]):
     # pylint: disable=protected-access
