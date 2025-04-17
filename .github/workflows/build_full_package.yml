@@ -13,28 +13,15 @@ jobs:
     runs-on: "ubuntu-latest"
 
     steps:
-      - name: "Find release for branch"
-        id: find_release
-        uses: cardinalby/git-get-release-action@v1
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        with:
-          tag: "latest-${{ env.BRANCH_NAME }}"
-      - name: Checkout misc files
+      - name: Checkout main repo for gh release
         uses: actions/checkout@v4
-        with:
-          sparse-checkout: |
-            LICENSE
-            README_dist.txt
-          sparse-checkout-cone-mode: false
-          path: main_repo
 
       - name: "Setup stage directory"
         shell: bash
         run: |
           mkdir -p stage
-          mv main_repo/LICENSE stage
-          mv main_repo/README_dist.txt stage/README.txt
+          mv LICENSE stage
+          mv README_dist.txt stage/README.txt
 
       - name: "Checkout document repo"
         uses: actions/checkout@v4
@@ -91,26 +78,16 @@ jobs:
           rm -rf windows-x64/ffmpeg-master-latest-win64-lgpl-shared
           rm -f ffmpeg-master-latest-win64-lgpl-shared.zip
 
-      - name: "Combine all files"
+      - name: "Combine all files and upload"
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }} # required for gh release
         run: |
           mkdir dist
           7z x preppipe-windows-x64.7z -owindows-x64
           rm -f preppipe-windows-x64.7z
-          cp -r stage/docs windows-x64
+          cp -r stage/* windows-x64
           cd windows-x64 && 7z a -t7z -mx=9 ../dist/preppipe-windows-x64-full.7z * && cd ..
+          gh release upload latest-${{ env.BRANCH_NAME }} dist/preppipe-windows-x64-full.7z --clobber
+          rm -rf windows-x64
 
-      - name: "Modify the release to include the full package"
-        uses: irongut/EditRelease@v1.2.0
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          id: ${{ steps.find_release.outputs.id }}
-          files: "dist/preppipe-windows-x64-full.7z"
-        #uses: IsaacShelton/update-existing-release@v1.3.4
-        #with:
-        #  token: ${{secrets.GITHUB_TOKEN}}
-        #  tag: "latest-${{ env.BRANCH_NAME }}"
-        #  replace: false
-        #  updateTag: false
-        #  prerelease: true
-        #  files: "dist/preppipe-windows-x64-full.7z"
