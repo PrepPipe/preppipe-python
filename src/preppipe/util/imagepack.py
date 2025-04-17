@@ -3073,13 +3073,13 @@ class ImagePackDocsDumper(AssetDocsDumperBase):
       code = descriptor.composites_code[index]
       filename = code + ".png"
       actual_path = os.path.join(export_basepath, filename)
-      refpath = os.path.join(export_refpath, filename)
+      refpath = self.refpath(os.path.join(export_refpath, filename))
       asset.get_composed_image(index).save_png(actual_path)
       composites_filepaths.append(refpath)
     for index in range(len(asset.masks)):
       filename = f"mask_{index}.png"
       actual_path = os.path.join(export_basepath, filename)
-      refpath = os.path.join(export_refpath, filename)
+      refpath = self.refpath(os.path.join(export_refpath, filename))
       fork_args : list[Color | None] = [None] * len(asset.masks)
       fork_args[index] = Color.get((0,0,0))
       forked = asset.fork_applying_mask(args=fork_args) # type: ignore
