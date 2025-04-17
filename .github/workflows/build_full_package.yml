@@ -13,6 +13,13 @@ jobs:
     runs-on: "ubuntu-latest"
 
     steps:
+      - name: "Find release for branch"
+        id: find_release
+        uses: cardinalby/git-get-release-action@v1
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          tag: "latest-${{ env.BRANCH_NAME }}"
       - name: Checkout misc files
         uses: actions/checkout@v4
         with:
@@ -20,18 +27,19 @@ jobs:
             LICENSE
             README_dist.txt
           sparse-checkout-cone-mode: false
+          path: main_repo
 
       - name: "Setup stage directory"
         shell: bash
         run: |
           mkdir -p stage
-          mv LICENSE stage
-          mv README_dist.txt stage/README.txt
+          mv main_repo/LICENSE stage
+          mv main_repo/README_dist.txt stage/README.txt
 
       - name: "Checkout document repo"
         uses: actions/checkout@v4
         with:
-          name: "PrepPipe/preppipe-docs"
+          repository: "PrepPipe/preppipe-docs"
           path: docs_mkdocs
 
       - name: "Download main repo artifacts"
@@ -61,10 +69,6 @@ jobs:
       - name: "Build Documents"
         run: |
           7z x preppipe-docs-overlay.7z -y -odocs_mkdocs
-          echo "ls -l"
-          ls -l
-          echo "ls -l docs_mkdocs"
-          ls -l docs_mkdocs
           cd docs_mkdocs && mkdocs build -f mkdocs.yml && cd ..
           mv docs_mkdocs/generated stage/docs
         # now document files are in stage/docs
@@ -81,7 +85,7 @@ jobs:
       - name: "Extract ffmpeg"
         shell: bash
         run: |
-          unzip ffmpeg-master-latest-win64-lgpl-shared.zip "ffmpeg-master-latest-win64-lgpl-shared/bin/*" -d "windows-x64"
+          unzip ffmpeg-master-latest-win64-lgpl-shared.zip "ffmpeg-master-latest-win64-lgpl-shared/*" -d "windows-x64"
           mv windows-x64/ffmpeg-master-latest-win64-lgpl-shared/bin/* windows-x64/
           mv windows-x64/ffmpeg-master-latest-win64-lgpl-shared/LICENSE.txt windows-x64/LICENSE-ffmpeg.txt
           rm -rf windows-x64/ffmpeg-master-latest-win64-lgpl-shared
@@ -97,11 +101,16 @@ jobs:
           cd windows-x64 && 7z a -t7z -mx=9 ../dist/preppipe-windows-x64-full.7z * && cd ..
 
       - name: "Modify the release to include the full package"
-        uses: IsaacShelton/update-existing-release@v1.3.4
+        uses: irongut/EditRelease@v1.2.0
         with:
-          token: ${{secrets.GITHUB_TOKEN}}
-          tag: "latest-${{ env.BRANCH_NAME }}"
-          replace: false
-          updateTag: false
-          prerelease: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+          id: ${{ steps.find_release.outputs.id }}
           files: "dist/preppipe-windows-x64-full.7z"
+        #uses: IsaacShelton/update-existing-release@v1.3.4
+        #with:
+        #  token: ${{secrets.GITHUB_TOKEN}}
+        #  tag: "latest-${{ env.BRANCH_NAME }}"
+        #  replace: false
+        #  updateTag: false
+        #  prerelease: true
+        #  files: "dist/preppipe-windows-x64-full.7z"
