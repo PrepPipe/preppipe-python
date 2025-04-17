@@ -50,33 +50,3 @@ jobs:
             dist/preppipe-docs-overlay.7z
             dist/*.whl
             dist/builtin-assets.zip
-
-  # make this a separate job so that if this step fails (e.g., due to permission settings issue),
-  # we don't have to re-run pre-release when only this step is needed
-  request-all-in-one-build:
-    name: "Request rebuilding the all-in-one package"
-    needs: pre-release
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Repository Dispatch
-        uses: peter-evans/repository-dispatch@v2
-        with:
-          token: ${{ secrets.PREPPIPE_ALL_IN_ONE_PAT }}
-          repository: PrepPipe/preppipe-latest-all-in-one
-          event-type: update-request
-
-  #sync2gitee:
-  #  name: "Sync to Gitee"
-  #  runs-on: ubuntu-latest
-  #  steps:
-  #    - name: Organization mirror
-  #      uses: Yikun/hub-mirror-action@master
-  #      with:
-  #        src: github/preppipe
-  #        dst: gitee/preppipe
-  #        dst_key: ${{ secrets.GITEE_PRIVATE_KEY }}
-  #        dst_token: ${{ secrets.GITEE_TOKEN }}
-  #        account_type: org
-  #        force_update: true
