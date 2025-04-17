@@ -14,8 +14,7 @@ from .imports import *
 from .assetmanager import AssetManager
 
 _builtin_asset_zip_urls = [
-  "https://github.com/PrepPipe/preppipe-python/releases/download/latest-main/builtin-assets.zip",
-  "https://github.com/PrepPipe/preppipe-python/releases/download/latest-develop/builtin-assets.zip",
+  "https://github.com/PrepPipe/preppipe-python/releases/download/builtin-assets/builtin-assets.zip",
 ]
 
 def init_builtin_assets(args : list[str] | None = None):

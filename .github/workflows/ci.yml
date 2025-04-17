@@ -16,8 +16,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build
-      - name: create source assets zip
-        run: 7z.exe a -tzip -mx=9 dist/builtin-assets.zip assets/*
       - name: Detecting version
         id: vars
         shell: bash
@@ -49,4 +47,3 @@ jobs:
             dist/preppipe-windows-x64.7z
             dist/preppipe-docs-overlay.7z
             dist/*.whl
-            dist/builtin-assets.zip
