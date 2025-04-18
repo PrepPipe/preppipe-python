@@ -20,8 +20,15 @@ class MainWindow(QMainWindow, MainWindowInterface):
     self.requestOpenWithType(HomeWidget)
     self.ui.actionOpenDocumentation.triggered.connect(self.openDocumentHomePage)
     self.ui.actionOpenDocumentation.setShortcut(QKeySequence(QKeySequence.HelpContents))
+    self.ui.actionSettings.triggered.connect(lambda: self.requestOpenWithType(SettingWidget))
+    self.ui.actionMainPipeline.triggered.connect(lambda: self.requestOpenWithType(MainInputWidget))
     self.ui.tabWidget.tabCloseRequested.connect(self.handleTabCloseRequest)
 
+  _tr_functionality = TR_gui_mainwindow.tr("functionality",
+    en="Functionality",
+    zh_cn="功能",
+    zh_hk="功能",
+  )
   _tr_help = TR_gui_mainwindow.tr("help",
     en="Help",
     zh_cn="帮助",
@@ -34,6 +41,9 @@ class MainWindow(QMainWindow, MainWindowInterface):
   )
   def updateTextForLanguage(self):
     self.setWindowTitle(Translatable.tr_program_name.get())
+    self.ui.menuFunctionality.setTitle(self._tr_functionality.get())
+    self.ui.actionSettings.setText(self.tr_toolname_settings.get())
+    self.ui.actionMainPipeline.setText(self.tr_toolname_maininput.get())
     self.ui.menuHelp.setTitle(self._tr_help.get())
     self.ui.actionOpenDocumentation.setText(self._tr_open_documentation.get())
 
@@ -90,6 +100,8 @@ class MainWindow(QMainWindow, MainWindowInterface):
     if tab.canClose():
       tab.closeHandler()
       self.ui.tabWidget.removeTab(tabindex)
+      if self.ui.tabWidget.count() == 0:
+        self.requestOpenWithType(HomeWidget)
     return
 
 

@@ -12,11 +12,17 @@ class MainInputWidget(QWidget, ToolWidgetInterface):
   ui : Ui_MainInputWidget
   filelist : FileListInputWidget
 
+  _tr_desc = TR_gui_mainwindow.tr("maininput_desc",
+    en="Read story scripts and then export game projects or produce analysis reports.",
+    zh_cn="读取剧本，导出游戏工程或是分析报告。",
+    zh_hk="讀取劇本，導出遊戲工程或是分析報告。",
+  )
   @classmethod
   def getToolInfo(cls) -> ToolWidgetInfo:
     return ToolWidgetInfo(
       idstr="maininput",
       name=MainWindowInterface.tr_toolname_maininput,
+      tooltip=cls._tr_desc,
       widget=cls,
     )
 

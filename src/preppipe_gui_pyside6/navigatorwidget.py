@@ -171,5 +171,3 @@ class NavigatorWidget(QWidget, ToolWidgetInterface):
     super().update_text()
     self.model.emitSignalsForLanguageChange()
 
-  def canClose(self) -> bool:
-    return False
