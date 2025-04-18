@@ -31,10 +31,15 @@ class MainWindowInterface:
   def handleLanguageChange(self) -> None:
     raise NotImplementedError("Subclasses must implement the handleLanguageChange() method.")
 
+  tr_toolname_settings = TR_gui_mainwindow.tr("toolname_settings",
+    en="Settings",
+    zh_cn="设置",
+    zh_hk="設定",
+  )
   tr_toolname_maininput = TR_gui_mainwindow.tr("toolname_maininput",
-    en="Main Pipeline Entry",
-    zh_cn="主管线入口",
-    zh_hk="主管線入口",
+    en="Main Pipeline",
+    zh_cn="主管线",
+    zh_hk="主管線",
   )
   tr_toolname_analysis = TR_gui_mainwindow.tr("toolname_analysis",
     en="Analysis Tools",

@@ -45,6 +45,15 @@
     </property>
     <addaction name="actionOpenDocumentation"/>
    </widget>
+   <widget class="QMenu" name="menuFunctionality">
+    <property name="title">
+     <string>Functionality</string>
+    </property>
+    <addaction name="actionSettings"/>
+    <addaction name="separator"/>
+    <addaction name="actionMainPipeline"/>
+   </widget>
+   <addaction name="menuFunctionality"/>
    <addaction name="menuHelp"/>
   </widget>
   <widget class="QStatusBar" name="statusbar"/>
@@ -57,6 +66,21 @@
    </property>
    <property name="toolTip">
     <string>Open Documentation</string>
+   </property>
+  </action>
+  <action name="actionSettings">
+   <property name="text">
+    <string>Settings</string>
+   </property>
+  </action>
+  <action name="actionHome">
+   <property name="text">
+    <string>Home</string>
+   </property>
+  </action>
+  <action name="actionMainPipeline">
+   <property name="text">
+    <string>Main Pipeline</string>
    </property>
   </action>
  </widget>

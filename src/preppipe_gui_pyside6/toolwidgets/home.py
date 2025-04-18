@@ -58,8 +58,10 @@ class HomeWidget(QWidget, ToolWidgetInterface):
     self.build_entry_groupbox(self.ui.mainEntryGroupBox, HomeWidget.BASE_TOOLS)
 
   def build_entry_groupbox(self, group : QGroupBox, entry_list : list):
-    layout = QFormLayout()
+    layout = QGridLayout()
     layout.setContentsMargins(5, 5, 5, 5)
+    layout.setColumnStretch(0, 1)
+    layout.setColumnStretch(1, 2)
     group.setLayout(layout)
     for i, entry in enumerate(entry_list):
       name = None
@@ -85,9 +87,10 @@ class HomeWidget(QWidget, ToolWidgetInterface):
           button.setIcon(QIcon(icon))
           button.setIconSize(QSize(64, 64))
       button.clicked.connect(slot)
-      button.setSizePolicy(QSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.Fixed))
+      button.setSizePolicy(QSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.MinimumExpanding))
       desc_label = QLabel(desc.get())
       desc_label.setWordWrap(True)
-      layout.addRow(button, desc_label)
+      layout.addWidget(button, i, 0)
+      layout.addWidget(desc_label, i, 1)
       self.bind_text(button.setText, name)
       self.bind_text(desc_label.setText, desc)

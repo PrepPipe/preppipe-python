@@ -11,11 +11,6 @@ TR_gui_setting = TranslationDomain("gui_setting")
 class SettingWidget(QWidget, ToolWidgetInterface):
   ui : Ui_SettingWidget
 
-  _tr_toolname = TR_gui_setting.tr("toolname",
-    en="Setting",
-    zh_cn="设置",
-    zh_hk="設定",
-  )
   _tr_tab_general = TR_gui_setting.tr("tab_general",
     en="General",
     zh_cn="通用",
@@ -31,6 +26,11 @@ class SettingWidget(QWidget, ToolWidgetInterface):
     "zh_cn": "中文（简体）",
     "zh_hk": "中文（繁體）",
   }
+  _tr_desc = TR_gui_setting.tr("desc",
+    en="Edit settings here. Currently only language is supported.",
+    zh_cn="在这里编辑设置。目前仅支持语言设置。",
+    zh_hk="在這裡編輯設置。目前僅支持語言設置。",
+  )
 
   def __init__(self, parent : QWidget):
     super(SettingWidget, self).__init__(parent)
@@ -52,7 +52,8 @@ class SettingWidget(QWidget, ToolWidgetInterface):
   def getToolInfo(cls, **kwargs) -> ToolWidgetInfo:
     return ToolWidgetInfo(
       idstr="setting",
-      name=SettingWidget._tr_toolname,
+      name=MainWindowInterface.tr_toolname_settings,
+      tooltip=cls._tr_desc,
       widget=cls,
     )
 

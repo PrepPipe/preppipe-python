@@ -63,7 +63,7 @@
     </widget>
    </item>
    <item>
-    <layout class="QHBoxLayout" name="horizontalLayout">
+    <layout class="QHBoxLayout" name="horizontalLayout" stretch="1,7,1">
      <item>
       <spacer name="horizontalSpacer_2">
        <property name="orientation">
@@ -79,6 +79,17 @@
      </item>
      <item>
       <widget class="QGroupBox" name="mainEntryGroupBox">
+       <property name="sizePolicy">
+        <sizepolicy hsizetype="Minimum" vsizetype="Preferred">
+         <horstretch>0</horstretch>
+         <verstretch>0</verstretch>
+        </sizepolicy>
+       </property>
+       <property name="font">
+        <font>
+         <pointsize>12</pointsize>
+        </font>
+       </property>
        <property name="title">
         <string>主要功能入口</string>
        </property>
