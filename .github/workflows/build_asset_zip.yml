@@ -1,4 +1,4 @@
-name: "build-asset-zip"
+name: "Build raw asset zip"
 
 env:
   BRANCH_NAME: ${{ github.head_ref || github.ref_name }}

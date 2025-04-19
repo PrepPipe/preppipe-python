@@ -9,12 +9,15 @@ from .toolwidgets.home import *
 from .toolwidgets.setting import *
 from .toolwidgets.execute import *
 from .mainwindowinterface import *
+from .guiassets import *
 
 class MainWindow(QMainWindow, MainWindowInterface):
   def __init__(self):
     super(MainWindow, self).__init__()
     self.ui = Ui_MainWindow()
     self.ui.setupUi(self)
+    if ico_path := GUIAssetLoader.try_get_asset_path("preppipe.ico"):
+      self.setWindowIcon(QIcon(ico_path))
     self.updateTextForLanguage()
     self.requestOpenWithType(NavigatorWidget)
     self.requestOpenWithType(HomeWidget)
