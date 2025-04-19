@@ -295,7 +295,12 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
       layout.addWidget(label)
       self.ui.sourceGroupBox.setLayout(layout)
     # setData() 需要尽快返回，让组件先显示出来，后续再更新内容
-    QMetaObject.invokeMethod(self, "updateCurrentImage", Qt.QueuedConnection)
+    QMetaObject.invokeMethod(self, "finalize_init", Qt.QueuedConnection)
+
+  @Slot()
+  def finalize_init(self):
+    self.updateCurrentImage()
+    self.viewer.fit_to_view()
 
   def charactersprite_update_layer_preset_combobox_text(self):
     if self.charactersprite_layer_preset_combobox:
@@ -444,7 +449,6 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
     else:
       pixmap = QPixmap.fromImage(PIL.ImageQt.ImageQt(image))
     self.viewer.setImage(pixmap)
-    self.viewer.fit_to_view()
 
   _tr_save_overview_image = TR_gui_tool_imagepack.tr("save_overview_image",
     en="Save Overview Image",

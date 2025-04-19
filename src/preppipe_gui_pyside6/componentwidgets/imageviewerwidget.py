@@ -98,7 +98,7 @@ class ImageViewerWidget(QGraphicsView):
     # Remember the current center in scene coordinates.
     if scale == self._current_scale:
       return
-    center = self.mapToScene(self.viewport().rect().center())
+    center = self.get_current_center()
     cursorpos = self.mapToScene(self.mapFromGlobal(QCursor.pos()))
     old_scale = self._current_scale
     # Update the scale.
@@ -113,7 +113,10 @@ class ImageViewerWidget(QGraphicsView):
     if mouseCursorAsZoomCenter:
       new_cursorpos = QPointF(cursorpos.x() / capped_old_scale, cursorpos.y() / capped_old_scale) * scale_for_updating_center
       curcursorpos = self.mapToScene(self.mapFromGlobal(QCursor.pos()))
-      self.moveView(new_cursorpos.x() - curcursorpos.x(), new_cursorpos.y() - curcursorpos.y())
+      #print(f"center: {center}, cursorpos: {cursorpos}")
+      #print(f"new_cursorpos: {new_cursorpos}, curcursorpos: {curcursorpos}")
+      #self.moveView(new_cursorpos.x() - curcursorpos.x(), new_cursorpos.y() - curcursorpos.y())
+      self.moveView(int(curcursorpos.x() - new_cursorpos.x()), int(curcursorpos.y() - new_cursorpos.y()))
     self.is_follow_resize = False
 
   def wheelEvent(self, event: QWheelEvent):
@@ -166,6 +169,14 @@ class ImageViewerWidget(QGraphicsView):
       self._last_mouse_pos = None
     super().mouseReleaseEvent(event)
 
+  def get_current_center(self) -> QPointF:
+    '''只使用 self.mapToScene(self.viewport().rect().center()) 的话，切换差分时画面会有微小的平移'''
+    raw_center = self.viewport().rect().center()
+    raw_center2 = QPoint(raw_center.x()+1, raw_center.y()+1)
+    center1 = self.mapToScene(raw_center)
+    center2 = self.mapToScene(raw_center2)
+    return QPointF(((center1.x() + center2.x())/2), (center1.y() + center2.y())/2)
+
   def setImage(self, pixmap: QPixmap):
     """
     Sets a new image. If the new image’s dimensions are the same as the current,
@@ -174,7 +185,7 @@ class ImageViewerWidget(QGraphicsView):
     if self._original_pixmap is not None and self._original_pixmap.size() == pixmap.size():
       # Same dimensions: update the pixmap without resetting view.
       self._original_pixmap = pixmap
-      center = self.mapToScene(self.viewport().rect().center())
+      center = self.get_current_center()
       self._update_displayed_pixmap(center)
       return
 
