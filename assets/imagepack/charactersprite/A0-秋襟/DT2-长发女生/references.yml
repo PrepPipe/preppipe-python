@@ -1,3 +1,15 @@
 kind: CHARACTER
 reference:
   en: "DT2"
+masks:
+  - CHARACTER_COLOR_HAIR # M1-头发
+  - CHARACTER_COLOR_CLOTH # M2-衣服
+  - CHARACTER_COLOR_SKIRT # M3-裙摆
+  - CHARACTER_COLOR_SHIRT # M4-衬衫
+  - en: "BowTieColor" # M5-蝴蝶结
+    zh_cn: "蝴蝶结颜色"
+    zh_hk: "蝴蝶結顏色"
+  - en: "ClothInnerColor" # M6-领口腰带
+    zh_cn: "外套内侧颜色"
+    zh_hk: "外套內側顏色"
+  - CHARACTER_COLOR_CUFF # M7-袖口

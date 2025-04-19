@@ -2666,6 +2666,7 @@ class ImagePackDescriptor:
     COLOR = enum.auto() # 颜色选区
 
   class MaskType(enum.Enum):
+    # 背景的选区类型
     BACKGROUND_SCREEN = enum.auto(), ImagePack.TR_imagepack.tr("maskparam_screen",
       en="Screen",
       zh_cn="屏幕",
@@ -2676,20 +2677,45 @@ class ImagePackDescriptor:
       zh_cn="指示色",
       zh_hk="指示色",
     )
-    CHARACTER_COLOR_CLOTH = enum.auto(), ImagePack.TR_imagepack.tr("maskparam_color_cloth",
-      en="ClothColor",
-      zh_cn="衣服颜色",
-      zh_hk="衣服顏色",
-    )
+    # 角色立绘的选区类型
+    # 首先是角色身体特征
     CHARACTER_COLOR_HAIR = enum.auto(), ImagePack.TR_imagepack.tr("maskparam_color_hair",
       en="HairColor",
       zh_cn="发色",
       zh_hk="髮色",
     )
+    # 其次是装扮等外在特征
+    # 衬衫颜色特指穿在里面的衬衫颜色，衣服颜色用来表示穿在最外面的衣服的颜色
+    CHARACTER_COLOR_CLOTH = enum.auto(), ImagePack.TR_imagepack.tr("maskparam_color_cloth",
+      en="ClothColor",
+      zh_cn="衣服颜色",
+      zh_hk="衣服顏色",
+    )
+    CHARACTER_COLOR_SHIRT = enum.auto(), ImagePack.TR_imagepack.tr("maskparam_color_shirt",
+      en="ShirtColor",
+      zh_cn="衬衫颜色",
+      zh_hk="襯衫顏色",
+    )
+    CHARACTER_COLOR_SKIRT = enum.auto(), ImagePack.TR_imagepack.tr("maskparam_color_skirt",
+      en="SkirtColor",
+      zh_cn="裙子颜色",
+      zh_hk="裙子顏色",
+    )
+    CHARACTER_COLOR_CUFF = enum.auto(), ImagePack.TR_imagepack.tr("maskparam_color_cuff",
+      en="CuffColor",
+      zh_cn="袖口颜色",
+      zh_hk="袖口顏色",
+    )
     CHARACTER_COLOR_DECORATE = enum.auto(), ImagePack.TR_imagepack.tr("maskparam_color_decorate",
       en="DecorateColor",
       zh_cn="装饰色",
       zh_hk="裝飾色",
+    )
+    # 如果选区需要用新的类型表示，就用这个
+    CHARACTER_COLOR_CUSTOM = enum.auto(), ImagePack.TR_imagepack.tr("maskparam_color_custom",
+      en="CustomColor",
+      zh_cn="自定义颜色",
+      zh_hk="自定義顏色",
     )
 
     def __new__(cls, *args, **kwds):
@@ -2730,6 +2756,7 @@ class ImagePackDescriptor:
   authortags : tuple[str, ...] # 作者标签，如果有多个作者同时提供了相同名称的素材，可以用这个来区分
   packtype : ImagePackType # 图片组的类型
   masktypes : tuple[MaskType, ...] # 有几个选区、各自的类型
+  custom_masktype_names : list[Translatable] # 如果图片包有自定义的选区类型，那么它们的名称存在这里
   composites_code : list[str] # 各个差分组合的编号（字母数字组合）
   composites_layers : list[list[int]] # 各个差分组合所用的图层
   composites_references : dict[str, Translatable] # 如果某些差分组合有（非编号的）名称，那么它们的名称存在这里
@@ -2744,6 +2771,7 @@ class ImagePackDescriptor:
       'authortags': self.authortags,
       'packtype': self.packtype.name,
       'masktypes': [m.name for m in self.masktypes],
+      'custom_masktype_names': self.custom_masktype_names,
       'composites_code': self.composites_code,
       'composites_layers': self.composites_layers,
       'composites_references': self.composites_references,
@@ -2758,6 +2786,7 @@ class ImagePackDescriptor:
     self.authortags = state['authortags']
     self.packtype = ImagePackDescriptor.ImagePackType[state['packtype']]
     self.masktypes = tuple([ImagePackDescriptor.MaskType[s] for s in state['masktypes']])
+    self.custom_masktype_names = state['custom_masktype_names']
     self.composites_code = state['composites_code']
     self.composites_layers = state['composites_layers']
     self.composites_references = state['composites_references']
@@ -2784,6 +2813,15 @@ class ImagePackDescriptor:
     # 获取该图片组所有的选区
     # 由于要结合前端的参数读取，我们这里使用 enum 来表示选区的类型
     return self.masktypes
+
+  def get_mask_details(self) -> typing.Generator[tuple[MaskType, Translatable], None, None]:
+    num_custom = 0
+    for mask in self.masktypes:
+      if mask == ImagePackDescriptor.MaskType.CHARACTER_COLOR_CUSTOM:
+        yield mask, self.custom_masktype_names[num_custom]
+        num_custom += 1
+      else:
+        yield mask, mask.trname
 
   def get_all_composites(self) -> typing.Iterable[str]:
     # 获取该图片组所有的组合
@@ -2862,12 +2900,13 @@ class ImagePackDescriptor:
       for mask in pack.masks:
         match len(masktypelist):
           case 0:
-            masktypelist.append(ImagePackDescriptor.MaskType.CHARACTER_COLOR_CLOTH)
-          case 1:
             masktypelist.append(ImagePackDescriptor.MaskType.CHARACTER_COLOR_HAIR)
+          case 1:
+            masktypelist.append(ImagePackDescriptor.MaskType.CHARACTER_COLOR_CLOTH)
           case _:
             masktypelist.append(ImagePackDescriptor.MaskType.CHARACTER_COLOR_DECORATE)
     self.masktypes = tuple(masktypelist)
+    self.custom_masktype_names = []
     # 从图片包组合的名称中提取编号
     regex_pattern = re.compile(r'^(?P<code>[A-Z0-9]+)(?:-.+)?$')
     def get_code_from_composite_name(name : str) -> str:
@@ -2934,13 +2973,22 @@ class ImagePackDescriptor:
     if "masks" in references:
       used_keys.add("masks")
       masks = references["masks"]
-      if not isinstance(masks, list):
-        raise PPInternalError("Invalid masks: " + str(masks))
       masktypelist = []
-      for m in masks:
-        if not isinstance(m, str):
-          raise PPInternalError("Invalid mask type: " + str(m))
-        masktypelist.append(ImagePackDescriptor.MaskType[m])
+      if isinstance(masks, list):
+        for m in masks:
+          if isinstance(m, str):
+            masktypelist.append(ImagePackDescriptor.MaskType[m])
+          elif isinstance(m, dict):
+            # 创建一个自定义选区类型
+            custom_index = len(self.custom_masktype_names)
+            tr_id = self.pack_id + "-custommask-" + str(custom_index)
+            tr_obj = ImagePackDescriptor.TR_ref.tr(code=tr_id, **m)
+            self.custom_masktype_names.append(tr_obj)
+            masktypelist.append(ImagePackDescriptor.MaskType.CHARACTER_COLOR_CUSTOM)
+          else:
+            raise PPInternalError("Invalid mask type: " + str(m))
+      else:
+        raise PPInternalError("Invalid mask type: " + str(masks))
       self.masktypes = tuple(masktypelist)
     if "composites" in references:
       used_keys.add("composites")

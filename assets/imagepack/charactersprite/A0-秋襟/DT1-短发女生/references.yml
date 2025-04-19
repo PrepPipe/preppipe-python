@@ -1,3 +1,10 @@
 kind: CHARACTER
 reference:
   en: "DT1"
+masks:
+  - CHARACTER_COLOR_HAIR # M1-头发
+  - CHARACTER_COLOR_CLOTH # M2-衣服
+  - CHARACTER_COLOR_SKIRT # M3-裙子
+  - en: "ScarfDecorationColor" # M4-围巾装饰
+    zh_cn: "围巾装饰颜色"
+    zh_hk: "圍巾裝飾顏色"
