@@ -149,9 +149,9 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
       self.current_mask_params = [None] * len(self.descriptor.masktypes)
       layout = QFormLayout()
       self.ui.forkParamGroupBox.setLayout(layout)
-      for index, mask in enumerate(self.descriptor.masktypes):
-        nameLabel = QLabel(mask.trname.get())
-        self.bind_text(nameLabel.setText, mask.trname)
+      for index, (mask, trname) in enumerate(self.descriptor.get_mask_details()):
+        nameLabel = QLabel(trname.get())
+        self.bind_text(nameLabel.setText, trname)
         inputWidget = MaskInputWidget()
         match mask.get_param_type():
           case ImagePackDescriptor.MaskParamType.IMAGE:
