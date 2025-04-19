@@ -2864,6 +2864,21 @@ class ImagePackDescriptor:
   def get_layer_info(self, index : int) -> LayerInfo:
     return self.layer_info[index]
 
+  @staticmethod
+  def get_layer_code(layername : str, verify : bool = False) -> str:
+    # 获取图层名称内第一个 '-' 之前的部分，应该是大写字母+数字的组合，例如 L0-白天 -> L0
+    # 也有可能没有 '-', 整个名称只有像 L0 这样的
+    splitted = layername.split("-")
+    if len(splitted) == 0:
+      code = layername
+    else:
+      code = splitted[0]
+    # 检查是否是合规的图层代码
+    if verify:
+      if not re.match(r'^[A-Z]+[0-9]+$', code):
+        raise PPInternalError("Invalid layer code: " + code)
+    return code
+
   def get_size(self) -> tuple[int, int]:
     # 获取图片组的整体大小
     return self.size
@@ -2919,7 +2934,15 @@ class ImagePackDescriptor:
     self.composites_layers = [composite.layers for composite in pack.composites]
     self.composites_references = {}
     self.layer_info = []
-    for layer in pack.layers:
+    code_uniqueness_dict = {} # 只用于检查 codename 是否有重复，不存入文件
+    for layerindex, layer in enumerate(pack.layers):
+      # 检查重复
+      code = ImagePackDescriptor.get_layer_code(layer.basename, verify=True)
+      if code in code_uniqueness_dict:
+        previous_index = code_uniqueness_dict[code]
+        raise PPInternalError(f"Duplicate layer code: {code}: Current layer: #{layerindex} {layer.basename}; previous: #{previous_index} {pack.layers[previous_index].basename}")
+      code_uniqueness_dict[code] = layerindex
+      # 转为 ImagePackDescriptor 的 LayerInfo
       info = ImagePackDescriptor.LayerInfo(layer.offset_x, layer.offset_y, layer.width, layer.height)
       self.layer_info.append(info)
     self.size = (pack.width, pack.height)

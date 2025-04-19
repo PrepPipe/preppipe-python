@@ -73,11 +73,20 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
   current_mask_params : list[typing.Any] | None = None
   mask_param_widgets : list[MaskInputWidget]
   background_radio_buttons : list[QRadioButton] | None = None
+  charactersprite_layer_preset_combobox : QComboBox | None = None
+  charactersprite_layer_base_combobox : QComboBox | None = None
   charactersprite_layer_widgets : list[tuple[QCheckBox, QComboBox]] | None = None
+  charactersprite_layer_group_dict : dict[str, int] | None = None # 当我们需要启用某个图层时，我们应该在哪个图层选项中找到这个
 
   # 方便立绘视图根据启用的图层找差分序号，只在立绘视图中使用
   composites_reverse_dict : dict[tuple[int, ...], int] | None = None
   composite_code_to_index : dict[str, int] | None = None
+
+  # 用于在用代码修改角色立绘图层视图时避免更改当前图层
+  charactersprite_is_programmatically_changing : bool
+
+  # 虽然目前只有立绘视图使用但是我们都会提供
+  layer_code_to_index : dict[str, int]
 
   _tr_composition_selection = TR_gui_tool_imagepack.tr("composition_selection",
     en="Composition Selection",
@@ -103,9 +112,14 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
     self.current_mask_params = None
     self.mask_param_widgets = []
     self.background_radio_buttons = None
+    self.charactersprite_layer_preset_combobox = None
+    self.charactersprite_layer_base_combobox = None
     self.charactersprite_layer_widgets = None
+    self.charactersprite_layer_group_dict = None
+    self.charactersprite_is_programmatically_changing = False
     self.composites_reverse_dict = None
     self.composite_code_to_index = None
+    self.layer_code_to_index = {}
 
   _tr_no_mask = TR_gui_tool_imagepack.tr("no_mask",
     en="This image pack contains no customizable regions.",
@@ -146,6 +160,8 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
     if not isinstance(self.descriptor, ImagePackDescriptor):
       raise PPInternalError(f"Unexpected descriptor type {type(self.descriptor)}")
     self.current_pack = pack
+    for index, layer in enumerate(self.pack.layers):
+      self.layer_code_to_index[ImagePackDescriptor.get_layer_code(layer.basename)] = index
     if len(self.descriptor.masktypes) > 0:
       self.current_mask_params = [None] * len(self.descriptor.masktypes)
       layout = QFormLayout()
@@ -193,17 +209,6 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
           for index, (layers, code) in enumerate(zip(self.descriptor.composites_layers, self.descriptor.composites_code)):
             self.composites_reverse_dict[tuple(layers)] = index
             self.composite_code_to_index[code] = index
-          '''pack_id : str # 图片组的 ID
-  topref : Translatable | str # 所对应资源的名称
-  authortags : tuple[str, ...] # 作者标签，如果有多个作者同时提供了相同名称的素材，可以用这个来区分
-  packtype : ImagePackType # 图片组的类型
-  masktypes : tuple[MaskType, ...] # 有几个选区、各自的类型
-  composites_code : list[str] # 各个差分组合的编号（字母数字组合）
-  composites_layers : list[list[int]] # 各个差分组合所用的图层
-  composites_references : dict[str, Translatable] # 如果某些差分组合有（非编号的）名称，那么它们的名称存在这里
-  layer_info : list[LayerInfo] # 各个图层的信息
-  size : tuple[int, int] # 整体大小
-  bbox : tuple[int, int, int, int] # 边界框'''
           # 立绘视图的差分选择有两部分，第一部分是预设，单行，第二部分是基于图层组的差分自选，有多少图层组就有多少行
           # 第一部分分三列（预设的标签，下拉菜单选择预设，再加“应用”按钮），第二部分分两列（左边是复选框，右边是下拉菜单）
           # 我们统一使用 QGridLayout
@@ -221,7 +226,11 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
           else:
             for code, name in self.descriptor.composites_references.items():
               preset_combo.addItem(name.get(), code)
+            apply_button.clicked.connect(self.handleCharacterCompositionChange_Preset)
           grid_widgets.append((preset_label, preset_combo, apply_button))
+          self.charactersprite_layer_preset_combobox = preset_combo
+          self.charactersprite_layer_widgets = []
+          self.charactersprite_layer_group_dict = {}
           # 图层组部分（需要 charactersprite_gen 元数据）
           if charactersprite_gen := self.pack.opaque_metadata.get("charactersprite_gen", None):
             # 首先，基底部分一定得有
@@ -235,6 +244,7 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
             for k, v in base_options.items():
               base_combo.addItem(k, v)
             grid_widgets.append((base_checkbox, base_combo, None))
+            self.charactersprite_layer_base_combobox = base_combo
             # 然后是各种差分
             parts = charactersprite_gen["parts"]
             for kind_enum, kind_tr in ImagePack.PRESET_YAMLGEN_PARTS_KIND_PRESETS.values():
@@ -244,12 +254,19 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
               if parts_info is None:
                 continue
               def add_row(kind_tr, parts_list):
+                if self.charactersprite_layer_widgets is None or self.charactersprite_layer_group_dict is None:
+                  raise RuntimeError("data uninitialized")
+                row_index = len(self.charactersprite_layer_widgets)
                 kind_checkbox = QCheckBox(kind_tr.get())
                 self.bind_text(kind_checkbox.setText, kind_tr)
                 kind_combo = QComboBox()
                 for part in parts_list:
                   kind_combo.addItem(part)
+                  self.charactersprite_layer_group_dict[part] = row_index
                 grid_widgets.append((kind_checkbox, kind_combo, None))
+                self.charactersprite_layer_widgets.append((kind_checkbox, kind_combo))
+                kind_checkbox.toggled.connect(self.handleCharacterCompositionChange_ByLayer)
+                kind_combo.currentIndexChanged.connect(self.handleCharacterCompositionChange_ByLayer)
               if kind_enum == ImagePack.CharacterSpritePartsBased_PartKind.DECORATION:
                 # 该类型下每个子类都可独立选择
                 for subkind_name, subkind_list in parts_info.items():
@@ -266,9 +283,8 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
               if widget is None:
                 continue
               layout.addWidget(widget, row, col)
-          self.charactersprite_layer_widgets = []
-          # TODO charactersprite_layer_widgets
           self.ui.sourceGroupBox.setLayout(layout)
+          self.updateCharacterCompositionPanelFromCurrentIndex()
         case _:
           raise NotImplementedError(f"Pack type {self.descriptor.packtype} is not supported")
     else:
@@ -280,6 +296,24 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
       self.ui.sourceGroupBox.setLayout(layout)
     # setData() 需要尽快返回，让组件先显示出来，后续再更新内容
     QMetaObject.invokeMethod(self, "updateCurrentImage", Qt.QueuedConnection)
+
+  def charactersprite_update_layer_preset_combobox_text(self):
+    if self.charactersprite_layer_preset_combobox:
+      if len(self.descriptor.composites_references) == 0:
+        self.charactersprite_layer_preset_combobox.clear()
+        self.charactersprite_layer_preset_combobox.addItem(self._tr_no_preset_prompt.get())
+      else:
+        current_index = self.charactersprite_layer_preset_combobox.currentIndex()
+        self.charactersprite_layer_preset_combobox.clear()
+        for code, name in self.descriptor.composites_references.items():
+          self.charactersprite_layer_preset_combobox.addItem(name.get(), code)
+        if current_index >= 0 and current_index < len(self.descriptor.composites_references):
+          self.charactersprite_layer_preset_combobox.setCurrentIndex(current_index)
+
+  def update_text(self):
+    super().update_text()
+    if self.charactersprite_layer_preset_combobox:
+      self.charactersprite_update_layer_preset_combobox_text()
 
   @Slot(int)
   def handleMaskParamUpdate(self, index : int):
@@ -303,6 +337,87 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
       return
     self.current_index = new_index
     QMetaObject.invokeMethod(self, "updateCurrentImage", Qt.QueuedConnection)
+
+  def updateCharacterCompositionPanelFromCurrentIndex(self):
+    if self.charactersprite_layer_widgets is None or self.charactersprite_layer_group_dict is None:
+      raise RuntimeError("data uninitialized")
+    current_layers = None
+    if isinstance(self.current_index, list):
+      current_layers = self.current_index
+    else:
+      current_layers = self.pack.composites[self.current_index if self.current_index is not None else 0].layers
+
+    # 非基底图层的选项得在 self.charactersprite_layer_widgets 中修改，基底图层的选项在 self.charactersprite_layer_base_combobox 中
+    # 我们先把 current_layers_set 中所有的非基底图层选项处理好，剩下的部分一定都是基底图层
+    # 我们再在之后找个完全匹配的基底图层项
+    dest_layer_widget_states = [(False, '')] * len(self.charactersprite_layer_widgets) # <是否启用，启用哪个图层>的列表
+    base_layers = set()
+    for layer_index in current_layers:
+      codename = ImagePackDescriptor.get_layer_code(self.pack.layers[layer_index].basename)
+      group_index = self.charactersprite_layer_group_dict.get(codename, None)
+      if group_index is not None:
+        dest_layer_widget_states[group_index] = (True, codename)
+      else:
+        base_layers.add(codename)
+
+    # 开始决定哪些图层需要启用，先关掉 handleCharacterCompositionChange_ByLayer()
+    self.charactersprite_is_programmatically_changing = True
+
+    # 决定基底项应该用哪个
+    if self.charactersprite_layer_base_combobox is not None:
+      base_index = None
+      for i in range(self.charactersprite_layer_base_combobox.count()):
+        option_enabled_layers = self.charactersprite_layer_base_combobox.itemData(i, Qt.UserRole)
+        if len(option_enabled_layers) == len(base_layers) and all(layer in option_enabled_layers for layer in base_layers):
+          base_index = i
+          break
+      if base_index is not None:
+        self.charactersprite_layer_base_combobox.setCurrentIndex(base_index)
+
+    for groupindex, (checkbox, combobox) in enumerate(self.charactersprite_layer_widgets):
+      if groupindex >= len(dest_layer_widget_states):
+        raise RuntimeError("dest_layer_widget_states is too short")
+      enabled, layername = dest_layer_widget_states[groupindex]
+      checkbox.setChecked(enabled)
+      if enabled:
+        index = combobox.findText(layername)
+        if index < 0:
+          raise RuntimeError(f"Layer {layername} not found in combobox")
+        combobox.setCurrentIndex(index)
+
+    # 结束时恢复 handleCharacterCompositionChange_ByLayer()
+    self.charactersprite_is_programmatically_changing = False
+
+  @Slot()
+  def handleCharacterCompositionChange_Preset(self):
+    if self.charactersprite_layer_preset_combobox is None or self.composite_code_to_index is None:
+      raise RuntimeError("charactersprite data incomplete")
+    code = self.charactersprite_layer_preset_combobox.currentData()
+    if code is not None:
+      new_index = self.composite_code_to_index.get(code, 0)
+      self.updateCharacterCompositionPanelFromCurrentIndex()
+      if self.current_index != new_index:
+        self.current_index = new_index
+        QMetaObject.invokeMethod(self, "updateCurrentImage", Qt.QueuedConnection)
+
+  @Slot()
+  def handleCharacterCompositionChange_ByLayer(self):
+    if self.charactersprite_is_programmatically_changing:
+      return
+    if self.charactersprite_layer_widgets is None or self.charactersprite_layer_group_dict is None or self.charactersprite_layer_base_combobox is None:
+      raise RuntimeError("data uninitialized")
+    base_layers = self.charactersprite_layer_base_combobox.currentData()
+    current_layers = [self.layer_code_to_index[code] for code in base_layers]
+    for checkbox, combobox in self.charactersprite_layer_widgets:
+      if checkbox.isChecked():
+        layername = combobox.currentText()
+        current_layers.append(self.layer_code_to_index[layername])
+    current_layers.sort()
+    current_index = self.composites_reverse_dict.get(tuple(current_layers), None)
+    new_index = current_index if current_index is not None else current_layers
+    if self.current_index != new_index:
+      self.current_index = new_index
+      QMetaObject.invokeMethod(self, "updateCurrentImage", Qt.QueuedConnection)
 
   @Slot()
   def updateCurrentPack(self):
