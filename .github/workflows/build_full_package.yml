@@ -1,4 +1,4 @@
-name: "build-full-package"
+name: "Build full release package"
 
 env:
   BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
@@ -21,7 +21,7 @@ jobs:
         run: |
           mkdir -p stage
           mv LICENSE stage
-          mv README_dist.txt stage/README.txt
+          mv ci/README_dist.txt stage/README.txt
 
       - name: "Checkout document repo"
         uses: actions/checkout@v4

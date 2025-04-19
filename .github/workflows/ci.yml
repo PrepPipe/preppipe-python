@@ -27,11 +27,11 @@ jobs:
         run: pip install pyinstaller
       - name: create versionfiles
         run: |
-          python3 ./versionfile_gen.py versionfile_cli.txt preppipe_cli.exe --cli
-          python3 ./versionfile_gen.py versionfile_gui.txt preppipe.exe
+          python3 ./ci/versionfile_gen.py ./ci/versionfile_cli.txt preppipe_cli.exe --cli
+          python3 ./ci/versionfile_gen.py ./ci/versionfile_gui.txt preppipe.exe
       - name: run pyinstaller
         run: |
-          pyinstaller preppipe.spec
+          pyinstaller ci/preppipe.spec
           cd dist/preppipe     && 7z.exe a -t7z -mx=9 ../preppipe-windows-x64.7z *     && cd ../..
       - name: generate documentation files
         run: |

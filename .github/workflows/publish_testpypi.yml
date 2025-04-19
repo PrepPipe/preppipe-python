@@ -1,4 +1,4 @@
-name: testpypi-publish
+name: "Publish to TestPyPI"
 
 on: [workflow_dispatch]
 
