@@ -98,6 +98,7 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
     self.ui.viewerLayout.addWidget(self.viewer)
     self.bind_text(self.ui.sourceGroupBox.setTitle, self._tr_composition_selection)
     self.bind_text(self.ui.forkParamGroupBox.setTitle, self._tr_mask_parameters)
+    self.ui.infoLabel.setText('') # 在详细信息功能完成前先隐藏该标签
     self.current_index = 0
     self.current_mask_params = None
     self.mask_param_widgets = []
