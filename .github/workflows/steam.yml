@@ -1,0 +1,40 @@
+name: "Publish to steam"
+
+env:
+  BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deployToSteam:
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Download release"
+        id: download_release
+        uses: robinraju/release-downloader@v1.10
+        with:
+          repository: "PrepPipe/preppipe-python"
+          tag: "latest-${{ env.BRANCH_NAME }}"
+          fileName: "preppipe-windows-x64-full.7z"
+          tarBall: false
+          zipBall: false
+          out-file-path: "."
+      - name: "Print Version"
+        shell: bash
+        run: |
+          echo "${{steps.download_release.outputs.release_name}}" | cut -d " " -f1 | tee VERSION.txt
+          [ -s VERSION.txt ] && echo "PPVERSION=$(cat VERSION.txt)" >> $GITHUB_ENV
+      - name: "Extract release"
+        shell: bash
+        run: |
+          7z x preppipe-windows-x64-full.7z -owindows-x64
+      - uses: game-ci/steam-deploy@v3
+        with:
+          username: ${{ secrets.STEAM_USERNAME }}
+          configVdf: ${{ secrets.STEAM_CONFIG_VDF}}
+          appId: ${{ secrets.STEAM_APP_ID }}
+          buildDescription: ${{ env.PPVERSION }}
+          #rootPath: build
+          depot1Path: windows-x64
+          releaseBranch: prerelease
