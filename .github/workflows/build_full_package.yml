@@ -19,8 +19,8 @@ jobs:
       - name: "Setup stage directory"
         shell: bash
         run: |
-          mkdir -p stage
-          mv LICENSE stage
+          mkdir -p stage/licenses
+          mv LICENSE stage/licenses/preppipe_LICENSE.txt
           mv ci/README_dist.txt stage/README.txt
 
       - name: "Checkout document repo"
@@ -74,7 +74,8 @@ jobs:
         run: |
           unzip ffmpeg-master-latest-win64-lgpl-shared.zip "ffmpeg-master-latest-win64-lgpl-shared/*" -d "windows-x64"
           mv windows-x64/ffmpeg-master-latest-win64-lgpl-shared/bin/* windows-x64/
-          mv windows-x64/ffmpeg-master-latest-win64-lgpl-shared/LICENSE.txt windows-x64/LICENSE-ffmpeg.txt
+          mkdir -p windows-x64/licenses
+          mv windows-x64/ffmpeg-master-latest-win64-lgpl-shared/LICENSE.txt windows-x64/licenses/ffmpeg_LICENSE.txt
           rm -rf windows-x64/ffmpeg-master-latest-win64-lgpl-shared
           rm -f ffmpeg-master-latest-win64-lgpl-shared.zip
 
