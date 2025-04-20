@@ -82,7 +82,7 @@ class MainInputWidget(QWidget, ToolWidgetInterface):
     self.add_translatable_widget_child(self.filelist)
     input_layout = QVBoxLayout()
     input_layout.addWidget(self.filelist)
-    input_layout.setContentsMargins(0, 0, 0, 0)
+    #input_layout.setContentsMargins(0, 0, 0, 0)
     input_layout.setSpacing(0)
     self.ui.inputGroupBox.setLayout(input_layout)
     self.build_operation_groupbox(self.ui.analysisGroupBox, [
@@ -96,7 +96,7 @@ class MainInputWidget(QWidget, ToolWidgetInterface):
   def build_operation_groupbox(self, group : QGroupBox, entry_list : list):
     # 在 group 中添加按钮，entry_list 中每一项会成为一个带有大图标的按钮，图片在文字上方
     layout = QVBoxLayout()
-    layout.setContentsMargins(0, 0, 0, 0)
+    #layout.setContentsMargins(0, 0, 0, 0)
     group.setLayout(layout)
     for i, (name, icon, slot) in enumerate(entry_list):
       button = QPushButton(name.get())
@@ -111,7 +111,7 @@ class MainInputWidget(QWidget, ToolWidgetInterface):
 
   @Slot()
   def request_analysis(self):
-    pass
+    self.showNotImplementedMessageBox()
 
   @Slot()
   def request_export_renpy(self):
@@ -127,4 +127,12 @@ class MainInputWidget(QWidget, ToolWidgetInterface):
 
   @Slot()
   def request_export_webgal(self):
-    pass
+    filelist = self.filelist.getCurrentList()
+    if not filelist:
+      QMessageBox.critical(self, self._tr_unable_to_execute.get(), self._tr_input_required.get())
+      return
+    info = ExecutionInfo.init_main_pipeline(filelist)
+    info.args.append("--webgal-codegen")
+    info.args.append("--webgal-export")
+    info.add_output_unspecified(self._tr_export_path, "game", is_dir=True)
+    MainWindowInterface.getHandle(self).requestExecution(info)

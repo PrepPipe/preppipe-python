@@ -25,6 +25,7 @@ class MainWindow(QMainWindow, MainWindowInterface):
     self.ui.actionOpenDocumentation.setShortcut(QKeySequence(QKeySequence.HelpContents))
     self.ui.actionSettings.triggered.connect(lambda: self.requestOpenWithType(SettingWidget))
     self.ui.actionMainPipeline.triggered.connect(lambda: self.requestOpenWithType(MainInputWidget))
+    self.ui.actionNavigator.triggered.connect(lambda: self.requestOpenWithType(NavigatorWidget))
     self.ui.tabWidget.tabCloseRequested.connect(self.handleTabCloseRequest)
 
   _tr_functionality = TR_gui_mainwindow.tr("functionality",
@@ -47,6 +48,7 @@ class MainWindow(QMainWindow, MainWindowInterface):
     self.ui.menuFunctionality.setTitle(self._tr_functionality.get())
     self.ui.actionSettings.setText(self.tr_toolname_settings.get())
     self.ui.actionMainPipeline.setText(self.tr_toolname_maininput.get())
+    self.ui.actionNavigator.setText(self.tr_toolname_navigator.get())
     self.ui.menuHelp.setTitle(self._tr_help.get())
     self.ui.actionOpenDocumentation.setText(self._tr_open_documentation.get())
 

@@ -133,6 +133,13 @@ class NavigatorWidget(QWidget, ToolWidgetInterface):
   ui : Ui_NavigatorWidget
   model : ToolModel
 
+  TR_gui_navigator = TranslationDomain("gui_navigator")
+  _tr_infolabel_text = TR_gui_navigator.tr("infoLabel",
+    en="This page provides access for all the tools and assets in the program. Single click on the item to open it. (We will update this page in the future)",
+    zh_cn="本页提供了程序中所有工具和资源的入口。单击项目以打开对应项。 （我们将在将来更新此页面）",
+    zh_hk="本頁提供了程序中所有工具和資源的入口。單擊項目以打開對應項。 （我們將在將來更新此頁面）",
+  )
+
   def __init__(self, parent : QWidget):
     super(NavigatorWidget, self).__init__(parent)
     self.ui = Ui_NavigatorWidget()
@@ -143,6 +150,7 @@ class NavigatorWidget(QWidget, ToolWidgetInterface):
     self.ui.treeView.setHeaderHidden(True)
     self.ui.treeView.expandAll()
     self.ui.treeView.clicked.connect(self.on_treeView_clicked)
+    self.bind_text(self.ui.infoLabel.setText, self._tr_infolabel_text)
 
   def on_treeView_clicked(self, index: QModelIndex):
     if not index.isValid():
@@ -152,17 +160,11 @@ class NavigatorWidget(QWidget, ToolWidgetInterface):
       return
     MainWindowInterface.getHandle(self).requestOpen(info)
 
-  _tr_toolname_navigator = TR_gui_mainwindow.tr("toolname_navigator",
-    en="Navigator",
-    zh_cn="导航",
-    zh_hk="導航",
-  )
-
   @classmethod
   def getToolInfo(cls, **kwargs) -> ToolWidgetInfo:
     return ToolWidgetInfo(
       idstr="navigator",
-      name=cls._tr_toolname_navigator,
+      name=MainWindowInterface.tr_toolname_navigator,
       widget=cls,
       uniquelevel=ToolWidgetUniqueLevel.SINGLE_INSTANCE,
     )
