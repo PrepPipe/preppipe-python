@@ -7,6 +7,16 @@ from PySide6.QtGui import QDesktopServices
 from .utilcommon import *
 
 class FileOpenHelper:
+  tr_open = TR_gui_utilcommon.tr("open",
+    en="Open",
+    zh_cn="打开",
+    zh_hk="打開",
+  )
+  tr_open_containing_directory = TR_gui_utilcommon.tr("open_containing_directory",
+    en="Open Containing Directory",
+    zh_cn="打开所在目录",
+    zh_hk="打開所在目錄",
+  )
   _tr_not_supported = TR_gui_utilcommon.tr("not_supported",
     en="Not Supported",
     zh_cn="暂不支持",

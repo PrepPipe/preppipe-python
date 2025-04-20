@@ -89,6 +89,8 @@ class ExecuteWidget(QWidget, ToolWidgetInterface):
     self.ui = Ui_ExecuteWidget()
     self.ui.setupUi(self)
     self.ui.outputGroupBox.setLayout(QVBoxLayout())
+    self.bind_text(self.ui.killButton.setText, self._tr_kill_process)
+    self.bind_text(self.ui.outputGroupBox.setTitle, self._tr_outputs)
     self.ui.killButton.clicked.connect(self.kill_process)
     self.exec = None
 

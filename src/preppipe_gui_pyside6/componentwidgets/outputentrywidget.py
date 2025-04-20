@@ -10,16 +10,6 @@ from ..util.fileopen import FileOpenHelper
 
 class OutputEntryWidget(QWidget, TranslatableWidgetInterface):
   TR_gui_outputentrywidget = TranslationDomain("gui_outputentrywidget")
-  _tr_open_containing_directory = TR_gui_outputentrywidget.tr("open_containing_directory",
-    en="Open Containing Directory",
-    zh_cn="打开所在目录",
-    zh_hk="打開所在目錄",
-  )
-  _tr_open = TR_gui_outputentrywidget.tr("open",
-    en="Open",
-    zh_cn="打开",
-    zh_hk="打開",
-  )
   _tr_filestate_initial = TR_gui_outputentrywidget.tr("filestate_initial",
     en="Init",
     zh_cn="初始",
@@ -59,8 +49,8 @@ class OutputEntryWidget(QWidget, TranslatableWidgetInterface):
     self.path = ""
     self.lastModified = QDateTime()
 
-    self.bind_text(self.ui.openPushButton.setText, self._tr_open)
-    self.bind_text(self.ui.openInExplorerPushButton.setText, self._tr_open_containing_directory)
+    self.bind_text(self.ui.openPushButton.setText, FileOpenHelper.tr_open)
+    self.bind_text(self.ui.openInExplorerPushButton.setText, FileOpenHelper.tr_open_containing_directory)
 
   @staticmethod
   def getLatestModificationInDir(dirpath: str) -> QDateTime:

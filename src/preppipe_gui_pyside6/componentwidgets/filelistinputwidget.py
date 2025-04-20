@@ -56,6 +56,7 @@ class FileListInputWidget(QWidget, TranslatableWidgetInterface):
     self.bind_text(self.ui.removeButton.setText, self._tr_remove)
     self.bind_text(self.ui.moveUpButton.setText, self._tr_move_up)
     self.bind_text(self.ui.moveDownButton.setText, self._tr_move_down)
+    self.bind_text(self.ui.openContainingDirectoryButton.setText, FileOpenHelper.tr_open_containing_directory)
 
     self.ui.listWidget.itemChanged.connect(lambda: self.listChanged.emit())
     self.ui.addButton.clicked.connect(self.itemAdd)
