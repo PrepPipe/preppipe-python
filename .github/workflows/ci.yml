@@ -23,16 +23,24 @@ jobs:
           echo "version_tag=$(python3 ./ci/printversion.py)" >> $GITHUB_OUTPUT
       - name: Print version
         run: echo "${{ steps.vars.outputs.version_tag }}"
+      - name: install pip-licenses
+        run: python3 -m pip install --upgrade pip-licenses
+      - name: collect licenses
+        run: |
+          python3 ./ci/collect_licenses.py --output-dir licenses
       - name: install pyinstaller
-        run: pip install pyinstaller
+        run: pip install --upgrade pyinstaller
       - name: create versionfiles
         run: |
           python3 ./ci/versionfile_gen.py ./ci/versionfile_cli.txt preppipe_cli.exe --cli
           python3 ./ci/versionfile_gen.py ./ci/versionfile_gui.txt preppipe.exe
       - name: run pyinstaller
+        run: pyinstaller ci/preppipe.spec
+      - name: build package
+        shell: bash
         run: |
-          pyinstaller ci/preppipe.spec
-          cd dist/preppipe     && 7z.exe a -t7z -mx=9 ../preppipe-windows-x64.7z *     && cd ../..
+          mv licenses dist/preppipe
+          cd dist/preppipe && 7z.exe a -t7z -mx=9 ../preppipe-windows-x64.7z *  && cd ../..
       - name: generate documentation files
         run: |
           python3 ci/mkdocsgen.py
