@@ -41,6 +41,11 @@ class MainWindowInterface:
     zh_cn="主管线",
     zh_hk="主管線",
   )
+  tr_toolname_navigator = TR_gui_mainwindow.tr("toolname_navigator",
+    en="Navigator",
+    zh_cn="导航",
+    zh_hk="導航",
+  )
   tr_toolname_analysis = TR_gui_mainwindow.tr("toolname_analysis",
     en="Analysis Tools",
     zh_cn="分析工具",

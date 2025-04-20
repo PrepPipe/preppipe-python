@@ -2,9 +2,12 @@ from __future__ import annotations
 import typing
 import weakref
 from PySide6.QtCore import QObject
+from PySide6.QtWidgets import QMessageBox, QWidget
 from preppipe.language import *
 
 class TranslatableWidgetInterface:
+  TR_gui_misc = TranslationDomain("gui_misc")
+
   # 用于更新语言时自动更新文本
   _twi_binding_dict : weakref.WeakKeyDictionary[QObject, dict[str, Translatable | typing.Callable[[], str]]]
   _twi_general_list : list[tuple[typing.Callable[[str], None], Translatable | typing.Callable[[], str]]]
@@ -48,3 +51,18 @@ class TranslatableWidgetInterface:
     self._twi_binding_dict[obj][key] = tr
     self._update_text_qobject(obj, key, tr)
 
+  _tr_not_supported_yet_title = TR_gui_misc.tr("not_supported_title",
+    en = "Not Supported Yet",
+    zh_cn = "暂不支持",
+    zh_hk = "暫不支持",
+  )
+  _tr_not_supported_yet_details = TR_gui_misc.tr("not_supported_details",
+    en = "This feature is not supported yet.",
+    zh_cn = "该功能暂不支持。",
+    zh_hk = "該功能暫不支持。",
+  )
+  def showNotImplementedMessageBox(self):
+    if not isinstance(self, QWidget):
+      raise RuntimeError("TranslatableWidgetInterface instance must be a QWidget")
+    QMessageBox.warning(self, self._tr_not_supported_yet_title.get(),
+      self._tr_not_supported_yet_details.get())

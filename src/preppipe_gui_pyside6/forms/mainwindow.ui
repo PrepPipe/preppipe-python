@@ -49,9 +49,10 @@
     <property name="title">
      <string>Functionality</string>
     </property>
-    <addaction name="actionSettings"/>
-    <addaction name="separator"/>
+    <addaction name="actionNavigator"/>
     <addaction name="actionMainPipeline"/>
+    <addaction name="separator"/>
+    <addaction name="actionSettings"/>
    </widget>
    <addaction name="menuFunctionality"/>
    <addaction name="menuHelp"/>
@@ -81,6 +82,11 @@
   <action name="actionMainPipeline">
    <property name="text">
     <string>Main Pipeline</string>
+   </property>
+  </action>
+  <action name="actionNavigator">
+   <property name="text">
+    <string>Navigator</string>
    </property>
   </action>
  </widget>

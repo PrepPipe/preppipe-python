@@ -62,14 +62,14 @@ class ExecuteWidget(QWidget, ToolWidgetInterface):
     zh_hk="執行出錯 (返回值：{exitcode})，如有疑問請聯繫開發者。",
   )
   _tr_finish_prompt = TR_gui_executewidget.tr("finish_prompt",
-    en="You may now close this window.",
-    zh_cn="您现在可以关闭这个窗口了。",
-    zh_hk="您現在可以關閉這個窗口了。",
+    en="You may now close this tab.",
+    zh_cn="您现在可以关闭这个标签页了。",
+    zh_hk="您現在可以關閉這個標籤頁了。",
   )
   _tr_tempdir_clear_warning = TR_gui_executewidget.tr("tempdir_clear_warning",
     en="The temporary directory (including everything inside) will be deleted when closing the window: {path}",
-    zh_cn="临时目录（及其下所有文件）会在本窗口关闭时删除： {path}",
-    zh_hk="臨時目錄（及其下所有文件）會在本窗口關閉時刪除： {path}",
+    zh_cn="临时目录（及其下所有文件）会在本页关闭时删除： {path}",
+    zh_hk="臨時目錄（及其下所有文件）會在本頁關閉時刪除： {path}",
   )
 
   @classmethod
