@@ -80,3 +80,11 @@ PYTHONPATH=/path/to/preppipe/src
 ```
 git config --local include.path $PWD/gitconfig
 ```
+
+## 更新后所需操作
+
+本仓库有部分内容需要由程序生成，该步骤需要在(1)刚 `git clone` 完仓库时，或(2)相应的部分有改动时手动执行。CI 中每次构建完整的发布包都会执行这些操作。
+
+需要手动执行的有：（请在上述开发环境配置完毕后执行）
+* 资源文件处理。请在仓库根目录下运行 `python3 ./build_assets.py` 以生成 `src/preppipe/assets/_install` 下的内容。该操作需要在资源列表更新时或任意资源类型保存的的内部数据结构改变时重新进行。
+* GUI 中 PySide6 `.ui` 文件编译。请在 `src/preppipe_gui_pyside6/forms` 目录下将所有诸如 `xxx.ui` 的文件使用命令 `pyside6-uic xxx.ui generated/ui_xxx.py` 编译成 `.py`。如果您使用 Linux，您可以直接用该目录下的 `Makefile`。该操作需要在任意 .ui 文件更改后重新执行。
