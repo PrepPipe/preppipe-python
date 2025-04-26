@@ -1431,7 +1431,30 @@ class ImagePack(NamedAssetClassBase):
       result.opaque_metadata.update(metadata)
 
     result.optimize_masks()
+    result.sanity_check()
     return result
+
+  def sanity_check(self):
+    # 检查图层的顺序是否正确
+    for i, layer in enumerate(self.layers):
+      if layer.offset_x < 0 or layer.offset_y < 0:
+        raise PPInternalError("Invalid layer offset: " + str(layer.offset_x) + ", " + str(layer.offset_y))
+      if layer.width <= 0 or layer.height <= 0:
+        raise PPInternalError("Invalid layer size: " + str(layer.width) + ", " + str(layer.height))
+      if layer.offset_x + layer.width > self.width or layer.offset_y + layer.height > self.height:
+        raise PPInternalError("Layer out of bounds: " + str(layer.offset_x) + ", " + str(layer.offset_y) + ", "
+                              + str(layer.width) + ", " + str(layer.height) + ", "
+                              + str(self.width) + ", " + str(self.height))
+    for layers in self.composites:
+      if len(layers.layers) == 0:
+        raise PPInternalError("Empty composite: " + layers.basename)
+      for i in layers.layers:
+        if i < 0 or i >= len(self.layers):
+          raise PPInternalError("Invalid composite layer index: " + str(i) + " (max: " + str(len(self.layers)) + ")")
+      # 为了避免难以发现的图层间顺序错误导致组合图与预期的不一样，我们在这里检查所有图层有没有按照标号从小到大的顺序排列
+      # 一般我们要求下面的图层的标号更小、上面的更大，所以组合里的图层也应该是从小到大的顺序
+      if not all(x < y for x, y in zip(layers.layers, layers.layers[1:])):
+        raise PPInternalError("Invalid composite layer order: " + str(layers.layers))
 
   TR_imagepack_yamlgen_parts = TR_imagepack.tr("parts",
     en="parts",
@@ -1832,10 +1855,12 @@ class ImagePack(NamedAssetClassBase):
     result_layers : dict[str, dict] = {}
     if layers is not None:
       result_layers.update(layers)
+    layer_orders : dict[str, int] = {}
     for codename, part in parts.items():
       part_dict = {}
       if kinds_enum_map[part.kind] == ImagePack.CharacterSpritePartsBased_PartKind.BASE:
         part_dict[ImagePack.TR_imagepack_yamlparse_flags.get()] = ImagePack.TR_imagepack_yamlparse_base.get()
+      layer_orders[part.name] = len(result_layers)
       result_layers[part.name] = part_dict
     result_composites : dict[str, list[str]] = {}
     if composites is not None:
@@ -1861,6 +1886,7 @@ class ImagePack(NamedAssetClassBase):
       for nonbase_combination in nonbase_parts_combinations:
         combination_codename = combination_codename_base + "".join(nonbase_combination)
         combination_layers = combination_layers_base + [parts[part].name for part in nonbase_combination]
+        combination_layers.sort(key=lambda x: layer_orders[x])
         result_composites[combination_codename] = combination_layers
     return (result_layers, masks, result_composites, metadata)
 
