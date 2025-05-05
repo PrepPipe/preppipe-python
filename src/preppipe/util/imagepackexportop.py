@@ -273,6 +273,7 @@ class ImagePackExportDataBuilder:
   class InstanceExportInfo:
     layer_exports : list # list[LayerExportInfo]
     composites : dict[str, tuple[int, ...]] # 差分组合的编码 -> 各个组成图层的编号
+    image_size : tuple[int, int] # 图片包的原始大小，Ren'Py 需要这个信息来生成 layeredimage 块
     first_referenced_by : typing.Any | None = None
 
   def finalize(self, dest : SymbolTableRegion[ImagePackExportOpSymbol]) -> dict[str, InstanceExportInfo]:
@@ -381,7 +382,7 @@ class ImagePackExportDataBuilder:
           composite_code = reference_info.composite_code
           layers = tuple(info.descriptor.get_layers_from_composite_index(composite_index))
           composite_exports[composite_code] = layers
-        instance_export_info = ImagePackExportDataBuilder.InstanceExportInfo(layer_exports=layer_exports, composites=composite_exports, first_referenced_by=info.first_referenced_by)
+        instance_export_info = ImagePackExportDataBuilder.InstanceExportInfo(layer_exports=layer_exports, composites=composite_exports, image_size=info.descriptor.size, first_referenced_by=info.first_referenced_by)
         resultdict[info.instance_id] = instance_export_info
     return resultdict
 

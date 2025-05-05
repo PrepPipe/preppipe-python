@@ -1059,9 +1059,11 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
     # 2. 对每一个差分组合，生成一个 image 结点，把差分组合名称到 A 中图层的关系给写上
     # (比如如果差分组合"M1E1" 由 L1, L2 两个图层组成，那我们写： image A M1E1 = "A L1 L2")
     for pack_id, info in imagepacks.items():
-      lines = []
-      header = "layeredimage " + pack_id + ":"
-      lines.append(header)
+      lines = [
+        f"layeredimage {pack_id}:",
+        r"    always:",
+        f"        Null(width={info.image_size[0]}, height={info.image_size[1]})"
+      ]
       for layerinfo in info.layer_exports:
         if not isinstance(layerinfo, ImagePackExportDataBuilder.LayerExportInfo):
           raise PPInternalError('Unexpected layer export info type')
