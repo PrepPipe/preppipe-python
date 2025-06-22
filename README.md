@@ -55,7 +55,7 @@ English users please use the [Github Discussions page](https://github.com/PrepPi
 如果您想构建一个开发环境，您需要安装以下 Python 依赖项。推荐在一个 `venv` 中操作。
   * 构建需要 `build twine`
   * 运行时需要的包在 [setup.cfg](setup.cfg) 的 `options.install_requires` 和 `options.extras_require` 下
-  * 部分依赖（比如 llist）可能需要您拥有 C/C++ 编译环境，如果安装依赖时报错请按照提示操作。
+  * 部分依赖可能需要您拥有 C/C++ 编译环境，如果安装依赖时报错请按照提示操作。
 
 （注：如果你使用 VSCode, 您可以在 `.vscode/settings.json` 中将 `"python.defaultInterpreterPath"` 指向 `venv` 中的 Python 解释器）
 
