@@ -24,7 +24,6 @@ import base64
 import PIL.Image
 import pydub
 import bidict
-import llist
 
 from .commontypes import TextAttribute, Color
 from . import __version__
@@ -38,57 +37,105 @@ from .language import *
 
 T = typing.TypeVar('T')
 
-# we create our own list type here because of the following reasons:
-# 1. IDE (e.g., VSCode) may not be able to get information from llist module for auto-completion, etc
-# 2. Certain API is easy to misuse for our use case (we will subclass the nodes)
-#    For example:
-#       * llist.dllist.insert(), etc will create NEW nodes instead of directly using the node passed in, and this is not what we want
-#       * iterating over a dllist is getting the VALUE on the nodes, instead of getting the nodes
-
 _IListNodeTypeVar = typing.TypeVar('_IListNodeTypeVar', bound='IListNode')
-class IList(llist.dllist, typing.Generic[_IListNodeTypeVar, T]):
-  # __slots__ = ('_parent')
-  _parent : typing.Any
+class IList(typing.Generic[_IListNodeTypeVar, T]):
+  _ilist_parent : typing.Any
+  _ilist_size : int
+  _ilist_front : _IListNodeTypeVar | None
+  _ilist_back : _IListNodeTypeVar | None
   def __init__(self, parent : T) -> None:
     super().__init__()
-    self._parent = parent
+    self._ilist_parent = parent
+    self._ilist_size = 0
+    self._ilist_front = None
+    self._ilist_back = None
 
   @property
   def parent(self) -> T:
-    return self._parent
+    return self._ilist_parent
 
   @property
   def size(self) -> int:
-    return super().size
+    return self._ilist_size
 
   @property
-  def front(self) -> _IListNodeTypeVar:
-    # return the first node if available, None if not
-    return super().first
+  def front(self) -> _IListNodeTypeVar | None:
+    return self._ilist_front
 
   @property
   def empty(self) -> bool:
-    return super().first is None
+    return self._ilist_size == 0
 
   @property
-  def back(self) -> _IListNodeTypeVar:
-    # return the last node if available, None if not
-    return super().last
+  def back(self) -> _IListNodeTypeVar | None:
+    return self._ilist_back
 
+  # pylint: disable=protected-access
   def insert(self, where : _IListNodeTypeVar, node : _IListNodeTypeVar):
     assert isinstance(node, IListNode)
-    super().insertnodebefore(node, where)
-    node.node_inserted(self.parent)
+    assert isinstance(where, IListNode)
+    if where is None:
+      self.push_back(node)
+      return
+    if self._ilist_front is where:
+      self.push_front(node)
+      return
+    assert node._ilist_owner is None
+    node._ilist_owner = self
+    node._ilist_prev = where._ilist_prev
+    node._ilist_next = where
+    if prev := where._ilist_prev:
+      prev._ilist_next = node
+    where._ilist_prev = node
+    self._ilist_size += 1
+
+  def remove(self, node : _IListNodeTypeVar):
+    if self.size == 1:
+      assert self._ilist_front is node
+      self._ilist_front = None
+      self._ilist_back = None
+      self._ilist_size = 0
+    else:
+      if prev := node._ilist_prev:
+        prev._ilist_next = node._ilist_next
+      elif self._ilist_front is node:
+        self._ilist_front = node._ilist_next
+      if next := node._ilist_next:
+        next._ilist_prev = node._ilist_prev
+      elif self._ilist_back is node:
+        self._ilist_back = node._ilist_prev
+      self._ilist_size -= 1
+    node._ilist_owner = None
+    node._ilist_prev = None
+    node._ilist_next = None
+
+  def _check_simple_add(self, node : _IListNodeTypeVar) -> bool:
+    assert isinstance(node, IListNode)
+    assert node._ilist_owner is None
+    node._ilist_owner = self
+    if self.empty:
+      self._ilist_front = node
+      self._ilist_back = node
+      self._ilist_size = 1
+      return False
+    return True
 
   def push_back(self, node : _IListNodeTypeVar):
-    assert isinstance(node, IListNode)
-    super().appendnode(node)
-    node.node_inserted(self.parent)
+    if self._check_simple_add(node):
+      node._ilist_prev = self._ilist_back
+      self._ilist_back._ilist_next = node
+      self._ilist_back = node
+      node._ilist_next = None
+      self._ilist_size += 1
 
   def push_front(self, node : _IListNodeTypeVar):
-    assert isinstance(node, IListNode)
-    super().insertnodebefore(node, super().first)
-    node.node_inserted(self.parent)
+    if self._check_simple_add(node):
+      assert isinstance(self._ilist_front, IListNode)
+      node._ilist_next = self._ilist_front
+      self._ilist_front._ilist_prev = node
+      self._ilist_front = node
+      node._ilist_prev = None
+      self._ilist_size += 1
 
   def get_index_of(self, node : _IListNodeTypeVar) -> int:
     # -1 if node not found, node index if found
@@ -106,39 +153,67 @@ class IList(llist.dllist, typing.Generic[_IListNodeTypeVar, T]):
 
   def merge_into(self, dest : IList[_IListNodeTypeVar, T]):
     assert isinstance(dest, IList)
-    while self.front is not None:
-      v = self.front
-      assert isinstance(v, IListNode)
-      # pylint: disable=no-member
-      v.node_removed(self.parent)
-      super().remove(v)
-      dest.push_back(v)
+    if self.size == 0:
+      return
+    if dest.empty:
+      dest._ilist_front = self.front
+      dest._ilist_back = self.back
+      dest._ilist_size = self.size
+      self._ilist_front = None
+      self._ilist_back = None
+      self._ilist_size = 0
+      return
+    for node in self:
+      assert isinstance(node, IListNode)
+      node._ilist_owner = dest
+    dest._ilist_back._ilist_next = self.front
+    self.front._ilist_prev = dest._ilist_back
+    dest._ilist_back = self.back
+    dest._ilist_size += self.size
+    self._ilist_front = None
+    self._ilist_back = None
+    self._ilist_size = 0
+
 
   def __iter__(self) -> IListIterator[_IListNodeTypeVar]:
-    return IListIterator(super().first)
+    return IListIterator(self.front)
 
   # pylint: disable=invalid-length-returned
   def __len__(self) -> int:
-    assert self.size >= 0
     return self.size
 
   def __getitem__(self, index : int) -> _IListNodeTypeVar:
-    return super().__getitem__(index)
+    if index < 0 or index >= self.size:
+      raise IndexError("Index out of range")
+    cur_index = 0
+    cur_node = self.front
+    while cur_node is not None:
+      assert isinstance(cur_node, IListNode)
+      if cur_index == index:
+        return cur_node
+      cur_node = cur_node.next
+      cur_index += 1
+    raise PPInternalError("IList.__getitem__() reached end of list without finding index")
 
   def clear(self):
-    while self.front is not None:
-      v = self.front
+    v = self.front
+    while v is not None:
       assert isinstance(v, IListNode)
-      # pylint: disable=no-member
-      v.node_removed(self.parent)
-      super().remove(v)
+      next = v._ilist_next
+      v._ilist_prev = None
+      v._ilist_next = None
+      v._ilist_owner = None
+      v = next
+    self._ilist_size = 0
+    self._ilist_front = None
+    self._ilist_back = None
 
 class IListIterator(typing.Generic[_IListNodeTypeVar]):
   # __slots__ = ('_node')
 
-  _node : _IListNodeTypeVar
+  _node : _IListNodeTypeVar | None
 
-  def __init__(self, n : _IListNodeTypeVar) -> None:
+  def __init__(self, n : _IListNodeTypeVar | None) -> None:
     super().__init__()
     self._node = n
 
@@ -148,34 +223,23 @@ class IListIterator(typing.Generic[_IListNodeTypeVar]):
     curnode = self._node
     self._node = curnode.next
     assert isinstance(curnode, IListNode)
-    # 大部分情况下我们使用结点本身作为列表的值
-    # 不过某些场景（比如 util.graphtrait）我们使用额外的 IListNode 来使同一实例出现在多个列表中
-    # 这时我们需要使用结点上挂的 value 来作为实际值
-    # 但是有时我们的 IListNode 的子类也会用 value 属性
-    # 所以我们这里特判，只有以下情况使用 value 值，其余情况用结点本身：
-    # 1. 当前结点不是 IListNode 的子类
-    # 2. 当前结点有 value
-    if type(curnode) in (IListNode, llist.dllistnode):
-      if v := curnode.value:
-        return v
     return curnode
 
-# if the list intends to be mutable, element node should inherit from this class
-# otherwise, just inheriting from llist.dllistnode is fine
-class IListNode(llist.dllistnode, typing.Generic[_IListNodeTypeVar]):
+class IListNode(typing.Generic[_IListNodeTypeVar]):
   # __slots__ = ()
+  _ilist_owner : IList[_IListNodeTypeVar, typing.Any] | None
+  _ilist_prev : _IListNodeTypeVar | None
+  _ilist_next : _IListNodeTypeVar | None
 
   def __init__(self, **kwargs) -> None:
     # passthrough kwargs for cooperative multiple inheritance
     super().__init__(**kwargs)
+    self._ilist_owner = None
+    self._ilist_prev = None
+    self._ilist_next = None
 
   def _try_get_owner(self) -> IList | None:
-    # first, weakref itself can be None if it never referenced another object
-    # second, weakref may lose reference to the target
-    # we use this function to dereference a weakref
-    if self.owner is not None:
-      return self.owner()
-    return None
+    return self._ilist_owner
 
   # pylint: disable=protected-access
   def insert_before(self, ip : IListNode[_IListNodeTypeVar]) -> None:
@@ -184,54 +248,32 @@ class IListNode(llist.dllistnode, typing.Generic[_IListNodeTypeVar]):
     ipowner = ip._try_get_owner()
     assert ipowner is not None
     if owner is not None:
-      self.node_removed(self.parent)
-      # pylint: disable=no-member
       owner.remove(self)
-    self.node_inserted(self.parent)
-    ipowner.insertnode(self, ip)
+    ipowner.insert(ip, self)
 
   # erase_from_parent() includes self cleanup; it should be defined in derived classes
   def remove_from_parent(self):
-    owner = self._try_get_owner()
-    if owner is not None:
-      self.node_removed(self.parent)
-      # pylint: disable=no-member
+    if owner := self._try_get_owner():
       owner.remove(self)
 
-  # if a derived class want to execute code before inserting or removing from list,
-  # override these member functions
-
-  def node_inserted(self, parent):
-    # parent is the new parent after insertion
-    pass
-
-  def node_removed(self, parent):
-    # parent is the one that is no longer the parent after the removal
-    pass
+  @property
+  def prev(self) -> _IListNodeTypeVar | None:
+    return self._ilist_prev
 
   @property
-  def prev(self) -> _IListNodeTypeVar:
-    return super().prev
-
-  @property
-  def next(self) -> _IListNodeTypeVar:
-    return super().next
+  def next(self) -> _IListNodeTypeVar | None:
+    return self._ilist_next
 
   @property
   def parent(self) -> IList[_IListNodeTypeVar, typing.Any] | None:
-    # return the parent of the list
-    # to get a type hint, override this method in derived class to add it
-    owner = self._try_get_owner()
-    if owner is not None:
-      # pylint: disable=no-member
+    if owner := self._try_get_owner():
       return owner.parent
     return None
 
   def get_index(self):
-    owner = self._try_get_owner()
-    assert owner is not None
-    # pylint: disable=no-member
-    return owner.get_index_of(self)
+    if owner := self._try_get_owner():
+      return owner.get_index_of(self)
+    raise PPInternalError("IListNode.get_index() called on a node without owner")
 
 _NameDictNodeTypeVar = typing.TypeVar('_NameDictNodeTypeVar', bound='NameDictNode')
 class NameDict(collections.abc.MutableMapping[str, _NameDictNodeTypeVar], typing.Generic[_NameDictNodeTypeVar]):
@@ -1782,19 +1824,13 @@ class Symbol(Operation):
       table._rename_symbol(self, n)
     self._name = n
 
-  def node_inserted(self, parent : Block):
-    assert isinstance(parent, Block)
-    table = parent.parent
-    assert isinstance(table, SymbolTableRegion)
-    # pylint: disable=protected-access
-    table._add_symbol(self)
-
-  def node_removed(self, parent : Block):
-    assert isinstance(parent, Block)
-    table = parent.parent
-    assert isinstance(table, SymbolTableRegion)
-    # pylint: disable=protected-access
-    table._drop_symbol(self.name)
+  def remove_from_parent(self):
+    if self.parent is not None:
+      table = self.parent.parent
+      assert isinstance(table, SymbolTableRegion)
+      # pylint: disable=protected-access
+      table._drop_symbol(self.name)
+    super().remove_from_parent()
 
 @IRObjectJsonTypeName("metadata_op")
 class MetadataOp(Operation):
@@ -2158,6 +2194,7 @@ class SymbolTableRegion(Region, collections.abc.Sequence, typing.Generic[_Symbol
 
   def add(self, symbol : _SymbolTypeVar):
     assert isinstance(symbol, Symbol)
+    self._add_symbol(symbol)
     self._block.push_back(symbol)
 
 @IRObjectJsonTypeName('literal_l')
