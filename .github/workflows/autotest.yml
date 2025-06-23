@@ -10,6 +10,8 @@ jobs:
         os: [ubuntu-latest]
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true
       - uses: ./.github/actions/build
       - name: test
         run: python3 -m unittest
