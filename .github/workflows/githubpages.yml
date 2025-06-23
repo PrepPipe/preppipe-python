@@ -31,6 +31,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          lfs: true
       - name: Build
         uses: ./.github/actions/build
       - name: Install dependencies for building doxygen
