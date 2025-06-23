@@ -50,7 +50,7 @@ English users please use the [Github Discussions page](https://github.com/PrepPi
 
 ## 开发环境设置
 
-目前本程序需要至少 Python 3.10 版本。
+目前本程序需要至少 Python 3.10 版本。正确 `git clone` 本仓库需要安装 Git LFS 支持。
 
 如果您想构建一个开发环境，您需要安装以下 Python 依赖项。推荐在一个 `venv` 中操作。
   * 构建需要 `build twine`
