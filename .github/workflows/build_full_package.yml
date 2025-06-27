@@ -15,8 +15,7 @@ jobs:
     steps:
       - name: Checkout main repo for gh release
         uses: actions/checkout@v4
-        with:
-          lfs: true
+        # do not use LFS here (not needed + save bandwidth)
 
       - name: "Setup stage directory"
         shell: bash
