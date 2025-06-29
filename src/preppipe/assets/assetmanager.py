@@ -26,6 +26,7 @@ import dataclasses
 import pickle
 import collections
 import yaml
+import shutil
 import PIL.ImageFont
 from ..language import *
 from ..exceptions import *
@@ -535,6 +536,7 @@ class AssetManager:
     parser.add_argument("--build-embedded", metavar="<dir>", help="Build the embedded asset pack from the specified directory")
     parser.add_argument("--build-extra", metavar="<dir>", nargs="*", help="Build the extra asset pack from the specified directory")
     parser.add_argument("--export-docs", metavar="<yml>", help="Export asset documentation accoding to the specified YAML file")
+    parser.add_argument("--export-built-embedded", metavar="<dir>", help="Copy the embedded assets to the specified directory")
     parser.add_argument("--dump-json", action="store_true", help="Dump all asset info as a JSON string")
     if args is None:
       args = sys.argv[1:]
@@ -553,6 +555,12 @@ class AssetManager:
 
     if parsed_args.export_docs is not None:
       AssetManager.get_instance().export_assets_docs(parsed_args.export_docs)
+
+    if parsed_args.export_built_embedded is not None:
+      # cp -r <install_base>/* <export_dir>
+      install_base = AssetManager.get_embedded_asset_install_path()
+      export_dir = parsed_args.export_built_embedded
+      shutil.copytree(install_base, export_dir, dirs_exist_ok=True)
 
     if parsed_args.dump_json:
       inst = AssetManager.get_instance()
