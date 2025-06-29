@@ -4,13 +4,9 @@ description: "build the package"
 runs:
   using: "composite"
   steps:
-    # checkout the repo
-    - uses: actions/checkout@v4
     - uses: actions/setup-python@v5
       with:
         python-version: '3.10.x'
-    - uses: FedericoCarboni/setup-ffmpeg@v3
-      id: setup-ffmpeg
     - name: fetch tags
       run: git fetch --prune --unshallow --tags
       shell: bash
@@ -36,8 +32,9 @@ runs:
     - name: install
       run: pip install "${WHEEL_FILE}[gui]"
       shell: bash
-    - name: build assets
-      run: python3 -X utf8 ./build_assets.py
-      shell: bash
+    # After moving to LFS, we don't always build assets
+    # - name: build assets
+    #   run: python3 -X utf8 ./build_assets.py
+    #   shell: bash
 
 

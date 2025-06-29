@@ -5,20 +5,20 @@ env:
 
 on:
   push:
-    #branches:
-    #  - "main"
-    #  - "develop"
+    branches:
+      - "main"
+      - "develop"
   workflow_dispatch:
 
 jobs:
-  pre-release:
-    name: "Pre Release"
-    runs-on: "windows-2019" # Windows 10, VS 2019
+  windows-pre-release:
+    name: "Windows Pre-release"
+    runs-on: "windows-latest"
 
     steps:
       - uses: actions/checkout@v4
         with:
-          lfs: true
+          lfs: false
       - uses: ./.github/actions/build
       - name: Detecting version
         id: vars
@@ -45,10 +45,6 @@ jobs:
         run: |
           mv licenses dist/preppipe
           cd dist/preppipe && 7z.exe a -t7z -mx=9 ../preppipe-windows-x64.7z *  && cd ../..
-      - name: generate documentation files
-        run: |
-          python3 ci/mkdocsgen.py
-          cd docs_mkdocs && 7z.exe a -t7z -mx=9 ../dist/preppipe-docs-overlay.7z docs && cd ..
       - uses: "marvinpinto/action-automatic-releases@latest"
         with:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
@@ -57,5 +53,48 @@ jobs:
           title: "${{ steps.vars.outputs.version_tag }} 最新版本 (Latest build) - ${{ env.BRANCH_NAME }}"
           files: |
             dist/preppipe-windows-x64.7z
-            dist/preppipe-docs-overlay.7z
             dist/*.whl
+
+  asset-related:
+    name: "Full CI with assets"
+    runs-on: "ubuntu-latest"
+    needs: windows-pre-release
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: false
+      - name: "Download assets"
+        uses: robinraju/release-downloader@v1.10
+        with:
+          repository: "PrepPipe/preppipe-python"
+          tag: "builtin-assets"
+          fileName: builtin-assets.zip
+          tarBall: false
+          zipBall: false
+          out-file-path: "."
+      - name: "Extract assets"
+        shell: bash
+        run: |
+          mkdir -p assets
+          7z x builtin-assets.zip -y
+      - uses: ./.github/actions/build
+      - name: build assets
+        run: python3 -X utf8 ./build_assets.py --export-built-embedded src/preppipe/assets/_install
+        shell: bash
+      - name: create asset pack
+        shell: bash
+        run: |
+          mkdir -p dist
+          cd src && 7z a -t7z -mx=9 ../dist/builtin-assets-packed.7z preppipe/assets/_install/*
+      - name: generate documentation files
+        run: |
+          python3 ci/mkdocsgen.py
+          cd docs_mkdocs && 7z a -t7z -mx=9 ../dist/preppipe-docs-overlay.7z docs && cd ..
+      - name: "Upload files"
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }} # required for gh release
+        run: |
+          gh release upload latest-${{ env.BRANCH_NAME }} dist/builtin-assets-packed.7z --clobber
+          gh release upload latest-${{ env.BRANCH_NAME }} dist/preppipe-docs-overlay.7z --clobber

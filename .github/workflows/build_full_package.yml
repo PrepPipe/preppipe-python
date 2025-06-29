@@ -31,12 +31,20 @@ jobs:
           path: docs_mkdocs
 
       - name: "Download main repo artifacts"
-        id: download_main
         uses: robinraju/release-downloader@v1.10
         with:
           repository: "PrepPipe/preppipe-python"
           tag: "latest-${{ env.BRANCH_NAME }}"
           fileName: "preppipe-*.7z"
+          tarBall: false
+          zipBall: false
+          out-file-path: "."
+      - name: "Download assets"
+        uses: robinraju/release-downloader@v1.10
+        with:
+          repository: "PrepPipe/preppipe-python"
+          tag: "latest-${{ env.BRANCH_NAME }}"
+          fileName: "builtin-assets-packed.7z"
           tarBall: false
           zipBall: false
           out-file-path: "."
@@ -86,8 +94,13 @@ jobs:
           GH_TOKEN: ${{ github.token }} # required for gh release
         run: |
           mkdir dist
+
           7z x preppipe-windows-x64.7z -owindows-x64
           rm -f preppipe-windows-x64.7z
+
+          7z x builtin-assets-packed.7z -owindows-x64/_internal
+          rm -f builtin-assets-packed.7z
+
           cp -r stage/* windows-x64
           cd windows-x64 && 7z a -t7z -mx=9 ../dist/preppipe-windows-x64-full.7z * && cd ..
           gh release upload latest-${{ env.BRANCH_NAME }} dist/preppipe-windows-x64-full.7z --clobber

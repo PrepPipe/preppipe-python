@@ -3,8 +3,9 @@ name: "Update Doxygen pages"
 
 on:
   # Runs on pushes targeting the default branch
-  push:
-    branches: ["main"]
+  # UPDATE: this Doxygen page is not well maintained, so we only deploy on manual trigger.
+  # push:
+  #   branches: ["main"]
 
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
@@ -32,7 +33,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          lfs: true
+          lfs: false
       - name: Build
         uses: ./.github/actions/build
       - name: Install dependencies for building doxygen
