@@ -39,6 +39,9 @@ def collect_licenses():
 
   for pkg in packages:
     name = pkg["Name"]
+    # ignore our own "preppipe"
+    if name == "preppipe":
+      continue
     version = pkg["Version"]
     license_type = pkg["License"]
     author = pkg["Author"]
