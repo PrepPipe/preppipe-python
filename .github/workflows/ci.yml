@@ -39,7 +39,7 @@ jobs:
           python3 ./ci/versionfile_gen.py ./ci/versionfile_cli.txt preppipe_cli.exe --cli
           python3 ./ci/versionfile_gen.py ./ci/versionfile_gui.txt preppipe.exe
       - name: run pyinstaller
-        run: pyinstaller ci/preppipe.spec
+        run: pyinstaller --log-level DEBUG ci/preppipe.spec
       - name: build package
         shell: bash
         run: |
