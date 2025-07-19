@@ -95,10 +95,10 @@ jobs:
         run: |
           mkdir dist
 
-          7z x preppipe-windows-x64.7z -owindows-x64
+          7z x preppipe-windows-x64.7z -y -owindows-x64
           rm -f preppipe-windows-x64.7z
 
-          7z x builtin-assets-packed.7z -owindows-x64/_internal
+          7z x builtin-assets-packed.7z -y -owindows-x64/_internal
           rm -f builtin-assets-packed.7z
 
           cp -r stage/* windows-x64
