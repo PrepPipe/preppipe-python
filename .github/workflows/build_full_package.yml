@@ -35,7 +35,7 @@ jobs:
         with:
           repository: "PrepPipe/preppipe-python"
           tag: "latest-${{ env.BRANCH_NAME }}"
-          fileName: "preppipe-*.7z"
+          fileName: "preppipe-*.7z*" # accept both 7z and 7z.001
           tarBall: false
           zipBall: false
           out-file-path: "."
@@ -44,7 +44,7 @@ jobs:
         with:
           repository: "PrepPipe/preppipe-python"
           tag: "latest-${{ env.BRANCH_NAME }}"
-          fileName: "builtin-assets-packed.7z"
+          fileName: "builtin-assets-packed.7z.*"
           tarBall: false
           zipBall: false
           out-file-path: "."
@@ -64,7 +64,7 @@ jobs:
 
       - name: "Build Documents"
         run: |
-          7z x preppipe-docs-overlay.7z -y -odocs_mkdocs
+          7z x preppipe-docs-overlay.7z.001 -y -odocs_mkdocs
           cd docs_mkdocs && mkdocs build -f mkdocs.yml && cd ..
           mv docs_mkdocs/generated stage/docs
         # now document files are in stage/docs
@@ -98,11 +98,11 @@ jobs:
           7z x preppipe-windows-x64.7z -y -owindows-x64
           rm -f preppipe-windows-x64.7z
 
-          7z x builtin-assets-packed.7z -y -owindows-x64/_internal
-          rm -f builtin-assets-packed.7z
+          7z x builtin-assets-packed.7z.001 -y -owindows-x64/_internal
+          rm -f builtin-assets-packed.7z.*
 
           cp -r stage/* windows-x64
-          cd windows-x64 && 7z a -t7z -mx=9 ../dist/preppipe-windows-x64-full.7z * && cd ..
-          gh release upload latest-${{ env.BRANCH_NAME }} dist/preppipe-windows-x64-full.7z --clobber
+          cd windows-x64 && 7z a -t7z -mx=9 ../dist/preppipe-windows-x64-full.7z * -v2000m && cd ..
+          gh release upload latest-${{ env.BRANCH_NAME }} dist/preppipe-windows-x64-full.7z.* --clobber
           rm -rf windows-x64
 

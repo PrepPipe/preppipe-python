@@ -16,7 +16,7 @@ jobs:
         with:
           repository: "PrepPipe/preppipe-python"
           tag: "latest-${{ env.BRANCH_NAME }}"
-          fileName: "preppipe-windows-x64-full.7z"
+          fileName: "preppipe-windows-x64-full.7z.*"
           tarBall: false
           zipBall: false
           out-file-path: "."
@@ -28,7 +28,7 @@ jobs:
       - name: "Extract release"
         shell: bash
         run: |
-          7z x preppipe-windows-x64-full.7z -owindows-x64
+          7z x preppipe-windows-x64-full.7z.001 -owindows-x64
       - uses: game-ci/steam-deploy@v3
         with:
           username: ${{ secrets.STEAM_USERNAME }}

@@ -22,7 +22,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          7z a -tzip -mx=9 dist/builtin-assets.zip assets/*
+          7z a -tzip -mx=9 dist/builtin-assets.zip assets/* -v2000m
       - name: "Upload zip"
         uses: softprops/action-gh-release@v2
         with:
@@ -31,4 +31,4 @@ jobs:
           name: "内置资源 (Builtin assets)"
           prerelease: true
           files: |
-            dist/builtin-assets.zip
+            dist/builtin-assets.zip.*
