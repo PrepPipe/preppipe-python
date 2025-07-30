@@ -2237,6 +2237,8 @@ class ImagePackSummary:
     best_numdiffrows = 1
     best_numdiffcols = 1
     best_equivalentdiffs = (1, 1)
+    best_basecolumnwidth = 0
+    best_basecolumnheight = 0
     best_aspect_ratio = None
     target_aspect_ratio = 16 / 9
     grid_height = diff_height+ diffname_maxheight + self.rowsep
@@ -2258,6 +2260,12 @@ class ImagePackSummary:
       if numdiffrows < equivalentdiff_numrows:
         numdiffrows = equivalentdiff_numrows
       numdiffcols = (equivnumdiffs + numdiffrows - 1) // numdiffrows
+      if numdiffcols < equivalentdiff_numcols:
+        numdiffcols = equivalentdiff_numcols
+        # 这种情况下 numdiffrows 可能过大，如果局部差分数量不足、不够填充 numdiffrows 多出来的部分，
+        # 我们需要把 numdiffrows 减小到可以填满的行数
+        numrows_canfilldiff = (numdiffs + numdiffcols - 1) // numdiffcols
+        numdiffrows = equivalentdiff_numrows + numrows_canfilldiff
       # 根据局部差分的行数和列数，计算出整个概览图的长宽
       cur_aspect_ratio = (numdiffcols * grid_width) / (numdiffrows * grid_height)
       if best_aspect_ratio is None or abs(cur_aspect_ratio - target_aspect_ratio) < abs(best_aspect_ratio - target_aspect_ratio):
@@ -2267,6 +2275,8 @@ class ImagePackSummary:
         best_numdiffrows = numdiffrows
         best_numdiffcols = numdiffcols
         best_equivalentdiffs = (equivalentdiff_numrows, equivalentdiff_numcols)
+        best_basecolumnwidth = basecolumnwidth
+        best_basecolumnheight = basecolumnheight
       # 如果基底图部分的宽度超过高度，那么我们就不再继续增加列数了
       if basecolumnheight < basecolumnwidth:
         break
@@ -2346,8 +2356,8 @@ class ImagePackSummary:
     comment_start_y = 0
     is_simple_layout = len(self.diffs) == 0 or len(self.diffs) <= max_diffs_in_right_side
     if is_simple_layout:
-      overview_width = basecolumnwidth + (best_numdiffcols - base_consumed_equivalent_diff_cols) * grid_width
-      overview_height = max(basecolumnheight, best_numdiffrows * grid_height - self.rowsep)
+      overview_width = best_basecolumnwidth + (best_numdiffcols - base_consumed_equivalent_diff_cols) * grid_width
+      overview_height = max(best_basecolumnheight, best_numdiffrows * grid_height - self.rowsep)
     else:
       overview_width = best_numdiffcols * grid_width - self.columnsep
       overview_height = best_numdiffrows * grid_height - self.rowsep
