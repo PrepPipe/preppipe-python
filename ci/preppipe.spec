@@ -56,7 +56,7 @@ cli_exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     version='versionfile_cli.txt',
-    icon=['../assets/gui/assets/preppipe_cli.ico'],
+    icon=['./preppipe_cli.ico'],
 )
 
 gui_pyz = PYZ(gui_a.pure, gui_a.zipped_data, cipher=block_cipher)
@@ -78,7 +78,7 @@ gui_exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     version='versionfile_gui.txt',
-    icon=['../assets/gui/assets/preppipe.ico'],
+    icon=['./preppipe.ico'],
 )
 coll = COLLECT(
     cli_exe,

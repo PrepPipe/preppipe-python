@@ -1,10 +1,17 @@
 name: "Build full release package"
 
-env:
-  BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
-
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to build the full package for"
+        required: true
+        type: string
+        default: "latest"
+
+env:
+  BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+  RELEASE_TAG: ${{ inputs.release_tag || 'latest' }}
 
 jobs:
 
@@ -34,7 +41,7 @@ jobs:
         uses: robinraju/release-downloader@v1.10
         with:
           repository: "PrepPipe/preppipe-python"
-          tag: "latest-${{ env.BRANCH_NAME }}"
+          tag: "${{ env.RELEASE_TAG }}"
           fileName: "preppipe-*.7z*" # accept both 7z and 7z.001
           tarBall: false
           zipBall: false
@@ -43,7 +50,7 @@ jobs:
         uses: robinraju/release-downloader@v1.10
         with:
           repository: "PrepPipe/preppipe-python"
-          tag: "latest-${{ env.BRANCH_NAME }}"
+          tag: "${{ env.RELEASE_TAG }}"
           fileName: "builtin-assets-packed.7z.*"
           tarBall: false
           zipBall: false
@@ -103,6 +110,6 @@ jobs:
 
           cp -r stage/* windows-x64
           cd windows-x64 && 7z a -t7z -mx=9 ../dist/preppipe-windows-x64-full.7z * -v2000m && cd ..
-          gh release upload latest-${{ env.BRANCH_NAME }} dist/preppipe-windows-x64-full.7z.* --clobber
+          gh release upload "${{ env.RELEASE_TAG }}" dist/preppipe-windows-x64-full.7z.* --clobber
           rm -rf windows-x64
 

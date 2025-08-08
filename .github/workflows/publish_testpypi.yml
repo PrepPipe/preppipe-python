@@ -15,7 +15,7 @@ jobs:
         id: download_main
         uses: robinraju/release-downloader@v1.10
         with:
-          tag: "latest-main"
+          tag: "latest"
           fileName: "*.whl"
           tarBall: false
           zipBall: false

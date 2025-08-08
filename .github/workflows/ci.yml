@@ -1,14 +1,20 @@
 name: "ci"
 
-env:
-  BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
-
 on:
   push:
     branches:
       - "main"
-      - "develop"
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag"
+        required: true
+        type: string
+        default: "latest"
+
+env:
+  BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+  RELEASE_TAG: ${{ inputs.release_tag || 'latest' }}
 
 jobs:
   windows-pre-release:
@@ -17,8 +23,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          lfs: false
       - uses: ./.github/actions/build
       - name: Detecting version
         id: vars
@@ -48,7 +52,7 @@ jobs:
       - uses: "marvinpinto/action-automatic-releases@latest"
         with:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
-          automatic_release_tag: "latest-${{ env.BRANCH_NAME }}"
+          automatic_release_tag: "${{ env.RELEASE_TAG }}"
           prerelease: true
           title: "${{ steps.vars.outputs.version_tag }} 最新版本 (Latest build) - ${{ env.BRANCH_NAME }}"
           files: |
@@ -62,22 +66,12 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          lfs: false
       - name: "Download assets"
-        uses: robinraju/release-downloader@v1.10
+        uses: actions/checkout@v4
         with:
-          repository: "PrepPipe/preppipe-python"
-          tag: "builtin-assets"
-          fileName: builtin-assets.zip.*
-          tarBall: false
-          zipBall: false
-          out-file-path: "."
-      - name: "Extract assets"
-        shell: bash
-        run: |
-          mkdir -p assets
-          7z x builtin-assets.zip.001 -y
+          repository: "PrepPipe/preppipe-assets"
+          ref: "main"
+          path: assets
       - uses: ./.github/actions/build
       - name: build assets
         run: python3 -X utf8 ./build_assets.py --export-built-embedded src/preppipe/assets/_install
@@ -96,5 +90,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }} # required for gh release
         run: |
-          gh release upload latest-${{ env.BRANCH_NAME }} dist/builtin-assets-packed.7z.* --clobber
-          gh release upload latest-${{ env.BRANCH_NAME }} dist/preppipe-docs-overlay.7z.* --clobber
+          gh release upload "${{ env.RELEASE_TAG }}" dist/builtin-assets-packed.7z.* --clobber
+          gh release upload "${{ env.RELEASE_TAG }}" dist/preppipe-docs-overlay.7z.* --clobber
