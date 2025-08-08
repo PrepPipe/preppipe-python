@@ -155,6 +155,9 @@ docs_mkdocs/
 .antlr
 _antlr_generated
 
+# source assets repo
+assets/
+
 # generated asset packs
 src/preppipe/assets/_install
 

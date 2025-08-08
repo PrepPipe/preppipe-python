@@ -30,6 +30,12 @@ We are working towards releasing the program on [Steam](https://store.steampower
 
 The documentation is managed in the [preppipe-docs repo](https://github.com/PrepPipe/preppipe-docs). [You can open the page here.](https://preppipe.github.io/preppipe-docs/) The same documentation is also included in the release packages.
 
+### 素材资源 Assets
+
+该项目的资源（背景、角色立绘等）存放在 [preppipe-assets 仓库](https://github.com/PrepPipe/preppipe-assets) 中。为方便从镜像获取，该仓库需要您手动下载。推荐将其置于仓库下 `assets` 目录中（或者使用 symlink）以使用 `build_assets.py`.
+
+All assets (e.g., backgrounds and character sprites) are stored in the [preppipe-assets repo](https://github.com/PrepPipe/preppipe-assets). To simplify accessing this repo from a mirror, currently you will need to manually download / clone this repo. We recommend to put it at `assets` to enable use of `build_assets.py`.
+
 ### 下载与运行 Download and Run
 
 目前我们只提供 64 位 Windows 系统的程序包，支持 Windows 10/11，不支持更早的 Windows 版本。其他系统如有需要的话请联系我们。打包好的程序可在 Github 的 release 页面获取，比如 [最新的开发中版本](https://github.com/PrepPipe/preppipe-python/releases/tag/latest-develop) 。用户请下载带 `full` 后缀的包 (`preppipe-windows-x64-full.7z`)，该包除了程序本体外还包含了第三方依赖（[ffmpeg](https://ffmpeg.org/)） 和程序文档。下载解压后请双击 `preppipe.exe` 以运行图形界面 (GUI)。
@@ -86,5 +92,5 @@ git config --local include.path $PWD/gitconfig
 本仓库有部分内容需要由程序生成，该步骤需要在(1)刚 `git clone` 完仓库时，或(2)相应的部分有改动时手动执行。CI 中每次构建完整的发布包都会执行这些操作。
 
 需要手动执行的有：（请在上述开发环境配置完毕后执行）
-* 资源文件处理。请在仓库根目录下运行 `python3 ./build_assets.py` 以生成 `src/preppipe/assets/_install` 下的内容。该操作需要在资源列表更新时或任意资源类型保存的的内部数据结构改变时重新进行。
+* 资源文件处理。请在获取[资源仓](#素材资源-assets)后，在仓库根目录下运行 `python3 ./build_assets.py` 以生成 `src/preppipe/assets/_install` 下的内容。该操作需要在资源列表更新时或任意资源类型保存的的内部数据结构改变时重新进行。
 * GUI 中 PySide6 `.ui` 文件编译。请在 `src/preppipe_gui_pyside6/forms` 目录下将所有诸如 `xxx.ui` 的文件使用命令 `pyside6-uic xxx.ui generated/ui_xxx.py` 编译成 `.py`。如果您使用 Linux，您可以直接用该目录下的 `Makefile`。该操作需要在任意 .ui 文件更改后重新执行。
