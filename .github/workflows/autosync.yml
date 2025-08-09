@@ -1,0 +1,40 @@
+name: "Sync to GitCode"
+
+on:
+  push:
+    branches:
+      - "main"
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Set up credentials
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.GITCODE_SSHKEY_PUBLIC }}" > ~/.ssh/id_ed25519.pub
+          echo "${{ secrets.GITCODE_SSHKEY_PRIVATE }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          chmod 644 ~/.ssh/id_ed25519.pub
+          chmod 700 ~/.ssh
+
+      - name: Scan key
+        shell: bash
+        run: ssh-keyscan -t rsa gitcode.com >> ~/.ssh/known_hosts
+
+      - name: Sync with GitCode
+        shell: bash
+        # WARNING: never force push
+        run: |
+          git config --global user.name "GitHub-CI"
+          git config --global user.email "dummy@gmail.com"
+          git remote add gitcode git@gitcode.com:preppipe/preppipe-python.git
+          git push gitcode main
+          git push gitcode --tags
