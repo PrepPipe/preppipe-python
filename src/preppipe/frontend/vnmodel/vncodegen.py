@@ -1209,6 +1209,11 @@ class VNCodeGen:
       zh_cn="旁白不能有状态、表情，我们无法将状态 {state} 赋予旁白。",
       zh_hk="旁白不能有狀態、表情，我們無法將狀態 {state} 賦予旁白。",
     )
+    _tr_unknown_sayer_name = TR_vn_codegen.tr("unknown_sayer_name",
+      en="Unknown Sayer",
+      zh_cn="未知发言者",
+      zh_hk="未知發言者",
+    )
 
     def visitVNASTSayNode(self, node : VNASTSayNode) -> VNTerminatorInstBase | None:
       if self.check_blocklocal_cond(node):
@@ -1235,11 +1240,18 @@ class VNCodeGen:
       if raw_sayer is not None:
         rawname = raw_sayer.get_string()
         sayname = self.parsecontext.resolve_alias(rawname)
+        is_unknown_sayer = False
+        if len(sayname) == 0:
+          # 如果发言者名字是空的，我们就用一个默认的名字
+          is_unknown_sayer = True
+          sayname = self._tr_unknown_sayer_name.get()
+          self.codegen.emit_error(code='vncodegen-sayexpr-empty-sayer', msg=self._tr_unknown_sayer_name.format(), loc=node.location, dest=self.warningdest)
         ch = self.codegen.resolve_character(sayname=sayname, from_namespace=self.namespace_tuple, parsecontext=self.parsecontext)
         if ch is None:
           # 如果没找到发言者，我们在当前命名空间创建一个新的发言者
-          msg = self._tr_implicit_sayer.format(sayname=sayname)
-          self.codegen.emit_error(code='vncodegen-sayer-implicit-decl', msg=msg, loc=node.location, dest=self.warningdest)
+          if not is_unknown_sayer:
+            msg = self._tr_implicit_sayer.format(sayname=sayname)
+            self.codegen.emit_error(code='vncodegen-sayer-implicit-decl', msg=msg, loc=node.location, dest=self.warningdest)
           ch = self.create_unknown_sayer(sayname, self.namespace_tuple)
         sayertuple = (sayname, ch)
       else:

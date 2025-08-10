@@ -155,6 +155,9 @@ class IList(typing.Generic[_IListNodeTypeVar, T]):
     assert isinstance(dest, IList)
     if self.size == 0:
       return
+    for node in self:
+      assert isinstance(node, IListNode)
+      node._ilist_owner = dest
     if dest.empty:
       dest._ilist_front = self.front
       dest._ilist_back = self.back
@@ -163,9 +166,6 @@ class IList(typing.Generic[_IListNodeTypeVar, T]):
       self._ilist_back = None
       self._ilist_size = 0
       return
-    for node in self:
-      assert isinstance(node, IListNode)
-      node._ilist_owner = dest
     dest._ilist_back._ilist_next = self.front
     self.front._ilist_prev = dest._ilist_back
     dest._ilist_back = self.back
