@@ -1,0 +1,40 @@
+name: "Autotest (End-to-End)"
+# We allow this autotest to fail since it currently requires exact match of output, which is not always appropriate.
+
+on:
+  push:
+    branches:
+      - "main"
+  workflow_dispatch:
+
+jobs:
+  autotest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: "Download assets"
+        uses: actions/checkout@v4
+        with:
+          repository: "PrepPipe/preppipe-assets"
+          ref: "main"
+          path: assets
+      - name: "Download test repo"
+        uses: actions/checkout@v4
+        with:
+          repository: "PrepPipe/preppipe-tests"
+          ref: "main"
+          path: preppipe-tests
+      - uses: ./.github/actions/build
+      - name: build assets
+        shell: bash
+        run: python3 -X utf8 ./build_assets.py --export-built-embedded src/preppipe/assets/_install
+      - name: Install test dependencies
+        shell: bash
+        run: |
+          python3 -m pip install --upgrade pip
+          pip install pytest
+      - name: Run tests
+        shell: bash
+        run: |
+          pytest -v --tb=short preppipe-tests/

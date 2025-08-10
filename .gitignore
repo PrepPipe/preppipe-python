@@ -158,6 +158,9 @@ _antlr_generated
 # source assets repo
 assets/
 
+# end-to-end test repo
+preppipe-tests/
+
 # generated asset packs
 src/preppipe/assets/_install
 
