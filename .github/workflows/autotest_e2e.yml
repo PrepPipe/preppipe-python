@@ -11,6 +11,11 @@ jobs:
   autotest:
     runs-on: ubuntu-latest
     steps:
+      - name: Install ffmpeg
+        shell: bash
+        run: |
+          sudo apt update
+          sudo apt install -y ffmpeg
       - name: Checkout code
         uses: actions/checkout@v4
       - name: "Download assets"
@@ -29,7 +34,7 @@ jobs:
       - name: build assets
         shell: bash
         run: python3 -X utf8 ./build_assets.py --export-built-embedded src/preppipe/assets/_install
-      - name: Install test dependencies
+      - name: Install pytest
         shell: bash
         run: |
           python3 -m pip install --upgrade pip
