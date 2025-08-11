@@ -33,8 +33,8 @@ jobs:
         shell: bash
         run: |
           python3 -m pip install --upgrade pip
-          pip install pytest
+          pip install pytest pytest-xdist pytest-timeout
       - name: Run tests
         shell: bash
         run: |
-          pytest -v --tb=short preppipe-tests/
+          pytest -n $(nproc) --timeout=300 -v --tb=short preppipe-tests/
