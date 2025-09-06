@@ -886,14 +886,15 @@ class VNCodeGen:
       zh_hk="以下命令結點在一個已經結束的基本塊中，內容不會被處理： {node}。請將內容移至可能結束該基本塊的指令前（比如跳轉、選項等）。",
     )
 
-    def check_blocklocal_cond(self, node : VNASTNodeBase) -> bool:
+    def check_blocklocal_cond(self, node : VNASTNodeBase, suppress_warning : bool = False) -> bool:
       # 检查该指令是否在正常的、未结束的块中
       # 是的话返回 False, 不在正常情况下时生成错误并返回 True
       if self.cur_terminator is None:
         return False
-      msg = self._tr_unhandled_node_in_terminated_block.format(node=node.get_short_str(0))
-      err = ErrorOp.create(error_code='vncodegen-unhandled-node-in-terminated-block', context=self.context, error_msg=StringLiteral.get(msg, self.context), loc=node.location)
-      err.insert_before(self.cur_terminator)
+      if not suppress_warning:
+        msg = self._tr_unhandled_node_in_terminated_block.format(node=node.get_short_str(0))
+        err = ErrorOp.create(error_code='vncodegen-unhandled-node-in-terminated-block', context=self.context, error_msg=StringLiteral.get(msg, self.context), loc=node.location)
+        err.insert_before(self.cur_terminator)
       return True
 
     def check_block_or_function_local_cond(self, node : VNASTNodeBase) -> bool:
@@ -1918,7 +1919,9 @@ class VNCodeGen:
       return None
 
     def visitVNASTReturnNode(self, node : VNASTReturnNode) -> VNTerminatorInstBase | None:
-      if self.check_block_or_function_local_cond(node):
+      # 章节结束命令只能在函数内使用
+      # 我们允许额外的章节结束命令（可能在转至章节命令后面）且不提供额外警告
+      if self.check_blocklocal_cond(node, suppress_warning=True):
         return None
       ret = VNReturnInst.create(context=self.context, start_time=self.starttime, name=node.name, loc=node.location)
       self.destblock.push_back(ret)
