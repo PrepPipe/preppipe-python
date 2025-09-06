@@ -121,6 +121,7 @@ class MainInputWidget(QWidget, ToolWidgetInterface):
       return
     info = ExecutionInfo.init_main_pipeline(filelist)
     info.args.append("--renpy-codegen")
+    info.add_debug_dump()
     info.args.append("--renpy-export")
     info.add_output_unspecified(self._tr_export_path, "game", is_dir=True)
     MainWindowInterface.getHandle(self).requestExecution(info)
@@ -133,6 +134,7 @@ class MainInputWidget(QWidget, ToolWidgetInterface):
       return
     info = ExecutionInfo.init_main_pipeline(filelist)
     info.args.append("--webgal-codegen")
+    info.add_debug_dump()
     info.args.append("--webgal-export")
     info.add_output_unspecified(self._tr_export_path, "game", is_dir=True)
     MainWindowInterface.getHandle(self).requestExecution(info)
