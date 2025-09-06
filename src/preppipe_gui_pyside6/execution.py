@@ -10,11 +10,14 @@ from PySide6.QtCore import *
 from preppipe.language import *
 from .settingsdict import *
 
+TR_gui_execution = TranslationDomain("gui_execution")
+
 @dataclasses.dataclass
 class SpecifiedOutputInfo:
-  # 有指定输出路径的输出项
+  # 有指定输出路径的输出项，将在输出列表中出现。目前也包含未指定输出路径的项（因为最终它们也会有路径）
   field_name: Translatable | str
   argindex: int = -1
+  auxiliary: bool = False # 是否为辅助输出（如调试输出等）,是的话我们会把它们放在其他输出之后
 
 @dataclasses.dataclass
 class UnspecifiedPathInfo:
@@ -28,15 +31,16 @@ class ExecutionInfo:
   envs: dict[str, str] = dataclasses.field(default_factory=dict)
   unspecified_paths: dict[int, UnspecifiedPathInfo] = dataclasses.field(default_factory=dict)
   specified_outputs: list[SpecifiedOutputInfo] = dataclasses.field(default_factory=list)
+  enable_debug_dump: bool = False
 
-  def add_output_specified(self, field_name : Translatable | str, path : str):
+  def add_output_specified(self, field_name : Translatable | str, path : str, auxiliary : bool = False):
     argindex = len(self.args)
-    self.specified_outputs.append(SpecifiedOutputInfo(field_name, argindex))
+    self.specified_outputs.append(SpecifiedOutputInfo(field_name, argindex, auxiliary))
     self.args.append(path)
 
-  def add_output_unspecified(self, field_name : Translatable | str, default_name: Translatable | str, is_dir : bool = False):
+  def add_output_unspecified(self, field_name : Translatable | str, default_name: Translatable | str, is_dir : bool = False, auxiliary : bool = False):
     argindex = len(self.args)
-    self.specified_outputs.append(SpecifiedOutputInfo(field_name, argindex))
+    self.specified_outputs.append(SpecifiedOutputInfo(field_name, argindex, auxiliary))
     self.unspecified_paths[argindex] = UnspecifiedPathInfo(default_name, is_dir)
     self.args.append('')
 
@@ -46,6 +50,11 @@ class ExecutionInfo:
     "md": "--md",
     "txt": "--txt",
   }
+  _tr_debug_dump = TR_gui_execution.tr("output_debug_dump",
+    en="Debug dumps",
+    zh_cn="调试输出",
+    zh_hk="調試輸出",
+  )
 
   @staticmethod
   def init_common():
@@ -71,6 +80,12 @@ class ExecutionInfo:
       result.args.append("--searchpath")
       result.args.extend(searchpaths)
 
+    # 设置 IR 保存路径，如果需要的话
+    result.enable_debug_dump = SettingsDict.instance().get("mainpipeline/debug", False)
+    if result.enable_debug_dump:
+      result.args.append("--debugdump-dir")
+      result.add_output_unspecified(ExecutionInfo._tr_debug_dump, "debug_dump", is_dir=True, auxiliary=True)
+
     # 给输入文件选择合适的读取选项
     last_input_flag = ''
     for i in inputs:
@@ -83,15 +98,24 @@ class ExecutionInfo:
         last_input_flag = flag
       result.args.append(i)
 
+    result.add_debug_dump()
     # 添加前端命令
     result.args.extend([
       "--cmdsyntax",
       "--vnparse",
+    ])
+    result.add_debug_dump()
+    result.args.extend([
       "--vncodegen",
       "--vn-blocksorting",
       "--vn-entryinference",
     ])
+    result.add_debug_dump()
     return result
+
+  def add_debug_dump(self):
+    if self.enable_debug_dump:
+      self.args.append("--debugdump")
 
 class ExecutionState(enum.Enum):
   INIT = 0

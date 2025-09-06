@@ -103,7 +103,9 @@ class ExecuteWidget(QWidget, ToolWidgetInterface):
     self.appendPlainText('='*20 + '\n')
     self.exec.outputAvailable.connect(self.handleOutput)
 
-    for out in execinfo.specified_outputs:
+    auxiliary_outputs = [out for out in execinfo.specified_outputs if out.auxiliary]
+    main_outputs = [out for out in execinfo.specified_outputs if not out.auxiliary]
+    for out in main_outputs + auxiliary_outputs:
       value = self.exec.composed_args[out.argindex]
       w = OutputEntryWidget(self)#, out.field_name, value)
       w.setData(out.field_name, value)

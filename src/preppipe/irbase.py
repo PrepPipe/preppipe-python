@@ -1812,6 +1812,12 @@ class Operation(IRObject, IListNode):
     dump = writer.write_op(self)
     print(dump.decode('utf-8'))
 
+  def dump_html(self, index : int = 0, parentdir : str = '') -> None:
+    # for debugging
+    writer = IRWriter(self.context, True, None, None)
+    dump = writer.write_op(self)
+    _save_content_html_helper(dump, self.name, type(self).__name__, index, parentdir)
+
 @IRObjectJsonTypeName("symbol_op")
 class Symbol(Operation):
 
@@ -4094,18 +4100,32 @@ for (asset_name in asset_dict) {
     self._walk_block(b, 0)
     return self._output_body.getvalue()
 
-def _view_content_helper(dump : bytes, name : str, typename : str):
-  name_portion = 'anon'
+def _get_sanitized_name_for_dump(name : str) -> str | None:
   if len(name) > 0:
     sanitized_name = get_sanitized_filename(name)
     if len(sanitized_name) > 0:
-      name_portion = sanitized_name
+      return sanitized_name
+  return None
+
+def _view_content_helper(dump : bytes, name : str, typename : str):
+  name_portion = _get_sanitized_name_for_dump(name)
+  if name_portion is None:
+    name_portion = 'anon'
   file = tempfile.NamedTemporaryFile('w+b', suffix='_viewdump.html', prefix='preppipe_' + typename + '_' + name_portion + '_', delete=False)
   file.write(dump)
   file.close()
   path = os.path.abspath(file.name)
   print('Opening HTML dump at ' + path)
   webbrowser.open_new_tab('file:///' + path)
+
+def _save_content_html_helper(dump : bytes, name : str, typename : str, index : int = 0, parentdir : str = ''):
+  name_portion = _get_sanitized_name_for_dump(name)
+  if name_portion is None:
+    name_portion = f"anon_{index}"
+  filename = f"{name_portion}_{typename}.html"
+  path = os.path.join(parentdir, filename) if len(parentdir) > 0 else filename
+  with open(path, 'wb') as f:
+    f.write(dump)
 
 # ------------------------------------------------------------------------------
 # IR verification

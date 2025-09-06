@@ -517,11 +517,32 @@ class _SaveIR(TransformBase):
   def run(self) -> None:
     raise PPNotImplementedError
 
-@BackendDecl('dump', input_decl=Operation, output_decl=IODecl('<No output>', nargs=0))
-class _DumpIR(TransformBase):
+@TransformArgumentGroup('debugdump', "Options for Debug Dump")
+@BackendDecl('debugdump', input_decl=Operation, output_decl=IODecl('<IR files>', nargs=0))
+class _DebugDump(TransformBase):
+  dumpdir : typing.ClassVar[str] = "dumps"
+
+  @staticmethod
+  def install_arguments(argument_group : argparse._ArgumentGroup):
+    argument_group.add_argument("--debugdump-dir", required=False, type=str, nargs=1, default=_DebugDump.dumpdir, help="Directory to save the dumps")
+
+  @staticmethod
+  def handle_arguments(args : argparse.Namespace):
+    if dumpdir := args.debugdump_dir:
+      assert isinstance(dumpdir, list) and len(dumpdir) == 1
+      _DebugDump.dumpdir = dumpdir[0]
+      assert isinstance(_DebugDump.dumpdir, str)
+      if not os.path.exists(_DebugDump.dumpdir):
+        os.makedirs(_DebugDump.dumpdir, exist_ok=True)
+      elif not os.path.isdir(_DebugDump.dumpdir):
+        raise PPInternalError("Debug dump directory path exists but is not a directory")
+
   def run(self) -> None:
-    for op in self.inputs:
-      op.dump()
+    for index, op in enumerate(self.inputs):
+      if isinstance(op, Operation):
+        op.dump_html(index, _DebugDump.dumpdir)
+      else:
+        raise PPInternalError("Debug dump input is not an operation")
 
 @BackendDecl('view', input_decl=Operation, output_decl=IODecl('<No output>', nargs=0))
 class _ViewIR(TransformBase):
