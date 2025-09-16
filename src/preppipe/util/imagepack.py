@@ -19,7 +19,6 @@ import PIL.ImageDraw
 import PIL.ImageFont
 import PIL.PngImagePlugin
 import numpy as np
-import scipy as sp
 import matplotlib
 import matplotlib.colors
 import cv2
@@ -34,9 +33,10 @@ import enum
 import unicodedata
 import textwrap
 import re
-import graphviz
 import shutil
+import tempfile
 import concurrent.futures
+import psd_tools
 
 from preppipe.irbase import IRValueMapper, Location, Operation
 
@@ -1248,6 +1248,7 @@ class ImagePack(NamedAssetClassBase):
     composites = None
     metadata = None
     generation = None
+    unpack_directory = None
     for k in yamlobj.keys():
       if k in ImagePack.TR_imagepack_yamlparse_layers.get_all_candidates():
         layers = yamlobj[k]
@@ -1268,12 +1269,20 @@ class ImagePack(NamedAssetClassBase):
                               + str(ImagePack.TR_imagepack_yamlparse_generation.get_all_candidates())
                               + ")")
     if generation is not None:
-      layers, masks, composites, metadata = ImagePack.handle_yaml_generation(generation, layers, masks, composites, metadata)
+      layers, masks, composites, metadata, unpack_directory = ImagePack.handle_yaml_generation(basepath, generation, layers, masks, composites, metadata)
     if layers is None:
       raise PPInternalError("No layers in " + yamlpath)
+    def lookup_file(filename : str) -> str:
+      nonlocal unpack_directory
+      nonlocal basepath
+      if unpack_directory is not None:
+        unpack_path = unpack_directory.name if isinstance(unpack_directory, tempfile.TemporaryDirectory) else unpack_directory
+        path_in_unpack_directory = os.path.join(unpack_path, filename)
+        if os.path.exists(path_in_unpack_directory):
+          return path_in_unpack_directory
+      return os.path.join(basepath, filename)
     layer_dict : dict[str, int] = {}
     for imgpathbase, d in layers.items():
-      imgpath = imgpathbase + ".png"
       layerindex = len(result.layers)
       layer_dict[imgpathbase] = layerindex
       flag_base = False
@@ -1299,6 +1308,7 @@ class ImagePack(NamedAssetClassBase):
             elif isinstance(value, list):
               for flag in value:
                 add_flag(flag)
+      imgpath = lookup_file(imgpathbase + ".png")
       if not os.path.exists(os.path.join(basepath, imgpath)):
         raise PPInternalError("Image file not found: " + imgpath)
       patch = ImageWrapper.create_untrusted(os.path.join(basepath, imgpath))
@@ -1394,7 +1404,7 @@ class ImagePack(NamedAssetClassBase):
                                   + str(ImagePack.TR_imagepack_yamlparse_projective.get_all_candidates()) + ")")
         if maskcolor is None:
           raise PPInternalError("Invalid mask in " + yamlpath + ": missing maskcolor")
-        maskimgpath = os.path.join(basepath, imgpathbase + ".png")
+        maskimgpath = lookup_file(imgpathbase + ".png")
         curmask = None
         offset_x = 0
         offset_y = 0
@@ -1432,7 +1442,7 @@ class ImagePack(NamedAssetClassBase):
 
     result.optimize_masks()
     result.sanity_check()
-    return result
+    return result, unpack_directory
 
   def sanity_check(self):
     # 检查图层的顺序是否正确
@@ -1455,6 +1465,17 @@ class ImagePack(NamedAssetClassBase):
       # 一般我们要求下面的图层的标号更小、上面的更大，所以组合里的图层也应该是从小到大的顺序
       if not all(x < y for x, y in zip(layers.layers, layers.layers[1:])):
         raise PPInternalError("Invalid composite layer order: " + str(layers.layers))
+
+  TR_imagepack_yamlgen_charactersprite_parts_based = TR_imagepack.tr("charactersprite_parts_based",
+    en="charactersprite_parts_based",
+    zh_cn="角色立绘_部件组合",
+    zh_hk="角色立繪_部件組合",
+  )
+  TR_imagepack_yamlgen_fileunpack = TR_imagepack.tr("fileunpack",
+    en="fileunpack",
+    zh_cn="文件解包",
+    zh_hk="文件解包",
+  )
 
   TR_imagepack_yamlgen_parts = TR_imagepack.tr("parts",
     en="parts",
@@ -1890,11 +1911,259 @@ class ImagePack(NamedAssetClassBase):
         result_composites[combination_codename] = combination_layers
     return (result_layers, masks, result_composites, metadata)
 
+  TR_imagepack_fileunpack_file = TR_imagepack.tr("fileunpack_file",
+    en="file",
+    zh_cn="文件",
+    zh_hk="文件",
+  )
+  TR_imagepack_fileunpack_exports = TR_imagepack.tr("fileunpack_exports",
+    en="exports",
+    zh_cn="导出",
+    zh_hk="導出",
+  )
+  TR_imagepack_fileunpack_diff = TR_imagepack.tr("fileunpack_diff",
+    en="diff",
+    zh_cn="差分",
+    zh_hk="差分",
+  )
+  TR_imagepack_fileunpack_base = TR_imagepack.tr("fileunpack_base",
+    en="base",
+    zh_cn="基底",
+    zh_hk="基底",
+  )
+  TR_imagepack_fileunpack_target = TR_imagepack.tr("fileunpack_target",
+    en="target",
+    zh_cn="目标",
+    zh_hk="目標",
+  )
+
   @staticmethod
-  def handle_yaml_generation(generation : dict[str, typing.Any], layers : dict | None, masks : dict | None, composites : dict | None, metadata : dict | None) -> tuple[dict | None, dict | None, dict | None, dict | None]:
-    if "charactersprite_parts_based" in generation:
-      data = generation["charactersprite_parts_based"]
-      return ImagePack.yaml_generation_charactersprite_parts_based(data, layers, masks, composites, metadata)
+  def _get_psd_composite_image_from_layers(psd : psd_tools.PSDImage, converted_layers : list[list[str]]) -> PIL.Image.Image:
+    converted_layers_used : list[bool] = [False] * len(converted_layers)
+    actual_layers : list[tuple[str, typing.Any]] = [] # <名字，图层对象>
+    def layer_filter(layer):
+      nonlocal actual_layers
+      nonlocal converted_layers_used
+      # 检查一个 layer 是否在 converted_layers 中
+      cur_layer = []
+      cur = layer
+      while cur.parent is not psd:
+        cur_layer.append(cur.name)
+        cur = cur.parent
+      cur_layer.append(cur.name) # 最后加上根节点
+      cur_layer.reverse()
+      if layer.is_group():
+        # 如果是组，比较两项中的共同部分是否一致即可
+        for candidate_target in converted_layers:
+          minlen = min(len(cur_layer), len(candidate_target))
+          if cur_layer[:minlen] == candidate_target[:minlen]:
+            return True
+        return False
+      else:
+        # 如果是具体图层，判断 cur_layer 是否与 converted_layers 中的某一项匹配，或是某一项的子节点
+        for index, candidate_target in enumerate(converted_layers):
+          if len(cur_layer) < len(candidate_target):
+            continue
+          if cur_layer[:len(candidate_target)] == candidate_target:
+            actual_layers.append(('/'.join(cur_layer), layer))
+            converted_layers_used[index] = True
+            return True
+        return False
+    composite = psd.composite(ignore_preview=True, force=True, layer_filter=layer_filter)
+    if len(actual_layers) == 0:
+      raise PPInternalError("No layers matched in export")
+    if not all(converted_layers_used):
+      unused_layers = [converted_layers[i] for i in range(len(converted_layers)) if not converted_layers_used[i]]
+      raise PPInternalError("Some layers were not found: " + str(unused_layers))
+    if composite is None or composite.getbbox() is None:
+      raise PPInternalError("Empty image in export (something went wrong?)")
+    return composite
+
+  @staticmethod
+  def _convert_psd_layername_expr(layers : typing.Union[str, list[str]]) -> list[list[str]]:
+    converted_layers : list[list[str]] = []
+    if isinstance(layers, str):
+      layers = [layers]
+    for layer in layers:
+      if not isinstance(layer, str):
+        raise PPInternalError("Invalid layer name expression in PSD exports: expecting a str but got " + str(layer) + " (type: " + str(type(layer)) + ")")
+      converted_layers.append(layer.split("/"))
+    return converted_layers
+
+  @staticmethod
+  def _compute_patch(base: PIL.Image.Image, target: PIL.Image.Image) -> PIL.Image.Image:
+    """
+    Compute patch image such that base ⊕ patch ≈ target
+    (⊕ = alpha compositing with patch over base).
+    Both input images must be RGBA and the same size.
+    """
+    tol = 1e-6 # tolerance
+
+    # Convert to float arrays in [0,1]
+    base_arr = np.asarray(base.convert("RGBA"), dtype=np.float32) / 255.0
+    target_arr = np.asarray(target.convert("RGBA"), dtype=np.float32) / 255.0
+
+    Cb, Ab = base_arr[..., :3], base_arr[..., 3:4]
+    Ct, At = target_arr[..., :3], target_arr[..., 3:4]
+
+    # Patch alpha
+    Ap = np.where(
+      Ab < 1.0 - tol,
+      (At - Ab) / (1.0 - Ab),
+      1.0,  # when Ab == 1
+    )
+    Ap = np.clip(Ap, 0.0, 1.0)
+
+    # Patch color
+    numerator = Ct * At - Cb * Ab * (1.0 - Ap)
+    # Use np.where to avoid division by zero
+    Cp = np.where(Ap > tol, numerator / Ap, 0.0)
+    Cp = np.clip(Cp, 0.0, 1.0)
+
+    # ---- Remove unnecessary patches ----
+    same = np.allclose(base_arr, target_arr, atol=tol)
+    # `np.allclose` on whole array → scalar, but we need per-pixel mask:
+    same = np.all(np.abs(base_arr - target_arr) <= tol, axis=-1, keepdims=True)
+
+    Ap = np.where(same, 0.0, Ap)
+    Cp = np.where(same, 0.0, Cp)
+
+    patch_arr = np.concatenate([Cp, Ap], axis=-1)
+    patch_img = PIL.Image.fromarray((patch_arr * 255.0).astype(np.uint8), mode="RGBA")
+    return patch_img
+
+  @staticmethod
+  def _get_psd_composite_image_from_diff(psd : psd_tools.PSDImage, info : dict) -> PIL.Image.Image:
+    base_layers_str = None
+    target_layers_str = None
+    if not isinstance(info, dict):
+      raise PPInternalError("Invalid diff info in PSD exports: expecting a dict but got " + str(info) + " (type: " + str(type(info)) + ")")
+    for k, v in info.items():
+      if k in ImagePack.TR_imagepack_fileunpack_base.get_all_candidates():
+        base_layers_str = v
+      elif k in ImagePack.TR_imagepack_fileunpack_target.get_all_candidates():
+        target_layers_str = v
+      else:
+        raise PPInternalError("Unknown key in diff info in PSD exports: " + k + "(supported keys: "
+                              + str(ImagePack.TR_imagepack_fileunpack_base.get_all_candidates()) + ", "
+                              + str(ImagePack.TR_imagepack_fileunpack_target.get_all_candidates()) + ")")
+    if base_layers_str is None or target_layers_str is None:
+      raise PPInternalError("Missing base or target in diff info in PSD exports: " + str(info))
+    base_layers = ImagePack._convert_psd_layername_expr(base_layers_str)
+    target_layers = ImagePack._convert_psd_layername_expr(target_layers_str)
+    base_image = ImagePack._get_psd_composite_image_from_layers(psd, base_layers)
+    target_image = ImagePack._get_psd_composite_image_from_layers(psd, target_layers)
+    if base_image.size != target_image.size:
+      raise PPInternalError("Base and target images have different sizes in diff export")
+
+    base_bbox = base_image.getbbox()
+    target_bbox = target_image.getbbox()
+    if base_bbox is None or target_bbox is None:
+      raise PPInternalError("Base or target image is empty in diff export")
+    common_bbox = (
+      min(base_bbox[0], target_bbox[0]),
+      min(base_bbox[1], target_bbox[1]),
+      max(base_bbox[2], target_bbox[2]),
+      max(base_bbox[3], target_bbox[3]),
+    )
+    all_bbox = (0, 0, psd.width, psd.height)
+    # 将两张图裁剪至公共区域再计算差分以节省时间
+    if common_bbox != all_bbox:
+      base_image = base_image.crop(common_bbox)
+      target_image = target_image.crop(common_bbox)
+    # 计算差分
+    diff_image = ImagePack._compute_patch(base_image, target_image)
+    if diff_image.getbbox() is None:
+      raise PPInternalError("Computed patch image is empty in diff export (something went wrong?)")
+    if common_bbox != all_bbox:
+      # 将差分图扩展回原始大小
+      full_diff_image = PIL.Image.new("RGBA", (psd.width, psd.height), (0, 0, 0, 0))
+      full_diff_image.paste(diff_image, (common_bbox[0], common_bbox[1]))
+      diff_image = full_diff_image
+    return diff_image
+
+  @staticmethod
+  def _unpack_psd_to_directory(psdpath : str, destdir : str, exports : dict) -> None:
+    psd = psd_tools.PSDImage.open(psdpath)
+    for filename, info in exports.items():
+      if isinstance(info, dict):
+        if len(info) != 1:
+          raise PPInternalError("Invalid export info in PSD exports: expecting a dict with exactly one key but got " + str(info))
+        algo, info = next(iter(info.items()))
+        if algo in ImagePack.TR_imagepack_fileunpack_diff.get_all_candidates():
+          composite = ImagePack._get_psd_composite_image_from_diff(psd, info)
+        else:
+          raise PPInternalError("Unknown export algorithm in PSD exports: " + algo + "(supported algorithms: "
+                                + str(ImagePack.TR_imagepack_fileunpack_diff.get_all_candidates()) + ")")
+      else:
+        converted_layers = ImagePack._convert_psd_layername_expr(info)
+        composite = ImagePack._get_psd_composite_image_from_layers(psd, converted_layers)
+      savename = os.path.join(destdir, filename + ".png")
+      composite.save(savename)
+
+  @staticmethod
+  def yaml_generation_file_expand(basepath : str, data : dict, metadata : dict | None) -> tempfile.TemporaryDirectory | str:
+    file = None
+    exports = None
+    if not isinstance(data, dict):
+      raise PPInternalError("Invalid file unpack generation data: expecting a dict but got " + str(data) + " (type: " + str(type(data)) + ")")
+    for k, v in data.items():
+      if k in ImagePack.TR_imagepack_fileunpack_file.get_all_candidates():
+        if not isinstance(v, str):
+          raise PPInternalError("Invalid file in file unpack generation data: expecting a str but got " + str(v) + " (type: " + str(type(v)) + ")")
+        file = v
+      elif k in ImagePack.TR_imagepack_fileunpack_exports.get_all_candidates():
+        if not isinstance(v, dict):
+          raise PPInternalError("Invalid exports in file unpack generation data: expecting a dict but got " + str(v) + " (type: " + str(type(v)) + ")")
+        exports = v
+      else:
+        raise PPInternalError("Unknown key in file unpack generation data: " + k + "(supported keys: "
+                              + str(ImagePack.TR_imagepack_fileunpack_file.get_all_candidates()) + ", "
+                              + str(ImagePack.TR_imagepack_fileunpack_exports.get_all_candidates()) + ")")
+    if file is None or exports is None:
+      raise PPInternalError("Missing file or exports in file unpack generation data: " + str(data))
+    filepath = os.path.join(basepath, file)
+    if not os.path.isfile(filepath):
+      raise PPInternalError("File not found: " + filepath)
+
+    preserve_unpacked_files : bool = False
+    if metadata is not None:
+      if metadata.get("debug", False) is True:
+        preserve_unpacked_files = True
+    if preserve_unpacked_files:
+      dumpdir = tempfile.mkdtemp(prefix="preppipe_imagepack_unpack_")
+      # TODO 升级到 Python 3.12 后可以直接用 tempfile.TemporaryDirectory 的 delete 参数
+    else:
+      dumpdir = tempfile.TemporaryDirectory(prefix="preppipe_imagepack_unpack_")
+    dumpdir_path = dumpdir if isinstance(dumpdir, str) else dumpdir.name
+    if preserve_unpacked_files:
+      print("Unpacking files to " + dumpdir_path)
+
+    _, ext = os.path.splitext(file)
+    if ext.lower() == ".psd":
+      ImagePack._unpack_psd_to_directory(filepath, dumpdir_path, exports)
+    else:
+      raise PPNotImplementedError("Unsupported file type for unpacking: " + filepath)
+    return dumpdir
+
+  @staticmethod
+  def handle_yaml_generation(basepath : str, generation : dict[str, typing.Any], layers : dict | None, masks : dict | None, composites : dict | None, metadata : dict | None) -> tuple[dict | None, dict | None, dict | None, dict | None, tempfile.TemporaryDirectory | str | None]:
+    result_layers = None
+    result_masks = None
+    result_composites = None
+    result_metadata = None
+    unpack_directory = None
+    for k, data in generation.items():
+      if not isinstance(k, str):
+        raise PPInternalError("Invalid generation key: expecting a str but got " + str(k) + " (type: " + str(type(k)) + ")")
+      if k in ImagePack.TR_imagepack_yamlgen_charactersprite_parts_based.get_all_candidates():
+        if result_layers is not None:
+          raise PPInvalidOperationError("Multiple generation algorithms specified: " + str(list(generation.keys())))
+        result_layers, result_masks, result_composites, result_metadata = ImagePack.yaml_generation_charactersprite_parts_based(data, layers, masks, composites, metadata)
+      elif k in ImagePack.TR_imagepack_yamlgen_fileunpack.get_all_candidates():
+        unpack_directory = ImagePack.yaml_generation_file_expand(basepath, data, metadata)
+    if result_layers is not None or unpack_directory is not None:
+      return (result_layers, result_masks, result_composites, result_metadata, unpack_directory)
     raise PPInvalidOperationError("Unknown generation algorithm : " + str(generation))
 
   # 以下是提供给外部使用的接口
@@ -1905,12 +2174,14 @@ class ImagePack(NamedAssetClassBase):
 
   @staticmethod
   def build_asset_archive(name : str, destpath : str, yamlpath : str, references_filename : str = "references.yml"):
-    pack = ImagePack.build_image_pack_from_yaml(yamlpath)
+    pack, unpack_directory = ImagePack.build_image_pack_from_yaml(yamlpath)
     pack.write_to_path(destpath)
     basepath = os.path.dirname(os.path.abspath(yamlpath))
     references_path = os.path.join(basepath, references_filename)
     descriptor = ImagePackDescriptor(pack, name, references_path, destpath)
     ImagePack.add_descriptor(descriptor)
+    if unpack_directory is not None and isinstance(unpack_directory, tempfile.TemporaryDirectory):
+      unpack_directory.cleanup()
     return descriptor
 
   @classmethod
@@ -1995,11 +2266,12 @@ class ImagePack(NamedAssetClassBase):
 
     current_pack = None
     current_pack_descriptor = None
+    unpack_directory = None
     if parsed_args.create is not None:
       ImagePack.print_executing_command("--create")
       # 创建一个新的 imagepack
       # 从 yaml 中读取
-      current_pack = ImagePack.build_image_pack_from_yaml(parsed_args.create)
+      current_pack, unpack_directory = ImagePack.build_image_pack_from_yaml(parsed_args.create)
     elif parsed_args.load is not None:
       # 从 zip 中读取
       ImagePack.print_executing_command("--load")
@@ -2076,6 +2348,9 @@ class ImagePack(NamedAssetClassBase):
       if current_pack is None:
         raise PPInternalError("Cannot export overview without input")
       current_pack.write_overview_image(parsed_args.export_overview, current_pack_descriptor, parsed_args.export_overview_html)
+
+    if unpack_directory is not None and isinstance(unpack_directory, tempfile.TemporaryDirectory):
+      unpack_directory.cleanup()
 
   _debug = False
 
