@@ -1838,6 +1838,9 @@ class ImagePack(NamedAssetClassBase):
       parts_by_kind = parts_by_tag_kind[tag]
       main_parts : list[list[str]] = [] # 眉毛、眼睛、嘴巴
       d_parts : list[list[str]] = [] # 装饰
+      # 用于检查是否有某个部件没有对某个表情标签的差分（比如嘴巴没画）
+      # 宁可报错也不能悄悄生成没有嘴巴的表情
+      appeared_kinds : set[ImagePack.CharacterSpritePartsBased_PartKind] = set()
       for kind in part_kinds.keys():
         kind_enum = kinds_enum_map[kind]
         if kind_enum == ImagePack.CharacterSpritePartsBased_PartKind.DECORATION:
@@ -1849,8 +1852,12 @@ class ImagePack(NamedAssetClassBase):
         # 剩下的应该只有眉毛、眼睛、嘴巴
         if kind_enum not in (ImagePack.CharacterSpritePartsBased_PartKind.EYEBROW, ImagePack.CharacterSpritePartsBased_PartKind.EYE, ImagePack.CharacterSpritePartsBased_PartKind.MOUTH):
           raise PPNotImplementedError("Unknown part kind: " + kind)
+        appeared_kinds.add(kind_enum)
         if cur_main_parts := parts_by_kind.get(kind):
           main_parts.append(cur_main_parts)
+      for kind in (ImagePack.CharacterSpritePartsBased_PartKind.EYEBROW, ImagePack.CharacterSpritePartsBased_PartKind.EYE, ImagePack.CharacterSpritePartsBased_PartKind.MOUTH):
+        if kind in used_part_kinds and kind not in appeared_kinds:
+          raise PPInternalError("Missing part kind " + kind.name + " for tag " + tag)
       # 生成所有可能的组合
       for main_parts_combination in itertools.product(*main_parts):
         try_add_combinations(main_parts_combination)
