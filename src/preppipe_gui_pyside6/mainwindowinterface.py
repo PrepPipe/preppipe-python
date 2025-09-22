@@ -61,3 +61,8 @@ class MainWindowInterface:
     zh_cn="WebGal 导出",
     zh_hk="WebGal 導出",
   )
+  tr_toolname_guiconverter = TR_gui_mainwindow.tr("toolname_guiconverter",
+    en="GUI Converter",
+    zh_cn="GUI 转换",
+    zh_hk="GUI 轉換",
+  )
