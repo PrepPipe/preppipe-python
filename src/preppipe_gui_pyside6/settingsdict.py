@@ -8,6 +8,7 @@ import shelve
 import threading
 import collections
 import collections.abc
+import tempfile
 from preppipe.language import *
 
 def get_executable_base_dir() -> str:
@@ -133,3 +134,10 @@ class SettingsDict(collections.abc.MutableMapping):
       if candidate in SettingsDict._langs_dict:
         return candidate
     return "en"
+
+  @staticmethod
+  def get_current_temp_dir() -> str:
+    if inst := SettingsDict.instance():
+      if tempdir := inst.get("mainpipeline/temporarypath"):
+        return tempdir
+    return tempfile.gettempdir()

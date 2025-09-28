@@ -21,6 +21,11 @@ class SettingWidget(QWidget, ToolWidgetInterface):
     zh_cn="语言",
     zh_hk="語言",
   )
+  _tr_general_temporary_path = TR_gui_setting.tr("general_temporary_path",
+    en="Temporary Directory",
+    zh_cn="临时目录",
+    zh_hk="臨時目錄",
+  )
   _tr_general_debug = TR_gui_setting.tr("general_debug",
     en="Generate Debug Outputs",
     zh_cn="生成调试输出",
@@ -49,6 +54,7 @@ class SettingWidget(QWidget, ToolWidgetInterface):
     self.bind_text(lambda s : self.ui.tabWidget.setTabText(0, s), self._tr_tab_general)
     self.bind_text(self.ui.languageLabel.setText, self._tr_general_language)
     self.bind_text(self.ui.mainPipelineGroupBox.setTitle, MainWindowInterface.tr_toolname_maininput)
+    self.bind_text(self.ui.temporaryPathLabel.setText, self._tr_general_temporary_path)
     self.bind_text(self.ui.debugModeCheckBox.setText, self._tr_general_debug)
     self.bind_text(self.ui.debugModeCheckBox.setToolTip, self._tr_general_debug_desc)
     self.ui.languageComboBox.clear()
@@ -58,6 +64,11 @@ class SettingWidget(QWidget, ToolWidgetInterface):
     self.ui.languageComboBox.currentIndexChanged.connect(self.on_languageComboBox_currentIndexChanged)
     self.ui.debugModeCheckBox.setChecked(True if SettingsDict.instance().get("mainpipeline/debug", False) else False)
     self.ui.debugModeCheckBox.toggled.connect(self.on_debugModeCheckBox_toggled)
+    self.ui.temporaryPathWidget.setDirectoryMode(True)
+    self.ui.temporaryPathWidget.setFieldName(self._tr_general_temporary_path)
+    self.ui.temporaryPathWidget.setCurrentPath(SettingsDict.get_current_temp_dir())
+    self.ui.temporaryPathWidget.filePathUpdated.connect(self.on_temporaryPathWidget_changed)
+    self.add_translatable_widget_child(self.ui.temporaryPathWidget)
 
   def on_languageComboBox_currentIndexChanged(self, index):
     lang_code = self.ui.languageComboBox.currentData()
@@ -65,6 +76,9 @@ class SettingWidget(QWidget, ToolWidgetInterface):
 
   def on_debugModeCheckBox_toggled(self, checked):
     SettingsDict.instance()["mainpipeline/debug"] = True if checked else False
+
+  def on_temporaryPathWidget_changed(self, path):
+    SettingsDict.instance()["mainpipeline/temporarypath"] = path if path != tempfile.gettempdir() else None
 
   @classmethod
   def getToolInfo(cls, **kwargs) -> ToolWidgetInfo:

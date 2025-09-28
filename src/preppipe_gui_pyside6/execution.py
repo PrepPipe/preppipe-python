@@ -9,6 +9,7 @@ import time
 from PySide6.QtCore import *
 from preppipe.language import *
 from .settingsdict import *
+import os
 
 TR_gui_execution = TranslationDomain("gui_execution")
 
@@ -120,6 +121,7 @@ class ExecutionInfo:
 class ExecutionState(enum.Enum):
   INIT = 0
   FAILED_TEMPDIR_CREATION = enum.auto()
+  FAILED_INVALID_TEMPDIR = enum.auto()
   FAILED_LAUNCH = enum.auto()
   FAILED_EXECUTE = enum.auto()
   RUNNING = enum.auto()
@@ -170,7 +172,12 @@ class ExecutionObject(QObject):
     })
     self.composed_args = self.info.args.copy()
     if self.info.unspecified_paths:
-      self.tmpdir = tempfile.TemporaryDirectory()
+      tmppath = SettingsDict.instance().get("mainpipeline/temporarypath", None)
+      if tmppath:
+        if not os.path.isdir(tmppath):
+          self.state = ExecutionState.FAILED_INVALID_TEMPDIR
+          return
+      self.tmpdir = tempfile.TemporaryDirectory(dir=tmppath)
       if not self.tmpdir:
         self.state = ExecutionState.FAILED_TEMPDIR_CREATION
         return
