@@ -179,7 +179,7 @@ class VNASTPendingAssetReference(LiteralExpr):
 
 @IRWrappedStatelessClassJsonName("vnast_asset_intendop_e")
 class VNASTAssetIntendedOperation(enum.Enum):
-  OP_PUT = 0,
+  OP_PUT = 0
   OP_CREATE = enum.auto()
   OP_REMOVE = enum.auto()
 
