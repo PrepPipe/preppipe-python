@@ -74,6 +74,11 @@ class MainInputWidget(QWidget, ToolWidgetInterface):
     self.bind_text(self.ui.inputGroupBox.setTitle, self._tr_maininput_group_input)
     self.bind_text(self.ui.analysisGroupBox.setTitle, self._tr_maininput_group_analysis)
     self.bind_text(self.ui.exportGroupBox.setTitle, self._tr_maininput_group_export)
+    self.bind_text(self.ui.exportPathLabel.setText, self._tr_export_path)
+    self.ui.exportPathWidget.setDirectoryMode(True)
+    self.ui.exportPathWidget.setFieldName(self._tr_export_path)
+    self.add_translatable_widget_child(self.ui.exportPathWidget)
+
     self.filelist = FileListInputWidget(self)
     self.filelist.setFieldName(self._tr_fieldname_files)
     self.filelist.setDirectoryMode(False)
@@ -113,28 +118,25 @@ class MainInputWidget(QWidget, ToolWidgetInterface):
   def request_analysis(self):
     self.showNotImplementedMessageBox()
 
-  @Slot()
-  def request_export_renpy(self):
+  def request_export_common(self,target:str):
     filelist = self.filelist.getCurrentList()
     if not filelist:
       QMessageBox.critical(self, self._tr_unable_to_execute.get(), self._tr_input_required.get())
       return
     info = ExecutionInfo.init_main_pipeline(filelist)
-    info.args.append("--renpy-codegen")
+    info.args.append(f"--{target}-codegen")
     info.add_debug_dump()
-    info.args.append("--renpy-export")
-    info.add_output_unspecified(self._tr_export_path, "game", is_dir=True)
+    info.args.append(f"--{target}-export")
+    if exportPath := self.ui.exportPathWidget.getCurrentPath():
+      info.add_output_specified(self._tr_export_path, exportPath)
+    else:
+      info.add_output_unspecified(self._tr_export_path, "game", is_dir=True)
     MainWindowInterface.getHandle(self).requestExecution(info)
 
   @Slot()
+  def request_export_renpy(self):
+    self.request_export_common('renpy')
+
+  @Slot()
   def request_export_webgal(self):
-    filelist = self.filelist.getCurrentList()
-    if not filelist:
-      QMessageBox.critical(self, self._tr_unable_to_execute.get(), self._tr_input_required.get())
-      return
-    info = ExecutionInfo.init_main_pipeline(filelist)
-    info.args.append("--webgal-codegen")
-    info.add_debug_dump()
-    info.args.append("--webgal-export")
-    info.add_output_unspecified(self._tr_export_path, "game", is_dir=True)
-    MainWindowInterface.getHandle(self).requestExecution(info)
+    self.request_export_common('webgal')
