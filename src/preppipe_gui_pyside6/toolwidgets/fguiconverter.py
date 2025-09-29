@@ -9,6 +9,8 @@ from ..settingsdict import *
 from ..translatablewidgetinterface import *
 from ..util.fileopen import FileOpenHelper
 
+from fgui_converter.utils.renpy.Fgui2RenpyConverter import *
+
 TR_gui_fguiconverter = TranslationDomain("gui_fguiconverter")
 
 class FguiConverterWidget(QWidget, ToolWidgetInterface):
@@ -18,7 +20,7 @@ class FguiConverterWidget(QWidget, ToolWidgetInterface):
   verifyCB : typing.Callable[[str], bool] | None
   fieldName : Translatable | str
   filter : Translatable | str
-  lastAddedPath : str
+  lastInputPath : str
   lastOutputPath : str
   ui : Ui_FguiConverterWidget
 
@@ -74,7 +76,7 @@ class FguiConverterWidget(QWidget, ToolWidgetInterface):
     self.verifyCB = None
     self.fieldName = ""
     self.filter = ""
-    self.lastAddedPath = ""
+    self.lastInputPath = ""
     self.lastOutputPath = ""
 
     self.bind_text(self.ui.fguiAssetDictLabel.setText, self._tr_fgui_assets_dict_label)
@@ -93,6 +95,7 @@ class FguiConverterWidget(QWidget, ToolWidgetInterface):
     self.setAcceptDrops(True)
     self.ui.outputDictButton.clicked.connect(self.itemOpenOutputDirectory)
     self.ui.outputDictLine.textChanged.connect(self.setOutputDict)
+    self.ui.convertButton.clicked.connect(self.generateRenpyUi)
 
   @classmethod
   def getToolInfo(cls, **kwargs) -> ToolWidgetInfo:
@@ -154,9 +157,9 @@ class FguiConverterWidget(QWidget, ToolWidgetInterface):
       if self.ui.listWidget.item(i).text() == path:
         return
     newItem = QListWidgetItem(path)
-    newItem.setToolTip(path)
+    #newItem.setToolTip(path)
     self.ui.listWidget.addItem(newItem)
-    self.lastAddedPath = path
+    self.lastInputPath = path
     self.listChanged.emit()
 
   @Slot()
@@ -193,7 +196,7 @@ class FguiConverterWidget(QWidget, ToolWidgetInterface):
   @Slot()
   def itemAdd(self):
     dialogTitle = self._tr_select_dialog_title.format(field=str(self.fieldName))
-    initialDir = self.lastAddedPath if self.lastAddedPath else ""
+    initialDir = self.lastInputPath if self.lastInputPath else ""
     dialog = QFileDialog(self, dialogTitle, initialDir, str(self.filter))
     if self.isDirectoryMode:
       dialog.setFileMode(QFileDialog.Directory)
@@ -235,10 +238,21 @@ class FguiConverterWidget(QWidget, ToolWidgetInterface):
     self.ui.outputDictLine.setText(path)
     self.lastOutputPath = path
 
-  @classmethod
-  def getToolInfo(cls, **kwargs) -> ToolWidgetInfo:
-    return ToolWidgetInfo(
-      idstr="guiconverter",
-      name=MainWindowInterface.tr_toolname_guiconverter,
-      widget=cls,
-    )
+  @Slot()
+  def generateRenpyUi(self):
+    # 检查当前输入输出设置。
+    # 报错暂时只在Python命令行打印，后续改为弹窗信息。
+    if self.ui.listWidget.count() > 0:
+      inputPathList = self.getCurrentList()
+    else:
+      print("Input Path List is Empty.")
+      return
+    outputPathStr = self.ui.outputDictLine.text()
+    if os.path.isdir(outputPathStr):
+      print(outputPathStr)
+    else:
+      print("Ren'Py Project base dictionary does not exsit.")
+      return
+    
+    # 创建FguiToRenpyConverter对象
+    convert(["Test", "-i", inputPathList[0], "-o", outputPathStr])

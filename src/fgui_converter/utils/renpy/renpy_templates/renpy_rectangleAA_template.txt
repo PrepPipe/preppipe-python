@@ -1,0 +1,2 @@
+# 带光滑渐变的圆角矩形图像定义
+image {image_name} = Model().child(Solid('000')).shader('CursedOctopus.rectangleAA').uniform('u_rectangle_color', {rectangle_color}).uniform('u_stroke_color', {stroke_color}).uniform('u_model_size', {image_size}).uniform('u_radius', {round_radius}).uniform('u_thickness', {stroke_thickness}).uniform('u_edge_softness', 1.0)
