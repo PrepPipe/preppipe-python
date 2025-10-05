@@ -17,6 +17,7 @@ from .frontend import commanddocs
 from .renpy import passes as renpy_passes
 from .webgal import passes as webgal_passes
 from .frontend.vnmodel import passes as vnparser_passes
+from .frontend import inputexport
 from .transform import passes as vnmodel_transform_passes
 from .analysis import passes as vnmodel_analysis_passes
 from . import testbench
