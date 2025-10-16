@@ -15,11 +15,35 @@
   </property>
   <layout class="QHBoxLayout" name="horizontalLayout" stretch="1,0">
    <item>
-    <widget class="QGroupBox" name="inputGroupBox">
-     <property name="title">
-      <string>Input</string>
-     </property>
-    </widget>
+    <layout class="QVBoxLayout" name="inputLayout" stretch="9,1">
+     <item>
+      <widget class="QGroupBox" name="inputGroupBox">
+       <property name="title">
+        <string>Input</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <layout class="QHBoxLayout" name="exportLayout">
+       <item>
+        <widget class="QLabel" name="exportPathLabel">
+         <property name="sizePolicy">
+          <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+           <horstretch>0</horstretch>
+           <verstretch>0</verstretch>
+          </sizepolicy>
+         </property>
+         <property name="text">
+          <string>Export Path</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="FileSelectionWidget" name="exportPathWidget" native="true"/>
+       </item>
+      </layout>
+     </item>
+    </layout>
    </item>
    <item>
     <layout class="QVBoxLayout" name="verticalLayout" stretch="0,1">
@@ -41,6 +65,14 @@
    </item>
   </layout>
  </widget>
+ <customwidgets>
+  <customwidget>
+   <class>FileSelectionWidget</class>
+   <extends>QWidget</extends>
+   <header>preppipe_gui_pyside6.componentwidgets.fileselectionwidget</header>
+   <container>1</container>
+  </customwidget>
+ </customwidgets>
  <resources/>
  <connections/>
 </ui>
