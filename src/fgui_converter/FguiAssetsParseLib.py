@@ -997,10 +997,14 @@ class FguiAssets():
 
     def clear(self):
         self.fgui_project_name = ''
+        self.package_desc_file = ''
+        self.sprite_desc_file = ''
         self.package_desc.clear()
         self.object_dict.clear()
         self.fgui_atlas_dicts.clear()
         self.fgui_component_set.clear()
+        self.fgui_image_set.clear()
+        self.fgui_atlas_dicts.clear()
 
     def get_componentname_by_id(self, id):
         return self.package_desc.id_name_mapping[id]
@@ -1015,3 +1019,6 @@ class FguiAssets():
         for image in self.fgui_image_set:
             if image.image_id == id:
                 return (image.width, image.height)
+
+    def __del__(self):
+        self.clear()
