@@ -238,6 +238,24 @@ class FguiConverterWidget(QWidget, ToolWidgetInterface):
     self.ui.outputDictLine.setText(path)
     self.lastOutputPath = path
 
+  _tr_unable_to_transform = TR_gui_fguiassetsdictwidget.tr("unable_to_transform",
+    en="Unable to transform",
+    zh_cn="无法转换",
+    zh_hk="無法轉換",
+  )
+
+  _tr_input_required = TR_gui_fguiassetsdictwidget.tr("input_required",
+    en="Please specify input directory first",
+    zh_cn="请先指定输入文件夹",
+    zh_hk="請先指定輸入文件夾",
+  )
+
+  _tr_output_required = TR_gui_fguiassetsdictwidget.tr("output_required",
+    en="Please specify output directory first",
+    zh_cn="请先指定输出文件夹",
+    zh_hk="請先指定輸出文件夾",
+  )
+
   @Slot()
   def generateRenpyUi(self):
     # 检查当前输入输出设置。
@@ -246,13 +264,18 @@ class FguiConverterWidget(QWidget, ToolWidgetInterface):
       inputPathList = self.getCurrentList()
     else:
       print("Input Path List is Empty.")
+      QMessageBox.critical(self, self._tr_unable_to_transform.get(), self._tr_input_required.get())
       return
     outputPathStr = self.ui.outputDictLine.text()
     if os.path.isdir(outputPathStr):
       print(outputPathStr)
     else:
       print("Ren'Py Project base dictionary does not exsit.")
+      QMessageBox.critical(self, self._tr_unable_to_transform.get(), self._tr_output_required.get())
       return
     
-    # 创建FguiToRenpyConverter对象
-    convert(["Test", "-i", inputPathList[0], "-o", outputPathStr])
+    curRow = self.ui.listWidget.currentRow()
+    if curRow >= 0:
+      #item = self.ui.listWidget.takeItem(curRow)
+      # 创建FguiToRenpyConverter对象
+      convert(["Test", "-i", inputPathList[curRow], "-o", outputPathStr])
