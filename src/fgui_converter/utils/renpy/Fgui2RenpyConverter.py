@@ -855,6 +855,35 @@ class FguiToRenpyConverter:
             content = file.read()
         return content
 
+    def cleanup(self):
+        """
+        清理转换器资源
+        清理内存中的数据结构、模板缓存等资源
+        """
+        try:
+            self.fgui_assets = None
+            # 清理代码生成相关的列表
+            self.renpy_code.clear()
+            self.screen_code.clear()
+            self.screen_definition_head.clear()
+            self.screen_variable_code.clear()
+            self.screen_function_code.clear()
+            self.screen_ui_code.clear()
+            self.style_code.clear()
+            self.dismiss_action_list.clear()
+            
+            # 重置缩进相关状态
+            self.root_indent_level = 0
+            self.indent_str = ''
+            self.screen_has_dismiss = False
+            
+        except Exception as e:
+            print(f"清理资源时出现错误: {e}")
+
+    def __del__(self):
+        self.cleanup()
+
+
 
     def copy_predefine_files(self, source_dir, target_dir):
         """
@@ -989,6 +1018,9 @@ def convert(argv):
         atlas_count = converter.copy_atlas_files(fgui_project_path, images_dir)
         print(f"复制了 {atlas_count} 个图集文件")
 
+        # 一些清理
+        fgui_assets.clear()
+        converter.cleanup()
 
     except Exception as e:
         print(f"❌ 转换过程中出现错误: {e}")
