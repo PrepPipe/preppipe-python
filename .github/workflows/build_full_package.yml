@@ -79,7 +79,7 @@ jobs:
       - name: "Download ffmpeg"
         uses: robinraju/release-downloader@v1.10
         with:
-          repository: "BtbN/FFmpeg-Builds"
+          repository: "PrepPipe/preppipe-thirdparty-bins"
           tag: "latest"
           fileName: "ffmpeg-master-latest-win64-lgpl-shared.zip"
           tarBall: false
