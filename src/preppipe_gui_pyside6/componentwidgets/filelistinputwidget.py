@@ -40,6 +40,11 @@ class FileListInputWidget(QWidget, TranslatableWidgetInterface):
       zh_cn="下移",
       zh_hk="下移",
   )
+  _tr_insert = TR_gui_filelistinputwidget.tr("insert",
+      en="Insert",
+      zh_cn="插入",
+      zh_hk="插入",
+  )
 
   def __init__(self, parent : QWidget | None = None):
     super(FileListInputWidget, self).__init__(parent)
@@ -51,6 +56,10 @@ class FileListInputWidget(QWidget, TranslatableWidgetInterface):
     self.fieldName = ""
     self.filter = ""
     self.lastAddedPath = ""
+
+    # 设置右键菜单策略
+    self.ui.listWidget.setContextMenuPolicy(Qt.CustomContextMenu)
+    self.ui.listWidget.customContextMenuRequested.connect(self.showContextMenu)
 
     self.bind_text(self.ui.addButton.setText, self._tr_add)
     self.bind_text(self.ui.removeButton.setText, self._tr_remove)
@@ -110,15 +119,23 @@ class FileListInputWidget(QWidget, TranslatableWidgetInterface):
         self.addPath(path)
     event.acceptProposedAction()
 
-  @Slot(str)
-  def addPath(self, path: str):
-    # Prevent duplicates
+  def _has_duplicates(self,path:str)->bool:
     for i in range(self.ui.listWidget.count()):
       if self.ui.listWidget.item(i).text() == path:
-        return
+        return True
+    return False
+
+  @Slot(str)
+  def addPath(self, path: str, insertBeforeRow: int = -1):
+    # Prevent duplicates
+    if self._has_duplicates(path):
+      return
     newItem = QListWidgetItem(path)
     newItem.setToolTip(path)
-    self.ui.listWidget.addItem(newItem)
+    if insertBeforeRow >= 0 and insertBeforeRow <= self.ui.listWidget.count():
+      self.ui.listWidget.insertItem(insertBeforeRow, newItem)
+    else:
+      self.ui.listWidget.addItem(newItem)
     self.lastAddedPath = path
     self.listChanged.emit()
 
@@ -155,6 +172,10 @@ class FileListInputWidget(QWidget, TranslatableWidgetInterface):
 
   @Slot()
   def itemAdd(self):
+    self.openSelectionDialog()
+
+  @Slot(int)
+  def openSelectionDialog(self, insertBeforeRow : int = -1):
     dialogTitle = self._tr_select_dialog_title.format(field=str(self.fieldName))
     initialDir = self.lastAddedPath if self.lastAddedPath else ""
     dialog = QFileDialog(self, dialogTitle, initialDir, str(self.filter))
@@ -163,7 +184,8 @@ class FileListInputWidget(QWidget, TranslatableWidgetInterface):
       dialog.setOption(QFileDialog.ShowDirsOnly, True)
     else:
       dialog.setFileMode(QFileDialog.ExistingFile if self.isExistingOnly else QFileDialog.AnyFile)
-    dialog.fileSelected.connect(self.addPath)
+
+    dialog.fileSelected.connect(lambda path: self.addPath(path, insertBeforeRow))
     dialog.show()
 
   @Slot()
@@ -173,3 +195,40 @@ class FileListInputWidget(QWidget, TranslatableWidgetInterface):
       item = self.ui.listWidget.takeItem(curRow)
       del item
       self.listChanged.emit()
+
+  @Slot()
+  def itemOpen(self):
+    """打开当前选中项"""
+    curRow = self.ui.listWidget.currentRow()
+    if curRow >= 0:
+      path = self.ui.listWidget.item(curRow).text()
+      FileOpenHelper.open(self, path)
+
+  @Slot(QPoint)
+  def showContextMenu(self, pos):
+    """显示右键菜单"""
+    menu = QMenu(self)
+
+    if self.ui.listWidget.currentRow() >= 0:
+      insertAction = QAction(self._tr_insert.get(), self)
+      removeAction = QAction(self._tr_remove.get(), self)
+      openAction = QAction(FileOpenHelper.tr_open.get(), self)
+      openDirAction = QAction(FileOpenHelper.tr_open_containing_directory.get(), self)
+      insertBeforeRow = -1
+      if insertBeforeItem := self.ui.listWidget.itemAt(pos):
+        insertBeforeRow = self.ui.listWidget.row(insertBeforeItem)
+      insertAction.triggered.connect(lambda:self.openSelectionDialog(insertBeforeRow))
+      removeAction.triggered.connect(self.itemRemove)
+      openAction.triggered.connect(self.itemOpen)
+      openDirAction.triggered.connect(self.itemOpenContainingDirectory)
+      menu.addAction(insertAction)
+      menu.addAction(removeAction)
+      menu.addSeparator()
+      menu.addAction(openAction)
+      menu.addAction(openDirAction)
+    else:
+      addAction = QAction(self._tr_add.get(), self)
+      addAction.triggered.connect(self.openSelectionDialog)
+      menu.addAction(addAction)
+
+    menu.exec(self.ui.listWidget.mapToGlobal(pos))
