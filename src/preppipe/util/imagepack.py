@@ -3072,6 +3072,7 @@ class ImagePackDescriptor:
   pack_id : str # 图片组的 ID
   topref : Translatable | str # 所对应资源的名称
   authortags : tuple[str, ...] # 作者标签，如果有多个作者同时提供了相同名称的素材，可以用这个来区分
+  description : Translatable | None # 所对应资源的稍长的介绍
   packtype : ImagePackType # 图片组的类型
   masktypes : tuple[MaskType, ...] # 有几个选区、各自的类型
   custom_masktype_names : list[Translatable] # 如果图片包有自定义的选区类型，那么它们的名称存在这里
@@ -3087,6 +3088,7 @@ class ImagePackDescriptor:
       'pack_id': self.pack_id,
       'topref': self.topref,
       'authortags': self.authortags,
+      'description': self.description,
       'packtype': self.packtype.name,
       'masktypes': [m.name for m in self.masktypes],
       'custom_masktype_names': self.custom_masktype_names,
@@ -3102,6 +3104,7 @@ class ImagePackDescriptor:
     self.pack_id = state['pack_id']
     self.topref = state['topref']
     self.authortags = state['authortags']
+    self.description = state['description']
     self.packtype = ImagePackDescriptor.ImagePackType[state['packtype']]
     self.masktypes = tuple([ImagePackDescriptor.MaskType[s] for s in state['masktypes']])
     self.custom_masktype_names = state['custom_masktype_names']
@@ -3214,6 +3217,7 @@ class ImagePackDescriptor:
       self.authortags = tuple(pack.opaque_metadata["author"])
     else:
       self.authortags = tuple()
+    self.description = None
     # 关于判断图片包类型，我们目前假设有图片选区的都是背景，没有的都是角色立绘
     is_screen_found = False
     for mask in pack.masks:
@@ -3307,6 +3311,15 @@ class ImagePackDescriptor:
         if not isinstance(t, str):
           raise PPInternalError("Invalid author tag: " + str(t))
       self.authortags = tuple(tags)
+    if "description" in references:
+      used_keys.add("description")
+      descvalue = references["description"]
+      if isinstance(descvalue, dict):
+        tr_id = self.pack_id + "-description"
+        tr_obj = ImagePackDescriptor.TR_ref.tr(code=tr_id, **descvalue)
+        self.description = tr_obj
+      else:
+        raise PPInternalError("Invalid description value: " + str(descvalue))
     if "kind" in references:
       used_keys.add("kind")
       kind_str = references["kind"]
@@ -3373,6 +3386,8 @@ class ImagePackDescriptor:
     result : dict[str, typing.Any] = {}
     if isinstance(self.topref, Translatable):
       result["name"] = self.topref.dump_candidates_json()
+    if isinstance(self.description, Translatable):
+      result["description"] = self.description.dump_candidates_json()
     result["packtype"] = self.packtype.name
     result["composites_code"] = self.composites_code
     if len(self.composites_references) > 0:
