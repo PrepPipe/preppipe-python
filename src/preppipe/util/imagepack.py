@@ -1948,6 +1948,7 @@ class ImagePack(NamedAssetClassBase):
   def _get_psd_composite_image_from_layers(psd : psd_tools.PSDImage, converted_layers : list[list[str]]) -> PIL.Image.Image:
     converted_layers_used : list[bool] = [False] * len(converted_layers)
     actual_layers : list[tuple[str, typing.Any]] = [] # <名字，图层对象>
+    debug_layerlog : list[str] = []
     def layer_filter(layer):
       nonlocal actual_layers
       nonlocal converted_layers_used
@@ -1964,7 +1965,9 @@ class ImagePack(NamedAssetClassBase):
         for candidate_target in converted_layers:
           minlen = min(len(cur_layer), len(candidate_target))
           if cur_layer[:minlen] == candidate_target[:minlen]:
+            debug_layerlog.append(f"{cur_layer}: matched prefix with group layer {'/'.join(candidate_target)}")
             return True
+        debug_layerlog.append(f"{cur_layer}: no match")
         return False
       else:
         # 如果是具体图层，判断 cur_layer 是否与 converted_layers 中的某一项匹配，或是某一项的子节点
@@ -1974,16 +1977,24 @@ class ImagePack(NamedAssetClassBase):
           if cur_layer[:len(candidate_target)] == candidate_target:
             actual_layers.append(('/'.join(cur_layer), layer))
             converted_layers_used[index] = True
+            debug_layerlog.append(f"{cur_layer}: matched: {'/'.join(candidate_target)}")
             return True
+        debug_layerlog.append(f"{cur_layer}: no match")
         return False
     composite = psd.composite(ignore_preview=True, force=True, layer_filter=layer_filter)
     if len(actual_layers) == 0:
-      raise PPInternalError("No layers matched in export")
+      print("\n".join(debug_layerlog))
+      # raise PPInternalError("No layers matched in export")
+      print("No layers matched in export")
     if not all(converted_layers_used):
       unused_layers = [converted_layers[i] for i in range(len(converted_layers)) if not converted_layers_used[i]]
-      raise PPInternalError("Some layers were not found: " + str(unused_layers))
+      print("\n".join(debug_layerlog))
+      #raise PPInternalError("Some layers were not found: " + str(unused_layers))
+      print("Some layers were not found: " + str(unused_layers))
     if composite is None or composite.getbbox() is None:
-      raise PPInternalError("Empty image in export (something went wrong?)")
+      #raise PPInternalError("Empty image in export (something went wrong?)")
+      print("Empty image in export (something went wrong?)")
+      composite = PIL.Image.new("RGBA", (psd.width, psd.height), (0,0,0,0))
     return composite
 
   @staticmethod
@@ -2093,6 +2104,7 @@ class ImagePack(NamedAssetClassBase):
   def _unpack_psd_to_directory(psdpath : str, destdir : str, exports : dict) -> None:
     psd = psd_tools.PSDImage.open(psdpath)
     for filename, info in exports.items():
+      print(f"Extracting: {filename}")
       if isinstance(info, dict):
         if len(info) != 1:
           raise PPInternalError("Invalid export info in PSD exports: expecting a dict with exactly one key but got " + str(info))
