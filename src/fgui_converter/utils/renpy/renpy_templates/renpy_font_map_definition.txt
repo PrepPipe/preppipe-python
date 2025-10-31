@@ -1,0 +1,14 @@
+init python:
+    import os
+    font_name_list = [{font_name_list}]
+    font_file_ext = [".ttf", ".ttc", ".otf"]
+
+    for font_name in font_name_list:
+        for font_ext in font_file_ext:
+            font_file_name = f"{font_name}{font_ext}"
+            if os.path.exists(f"{config.gamedir}\\{font_file_name}") or os.path.exists(f"{config.gamedir}\\fonts\\{font_file_name}"):
+                config.font_name_map[font_name] = font_file_name
+                renpy.log(config.font_name_map)
+                break
+            else:
+                print(f"Could not Find font: {font_name}")
