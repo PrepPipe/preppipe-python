@@ -6,6 +6,7 @@ from PySide6.QtGui import *
 from ..forms.generated.ui_fileselectionwidget import Ui_FileSelectionWidget
 from preppipe.language import *
 from ..translatablewidgetinterface import *
+from ..util.fileopen import FileOpenHelper
 
 class FileSelectionWidget(QWidget, TranslatableWidgetInterface):
   # Signal to indicate that the file path has been updated.
@@ -27,6 +28,11 @@ class FileSelectionWidget(QWidget, TranslatableWidgetInterface):
     en="Select",
     zh_cn="选择",
     zh_hk="選擇",
+  )
+  tr_deselect = TR_gui_fileselectionwidget.tr("deselect",
+    en="Deselect",
+    zh_cn="取消选择",
+    zh_hk="取消選擇",
   )
 
   @staticmethod
@@ -62,6 +68,10 @@ class FileSelectionWidget(QWidget, TranslatableWidgetInterface):
     self.fieldName = ""
     self.filter = ""
     self.defaultName = ""
+
+    # 设置右键菜单策略
+    self.ui.pathLabel.setContextMenuPolicy(Qt.CustomContextMenu)
+    self.ui.pathLabel.customContextMenuRequested.connect(self.showContextMenu)
 
     # Connect the push button's clicked signal to open the dialog.
     self.ui.pushButton.clicked.connect(self.requestOpenDialog)
@@ -166,3 +176,30 @@ class FileSelectionWidget(QWidget, TranslatableWidgetInterface):
       if not self.verifyCB or self.verifyCB(path):
         self.setCurrentPath(path)
         return
+
+  def clearPath(self):
+    """清除当前选择的路径"""
+    self.setCurrentPath("")
+
+  @Slot(QPoint)
+  def showContextMenu(self, pos):
+    """显示右键菜单"""
+    menu = QMenu(self)
+
+    selectAction = QAction(self.tr_select.get(), self)
+    selectAction.triggered.connect(self.requestOpenDialog)
+    menu.addAction(selectAction)
+
+    if self.currentPath:
+      deselectAction = QAction(self.tr_deselect.get(), self)
+      openAction = QAction(FileOpenHelper.tr_open.get(), self)
+      openDirAction = QAction(FileOpenHelper.tr_open_containing_directory.get(), self)
+      deselectAction.triggered.connect(self.clearPath)
+      openAction.triggered.connect(lambda: FileOpenHelper.open(self, self.currentPath))
+      openDirAction.triggered.connect(lambda: FileOpenHelper.open_containing_directory(self, self.currentPath))
+      menu.addAction(deselectAction)
+      menu.addSeparator()
+      menu.addAction(openAction)
+      menu.addAction(openDirAction)
+
+    menu.exec(self.ui.pathLabel.mapToGlobal(pos))
