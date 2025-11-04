@@ -7,6 +7,15 @@ import re
 import argparse
 
 import shutil
+from enum import IntEnum
+
+class DisplayableChildType(IntEnum):
+    NULL = 0
+    IMAGE = 1
+    GRAPH = 2
+    TEXT = 3
+    COMPONENT = 4
+    OTHER = 5
 
 # 添加当前目录到Python路径，以便导入FguiAssetsParseLib
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -55,6 +64,7 @@ class FguiToRenpyConverter:
                              os.path.join(os.path.dirname(os.path.abspath(__file__)), "renpy_templates"))
         self.font_map_template = 'renpy_font_map_definition.txt'
         self.graph_template_dict = {}
+        self.graph_template_dict['null'] = self.get_graph_template('renpy_null_template.txt')
         self.graph_template_dict['rectangle'] = self.get_graph_template('renpy_rectangle_template.txt')
         self.graph_template_dict['ellipse'] = self.get_graph_template('renpy_ellipse_template.txt')
 
@@ -130,6 +140,79 @@ class FguiToRenpyConverter:
         image_definitions.append("")
         self.renpy_code.extend(image_definitions)
 
+    def generate_graph_definitions(self, fgui_graph):
+        """
+        生成图形组件定义。图形组件有多种类别：
+        None: 空白
+        rect: 矩形(可带圆角)
+        eclipse: 椭圆(包括圆形)
+        regular_polygon: 正多边形
+        polygon: 多边形
+        """
+        graph_code = []
+        graph_img_def = ''
+
+        if not isinstance(fgui_graph, FguiGraph):
+            print("It is not a graph displayable.")
+            return graph_code
+
+        xoffset = 0
+        yoffset = 0
+        if not fgui_graph.pivot_is_anchor:
+            size = fgui_graph.size
+            xoffset = int(fgui_graph.pivot[0] * size[0])
+            yoffset = int(fgui_graph.pivot[1] * size[1])
+
+        # 空白使用Null。
+        if fgui_graph.type is None:
+            # graph_code.append(f"{self.indent_str}null width {fgui_graph.size[0]} height {fgui_graph.size[1]}")
+            self.graph_template_dict['null'].replace('{image_name}', fgui_graph.id)\
+                                .replace('{width}', str(fgui_graph.size[0]))\
+                                .replace('{height}', str(fgui_graph.size[1]))
+        # 矩形(圆边矩形)。原生组件不支持圆边矩形，使用自定义shader实现。
+        elif fgui_graph.type == "rect":
+            # renpy_rectangle_template.txt模板已在转换器初始化读取。模板代码 self.self.graph_template_dict['rectangle'] 。
+            graph_img_def = self.graph_template_dict['rectangle'].replace('{image_name}', fgui_graph.id)\
+                                .replace('{rectangle_color}', str(rgba_normalize(fgui_graph.fill_color)))\
+                                .replace('{stroke_color}', str(rgba_normalize(fgui_graph.stroke_color)))\
+                                .replace('{image_size}', str(fgui_graph.size))\
+                                .replace('{round_radius}', str(fgui_graph.corner_radius))\
+                                .replace('{stroke_thickness}', str(fgui_graph.stroke_width))\
+                                .replace('{xysize}', str(fgui_graph.size))\
+                                .replace('{pos}', str(fgui_graph.xypos))\
+                                .replace('{anchor}', str(fgui_graph.pivot))\
+                                .replace('{xoffset}', str(xoffset))\
+                                .replace('{yoffset}', str(yoffset))\
+                                .replace('{transform_anchor}', str(True)) \
+                                .replace('{rotate}', str(fgui_graph.rotation))\
+                                .replace('{alpha}', str(fgui_graph.alpha))\
+                                .replace('{xzoom}', str(fgui_graph.scale[0]))\
+                                .replace('{yzoom}', str(fgui_graph.scale[1]))
+        # 椭圆(圆形)。Ren'Py尚不支持椭圆，使用自定义shader实现。
+        elif fgui_graph.type == "eclipse":
+            graph_img_def = self.graph_template_dict['ellipse'].replace('{image_name}', fgui_graph.id)\
+                                .replace('{ellipse_color}', str(rgba_normalize(fgui_graph.fill_color)))\
+                                .replace('{stroke_color}', str(rgba_normalize(fgui_graph.stroke_color)))\
+                                .replace('{image_size}', str(fgui_graph.size))\
+                                .replace('{stroke_thickness}', str(fgui_graph.stroke_width))\
+                                .replace('{xysize}', str(fgui_graph.size))\
+                                .replace('{pos}', str(fgui_graph.xypos))\
+                                .replace('{anchor}', str(fgui_graph.pivot))\
+                                .replace('{xoffset}', str(xoffset))\
+                                .replace('{yoffset}', str(yoffset))\
+                                .replace('{transform_anchor}', str(True)) \
+                                .replace('{rotate}', str(fgui_graph.rotation))\
+                                .replace('{alpha}', str(fgui_graph.alpha))\
+                                .replace('{xzoom}', str(fgui_graph.scale[0]))\
+                                .replace('{yzoom}', str(fgui_graph.scale[1]))
+        elif fgui_graph.type == "regular_polygon":
+            print("regular_polygon not implemented.")
+            pass
+        # 在整个脚本对象中添加graph定义。
+        graph_code.append(graph_img_def)
+
+        return graph_code
+
     def generate_screen(self, component):
         """
         生成screen定义。目标样例：
@@ -199,6 +282,7 @@ class FguiToRenpyConverter:
                     self.screen_ui_code.append(f"{self.indent_str}fixed:")
                     self.indent_level_up()
                     self.screen_ui_code.append(f"{self.indent_str}pos {displayable.xypos}")
+                    # 此处仅处理了title，而未处理selected_title。后续可能需要添加。
                     parameter_str = self.generate_button_parameter(displayable.button_property.title, displayable.custom_data)
                     self.screen_ui_code.append(f"{self.indent_str}use {ref_com.name}({parameter_str}) id \"{displayable.id}\"")
                     self.indent_level_down()
@@ -298,6 +382,76 @@ class FguiToRenpyConverter:
             self.style_code.append(f"{style_indent}strikethrough {fgui_text.strike}")
         self.style_code.append("")
 
+    @staticmethod
+    def get_child_type(displayable):
+        if isinstance(displayable, FguiImage):
+            return DisplayableChildType.IMAGE
+        elif isinstance(displayable, FguiText):
+            return DisplayableChildType.TEXT
+        elif isinstance(displayable, FguiGraph):
+            return DisplayableChildType.GRAPH
+        elif isinstance(displayable, FguiComponent):
+            return DisplayableChildType.COMPONENT
+        else:
+            return DisplayableChildType.OTHER
+
+    def generate_button_children(self, fgui_button):
+        """
+        生成按钮各状态的子组件。
+        """
+
+        # 4种状态的子组件列表
+        idle_child_list = []
+        hover_child_list = []
+        selected_child_list = []
+        selected_hover_child_list = []
+        # 非激活状体子组件列表
+        insensitive_child_list = []
+        # 始终显示的子组件列表
+        always_show_child_list = []
+        # 5种类型的子组件字典
+        state_children_dict = {
+            'idle': idle_child_list,
+            'hover': hover_child_list,
+            'selected': selected_child_list,
+            'selected_hover': selected_hover_child_list,
+            'insensitive': insensitive_child_list,
+            'always_show': always_show_child_list
+        }
+        state_index_name_dict = {
+            0: 'idle',
+            1: 'hover',
+            2: 'selected',
+            3: 'selected_hover',
+            4: 'insensitive',
+            None: 'always_show'
+        }
+        # 默认按钮控制器为button，并且必定有4种状态，顺序分别为idle、hover、selected、selected_hover。
+        # 检查按钮控制器名称
+        if fgui_button.controller_list[0].name != 'button':
+            print("按钮控制器名不是button。")
+            return state_children_dict
+        # 检查按钮控制器的状态列表
+        state_list = fgui_button.controller_list[0].page_index_dict.keys()
+        state_number = min(len(state_list), 5) #暂时不处理5种以上的控制器状态
+        if state_number < 4:
+            print("按钮控制器状态总数小于4。")
+            return state_children_dict
+
+        # 将displayable_list中的子组件按状态分别添加到对应列表中
+        for displayable in fgui_button.display_list.displayable_list:
+            if displayable.gear_display is None:
+                state_children_dict['always_show'].append((displayable.id, FguiToRenpyConverter.get_child_type(displayable)))
+                break
+            for i in range(0, state_number):
+                if displayable.gear_display and str(i) in displayable.gear_display.controller_index:
+                    state_children_dict[state_index_name_dict[i]].append((displayable.id, FguiToRenpyConverter.get_child_type(displayable)))
+                    continue
+        # print(state_children_dict)
+
+        return state_children_dict
+
+
     def generate_button_screen(self, component):
 
         """
@@ -330,39 +484,112 @@ class FguiToRenpyConverter:
         self.dismiss_action_list.clear()
         self.style_code.clear()
 
+        # 4种状态的子组件列表
+        idle_child_list = []
+        hover_child_list = []
+        selected_child_list = []
+        selected_hover_child_list = []
+        # 非激活状体子组件列表
+        insensitive_child_list = []
+        # 始终显示的子组件列表
+        always_show_child_list = []
+        # 5种类型的子组件字典
+        state_children_dict = {
+            'idle': idle_child_list,
+            'selected': selected_child_list,
+            'hover': hover_child_list,
+            'selected_hover': selected_hover_child_list,
+            'insensitive': insensitive_child_list,
+            'always_show': always_show_child_list
+        }
+
+        state_index_name_dict = {
+            0: 'idle',
+            1: 'selected',
+            2: 'hover',
+            3: 'selected_hover',
+            4: 'insensitive',
+            None: 'always_show'
+        }
+        
+        # 图片id与name映射关系
+        image_id_name_mapping = {}
+
         if component.extention != 'Button':
             print("组件类型不是按钮")
+            return
+
+        # 默认按钮控制器为button，并且必定有4种状态，顺序分别为idle、hover、selected、selected_hover。
+        # 可扩展为5种，第5种必需为insensitive，表示按钮不激活状态。
+        if component.controller_list[0].name != 'button':
+            print("按钮控制器名不是button。")
+            return
+        # 检查按钮控制器的状态列表
+        state_list = component.controller_list[0].page_index_dict.keys()
+        state_number = min(len(state_list), 5) #暂时不处理5种以上的控制器状态
+        if state_number < 4:
+            print("按钮控制器状态总数小于4。")
             return
 
         # 生成按钮组件screen
         self.screen_definition_head.append("# 按钮组件Screen")
         self.screen_definition_head.append(f"# 从FairyGUI按钮组件{component.name}转换而来")
-        # screen_code.append("")
 
         id = component.id
         button_name = component.name
         xysize = component.size
         background = self.default_background
+
         default_title = ''
+        # state_children_dict = self.generate_button_children(component)
         for displayable in component.display_list.displayable_list:
+            # 不带显示控制器表示始终显示
+            if displayable.gear_display is None:
+                # state_children_dict['always_show'].append((displayable, FguiToRenpyConverter.get_child_type(displayable)))
+                # 加入到所有状态显示列表中
+                if displayable.name != 'title':
+                    for state_list in state_children_dict.values():
+                        state_list.append((displayable, FguiToRenpyConverter.get_child_type(displayable)))
+                else:
+                    pass
+            # 其他状态根据枚举值加入各列表
+            else:
+                for i in range(0, state_number):
+                    if str(i) in displayable.gear_display.controller_index:
+                        state_children_dict[state_index_name_dict[i]].append((displayable, FguiToRenpyConverter.get_child_type(displayable)))
+                        continue
             # 图片组件
             if isinstance(displayable, FguiImage):
                 for image in self.fgui_assets.package_desc.image_list:
                     if displayable.src == image.id:
-                        background = image.name
+                        image_id_name_mapping[displayable.id] = image.name
                         break
-                    # TODO
-                    # 处理不同图片分别用于idle、hover、selected_idle和selected_hover的情况
-            # 文本组件
+                # print(image_id_name_mapping)
+            elif isinstance(displayable, FguiGraph):
+                self.renpy_code.extend(self.generate_graph_definitions(displayable))
+                # break
+            # 文本组件。只处理名为title的文本组件。其他的文本待后续增加。
             # FGUI与Ren'Py中的相同的文本对齐方式渲染效果略有不同，Ren'Py的效果更好。
-            # if isinstance(displayable, FguiText) and displayable.name == 'title':
-            if isinstance(displayable, FguiText):
+            elif isinstance(displayable, FguiText) and displayable.name == 'title':
                 # 重置缩进级别
                 self.reset_indent_level()
                 default_title = displayable.text
                 # 定义样式
                 self.generate_text_style(displayable, f"{button_name}_text")
                 # self.screen_code.extend(self.style_code)
+
+        # 根据state_children_dict生成各种对应状态的background
+        # idle_background
+        self.generate_image_object(f"{button_name}_idle_background", state_children_dict['idle'])
+        # selected_background
+        self.generate_image_object(f"{button_name}_selected_background", state_children_dict['selected'])
+        # hover_background
+        self.generate_image_object(f"{button_name}_hover_background", state_children_dict['hover'],)
+        # selected_hover_background
+        self.generate_image_object(f"{button_name}_selected_hover_background", state_children_dict['selected_hover'])
+        # insensitive_background
+        self.generate_image_object(f"{button_name}_insensitive_background", state_children_dict['insensitive'])
+
 
         # 重置缩进级别
         self.reset_indent_level()
@@ -377,7 +604,17 @@ class FguiToRenpyConverter:
         self.indent_level_up()
         self.screen_ui_code.append(f"{self.indent_str}style_prefix '{button_name}'")
         self.screen_ui_code.append(f"{self.indent_str}xysize ({xysize})")
-        self.screen_ui_code.append(f"{self.indent_str}background '{background}'")
+        # self.screen_ui_code.append(f"{self.indent_str}background '{background}'")
+        if state_children_dict['idle']:
+            self.screen_ui_code.append(f"{self.indent_str}idle_background '{button_name}_idle_background'")
+        if state_children_dict['selected']:
+            self.screen_ui_code.append(f"{self.indent_str}selected_background '{button_name}_selected_background'")
+        if state_children_dict['hover']:
+            self.screen_ui_code.append(f"{self.indent_str}hover_background '{button_name}_hover_background'")
+        if state_children_dict['selected_hover']:
+            self.screen_ui_code.append(f"{self.indent_str}selected_hover_background '{button_name}_selected_hover_background'")
+        if state_children_dict['insensitive']:
+            self.screen_ui_code.append(f"{self.indent_str}insensitive_background '{button_name}_insensitive_background'")
         self.screen_ui_code.append(f"{self.indent_str}text title")
         self.screen_ui_code.append(f"{self.indent_str}action actions")
         # 一些按钮特性
@@ -396,6 +633,40 @@ class FguiToRenpyConverter:
 
     def trans_text_align(self, text_horizontal_align="left", text_vertical_align="top"):
         return self.align_dict.get(text_horizontal_align, 0.5), self.align_dict.get(text_vertical_align, 0.5)
+
+    def generate_image_object(self, image_name, displayable_list):
+        """
+        生成image对象，入参为一些子组件列表，自带transform。
+        暂时不考虑允许列表中的子组件添加额外transform，只单纯堆叠。
+        """
+        if len(displayable_list) <= 0:
+            return
+        image_definitions = []
+        image_definitions.append("# 图像定义")
+        image_definitions.append("# 合成的图像对象")
+        indent_level = self.root_indent_level
+        self.reset_indent_level()
+        image_definitions.append(f"image {image_name}:")
+        self.indent_level_up()
+        for displayable, displayalbe_type in displayable_list:
+            image_definitions.append(f"{self.indent_str}contains:")
+            self.indent_level_up()
+            if displayalbe_type == DisplayableChildType.IMAGE:
+                name = self.fgui_assets.get_componentname_by_id(displayable.src)
+                image_definitions.append(f"{self.indent_str}'{name}'")
+            elif displayalbe_type == DisplayableChildType.GRAPH:
+                image_definitions.append(f"{self.indent_str}'{displayable.id}'")
+            elif displayalbe_type == DisplayableChildType.TEXT:
+                image_definitions.append(f"{self.indent_str}Text({displayable.text})")
+            # 其他类型暂时用空对象占位
+            else:
+                image_definitions.append(f"{self.indent_str}Null()")
+            self.indent_level_down()
+
+        image_definitions.append("")
+
+        self.renpy_code.extend(image_definitions)
+        self.root_indent_level = indent_level
 
     def generate_image_displayable(self, fgui_image):
         """
@@ -459,54 +730,8 @@ class FguiToRenpyConverter:
             print("It is not a graph displayable.")
             return graph_code
 
-        # 空白直接使用Null。后续可能存在一些relation相关不匹配。
-        if fgui_graph.type is None:
-            graph_code.append(f"{self.indent_str}null width {fgui_graph.size[0]} height {fgui_graph.size[1]}")
-        # 矩形(圆边矩形)。原生组件不支持圆边矩形，使用自定义shader实现。
-        elif fgui_graph.type == "rect":
-            # renpy_rectangle_template.txt模板已在转换器初始化读取。模板代码 self.self.graph_template_dict['rectangle'] 。
-            graph_img_def = self.graph_template_dict['rectangle'].replace('{image_name}', fgui_graph.id)\
-                                .replace('{rectangle_color}', str(rgba_normalize(fgui_graph.fill_color)))\
-                                .replace('{stroke_color}', str(rgba_normalize(fgui_graph.stroke_color)))\
-                                .replace('{image_size}', str(fgui_graph.size))\
-                                .replace('{round_radius}', str(fgui_graph.corner_radius))\
-                                .replace('{stroke_thickness}', str(fgui_graph.stroke_width))
-            # 直接在整个脚本对象中添加graph定义。
-            self.renpy_code.append(graph_img_def)
-        # 椭圆(圆形)。Ren'Py尚不支持椭圆，使用自定义shader实现。
-        elif fgui_graph.type == "eclipse":
-            graph_img_def = self.graph_template_dict['ellipse'].replace('{image_name}', fgui_graph.id)\
-                                .replace('{ellipse_color}', str(rgba_normalize(fgui_graph.fill_color)))\
-                                .replace('{stroke_color}', str(rgba_normalize(fgui_graph.stroke_color)))\
-                                .replace('{image_size}', str(fgui_graph.size))\
-                                .replace('{stroke_thickness}', str(fgui_graph.stroke_width))
-            # 直接在整个脚本对象中添加graph定义。
-            self.renpy_code.append(graph_img_def)
-
-        # 生成screen中的部分，带transform。
-        graph_code.append(f"{self.indent_str}add \"{fgui_graph.id}\":")
-        self.indent_level_up()
-        graph_code.append(f"{self.indent_str}xysize {fgui_graph.size}")
-        graph_code.append(f"{self.indent_str}pos {fgui_graph.xypos}")
-        graph_code.append(f"{self.indent_str}at transform:")
-        self.indent_level_up()
-        graph_code.append(f"{self.indent_str}anchor {fgui_graph.pivot}")
-        if not fgui_graph.pivot_is_anchor:
-            size = fgui_graph.size
-            xoffset = int(fgui_graph.pivot[0] * size[0])
-            yoffset = int(fgui_graph.pivot[1] * size[1])
-            graph_code.append(f"{self.indent_str}xoffset {xoffset}")
-            graph_code.append(f"{self.indent_str}yoffset {yoffset}")
-        graph_code.append(f"{self.indent_str}transform_anchor True")
-        if fgui_graph.rotation:
-            graph_code.append(f"{self.indent_str}rotate {fgui_graph.rotation}")
-        if fgui_graph.alpha != 1.0:
-            graph_code.append(f"{self.indent_str}alpha {fgui_graph.alpha}")
-        if fgui_graph.scale != (1.0, 1.0):
-            graph_code.append(f"{self.indent_str}xzoom {fgui_graph.scale[0]} yzoom {fgui_graph.scale[1]}")
-        self.indent_level_down()
-
-        self.indent_level_down()
+        self.renpy_code.extend(self.generate_graph_definitions(fgui_graph))
+        graph_code.append(f"{self.indent_str}add \"{fgui_graph.id}\"")
 
         return graph_code
 

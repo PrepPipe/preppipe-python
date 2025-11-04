@@ -1,2 +1,13 @@
 # 抗锯齿的椭圆(圆形)图像定义
-image {image_name} = Model().child(Solid('000')).shader('CursedOctopus.ellipseAA').uniform('u_ellipse_color', {ellipse_color}).uniform('u_stroke_color', {stroke_color}).uniform('u_model_size', {image_size}).uniform('u_thickness', {stroke_thickness}).uniform('u_edge_softness', 0.01)
+image {image_name}:
+    Model().child(Solid('000')).shader('CursedOctopus.ellipseAA').uniform('u_ellipse_color', {ellipse_color}).uniform('u_stroke_color', {stroke_color}).uniform('u_model_size', {image_size}).uniform('u_thickness', {stroke_thickness}).uniform('u_edge_softness', 0.01)
+    xysize {xysize}
+    pos {pos}
+    anchor {anchor}
+    xoffset {xoffset}
+    yoffset {yoffset}
+    transform_anchor {transform_anchor}
+    rotate {rotate}
+    alpha {alpha}
+    xzoom {xzoom}
+    yzoom {yzoom}
