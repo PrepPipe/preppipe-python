@@ -750,9 +750,9 @@ class FguiLoader(FguiDisplayable):
         self.item_url = None
         if package_description_id:
             self.package_description_id = package_description_id
-            get_item_id(package_description_id)
+            self.get_item_id(package_description_id)
 
-    def get_item_id(packageDescription_id):
+    def get_item_id(self, packageDescription_id):
         self.item_url = self.url[self.url.find(packageDescription_id)+len(packageDescription_id):]
 
 class FguiGearBase:
@@ -868,6 +868,7 @@ class FguiGearSize(FguiGearBase):
             raise ValueError("xml tag is not gearSize.")
         super().__init__(gear_item_tree)
         self.index_value_dict = {} # 该字典存放控制器索引与对应尺寸
+        index_values = self.values
         if self.values:
             for i in range(len(self.values)):
                 item = index_values[i].split(",")
