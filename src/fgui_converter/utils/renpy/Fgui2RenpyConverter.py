@@ -353,22 +353,10 @@ class FguiToRenpyConverter:
         self.style_code.append(f"{style_indent}color '{fgui_text.text_color}'")
         xalign, yalign = self.trans_text_align(fgui_text.align, fgui_text.v_align)
         self.style_code.append(f"{style_indent}align ({xalign}, {yalign})")
-        # Ren'Py中使用两层outlines分别实现投影和描边
-        # FGUI中的投影包含描边，投影的size等于描边的size，默认值为0；Ren'Py中允许outlines为0，依然有效果
-        # Ren'Py中的property outlines可以是列表，先投影后描边
-        has_shadow = fgui_text.shadow_color
-        shadow_width = fgui_text.stroke_size
-        has_outline = fgui_text.stroke_color
-        if has_shadow:
-            shadow_outline = f"(absolute({shadow_width}), '{fgui_text.shadow_color}', absolute({fgui_text.shadow_offset[0]}), absolute({fgui_text.shadow_offset[1]}))"
-        if has_outline:
-            stroke_outline = f"(absolute({fgui_text.stroke_size}), '{fgui_text.stroke_color}', absolute(0), absolute(0))"
-        if has_shadow and not has_outline:
-            self.style_code.append(f"{style_indent}outlines [{shadow_outline}]")
-        if not has_shadow and has_outline:
-            self.style_code.append(f"{style_indent}outlines [{stroke_outline}]")
-        if has_shadow and has_outline:
-            self.style_code.append(f"{style_indent}outlines [{shadow_outline}, {stroke_outline}]")
+
+        text_outline_string = self.generate_text_outline_string(fgui_text)
+        self.style_code.append(f"{style_indent}outlines {text_outline_string}")
+
         # 默认两侧居中对齐
         self.style_code.append(f"{style_indent}textalign 0.5")
         # 粗体、斜体、下划线、删除线
@@ -642,8 +630,8 @@ class FguiToRenpyConverter:
         if len(displayable_list) <= 0:
             return
         image_definitions = []
-        image_definitions.append("# 图像定义")
-        image_definitions.append("# 合成的图像对象")
+        image_definitions.append("# image对象定义")
+        image_definitions.append("# 使用其他image对象的组合")
         indent_level = self.root_indent_level
         self.reset_indent_level()
         image_definitions.append(f"image {image_name}:")
@@ -670,6 +658,26 @@ class FguiToRenpyConverter:
         self.renpy_code.extend(image_definitions)
         self.root_indent_level = indent_level
 
+    @staticmethod
+    def generate_text_outline_string(fgui_text):
+        outline_string = '[]'
+        has_shadow = fgui_text.shadow_color
+        has_outline = fgui_text.stroke_color
+        if has_shadow:
+            shadow_outline = f"(absolute(0), \"{fgui_text.shadow_color}\", absolute({fgui_text.shadow_offset[0]}), absolute({fgui_text.shadow_offset[1]}))"
+        if has_outline:
+            stroke_outline = f"(absolute({fgui_text.stroke_size}), \"{fgui_text.stroke_color}\", absolute(0), absolute(0))"
+        if has_shadow and not has_outline:
+            outline_string = f"[{shadow_outline}]"
+        if not has_shadow and has_outline:
+            outline_string = f"[{stroke_outline}]"
+        # Ren'Py中的投影不包含其他描边。为保持与FGUI效果一直，需要添加一层，宽度与描边一致，颜色、偏移与投影一致。
+        if has_shadow and has_outline:
+            extra_shadow = f"(absolute({fgui_text.stroke_size}), \"{fgui_text.shadow_color}\", absolute({fgui_text.shadow_offset[0]}), absolute({fgui_text.shadow_offset[1]}))"
+            outline_string = f"[{shadow_outline}, {extra_shadow}, {stroke_outline}]"
+        return outline_string
+
+
     def generate_text_displayable_string(self, fgui_text):
         text_displayable_string = ''
         if not isinstance(fgui_text, FguiText):
@@ -690,20 +698,9 @@ class FguiToRenpyConverter:
         text_italic_param = f"italic={fgui_text.italic}"
         text_underline_param = f"underline={fgui_text.underline}"
         text_strike_param = f"strike={fgui_text.strike}"
-        has_shadow = fgui_text.shadow_color
-        shadow_width = fgui_text.stroke_size
-        has_outline = fgui_text.stroke_color
-        text_outlines_parame = 'outlines=[]'
-        if has_shadow:
-            shadow_outline = f"(absolute({shadow_width}), \"{fgui_text.shadow_color}\", absolute({fgui_text.shadow_offset[0]}), absolute({fgui_text.shadow_offset[1]}))"
-        if has_outline:
-            stroke_outline = f"(absolute({fgui_text.stroke_size}), \"{fgui_text.stroke_color}\", absolute(0), absolute(0))"
-        if has_shadow and not has_outline:
-            text_outlines_parame = f"outlines=[{shadow_outline}]"
-        if not has_shadow and has_outline:
-            text_outlines_parame = f"outlines=[{stroke_outline}]"
-        if has_shadow and has_outline:
-            text_outlines_parame = f"outlines=[{shadow_outline}, {stroke_outline}]"
+
+        text_outline_string = self.generate_text_outline_string(fgui_text)
+        text_outlines_parame = 'outlines={text_outline_string}'
 
         text_displayable_string = f"Text(text='{fgui_text.text}',{text_anchor_param},{text_transformanchor},{text_pos_param},{text_size_param},{text_font_param},{text_font_size_param},{text_font_color_param},{text_textalign_param},{text_bold_param},{text_italic_param},{text_underline_param},{text_strike_param},{text_outlines_parame})"
         return text_displayable_string
@@ -848,19 +845,9 @@ class FguiToRenpyConverter:
                 text_code.append(f"{self.indent_str}font '{text_font}'")
                 text_code.append(f"{self.indent_str}size {fgui_text.font_size}")
                 text_code.append(f"{self.indent_str}color '{fgui_text.text_color}'")
-                has_shadow = fgui_text.shadow_color
-                shadow_width = fgui_text.stroke_size
-                has_outline = fgui_text.stroke_color
-                if has_shadow:
-                    shadow_outline = f"(absolute({shadow_width}), '{fgui_text.shadow_color}', absolute({fgui_text.shadow_offset[0]}), absolute({fgui_text.shadow_offset[1]}))"
-                if has_outline:
-                    stroke_outline = f"(absolute({fgui_text.stroke_size}), '{fgui_text.stroke_color}', absolute(0), absolute(0))"
-                if has_shadow and not has_outline:
-                    text_code.append(f"{self.indent_str}outlines [{shadow_outline}]")
-                if not has_shadow and has_outline:
-                    text_code.append(f"{self.indent_str}outlines [{stroke_outline}]")
-                if has_shadow and has_outline:
-                    text_code.append(f"{self.indent_str}outlines [{shadow_outline}, {stroke_outline}]")
+                text_outline_string = self.generate_text_outline_string(fgui_text)
+                text_code.append(f"{self.indent_str}outlines {text_outline_string}")
+
                 if fgui_text.letter_spacing:
                     text_code.append(f"{self.indent_str}kerning {fgui_text.letter_spacing}")
                 if fgui_text.leading:
@@ -891,22 +878,10 @@ class FguiToRenpyConverter:
         text_code.append(f"{self.indent_str}font '{text_font}'")
         text_code.append(f"{self.indent_str}size {fgui_text.font_size}")
         text_code.append(f"{self.indent_str}color '{fgui_text.text_color}'")
-        # Ren'Py中使用两层outlines分别实现投影和描边
-        # FGUI中的投影包含描边，投影的size等于描边的size，默认值为0；Ren'Py中允许outlines为0，依然有效果。
-        # Ren'Py中的property outlines是列表，先投影后描边。
-        has_shadow = fgui_text.shadow_color
-        shadow_width = fgui_text.stroke_size
-        has_outline = fgui_text.stroke_color
-        if has_shadow:
-            shadow_outline = f"(absolute({shadow_width}), '{fgui_text.shadow_color}', absolute({fgui_text.shadow_offset[0]}), absolute({fgui_text.shadow_offset[1]}))"
-        if has_outline:
-            stroke_outline = f"(absolute({fgui_text.stroke_size}), '{fgui_text.stroke_color}', absolute(0), absolute(0))"
-        if has_shadow and not has_outline:
-            text_code.append(f"{self.indent_str}outlines [{shadow_outline}]")
-        if not has_shadow and has_outline:
-            text_code.append(f"{self.indent_str}outlines [{stroke_outline}]")
-        if has_shadow and has_outline:
-            text_code.append(f"{self.indent_str}outlines [{shadow_outline}, {stroke_outline}]")
+
+        text_outline_string = self.generate_text_outline_string(fgui_text)
+        text_code.append(f"{self.indent_str}outlines {text_outline_string}")
+
         # 字间距与行距
         if fgui_text.letter_spacing:
             text_code.append(f"{self.indent_str}kerning {fgui_text.letter_spacing}")
