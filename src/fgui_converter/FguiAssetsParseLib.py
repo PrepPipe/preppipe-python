@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+from re import M
 import sys
 import os
 from lxml import etree
@@ -252,7 +253,8 @@ class FguiComponent:
         self.id = id
         self.name = name
         self.package_desc_id = package_desc_id
-        self.size = component_etree.get("size")
+        size = component_etree.get("size")
+        self.size = tuple(map(int, size.split(","))) if size else (0,0)
         self.extention = component_etree.get("extention")
         self.mask = component_etree.get("mask")
         # 轴心。默认值为(0.0, 0.0)。
@@ -329,7 +331,7 @@ class FguiProgressBar(FguiComponent):
     """
     def __init__(self, component_etree, id, name, package_desc_id=None):
         super().__init__(component_etree, id, name, package_desc_id=None)
-        combobox = component_etree.find("ProgressBar")
+        self.progressbar = component_etree.find("ProgressBar")
 
 class FguiSlider(FguiComponent):
     """
@@ -339,7 +341,8 @@ class FguiSlider(FguiComponent):
     """
     def __init__(self, component_etree, id, name, package_desc_id=None):
         super().__init__(component_etree, id, name, package_desc_id=None)
-        combobox = component_etree.find("Slider")
+        self.slider = component_etree.find("Slider")
+        self.title_type = self.slider.get("titleType")
 
 class FguiWindow(FguiComponent):
     """
@@ -370,7 +373,7 @@ class FguiDisplayList:
         # print(f"package_desc_id: {package_desc_id}")
         self.displayable_list = []
         for displayable in self.display_list_etree:
-            print(displayable.tag)
+            # print(displayable.tag)
             # 根据标签类型创建相应的FguiDisplayable对象
             if displayable.tag == "graph":
                 self.displayable_list.append(FguiGraph(displayable))
@@ -388,14 +391,19 @@ class FguiDisplayList:
 
 def hex_aarrggbb_to_rgba(hex_color):
     """
-    将一个 8 位的十六进制颜色字符串 (AARRGGBB) 转换为一个 RGBA 元组。
+    将一个8位的十六进制颜色字符串(AARRGGBB)或6位的十六进制颜色字符串(RRGGBB)转换为一个 RGBA 元组。
     """
     # 移除字符串头部的 '#'
-    clean_hex = hex_color.lstrip('#')
+    clean_hex = hex_color.lstrip('#').lower()
+    hex_str_len = len(clean_hex)
 
-    # 检查处理后的字符串长度是否为 8
-    if len(clean_hex) != 8:
-        raise ValueError("输入的十六进制字符串必须是8位 (AARRGGBB)")
+    # 检查处理后的字符串长度是否为8或6
+    if hex_str_len != 8 and hex_str_len != 6:
+        raise ValueError("输入的十六进制字符串必须是8位(AARRGGBB)或6位(RRGGBB)")
+
+    # 6位字符则加上alpha通道的默认值 ff
+    if hex_str_len ==6:
+        clean_hex = 'ff' + clean_hex
 
     # 按 AARRGGBB 的顺序提取，并从16进制转换为10进制整数
     try:
@@ -460,7 +468,7 @@ class FguiDisplayable:
         self.xypos = tuple(map(int, xy.split(",")))
         # 尺寸。若为None：image的size默认与image对象一致。
         size = self.display_item_tree.get("size")
-        self.size = tuple(map(int, size.split(","))) if size else None
+        self.size = tuple(map(int, size.split(","))) if size else (0,0)
         # 保持比例。若为None，则将宽和高分别缩放到size。
         self.aspect = (self.display_item_tree.get("aspect") == "true")
         # 缩放。默认值为(1.0, 1.0)。
@@ -502,6 +510,9 @@ class FguiDisplayable:
         # Button，按钮专有属性
         self.button_property = None
 
+        # Slider，滑动条专有属性
+        self.slider_property = None
+
         # gear属性
         self.gear_display = None
         self.gear_display_2 = None
@@ -512,9 +523,12 @@ class FguiDisplayable:
         self.gear_text = None
         self.gear_icon = None
 
+        # relation
+        self.relations = None
+
         # 一级子对象
         self.child_num = len(self.display_item_tree)
-        # 控制器gear子组件
+        # 控制器gear子组件和relation关联项
         for i in range(self.child_num):
             if self.display_item_tree[i].tag == "gearDisplay" :
                 self.gear_display = FguiGearDisplay(self.display_item_tree[i])
@@ -534,6 +548,10 @@ class FguiDisplayable:
                 self.gear_icon = FguiGearIcon(self.display_item_tree[i])
             elif self.display_item_tree[i].tag == "Button" :
                 self.button_property = FguiButtonProperty(self.display_item_tree[i])
+            elif self.display_item_tree[i].tag == "relation" :
+                self.relations = FguiRelation(self.display_item_tree[i])
+            elif self.display_item_tree[i].tag == "Slider" :
+                self.slider_property = FguiSliderProperty(self.display_item_tree[i])
             else:
                 print(f"Tag not parse: {self.display_item_tree[i].tag}.")
 
@@ -754,6 +772,34 @@ class FguiLoader(FguiDisplayable):
 
     def get_item_id(self, packageDescription_id):
         self.item_url = self.url[self.url.find(packageDescription_id)+len(packageDescription_id):]
+
+class FguiRelation:
+    """
+    组件关联属性对象。表示与其他组件的相对关系。
+    通常是一个target：“关联对象”-sidePair“关联方式”的类字典结构。
+    """
+    def __init__(self, relation_item_tree):
+        if relation_item_tree.tag != "relation":
+            raise ValueError("xml tag is not relation.")
+        self.relation_item_tree = relation_item_tree
+        self.relation_dict = {}
+        key = self.relation_item_tree.get("target")
+        value = self.relation_item_tree.get("sidePair")
+        self.relation_dict[key] = value
+        # print(self.relation_dict)
+
+class FguiSliderProperty:
+    """
+    滑块的数值属性。分别包含最小值、最大值与当前值。
+    如果某一项属性未出现则等于默认值0。
+    """
+    def __init__(self, slider_property_tree):
+        if slider_property_tree.tag != "Slider":
+            raise ValueError("xml tag is not Slider.")
+        self.slider_property_tree = slider_property_tree
+        self.current_value = self.slider_property_tree.get("value", 0)
+        self.min_value = self.slider_property_tree.get("min", 0)
+        self.max_value = self.slider_property_tree.get("max", 0)
 
 class FguiGearBase:
     """

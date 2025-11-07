@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import dis
 import sys
 import os
 import re
@@ -8,7 +9,9 @@ import argparse
 
 import shutil
 from enum import IntEnum
+from tkinter import HORIZONTAL, NO, VERTICAL
 
+# 复合型组件的子组件枚举类型
 class DisplayableChildType(IntEnum):
     NULL = 0
     IMAGE = 1
@@ -16,6 +19,11 @@ class DisplayableChildType(IntEnum):
     TEXT = 3
     COMPONENT = 4
     OTHER = 5
+
+# bar、scrollbar、slider等组件的方向枚举类型
+class BarOrientationType(IntEnum):
+    HORIZONTAL = 0
+    VERTICAL = 1
 
 # 添加当前目录到Python路径，以便导入FguiAssetsParseLib
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -28,6 +36,23 @@ class FguiToRenpyConverter:
     将FairyGUI资源转换为Ren'Py的screen语言
     """
 
+    # 静态变量
+    # 文本对齐的转义字典
+    align_dict = {"left": 0.0, "center": 0.5, "right": 1.0, "top": 0.0, "middle": 0.5, "bottom": 1.0}
+    # 4个空格作为缩进基本单位
+    indent_unit = '    '
+
+    # 默认背景色，在某些未指定image的情况下用作填充。
+    default_background = '#fff'
+
+    # 菜单类界面名称，需要添加 tag menu。
+    menu_screen_name_list = ['main_menu', 'game_menu', 'save', 'load', 'preferences']
+
+    # 模态类界面名称，需要添加 Modal True。
+    modal_screen_name_list = ['confirm']
+
+
+    
     def __init__(self, fgui_assets):
         self.fgui_assets = fgui_assets
         self.renpy_code = []
@@ -42,21 +67,13 @@ class FguiToRenpyConverter:
         self.screen_has_dismiss = False
         self.dismiss_action_list = []
 
-        # 文本对齐的转义字典
-        self.align_dict = {"left": 0.0, "center": 0.5, "right": 1.0, "top": 0.0, "middle": 0.5, "bottom": 1.0}
-
         # 字体名称列表。SourceHanSansLite为Ren'Py默认字体。
         self.font_name_list = ["SourceHanSansLite"]
 
-        # 4个空格作为缩进基本单位
-        self.indent_unit = '    '
         # 组件缩进级别
         self.root_indent_level = 0
         # 缩进字符串
         self.indent_str = ''
-
-        # 默认背景色，在某些未指定image的情况下用作填充。
-        self.default_background = '#fff'
 
         # 部分模板与预设目录
         # self.renpy_template_dir = 'renpy_templates'
@@ -140,9 +157,10 @@ class FguiToRenpyConverter:
         image_definitions.append("")
         self.renpy_code.extend(image_definitions)
 
-    def generate_graph_definitions(self, fgui_graph):
+    def generate_graph_definitions(self, fgui_graph : FguiGraph, component_name : str) -> list:
         """
-        生成图形组件定义。图形组件有多种类别：
+        生成图形组件定义。返回字符串用于非screen定义。
+        图形组件有多种类别：
         None: 空白
         rect: 矩形(可带圆角)
         eclipse: 椭圆(包括圆形)
@@ -166,13 +184,13 @@ class FguiToRenpyConverter:
         # 空白使用Null。
         if fgui_graph.type is None:
             # graph_code.append(f"{self.indent_str}null width {fgui_graph.size[0]} height {fgui_graph.size[1]}")
-            self.graph_template_dict['null'].replace('{image_name}', fgui_graph.id)\
+            self.graph_template_dict['null'].replace('{image_name}', f"{component_name}_{fgui_graph.id}")\
                                 .replace('{width}', str(fgui_graph.size[0]))\
                                 .replace('{height}', str(fgui_graph.size[1]))
         # 矩形(圆边矩形)。原生组件不支持圆边矩形，使用自定义shader实现。
         elif fgui_graph.type == "rect":
             # renpy_rectangle_template.txt模板已在转换器初始化读取。模板代码 self.self.graph_template_dict['rectangle'] 。
-            graph_img_def = self.graph_template_dict['rectangle'].replace('{image_name}', fgui_graph.id)\
+            graph_img_def = self.graph_template_dict['rectangle'].replace('{image_name}', f"{component_name}_{fgui_graph.id}")\
                                 .replace('{rectangle_color}', str(rgba_normalize(fgui_graph.fill_color)))\
                                 .replace('{stroke_color}', str(rgba_normalize(fgui_graph.stroke_color)))\
                                 .replace('{image_size}', str(fgui_graph.size))\
@@ -190,7 +208,7 @@ class FguiToRenpyConverter:
                                 .replace('{yzoom}', str(fgui_graph.scale[1]))
         # 椭圆(圆形)。Ren'Py尚不支持椭圆，使用自定义shader实现。
         elif fgui_graph.type == "eclipse":
-            graph_img_def = self.graph_template_dict['ellipse'].replace('{image_name}', fgui_graph.id)\
+            graph_img_def = self.graph_template_dict['ellipse'].replace('{image_name}', f"{component_name}_{fgui_graph.id}")\
                                 .replace('{ellipse_color}', str(rgba_normalize(fgui_graph.fill_color)))\
                                 .replace('{stroke_color}', str(rgba_normalize(fgui_graph.stroke_color)))\
                                 .replace('{image_size}', str(fgui_graph.size))\
@@ -212,6 +230,148 @@ class FguiToRenpyConverter:
         graph_code.append(graph_img_def)
 
         return graph_code
+
+    def generate_slider_style(self, fgui_slider : FguiSlider):
+        """
+        生成滑块样式。
+        Ren'Py生成的滑动条效果与FGUI略有不同。
+        FGUI的左侧激活状态bar会在水平方向随滑块缩放，Ren'Py不会缩放。
+        目标样例：
+        image horizontal_idle_thumb_image:
+            "horizontal_thumb_base"
+
+        image horizontal_hover_thumb_image:
+            "horizontal_thumb_active"
+
+        image horizontal_idle_bar_image:
+            "horizontal_bar_base"
+
+        image horizontal_hover_bar_image:
+            "horizontal_bar_active"
+
+        style horizontal_slider:
+            bar_vertical False
+            xsize 540
+            ysize 3
+            thumb_offset 24
+            left_bar "horizontal_hover_bar_image"
+            right_bar "horizontal_idle_bar_image"
+            thumb Fixed(Frame("horizontal_[prefix_]thumb_image",xsize=48,ysize=54,ypos=-22))
+        """
+        bar_image_definition_code = []
+        style_definition_code = []
+        slider_style_code = []
+        if not isinstance(fgui_slider, FguiSlider):
+            print("It is not a slider.")
+            return slider_style_code
+
+        # 默认为水平滑块。实际需要根据grip中relation的sidePair属性来确定。
+        slider_type = BarOrientationType.HORIZONTAL
+        # bar的第一段，水平方向为right_bar，垂直方向为top_bar
+        first_bar_name = ''
+        # bar的第二段，水平方向为left_bar，垂直方向为bottom_bar
+        second_bar_name = ''
+        # 滑块图片名
+        thumb_idle_name = ''
+        thumb_hover_name = ''
+
+        # bar id，在grip的relation_dict中作为key查找值
+        bar_id = ''
+        grip_com = None
+        # 滑块位置，用做偏移
+        thumb_xpos, thumb_ypos = 0, 0
+
+        # slider 组件固定由两张图片(图形)和一个按钮构成，可能还有一个文本组件。
+        # 图片(图形)固定名称为n0和bar，按钮固定名称grip，文本组件固定名称title。
+        # 其他组件暂不处理。
+        for displayable in fgui_slider.display_list.displayable_list:
+            # FGUI中滑动条的背景
+            if displayable.name == 'n0':
+                if isinstance(displayable, FguiImage):
+                    second_bar_name = self.fgui_assets.get_componentname_by_id(displayable.src)
+                elif isinstance(displayable, FguiGraph):
+                    bar_image_definition_code.extend(self.generate_graph_definitions(displayable, fgui_slider.name))
+                    second_bar_name = f"{fgui_slider.name}_{displayable.id}"
+                else:
+                    print("Slider base is neither image nor graph.")
+                    return slider_style_code
+            # FGUI中滑动条的可变bar部分
+            if displayable.name == 'bar':
+                if isinstance(displayable, FguiImage):
+                    first_bar_name = self.fgui_assets.get_componentname_by_id(displayable.src)
+                elif isinstance(displayable, FguiGraph):
+                    bar_image_definition_code.extend(self.generate_graph_definitions(displayable, fgui_slider.name))
+                    first_bar_name = f"{fgui_slider.name}_{displayable.id}"
+                else:
+                    print("Slider bar is neither image nor graph.")
+                    return slider_style_code
+                bar_id = displayable.id
+            # FGUI中滑动条的标题类型文本
+            if displayable.name == 'title':
+                if isinstance(displayable, FguiText):
+                    style_name = f"slider_{fgui_slider.id}_title"
+                    self.generate_text_style(displayable, style_name)
+                else:
+                    print("Slider title is not text.")
+                    return slider_style_code
+            # FGUI中滑动条的滑块按钮
+            if displayable.name == 'grip':
+                grip_com = self.fgui_assets.get_component_by_id(displayable.src)
+                if isinstance(grip_com, FguiButton):
+                    # grip是按钮，会生成对应的image对象
+                    thumb_idle_name = f"{fgui_slider.name}_grip_idle_background"
+                    thumb_hover_name = f"{fgui_slider.name}_grip_hover_background"
+                    thumb_xpos, thumb_ypos = displayable.xypos
+                    # 根据grip中relation的sidePair属性来确定方向
+                    side_pair_str = displayable.relations.relation_dict[bar_id]
+                    # 只有该值表示垂直滑动条
+                    if side_pair_str == "bottom-bottom":
+                        slider_type = BarOrientationType.VERTICAL
+                else:
+                    print("Slider grp is not button.")
+                    return slider_style_code
+
+        # 生成bar和thumb的image
+        bar_image_definition_code.append(f"image {fgui_slider.name}_base_bar_image:")
+        bar_image_definition_code.append(f"{self.indent_unit}'{second_bar_name}'")
+        bar_image_definition_code.append(f"image {fgui_slider.name}_active_bar_image:")
+        bar_image_definition_code.append(f"{self.indent_unit}'{first_bar_name}'")
+        bar_image_definition_code.append(f"image {fgui_slider.name}_idle_thumb_image:")
+        bar_image_definition_code.append(f"{self.indent_unit}'{thumb_idle_name}'")
+        bar_image_definition_code.append(f"image {fgui_slider.name}_hover_thumb_image:")
+        bar_image_definition_code.append(f"{self.indent_unit}'{thumb_hover_name}'")
+        bar_image_definition_code.append("")
+
+        is_vertical = (slider_type==BarOrientationType.VERTICAL)
+        thumb_offset = int(grip_com.size[1]/2) if is_vertical else int(grip_com.size[0]/2)
+        style_definition_code.append(f"style {fgui_slider.name}:")
+        style_definition_code.append(f"{self.indent_unit}bar_vertical {is_vertical}")
+        style_definition_code.append(f"{self.indent_unit}xysize {fgui_slider.size}")
+        style_definition_code.append(f"{self.indent_unit}thumb_offset {thumb_offset}")
+        if is_vertical:
+            style_definition_code.append(f"{self.indent_unit}top_bar '{second_bar_name}'")
+            style_definition_code.append(f"{self.indent_unit}bottom_bar '{first_bar_name}'")
+            thumb_ypos = 0
+        else:
+            style_definition_code.append(f"{self.indent_unit}left_bar '{first_bar_name}'")
+            style_definition_code.append(f"{self.indent_unit}right_bar '{second_bar_name}'")
+            thumb_xpos = 0
+        style_definition_code.append(f"{self.indent_unit}thumb Fixed(Frame('{fgui_slider.name}_[prefix_]thumb_image',xysize={grip_com.size},pos=({thumb_xpos},{thumb_ypos})))")
+        style_definition_code.append("")
+
+        slider_style_code.extend(bar_image_definition_code)
+        slider_style_code.extend(style_definition_code)
+
+        self.style_code.extend(slider_style_code)
+
+
+    @staticmethod
+    def is_menu_screen(screen_name):
+        return screen_name in FguiToRenpyConverter.menu_screen_name_list
+    
+    @staticmethod
+    def is_modal_screen(screen_name):
+        return screen_name in FguiToRenpyConverter.modal_screen_name_list
 
     def generate_screen(self, component):
         """
@@ -254,16 +414,27 @@ class FguiToRenpyConverter:
         id = component.id
         screen_name = component.name
 
+        # 界面入参列表
+        screen_params = ''
+        # confirm 界面固定入参
+        if screen_name == 'confirm':
+            screen_params = 'message, yes_action, no_action'
+
         self.reset_indent_level()
-        self.screen_definition_head.append(f"screen {screen_name}():")
+        self.screen_definition_head.append(f"screen {screen_name}({screen_params}):")
         self.indent_level_up()
+        if self.is_menu_screen(screen_name):
+            self.screen_ui_code.append(f"{self.indent_str}tag menu\n")
+        if self.is_modal_screen(screen_name):
+            self.screen_ui_code.append(f"{self.indent_str}modal True")
+            self.screen_ui_code.append(f"{self.indent_str}zorder 200\n")
         for displayable in component.display_list.displayable_list:
             # 图片组件
             if isinstance(displayable, FguiImage):
                 self.screen_ui_code.extend(self.generate_image_displayable(displayable))
             # 图形组件
             elif isinstance(displayable, FguiGraph):
-                self.screen_ui_code.extend(self.generate_graph_displayable(displayable))
+                self.screen_ui_code.extend(self.generate_graph_displayable(displayable, component.name))
             # 文本组件
             elif isinstance(displayable, FguiText):
                 self.screen_ui_code.extend(self.generate_text_displayable(displayable))
@@ -283,15 +454,20 @@ class FguiToRenpyConverter:
                     self.indent_level_up()
                     self.screen_ui_code.append(f"{self.indent_str}pos {displayable.xypos}")
                     # 此处仅处理了title，而未处理selected_title。后续可能需要添加。
-                    parameter_str = self.generate_button_parameter(displayable.button_property.title, displayable.custom_data)
-                    self.screen_ui_code.append(f"{self.indent_str}use {ref_com.name}({parameter_str}) id '{displayable.id}'")
+                    if displayable.button_property:
+                        parameter_str = self.generate_button_parameter(displayable.button_property.title, displayable.custom_data)
+                    else:
+                        parameter_str = self.generate_button_parameter(None, displayable.custom_data)
+                    self.screen_ui_code.append(f"{self.indent_str}use {ref_com.name}({parameter_str}) id '{screen_name}_{displayable.id}'")
                     self.indent_level_down()
 
         self.screen_code.extend(self.screen_definition_head)
-        self.screen_code.extend(self.screen_variable_code)
-        self.screen_code.append("")
-        self.screen_code.extend(self.screen_function_code)
-        self.screen_code.append("")
+        if self.screen_variable_code:
+            self.screen_code.extend(self.screen_variable_code)
+            self.screen_code.append("")
+        if self.screen_function_code:
+            self.screen_code.extend(self.screen_function_code)
+            self.screen_code.append("")
         # 添加只有1个生效的dismiss
         if self.screen_has_dismiss:
             self.screen_ui_code.append(f"{self.indent_str}dismiss:")
@@ -299,8 +475,11 @@ class FguiToRenpyConverter:
             self.screen_ui_code.append(f"{self.indent_str}modal False")
             dismiss_action_list = ', '.join(self.dismiss_action_list)
             self.screen_ui_code.append(f"{self.indent_str}action [{dismiss_action_list}]")
-            
+
+        self.screen_ui_code.append("")
         self.screen_code.extend(self.screen_ui_code)
+
+
 
     def generate_button_parameter(self, button_title=None, original_actions_str=None):
         parameter_str = ""
@@ -317,7 +496,7 @@ class FguiToRenpyConverter:
 
         return parameter_str
 
-    def generate_text_style(self, fgui_text, style_name):
+    def generate_text_style(self, fgui_text : FguiText, style_name : str):
         """
         生成文本样式，专用于按钮标题，因为按钮中通常只有一个文本组件。
         目标样例：
@@ -331,14 +510,14 @@ class FguiToRenpyConverter:
             textalign 0.5
         """
 
-        self.style_code.clear()
+        # self.style_code.clear()
         # FGUI与Ren'Py中的相同的文本对齐方式渲染效果略有不同，Ren'Py的效果更好。
         if not isinstance(fgui_text, FguiText):
             print("It is not a text displayable.")
             return
         # 样式具有固定一档的缩进
         style_indent = "    "
-        default_title = fgui_text.text
+        # default_title = fgui_text.text
         # 定义样式
         self.style_code.append(f"style {style_name}:")
         self.style_code.append(f"{style_indent}xysize {fgui_text.size}")
@@ -357,8 +536,12 @@ class FguiToRenpyConverter:
         text_outline_string = self.generate_text_outline_string(fgui_text)
         self.style_code.append(f"{style_indent}outlines {text_outline_string}")
 
+
+        #设置最小宽度才能使text_align生效
+        self.style_code.append(f"{style_indent}min_width {fgui_text.size[0]}")
+        xalign, yalign = self.trans_text_align(fgui_text.align, fgui_text.v_align)
         # 默认两侧居中对齐
-        self.style_code.append(f"{style_indent}textalign 0.5")
+        self.style_code.append(f"{style_indent}textalign {xalign}")
         # 粗体、斜体、下划线、删除线
         if fgui_text.bold:
             self.style_code.append(f"{style_indent}bold {fgui_text.bold}")
@@ -383,7 +566,7 @@ class FguiToRenpyConverter:
         else:
             return DisplayableChildType.OTHER
 
-    def generate_button_children(self, fgui_button):
+    def generate_button_children(self, fgui_button : FguiButton):
         """
         生成按钮各状态的子组件。
         """
@@ -428,17 +611,21 @@ class FguiToRenpyConverter:
 
         # 将displayable_list中的子组件按状态分别添加到对应列表中
         for displayable in fgui_button.display_list.displayable_list:
+            displayable_id = ''
+            if isinstance(displayable, FguiGraph):
+                displayable_id = f"{fgui_button.name}_{displayable.id}"
+            else:
+                displayable_id = displayable.id
             if displayable.gear_display is None:
-                state_children_dict['always_show'].append((displayable.id, FguiToRenpyConverter.get_child_type(displayable)))
+                state_children_dict['always_show'].append((displayable_id, FguiToRenpyConverter.get_child_type(displayable)))
                 break
             for i in range(0, state_number):
                 if displayable.gear_display and str(i) in displayable.gear_display.controller_index:
-                    state_children_dict[state_index_name_dict[i]].append((displayable.id, FguiToRenpyConverter.get_child_type(displayable)))
+                    state_children_dict[state_index_name_dict[i]].append((displayable_id, FguiToRenpyConverter.get_child_type(displayable)))
                     continue
         # print(state_children_dict)
 
         return state_children_dict
-
 
     def generate_button_screen(self, component):
 
@@ -470,7 +657,7 @@ class FguiToRenpyConverter:
         self.screen_ui_code.clear()
         self.has_dismiss = False
         self.dismiss_action_list.clear()
-        self.style_code.clear()
+        # self.style_code.clear()
 
         # 4种状态的子组件列表
         idle_child_list = []
@@ -554,7 +741,7 @@ class FguiToRenpyConverter:
                         break
                 # print(image_id_name_mapping)
             elif isinstance(displayable, FguiGraph):
-                self.renpy_code.extend(self.generate_graph_definitions(displayable))
+                self.renpy_code.extend(self.generate_graph_definitions(displayable, button_name))
                 # break
             # 文本组件。只处理名为title的文本组件。其他的文本待后续增加。
             # FGUI与Ren'Py中的相同的文本对齐方式渲染效果略有不同，Ren'Py的效果更好。
@@ -568,15 +755,15 @@ class FguiToRenpyConverter:
 
         # 根据state_children_dict生成各种对应状态的background
         # idle_background
-        self.generate_image_object(f"{button_name}_idle_background", state_children_dict['idle'])
+        self.generate_image_object(f"{button_name}_idle_background", state_children_dict['idle'], button_name)
         # selected_background
-        self.generate_image_object(f"{button_name}_selected_background", state_children_dict['selected'])
+        self.generate_image_object(f"{button_name}_selected_background", state_children_dict['selected'], button_name)
         # hover_background
-        self.generate_image_object(f"{button_name}_hover_background", state_children_dict['hover'],)
+        self.generate_image_object(f"{button_name}_hover_background", state_children_dict['hover'], button_name)
         # selected_hover_background
-        self.generate_image_object(f"{button_name}_selected_hover_background", state_children_dict['selected_hover'])
+        self.generate_image_object(f"{button_name}_selected_hover_background", state_children_dict['selected_hover'], button_name)
         # insensitive_background
-        self.generate_image_object(f"{button_name}_insensitive_background", state_children_dict['insensitive'])
+        self.generate_image_object(f"{button_name}_insensitive_background", state_children_dict['insensitive'], button_name)
 
 
         # 重置缩进级别
@@ -592,17 +779,17 @@ class FguiToRenpyConverter:
         self.indent_level_up()
         self.screen_ui_code.append(f"{self.indent_str}style_prefix '{button_name}'")
         self.screen_ui_code.append(f"{self.indent_str}xysize ({xysize})")
-        # self.screen_ui_code.append(f"{self.indent_str}background '{background}'")
-        if state_children_dict['idle']:
-            self.screen_ui_code.append(f"{self.indent_str}idle_background '{button_name}_idle_background'")
-        if state_children_dict['selected']:
-            self.screen_ui_code.append(f"{self.indent_str}selected_background '{button_name}_selected_background'")
-        if state_children_dict['hover']:
-            self.screen_ui_code.append(f"{self.indent_str}hover_background '{button_name}_hover_background'")
-        if state_children_dict['selected_hover']:
-            self.screen_ui_code.append(f"{self.indent_str}selected_hover_background '{button_name}_selected_hover_background'")
-        if state_children_dict['insensitive']:
-            self.screen_ui_code.append(f"{self.indent_str}insensitive_background '{button_name}_insensitive_background'")
+        self.screen_ui_code.append(f"{self.indent_str}background '{button_name}_[prefix_]background'")
+        # if state_children_dict['idle']:
+        #     self.screen_ui_code.append(f"{self.indent_str}idle_background '{button_name}_idle_background'")
+        # if state_children_dict['selected']:
+        #     self.screen_ui_code.append(f"{self.indent_str}selected_background '{button_name}_selected_background'")
+        # if state_children_dict['hover']:
+        #     self.screen_ui_code.append(f"{self.indent_str}hover_background '{button_name}_hover_background'")
+        # if state_children_dict['selected_hover']:
+        #     self.screen_ui_code.append(f"{self.indent_str}selected_hover_background '{button_name}_selected_hover_background'")
+        # if state_children_dict['insensitive']:
+        #     self.screen_ui_code.append(f"{self.indent_str}insensitive_background '{button_name}_insensitive_background'")
         self.screen_ui_code.append(f"{self.indent_str}text title")
         self.screen_ui_code.append(f"{self.indent_str}action actions")
         # 一些按钮特性
@@ -622,7 +809,7 @@ class FguiToRenpyConverter:
     def trans_text_align(self, text_horizontal_align="left", text_vertical_align="top"):
         return self.align_dict.get(text_horizontal_align, 0.5), self.align_dict.get(text_vertical_align, 0.5)
 
-    def generate_image_object(self, image_name, displayable_list):
+    def generate_image_object(self, image_name : str, displayable_list : list, component_name: str):
         """
         生成image对象，入参为一些子组件列表，自带transform。
         暂时不考虑允许列表中的子组件添加额外transform，只单纯堆叠。
@@ -643,7 +830,7 @@ class FguiToRenpyConverter:
                 name = self.fgui_assets.get_componentname_by_id(displayable.src)
                 image_definitions.append(f"{self.indent_str}'{name}'")
             elif displayalbe_type == DisplayableChildType.GRAPH:
-                image_definitions.append(f"{self.indent_str}'{displayable.id}'")
+                image_definitions.append(f"{self.indent_str}'{component_name}_{displayable.id}'")
             elif displayalbe_type == DisplayableChildType.TEXT:
                 # image_definitions.append(f"{self.indent_str}Text({displayable.text})")
                 text_displayable_string = self.generate_text_displayable_string(displayable)
@@ -661,6 +848,9 @@ class FguiToRenpyConverter:
     @staticmethod
     def generate_text_outline_string(fgui_text):
         outline_string = '[]'
+        if not isinstance(fgui_text, FguiText):
+            print("It is not a text Displayable.")
+            return outline_string
         has_shadow = fgui_text.shadow_color
         has_outline = fgui_text.stroke_color
         if has_shadow:
@@ -693,7 +883,9 @@ class FguiToRenpyConverter:
         text_font_param = f"font='{text_font}'"
         text_font_size_param = f"size={fgui_text.font_size}"
         text_font_color_param = f"color='{fgui_text.text_color}'"
-        text_textalign_param = f"textalign=0.5"
+        text_min_width_param = f"min_width={fgui_text.size[0]}"
+        xalign, yalign = self.trans_text_align(fgui_text.align, fgui_text.v_align)
+        text_textalign_param = f"textalign={xalign}"
         text_bold_param = f"bold={fgui_text.bold}"
         text_italic_param = f"italic={fgui_text.italic}"
         text_underline_param = f"underline={fgui_text.underline}"
@@ -702,7 +894,7 @@ class FguiToRenpyConverter:
         text_outline_string = self.generate_text_outline_string(fgui_text)
         text_outlines_parame = 'outlines={text_outline_string}'
 
-        text_displayable_string = f"Text(text='{fgui_text.text}',{text_anchor_param},{text_transformanchor},{text_pos_param},{text_size_param},{text_font_param},{text_font_size_param},{text_font_color_param},{text_textalign_param},{text_bold_param},{text_italic_param},{text_underline_param},{text_strike_param},{text_outlines_parame})"
+        text_displayable_string = f"Text(text='{fgui_text.text}',{text_anchor_param},{text_transformanchor},{text_pos_param},{text_size_param},{text_font_param},{text_font_size_param},{text_font_color_param},{text_min_width_param},{text_textalign_param},{text_bold_param},{text_italic_param},{text_underline_param},{text_strike_param},{text_outlines_parame})"
         return text_displayable_string
 
     def generate_image_displayable(self, fgui_image):
@@ -752,9 +944,10 @@ class FguiToRenpyConverter:
                 break
         return image_code
 
-    def generate_graph_displayable(self, fgui_graph):
+    def generate_graph_displayable(self, fgui_graph : FguiGraph, component_name : str) -> list:
         """
-        生成图形组件。图形组件有多种类别：
+        生成图形组件。用于screen中。
+        图形组件有多种类别：
         None: 空白
         rect: 矩形(可带圆角)
         eclipse: 椭圆(包括圆形)
@@ -767,8 +960,8 @@ class FguiToRenpyConverter:
             print("It is not a graph displayable.")
             return graph_code
 
-        self.renpy_code.extend(self.generate_graph_definitions(fgui_graph))
-        graph_code.append(f"{self.indent_str}add '{fgui_graph.id}'")
+        self.renpy_code.extend(self.generate_graph_definitions(fgui_graph, component_name))
+        graph_code.append(f"{self.indent_str}add '{component_name}_{fgui_graph.id}'")
 
         return graph_code
 
@@ -805,7 +998,10 @@ class FguiToRenpyConverter:
             self.indent_level_up()
             text_code.append(f"{self.indent_str}action {fgui_text.name}_input_value.Enable()")
             self.indent_level_down()
-
+        # message 表示可能需要接收Ren'Py的提示语
+        elif fgui_text.name == 'message':
+            text_code.append(f"{self.indent_str}text message:")
+            print("Detected a 'message' text displayable. Please ensure it was used in confirm screen.")
         else:
             text_code.append(f"{self.indent_str}text '{text_str}':")
         self.indent_level_up()
@@ -852,6 +1048,7 @@ class FguiToRenpyConverter:
                     text_code.append(f"{self.indent_str}kerning {fgui_text.letter_spacing}")
                 if fgui_text.leading:
                     text_code.append(f"{self.indent_str}line_leading {fgui_text.leading}")
+                text_code.append(f"{self.indent_str}min_width {fgui_text.size[0]}")
                 xalign, yalign = self.trans_text_align(fgui_text.align, fgui_text.v_align)
                 text_code.append(f"{self.indent_str}textalign {xalign}")
                 if fgui_text.bold:
@@ -888,6 +1085,8 @@ class FguiToRenpyConverter:
         if fgui_text.leading:
             text_code.append(f"{self.indent_str}line_leading {fgui_text.leading}")
 
+        #设置最小宽度才能使text_align生效
+        text_code.append(f"{self.indent_str}min_width {fgui_text.size[0]}")
         # Ren'Py中只有文本宽度小于组件宽度的水平方向对齐设置
         xalign, yalign = self.trans_text_align(fgui_text.align, fgui_text.v_align)
         text_code.append(f"{self.indent_str}textalign {xalign}")
@@ -1055,7 +1254,7 @@ class FguiToRenpyConverter:
             elif component.extention == 'Label':
                 pass
             elif component.extention == 'Slider':
-                pass
+                self.generate_slider_style(component)
             elif component.extention == 'ComboBox':
                 pass
             elif component.extention == 'ProgressBar':
@@ -1063,6 +1262,8 @@ class FguiToRenpyConverter:
             else:
                 self.generate_screen(component)
                 self.renpy_code.extend(self.screen_code)
+
+        self.renpy_code.extend(self.style_code)
 
     def save_to_file(self, filename):
         """
