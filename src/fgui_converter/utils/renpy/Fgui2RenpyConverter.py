@@ -359,6 +359,8 @@ class FguiToRenpyConverter:
         style_definition_code.append(f"{self.indent_unit}thumb Fixed(Frame('{fgui_slider.name}_[prefix_]thumb_image',xysize={grip_com.size},pos=({thumb_xpos},{thumb_ypos})))")
         style_definition_code.append("")
 
+        # 添加头部注释
+        slider_style_code.append("# 滑动条样式定义")
         slider_style_code.extend(bar_image_definition_code)
         slider_style_code.extend(style_definition_code)
 
@@ -460,6 +462,16 @@ class FguiToRenpyConverter:
                         parameter_str = self.generate_button_parameter(None, displayable.custom_data)
                     self.screen_ui_code.append(f"{self.indent_str}use {ref_com.name}({parameter_str}) id '{screen_name}_{displayable.id}'")
                     self.indent_level_down()
+                    continue
+                # 滑动条
+                if ref_com.extention == "Slider" and ref_com.name != None:
+                    self.screen_ui_code.append(f"{self.indent_str}fixed:")
+                    self.indent_level_up()
+                    self.screen_ui_code.append(f"{self.indent_str}pos {displayable.xypos}")
+                    bar_value = displayable.custom_data if displayable.custom_data else displayable.slider_property.current_value
+                    self.screen_ui_code.append(f"{self.indent_str}bar value {bar_value} style '{ref_com.name}' id '{screen_name}_{displayable.id}'")
+                    self.indent_level_down()
+                    continue
 
         self.screen_code.extend(self.screen_definition_head)
         if self.screen_variable_code:
