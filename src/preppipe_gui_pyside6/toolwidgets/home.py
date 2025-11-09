@@ -7,6 +7,7 @@ from ..guiassets import GUIAssetLoader
 from ..forms.generated.ui_homewidget import Ui_HomeWidget
 from .maininput import MainInputWidget
 from .setting import SettingWidget
+from .assetbrowser import AssetBrowserWidget
 
 class HomeWidget(QWidget, ToolWidgetInterface):
   _tr_toolname_home = TR_gui_mainwindow.tr("toolname_home",
@@ -37,6 +38,7 @@ class HomeWidget(QWidget, ToolWidgetInterface):
   BASE_TOOLS = [
     MainInputWidget,
     SettingWidget,
+    AssetBrowserWidget,
   ]
   @classmethod
   def getToolInfo(cls) -> ToolWidgetInfo:
