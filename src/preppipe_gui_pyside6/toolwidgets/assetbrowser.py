@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import os
+from typing import Tuple
+from collections import OrderedDict
 from PySide6.QtCore import *
 from PySide6.QtGui import *
 from PySide6.QtWidgets import *
@@ -12,6 +14,7 @@ from ..toolwidgetinterface import *
 from ..forms.generated.ui_assetbrowserwidget import Ui_AssetBrowserWidget
 from ..settingsdict import SettingsDict
 from ..util.asset_thumbnail import generate_thumbnail_from_imagepack
+from ..componentwidgets.flowlayout import FlowLayout
 
 TR_gui_tool_assetbrowser = TranslationDomain("gui_tool_assetbrowser")
 
@@ -23,8 +26,8 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
   SETTINGS_KEY_CURRENT_TAG = "persistent/assetmanager/current_tag"
   # 当前选中的标签
   current_tag: str
-  # 标签到素材的映射字典，格式：{tag_name: {asset_id: asset_object}}
-  assets_by_tag: dict[str, dict[str, object]]
+  # 标签到素材的映射字典，格式：{tag_name: Tuple[QListWidgetItem, dict[asset_id: asset_object]]}
+  assets_by_tag: OrderedDict[str, Tuple[QListWidgetItem, dict[str, object]]]
   # 缩略图缓存字典
   thumbnail_cache: dict[str, str]
   # 用于异步加载的线程池
@@ -90,12 +93,30 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     zh_hk="單擊標籤編輯，按Delete鍵删除",
   )
 
+  _tr_tag_edit_title = TR_gui_tool_assetbrowser.tr("tag_edit_title",
+    en="Edit Tags",
+    zh_cn="编辑标签",
+    zh_hk="編輯標籤",
+  )
+
+  _tr_confirm = TR_gui_tool_assetbrowser.tr("confirm",
+    en="Confirm",
+    zh_cn="确认",
+    zh_hk="確認",
+  )
+
+  _tr_tag_edit_current_hint = TR_gui_tool_assetbrowser.tr("tag_edit_current_hint",
+    en="Enter to add new tag, click tag to delete",
+    zh_cn="Enter添加新标签，点击标签删除",
+    zh_hk="Enter添加新標籤，點擊標籤刪除",
+  )
+
   def __init__(self, parent: QWidget):
     super(AssetBrowserWidget, self).__init__(parent)
     self.ui = Ui_AssetBrowserWidget()
     self.ui.setupUi(self)
     self.current_tag = ""
-    self.assets_by_tag = {}
+    self.assets_by_tag = OrderedDict()  # 使用有序字典，保持标签添加顺序
     self.thumbnail_cache = {}
     self.thread_pool = QThreadPool()
     self.thumbnail_items = {}
@@ -211,7 +232,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     tags_dict = settings.get(self.SETTINGS_KEY_TAGS, {})
 
     # 初始化标签到素材的映射字典
-    self.assets_by_tag = {}
+    self.assets_by_tag = OrderedDict()
 
     # 从assetmanager获取所有素材
     asset_manager = AssetManager.get_instance()
@@ -229,11 +250,6 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     self.semantic_to_tag_text["background"] = background_tag
     self.semantic_to_tag_text["character"] = character_tag
     self.semantic_to_tag_text["other"] = other_tag
-
-    # 初始化预设标签的素材映射
-    self.assets_by_tag[background_tag] = {}
-    self.assets_by_tag[character_tag] = {}
-    self.assets_by_tag[other_tag] = {}
 
     # 根据素材类型自动分类
     for asset_id in self.all_asset_ids:
@@ -307,12 +323,15 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
               # 自定义标签保持原样
               display_tag = tag
 
-            # 确保标签存在于assets_by_tag中
+            # 确保标签存在于assets_by_tag中，并且直接添加素材（根据用户需求，不需要初始化为空）
             if display_tag not in self.assets_by_tag:
-              self.assets_by_tag[display_tag] = {}
+              self.assets_by_tag[display_tag] = (None, {asset_id: asset})
+            else:
+              # 如果标签已存在，添加素材到现有字典
+              _, asset_dict = self.assets_by_tag[display_tag]
+              asset_dict[asset_id] = asset
 
-            # 添加素材到标签映射
-            self.assets_by_tag[display_tag][asset_id] = asset
+      # 素材已在上面的逻辑中添加，这里不再重复处理
       except Exception:
         continue
 
@@ -370,16 +389,31 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
             break
 
   def update_tags_list(self):
-    """更新标签列表显示，按分类组织标签，并建立语义映射关系，同时显示标签对应的素材个数"""
-    # 确保全部标签的映射关系存在
+    """更新标签列表显示，建立语义映射关系，同时显示标签对应的素材个数"""
+    # 获取"全部"文本，但不作为标签处理
     all_text = self._tr_all.get()
+
+    # 确保预定义标签的映射关系存在（用于语言切换）
+    background_text = self._tr_background.get()
+    character_text = self._tr_character.get()
+    other_text = self._tr_other.get()
+
+    # 添加"全部"标签的语义映射（用于语言切换）
     self.tag_text_to_semantic[all_text] = "all"
     self.semantic_to_tag_text["all"] = all_text
 
+    self.tag_text_to_semantic[background_text] = "background"
+    self.semantic_to_tag_text["background"] = background_text
+
+    self.tag_text_to_semantic[character_text] = "character"
+    self.semantic_to_tag_text["character"] = character_text
+
+    self.tag_text_to_semantic[other_text] = "other"
+    self.semantic_to_tag_text["other"] = other_text
+
     self.ui.categoriesListWidget.clear()
 
-    # 添加一个特殊的全部标签（默认选中）
-    # 全部标签的素材个数是所有素材ID的数量
+    # 添加一个特殊的"全部"列表项（默认选中），这不是一个真正的标签
     all_count = len(self.all_asset_ids)
     all_item = QListWidgetItem(f"{all_text} ({all_count})")
     font = all_item.font()
@@ -387,41 +421,18 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     all_item.setFont(font)
     self.ui.categoriesListWidget.addItem(all_item)
 
-    # 按预定义的顺序添加主要分类标签
-    main_categories = [
-      (self._tr_background.get(), "background"),
-      (self._tr_character.get(), "character"),
-      (self._tr_other.get(), "other")
-    ]
-    displayed_main_categories = {cat[0] for cat in main_categories}
-
-    for category_str, semantic in main_categories:
-      # 确保映射关系存在
-      self.tag_text_to_semantic[category_str] = semantic
-      self.semantic_to_tag_text[semantic] = category_str
-
+    # 添加所有实际标签（按添加顺序）
+    for tag in self.assets_by_tag.keys():
       # 获取该标签对应的素材个数
-      count = len(self.assets_by_tag.get(category_str, {}))
-      # 始终显示预定义标签
-      item = QListWidgetItem(f"{category_str} ({count})")
-      # 可以为主要分类添加特殊样式
-      font = item.font()
-      font.setBold(False)
-      item.setFont(font)
-      self.ui.categoriesListWidget.addItem(item)
-
-    # 添加其他自定义标签（按字母顺序）
-    # 获取所有不在预定义标签中的标签
-    custom_tags = sorted([tag for tag in self.assets_by_tag.keys() if tag not in displayed_main_categories])
-    for tag in custom_tags:
-      # 获取该标签对应的素材个数
-      count = len(self.assets_by_tag.get(tag, {}))
-      item = QListWidgetItem(f"{tag} ({count})")
-      self.ui.categoriesListWidget.addItem(item)
-      # 对于自定义标签，直接使用原始文本作为语义标识，保持一致性
-      if tag not in self.tag_text_to_semantic:
-        self.tag_text_to_semantic[tag] = tag
-        self.semantic_to_tag_text[tag] = tag
+      count = len(self.assets_by_tag[tag][1])
+      # 只显示有素材的标签
+      if count > 0:
+        item = QListWidgetItem(f"{tag} ({count})")
+        self.ui.categoriesListWidget.addItem(item)
+        # 确保标签的映射关系存在
+        if tag not in self.tag_text_to_semantic:
+          self.tag_text_to_semantic[tag] = tag
+          self.semantic_to_tag_text[tag] = tag
 
   def get_tags_dict(self) -> dict[str, set[str]]:
     """获取标签字典，并确保只包含语义标识"""
@@ -477,8 +488,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     self.save_tags_dict(tags_dict)
 
   def on_tag_selected(self, item: QListWidgetItem):
-    """处理标签选择事件"""
-    # 从显示文本中提取纯标签文本（去除计数部分）
+    """当用户从分类列表中选择一个标签时调用"""
     display_text = item.text()
     if ' (' in display_text:
       tag_text = display_text.split(' (')[0]
@@ -489,8 +499,12 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     self.current_tag = tag_text
     self.ui.categoryTitleLabel.setText(self.current_tag)
 
-    # 获取标签的语义标识
-    tag_semantic = self.tag_text_to_semantic.get(self.current_tag, "custom")
+    # 特殊处理"全部"列表项，直接使用"all"语义
+    if tag_text == self._tr_all.get():
+      tag_semantic = "all"
+    else:
+      # 对于实际标签，获取其语义标识
+      tag_semantic = self.tag_text_to_semantic.get(self.current_tag, "custom")
 
     # 保存当前选中的标签语义标识到设置
     settings = SettingsDict.instance()
@@ -518,8 +532,8 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     asset_manager = AssetManager.get_instance()
 
     # 确定要显示的素材
-    if tag == "all" or tag == self._tr_all.get():
-      # 显示所有素材
+    if tag == "all":
+      # 显示所有素材（对应"全部"特殊选项）
       asset_ids_to_show = self.all_asset_ids
     else:
       # 查找对应的显示标签文本
@@ -533,26 +547,6 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       # 从assets_by_tag获取该标签下的所有素材ID
       if display_tag in self.assets_by_tag:
         asset_ids_to_show = list(self.assets_by_tag[display_tag].keys())
-      else:
-        # 如果找不到，尝试基于语义类别自动匹配
-        semantic = self.tag_text_to_semantic.get(display_tag, tag)
-        tag_semantic_category = semantic.split('_')[0]  # 提取基本语义类别
-
-        if tag_semantic_category and tag_semantic_category != "custom":
-          for asset_id in self.all_asset_ids:
-            try:
-              asset = asset_manager.get_asset(asset_id)
-              if isinstance(asset, ImagePack):
-                descriptor = ImagePack.get_descriptor_by_id(asset_id)
-                if descriptor:
-                  pack_type = descriptor.get_image_pack_type()
-                  # 基于语义类别匹配
-                  if (tag_semantic_category == "background" and pack_type == ImagePackDescriptor.ImagePackType.BACKGROUND) or \
-                     (tag_semantic_category == "character" and pack_type == ImagePackDescriptor.ImagePackType.CHARACTER):
-                    asset_ids_to_show.append(asset_id)
-            except Exception:
-              # 忽略单个资产的错误，继续处理其他资产
-              continue
 
     if not asset_ids_to_show:
       return
@@ -631,22 +625,25 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       for existing_tag in list(tags_dict[asset_id]):
         if existing_tag in self.tag_text_to_semantic and existing_tag != tag_to_use:
           tags_dict[asset_id].discard(existing_tag)
-      # 更新assets_by_tag映射
+      # 更新assets_by_tag映射，直接添加素材（根据用户需求，不需要初始化为空）
       if tag not in self.assets_by_tag:
-        self.assets_by_tag[tag] = {}
-      self.assets_by_tag[tag][asset_id] = asset
+        self.assets_by_tag[tag] = (None, {asset_id: asset})
+      else:
+        _, asset_dict = self.assets_by_tag[tag]
+        asset_dict[asset_id] = asset
     else:
-      # 移除标签，但保留自动生成的系统标签（预设标签）
-      if tag not in [self._tr_background.get(), self._tr_character.get(), self._tr_other.get()]:
-        # 检查标签是否存在
-        if tag_to_use in tags_dict[asset_id]:
-          # 只移除语义标识
-          tags_dict[asset_id].discard(tag_to_use)
-          # 更新assets_by_tag映射
-          if tag in self.assets_by_tag and asset_id in self.assets_by_tag[tag]:
-            del self.assets_by_tag[tag][asset_id]
+      # 移除标签，所有标签（包括预设标签）都应该可以被清空
+      # 检查标签是否存在
+      if tag_to_use in tags_dict[asset_id]:
+        # 只移除语义标识
+        tags_dict[asset_id].discard(tag_to_use)
+        # 更新assets_by_tag映射
+        if tag in self.assets_by_tag:
+          _, asset_dict = self.assets_by_tag[tag]
+          if asset_id in asset_dict:
+            del asset_dict[asset_id]
           # 如果标签没有素材了，删除该标签
-          if tag in self.assets_by_tag and not self.assets_by_tag[tag]:
+          if not asset_dict:
             del self.assets_by_tag[tag]
 
     # 保存更新后的标签字典，确保只保存语义标识
@@ -746,55 +743,126 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
 
     return card_width
 
+  class TagBlock(QWidget):
+    """自定义标签块组件"""
+    deleted = Signal(str)  # 标签被删除时发出信号
+
+    def __init__(self, tag_text, parent=None):
+      super().__init__(parent)
+      self.tag_text = tag_text
+
+      # 设置布局
+      layout = QHBoxLayout(self)
+      layout.setContentsMargins(8, 4, 8, 4)
+      layout.setSpacing(4)
+
+      # 创建标签文本
+      self.label = QLabel(tag_text)
+      self.label.setStyleSheet("color: #FFFFFF; font-size: 9pt; font-weight: 500;")
+      layout.addWidget(self.label)
+
+      # 设置整个标签块的样式，添加悬浮效果
+      self.setStyleSheet(
+        "QWidget { background-color: rgba(65, 65, 65, 0.95); border: 1px solid rgba(70, 70, 70, 0.95); border-radius: 20px; padding: 2px; }"
+        "QWidget:hover { background-color: rgba(255, 0, 0, 0.3); border: 1px solid rgba(255, 0, 0, 0.5); }"
+      )
+
+      # 设置鼠标形状为手形，提示可点击
+      self.setCursor(Qt.PointingHandCursor)
+
+    def mousePressEvent(self, event):
+      """点击整个标签块时删除标签"""
+      # 直接触发删除信号并删除自身
+      self.deleted.emit(self.tag_text)
+      self.deleteLater()
+
   class TagEditDialog(QDialog):
     """标签编辑对话框，用于编辑素材的标签"""
     def __init__(self, asset_id, asset_browser, parent=None):
       super().__init__(parent)
       self.asset_id = asset_id
       self.asset_browser = asset_browser
-      self.setWindowTitle("编辑标签")
-      self.resize(300, 400)
+      self.has_edited = False  # 编辑状态标志
 
-      # 创建布局
+      # 获取素材名称
+      asset_manager = AssetManager.get_instance()
+      asset = asset_manager.get_asset(asset_id)
+      asset_name = asset_id  # 默认使用asset_id
+
+      if isinstance(asset, ImagePack):
+          descriptor = ImagePack.get_descriptor_by_id(asset_id)
+          if descriptor:
+              # 使用get_name()方法获取友好名称
+              name_obj = descriptor.get_name()
+              if hasattr(name_obj, 'get'):
+                  # 如果是Translatable对象
+                  asset_name = name_obj.get()
+              elif name_obj:
+                  # 如果是普通字符串
+                  asset_name = name_obj
+
+      # 设置窗口标题格式：{标签编辑的当前语言翻译.get()}：{assetname}
+      self.setWindowTitle(f"{self.asset_browser._tr_tag_edit_title.get()}：{asset_name}")
+      # 设置对话框大小策略，允许根据内容自适应调整高度
+      self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+      # 设置最小宽度，但不固定高度，让对话框能根据内容自动调整
+      self.setMinimumWidth(400)
+
+      # 创建主布局
       main_layout = QVBoxLayout(self)
+      main_layout.setContentsMargins(16, 16, 16, 16)
+      main_layout.setSpacing(16)
 
-      # 创建标签列表
-      self.tag_list_widget = QListWidget()
-      self.tag_list_widget.setSelectionMode(QAbstractItemView.SingleSelection)
-      main_layout.addWidget(self.tag_list_widget)
+      # 顶部添加编辑框（居中）
+      edit_line_container = QWidget()
+      edit_line_layout = QHBoxLayout(edit_line_container)
+      edit_line_layout.setContentsMargins(0, 0, 0, 0)
+      edit_line_layout.addStretch()
 
-      # 添加简短文本提示
-      hint_label = QLabel(self.asset_browser._tr_tag_edit_hint.get())
-      hint_label.setAlignment(Qt.AlignCenter)
-      hint_label.setStyleSheet("color: #666666; font-size: 12px;")
-      main_layout.addWidget(hint_label)
+      self.edit_line = QLineEdit()
+      self.edit_line.setStyleSheet("border: 1px solid #ccc; border-radius: 12px; padding: 4px 8px;")
+      self.edit_line.setPlaceholderText(self.asset_browser._tr_tag_edit_current_hint.get())
+      self.edit_line.hide()
+      self.edit_line.setFixedWidth(200)  # 设置固定宽度以便更好地居中
+
+      edit_line_layout.addWidget(self.edit_line)
+      edit_line_layout.addStretch()
+
+      main_layout.addWidget(edit_line_container)
+
+      # 中间添加标签容器（使用FlowLayout）
+      self.tags_container = QWidget()
+      self.tags_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+      self.tags_layout = FlowLayout(self.tags_container)
+      self.tags_layout.setContentsMargins(8, 8, 8, 8)
+      self.tags_layout.setSpacing(8)
+
+      # 添加标签容器到主布局，不设置伸展因子让其根据内容自适应高度
+      main_layout.addWidget(self.tags_container)
+
+
+
+      # 移除确认按钮，逻辑移至对话框关闭时
 
       # 加载当前标签
       self.load_tags()
 
       # 连接信号
-      self.tag_list_widget.itemClicked.connect(self.edit_tag)  # 改为单击编辑
+      self.edit_line.returnPressed.connect(self.on_edit_return_pressed)
+      self.edit_line.editingFinished.connect(self.on_edit_finished)
 
-      # 连接键盘事件
-      self.tag_list_widget.installEventFilter(self)
-
-      # 如果有标签，选中第一个并直接进入编辑模式
-      if self.tag_list_widget.count() > 0:
-        self.tag_list_widget.setCurrentRow(0)
-        # 延迟一点执行编辑，确保界面已完全初始化
-        QTimer.singleShot(0, lambda: self.tag_list_widget.editItem(self.tag_list_widget.currentItem()))
-      else:
-        # 如果没有标签，创建一个空的标签并直接编辑
-        empty_tag_item = QListWidgetItem("")
-        empty_tag_item.setFlags(empty_tag_item.flags() | Qt.ItemIsEditable)
-        self.tag_list_widget.addItem(empty_tag_item)
-        self.tag_list_widget.setCurrentRow(0)
-        # 延迟一点执行编辑，确保界面已完全初始化
-        QTimer.singleShot(0, lambda: self.tag_list_widget.editItem(empty_tag_item))
+      # 初始显示编辑框以方便快速输入
+      self.show_edit_line("")
 
     def load_tags(self):
       """加载当前资产的标签"""
-      self.tag_list_widget.clear()
+      # 清除现有的标签块
+      while self.tags_layout.count() > 0:
+        item = self.tags_layout.takeAt(0)
+        if item.widget():
+          item.widget().deleteLater()
+        del item
+
       tags_dict = self.asset_browser.get_tags_dict()
       asset_tags = tags_dict.get(self.asset_id, set())
 
@@ -806,67 +874,35 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
         else:
           display_tags.append(tag)
 
-      # 添加到列表
+      # 添加标签块
       for tag in sorted(display_tags):
-        item = QListWidgetItem()
-        item.setText(tag)
-        item.setFlags(item.flags() | Qt.ItemIsEditable)
-        self.tag_list_widget.addItem(item)
+        self.add_tag_block(tag)
 
+    def add_tag_block(self, tag_text):
+      """添加一个标签块"""
+      if not tag_text.strip():
+        return
 
+      tag_block = AssetBrowserWidget.TagBlock(tag_text)
+      tag_block.deleted.connect(self.on_tag_deleted)
 
-    def edit_tag(self, item):
-      """编辑标签"""
-      old_text = item.text()
-      # 启动编辑
-      self.tag_list_widget.editItem(item)
-      # 连接编辑完成信号
-      self.tag_list_widget.itemChanged.connect(lambda i: self.on_tag_edited(i, old_text))
+      # 添加到流式布局中
+      self.tags_layout.addWidget(tag_block)
+      # 强制布局更新
+      self.tags_layout.update()
 
-    def on_tag_edited(self, item, old_text):
-      """处理标签编辑完成事件，支持预设标签和自定义标签"""
-      new_text = item.text().strip()
-      if not new_text:
-        # 如果新文本为空，删除标签
-        self.remove_tag(item)
-      elif new_text != old_text:
-        # 更新标签
-        tags_dict = self.asset_browser.get_tags_dict()
-        if self.asset_id in tags_dict:
-          # 获取旧标签的语义标识
-          old_semantic = old_text
-          if old_text in self.asset_browser.tag_text_to_semantic:
-            old_semantic = self.asset_browser.tag_text_to_semantic[old_text]
+    def show_edit_line(self, text=""):
+      """显示编辑框并设置文本"""
+      self.edit_line.setText(text)
+      self.edit_line.show()
+      self.edit_line.setFocus()
 
-          # 获取新标签的语义标识
-          new_semantic = new_text
-          # 检查新标签是否与预设标签的显示文本匹配
-          for tag_text, semantic in self.asset_browser.tag_text_to_semantic.items():
-            if tag_text == new_text:
-              new_semantic = semantic
-              break
+    def hide_edit_line(self):
+      """隐藏编辑框"""
+      self.edit_line.hide()
 
-          # 移除旧标签
-          if old_semantic in tags_dict[self.asset_id]:
-            tags_dict[self.asset_id].remove(old_semantic)
-
-          # 添加新标签（无论是否是预设标签都允许）
-          tags_dict[self.asset_id].add(new_semantic)
-
-          # 保存并更新
-          self.asset_browser.save_tags_dict(tags_dict)
-          self.asset_browser.update_thumbnail_tags()
-
-      # 断开信号连接
-      try:
-        self.tag_list_widget.itemChanged.disconnect()
-      except:
-        pass
-
-    def remove_tag(self, item):
-      """移除标签"""
-      tag_text = item.text()
-
+    def on_tag_deleted(self, tag_text):
+      """处理标签删除事件"""
       # 从字典中移除
       tags_dict = self.asset_browser.get_tags_dict()
       if self.asset_id in tags_dict:
@@ -878,55 +914,94 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
           if not tags_dict[self.asset_id]:
             del tags_dict[self.asset_id]
 
-          # 保存并更新
+          # 设置编辑标志
+          self.has_edited = True
+
+          # 保存到字典，但不同步更新
           self.asset_browser.save_tags_dict(tags_dict)
-          self.asset_browser.update_thumbnail_tags()
 
-      # 从列表中移除
-      row = self.tag_list_widget.row(item)
-      self.tag_list_widget.takeItem(row)
+    # 移除标签编辑相关方法
 
-    def eventFilter(self, obj, event):
-      """事件过滤器，处理键盘事件"""
-      if event.type() == QEvent.KeyPress:
-        # ESC键关闭对话框
-        if event.key() == Qt.Key_Escape:
-          self.accept()
-          return True
+    def on_edit_return_pressed(self):
+      """处理编辑框回车事件"""
+      new_text = self.edit_line.text().strip()
+      if new_text:
+        # 排除"全部"标签
+        if new_text == self.asset_browser._tr_all.get():
+          # 隐藏编辑框
+          self.hide_edit_line()
+          return
 
-        # Delete键删除选中的标签
-        if event.key() == Qt.Key_Delete and obj == self.tag_list_widget:
-          current_item = self.tag_list_widget.currentItem()
-          if current_item:
-            self.remove_tag(current_item)
-          return True
+        # 添加新标签
+        tags_dict = self.asset_browser.get_tags_dict()
+        if self.asset_id not in tags_dict:
+          tags_dict[self.asset_id] = set()
 
-        # Backspace键处理：当编辑框为空时删除标签
-        if event.key() == Qt.Key_Backspace:
-          # 获取当前正在编辑的项目
-          current_item = self.tag_list_widget.currentItem()
-          editor = self.tag_list_widget.itemDelegate().editor()
+        # 获取新标签的语义标识
+        new_semantic = new_text
+        # 检查新标签是否与预设标签的显示文本匹配
+        for tag_text, semantic in self.asset_browser.tag_text_to_semantic.items():
+          if tag_text == new_text:
+            new_semantic = semantic
+            break
 
-          # 如果正在编辑且文本为空
-          if editor and current_item and isinstance(editor, QLineEdit) and editor.text() == "":
-            # 检查是否是最后一个标签
-            if self.tag_list_widget.count() > 1:
-              # 不是最后一个，则删除当前标签
-              self.remove_tag(current_item)
-              # 选择下一个标签并开始编辑
-              if self.tag_list_widget.currentItem():
-                QTimer.singleShot(0, lambda: self.tag_list_widget.editItem(self.tag_list_widget.currentItem()))
-            # 如果是最后一个标签，只保留输入框（不删除）
-            return True
+        # 添加新标签
+        tags_dict[self.asset_id].add(new_semantic)
 
-        if obj == self.tag_list_widget and event.key() in (Qt.Key_Up, Qt.Key_Down):
-          # 方向键已经由QListWidget处理，这里只需要在适当的时候编辑项目
-          if event.key() == Qt.Key_Up and self.tag_list_widget.currentRow() > 0:
-            QTimer.singleShot(0, lambda: self.tag_list_widget.editItem(self.tag_list_widget.currentItem()))
-          elif event.key() == Qt.Key_Down and self.tag_list_widget.currentRow() < self.tag_list_widget.count() - 1:
-            QTimer.singleShot(0, lambda: self.tag_list_widget.editItem(self.tag_list_widget.currentItem()))
+        # 设置编辑标志
+        self.has_edited = True
 
-      return super().eventFilter(obj, event)
+        # 保存到字典，但不同步更新
+        self.asset_browser.save_tags_dict(tags_dict)
+
+        # 更新界面
+        self.add_tag_block(new_text)
+
+      # 清空编辑框
+      self.edit_line.clear()
+
+    def on_edit_finished(self):
+      """处理编辑框完成编辑事件"""
+      # 如果编辑框为空，隐藏它
+      if not self.edit_line.text().strip():
+        self.hide_edit_line()
+      else:
+        # 否则按回车处理
+        self.on_edit_return_pressed()
+
+    def keyPressEvent(self, event):
+      """处理键盘事件"""
+      # ESC键关闭对话框
+      if event.key() == Qt.Key_Escape:
+        self.accept()
+      # 如果编辑框隐藏，按Enter键显示编辑框
+      elif event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
+        if not self.edit_line.isVisible():
+          self.show_edit_line()
+        else:
+          super().keyPressEvent(event)
+      else:
+        super().keyPressEvent(event)
+
+    def closeEvent(self, event):
+      """处理对话框关闭事件，执行之前确认按钮的逻辑"""
+      # 如果有编辑操作，同步更新
+      if self.has_edited:
+        self.asset_browser.update_thumbnail_tags()
+        # 重新加载标签以确保数据完全同步
+        self.asset_browser.load_tags()
+      super().closeEvent(event)
+
+
+
+    def accept(self):
+      """重写accept方法，执行之前确认按钮的逻辑"""
+      # 如果有编辑操作，同步更新
+      if self.has_edited:
+        self.asset_browser.update_thumbnail_tags()
+        # 重新加载标签以确保数据完全同步
+        self.asset_browser.load_tags()
+      super().accept()
 
   def add_thumbnail_to_flow(self, asset_id: str, thumbnail_path: str):
     """将缩略图添加到流布局中，使用根据容器大小动态计算的尺寸"""
@@ -1115,12 +1190,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     # 初始调整大小以确保文本正确省略
     resize_button_text(None)
 
-    # 连接点击信号到标签编辑对话框
-    def on_tags_button_clicked(aid=asset_id):
-      # 直接调用标签编辑对话框
-      self.open_tag_edit_dialog(aid)
-
-    tags_button.clicked.connect(on_tags_button_clicked)
+    tags_button.clicked.connect(lambda: self.open_tag_edit_dialog(asset_id))
 
     # 存储标签按钮的asset_id，用于标识和后续更新
     tags_button._asset_id = asset_id
@@ -1463,30 +1533,6 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
           if hasattr(tags_button, 'resizeEvent'):
             tags_button.resizeEvent(None)
 
-      # 同时更新资产名称（如果是Translatable对象）
-      asset_manager = AssetManager.get_instance()
-      asset = asset_manager.get_asset(asset_id)
-      if isinstance(asset, ImagePack):
-          descriptor = ImagePack.get_descriptor_by_id(asset_id)
-          if descriptor:
-              # 使用get_name()方法获取友好名称
-              name_obj = descriptor.get_name()
-              if hasattr(name_obj, 'get'):
-                  # 如果是Translatable对象
-                  friendly_name = name_obj.get()
-                  # 查找并更新名称标签
-                  for child in thumbnail_widget.findChildren(QLabel):
-                      # 查找名称标签（假设是第一个QLabel）
-                      if child.objectName() != f"tags_label_{asset_id}":
-                          if hasattr(child, '_full_text'):
-                              child._full_text = friendly_name
-                          # 重新设置省略文本
-                          card_width = thumbnail_widget.width()
-                          text_margins = 8  # 文本左右边距总和
-                          font_metrics = child.fontMetrics()
-                          child.setText(font_metrics.elidedText(friendly_name, Qt.ElideRight, card_width - text_margins))
-                          break
-
   def update_text(self):
     super().update_text()
 
@@ -1501,7 +1547,10 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       else:
         tag_text = display_text
 
-      if tag_text in self.tag_text_to_semantic:
+      # 特殊处理"全部"标签
+      if tag_text == self._tr_all.get():
+        current_semantic = "all"
+      elif tag_text in self.tag_text_to_semantic:
         current_semantic = self.tag_text_to_semantic[tag_text]
 
 

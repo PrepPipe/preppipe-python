@@ -73,6 +73,10 @@ class FlowLayout(QLayout):
         return self.minimumSize()
 
     def minimumSize(self):
+        # 如果没有项目，返回空大小，不占用空间
+        if not self._item_list:
+            return QSize()
+        
         size = QSize()
         for item in self._item_list:
             size = size.expandedTo(item.minimumSize())
