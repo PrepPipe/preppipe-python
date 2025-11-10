@@ -21,6 +21,144 @@ from ..util.asset_thumbnail import (
 )
 from ..componentwidgets.flowlayout import FlowLayout
 
+def calculate_elided_text(widget, full_text, margin=10):
+    """计算文本的省略版本
+
+    Args:
+        widget: QWidget实例，用于获取字体度量和宽度
+        full_text: 完整的原始文本
+        margin: 边距预留像素
+
+    Returns:
+        省略后的文本字符串
+    """
+    if not full_text:
+        return ''
+
+    # 获取字体度量对象
+    font_metrics = widget.fontMetrics()
+
+    # 计算可用宽度（考虑边距）
+    available_width = max(widget.width() - margin, 0)
+
+    # 计算省略文本
+    return font_metrics.elidedText(full_text, Qt.ElideRight, available_width)
+
+class ElidedPushButton(QPushButton):
+    """自定义的按钮类，用于实现文本溢出控制"""
+    def __init__(self, text, parent):
+        # 初始化时使用空文本
+        super().__init__('', parent)
+        self._full_text = text
+        # 存储原始文本，用于计算省略
+        self.setMouseTracking(True)
+        # 监听父组件大小变化
+        #if parent:
+            #parent.resizeEvent = lambda event, btn=self, orig_event=parent.resizeEvent: self._on_parent_resized(event, btn, orig_event)
+
+    def setFullText(self, text):
+        """设置完整文本"""
+        self._full_text = text
+        # 尝试更新省略文本
+        self._update_elided_text()
+        # 确保组件重绘
+        self.update()
+
+    def _update_elided_text(self):
+        """更新省略文本"""
+        elided_text = calculate_elided_text(self, self._full_text)
+        super().setText(elided_text)
+
+    def _on_parent_resized(self, event, btn, orig_event):
+        """父组件大小变化时的处理函数"""
+        # 调用原始的resizeEvent（如果存在）
+        if callable(orig_event):
+            orig_event(event)
+        # 更新省略文本
+        btn._update_elided_text()
+
+    def paintEvent(self, event):
+        """首次绘制方法，执行特殊逻辑后替换为常规绘制方法"""
+        super().paintEvent(event)
+        # 替换paintEvent为常规绘制方法
+        self.paintEvent = super().paintEvent
+        # 在当前事件返回后一次性刷新省略文本
+        elided_text = calculate_elided_text(self, self._full_text)
+        QTimer.singleShot(0, lambda: self.setText(elided_text))
+
+    def sizeHint(self):
+        """提供合适的大小提示"""
+        # 基于完整文本计算合适的宽度
+        font_metrics = self.fontMetrics()
+        text_width = font_metrics.horizontalAdvance(self.text())
+        # 添加内边距
+        return QSize(text_width, super().sizeHint().height())
+
+class ElidedLabel(QLabel):
+    """自定义的标签类，用于实现文本溢出控制"""
+    def __init__(self, text='', parent=None):
+        # 初始化时使用空文本
+        super().__init__('', parent)
+        self._full_text = text
+        self.setWordWrap(False)
+        # 监听父组件大小变化
+        if parent:
+            parent.resizeEvent = lambda event, label=self, orig_event=parent.resizeEvent: self._on_parent_resized(event, label, orig_event)
+
+    def setFullText(self, text):
+        """设置完整文本"""
+        self._full_text = text
+        # 尝试更新省略文本
+        self._update_elided_text()
+        # 确保组件重绘
+        self.update()
+
+    def _update_elided_text(self):
+        """更新省略文本"""
+        elided_text = calculate_elided_text(self, self._full_text, margin=8)
+        super().setText(elided_text)
+
+    def _on_parent_resized(self, event, label, orig_event):
+        """父组件大小变化时的处理函数"""
+        # 调用原始的resizeEvent（如果存在）
+        if callable(orig_event):
+            orig_event(event)
+
+        # 更新省略文本
+        label._update_elided_text()
+
+    def paintEvent(self, event):
+        """首次绘制方法，执行特殊逻辑后替换为常规绘制方法"""
+        painter = QPainter(self)
+
+        # 使用工具函数计算省略文本
+        elided_text = calculate_elided_text(self, self._full_text, margin=8)
+
+        # 绘制背景（如果需要）
+        painter.fillRect(self.rect(), self.palette().window())
+
+        # 绘制省略文本，居中对齐
+        painter.setPen(self.palette().text().color())
+        painter.drawText(self.rect(), Qt.AlignCenter, elided_text)
+
+        # 设置常规文本
+        super().setText(elided_text)
+
+        # 替换paintEvent为常规绘制方法
+        self.paintEvent = self._regular_paint_event
+
+    def _regular_paint_event(self, event):
+        """常规绘制方法，使用默认的绘制逻辑"""
+        super().paintEvent(event)
+
+    def sizeHint(self):
+        """提供合适的大小提示"""
+        # 基于完整文本计算合适的宽度
+        font_metrics = self.fontMetrics()
+        text_width = font_metrics.horizontalAdvance(self._full_text)
+        # 添加内边距
+        return QSize(text_width + 16, super().sizeHint().height())
+
 TR_gui_tool_assetbrowser = TranslationDomain("gui_tool_assetbrowser")
 
 class AssetBrowserWidget(QWidget, ToolWidgetInterface):
@@ -878,7 +1016,6 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
         # 浅色主题样式
         self.edit_line.setStyleSheet("background-color: rgba(220, 220, 220, 0.95); border: none; border-radius: 12px; padding: 4px 8px; color: #000000;")
       self.edit_line.setPlaceholderText(self.asset_browser._tr_tag_edit_current_hint.get())
-      self.edit_line.hide()
       self.edit_line.setFixedWidth(200)  # 设置固定宽度以便更好地居中
 
       edit_line_layout.addWidget(self.edit_line)
@@ -903,12 +1040,23 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       # 加载当前标签
       self.load_tags()
 
+      # 创建自动完成功能
+      self.completer = QCompleter()
+      self.completer.setCaseSensitivity(Qt.CaseInsensitive)  # 不区分大小写
+      self.completer.setCompletionMode(QCompleter.PopupCompletion)  # 弹出式完成模式
+      self.completer.setFilterMode(Qt.MatchContains)  # 包含匹配模式，更灵活
+      self.edit_line.setCompleter(self.completer)
+
+      # 更新自动完成的标签列表
+      self.update_completer_tags()
+
       # 连接信号
       self.edit_line.returnPressed.connect(self.on_edit_return_pressed)
       self.edit_line.editingFinished.connect(self.on_edit_finished)
-
-      # 初始显示编辑框以方便快速输入
-      self.show_edit_line("")
+      # 保存原始mousePressEvent方法引用
+      original_mouse_press = self.edit_line.mousePressEvent
+      # 重写mousePressEvent以处理点击事件并显示补全列表
+      self.edit_line.mousePressEvent = lambda event, orig=original_mouse_press, completer=self.completer: (orig(event), completer.complete() if completer else None)
 
     def load_tags(self):
       """加载当前资产的标签"""
@@ -948,14 +1096,17 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       self.tags_layout.update()
 
     def show_edit_line(self, text=""):
-      """显示编辑框并设置文本"""
+      """设置编辑框文本"""
       self.edit_line.setText(text)
-      self.edit_line.show()
-      self.edit_line.setFocus()
 
-    def hide_edit_line(self):
-      """隐藏编辑框"""
-      self.edit_line.hide()
+    def update_completer_tags(self):
+      """更新自动完成的标签列表"""
+      # 直接从assets_by_tag获取所有标签，这样更简单高效
+      all_tags = set(self.asset_browser.assets_by_tag.keys())
+
+      # 创建字符串列表模型
+      tags_model = QStringListModel(sorted(all_tags))
+      self.completer.setModel(tags_model)
 
     def on_tag_deleted(self, tag_text):
       """处理标签删除事件"""
@@ -976,6 +1127,9 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
           # 保存到字典，但不同步更新
           self.asset_browser.save_tags_dict(tags_dict)
 
+          # 更新自动完成列表
+          self.update_completer_tags()
+
     # 移除标签编辑相关方法
 
     def on_edit_return_pressed(self):
@@ -984,14 +1138,10 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       if new_text:
         # 排除"全部"标签
         if new_text == self.asset_browser._tr_all.get():
-          # 隐藏编辑框
-          self.hide_edit_line()
+          # 清空编辑框但不隐藏
+          self.edit_line.clear()
+          self.edit_line.setFocus()
           return
-
-        # 添加新标签
-        tags_dict = self.asset_browser.get_tags_dict()
-        if self.asset_id not in tags_dict:
-          tags_dict[self.asset_id] = set()
 
         # 获取新标签的语义标识
         new_semantic = new_text
@@ -1000,6 +1150,15 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
           if tag_text == new_text:
             new_semantic = semantic
             break
+
+        # 检查标签是否已存在
+        tags_dict = self.asset_browser.get_tags_dict()
+        # 由于asset_id在全局范围内保证存在，可以直接访问
+        if new_semantic in tags_dict[self.asset_id]:
+          # 标签已存在，清空编辑框并保持焦点
+          self.edit_line.clear()
+          self.edit_line.setFocus()
+          return
 
         # 添加新标签
         tags_dict[self.asset_id].add(new_semantic)
@@ -1010,32 +1169,32 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
         # 保存到字典，但不同步更新
         self.asset_browser.save_tags_dict(tags_dict)
 
+        # 更新自动完成列表
+        self.update_completer_tags()
+
         # 更新界面
         self.add_tag_block(new_text)
 
-      # 清空编辑框
+      # 清空编辑框并保持焦点，方便用户继续添加标签
       self.edit_line.clear()
+      self.edit_line.setFocus()
 
     def on_edit_finished(self):
       """处理编辑框完成编辑事件"""
-      # 如果编辑框为空，隐藏它
-      if not self.edit_line.text().strip():
-        self.hide_edit_line()
-      else:
-        # 否则按回车处理
+      # 不再隐藏编辑框，因为对话框关闭时会自然消失
+      # 如果有内容，按回车处理逻辑添加标签
+      if self.edit_line.text().strip():
         self.on_edit_return_pressed()
+
 
     def keyPressEvent(self, event):
       """处理键盘事件"""
       # ESC键关闭对话框
       if event.key() == Qt.Key_Escape:
         self.accept()
-      # 如果编辑框隐藏，按Enter键显示编辑框
+      # 按Enter键直接处理，不再设置焦点
       elif event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
-        if not self.edit_line.isVisible():
-          self.show_edit_line()
-        else:
-          super().keyPressEvent(event)
+        super().keyPressEvent(event)
       else:
         super().keyPressEvent(event)
 
@@ -1110,8 +1269,8 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     # 连接图片标签的调整大小信号以更新图片
     image_label.resizeEvent = lambda event, img=image_label, path=thumbnail_path, aid=asset_id: self._update_image_on_resize(event, img, path, aid)
 
-    # 创建名称标签 - 移除背景样式，使其成为纯文本标签
-    name_label = QLabel()
+    # 创建名称标签 - 使用自定义的ElidedLabel类来实现文本溢出控制
+    name_label = ElidedLabel()
     name_label.setAlignment(Qt.AlignCenter)
     name_label.setWordWrap(False)  # 禁止自动换行
     # 明确设置透明背景，确保没有任何背景色，并使用当前主题的文本颜色
@@ -1141,14 +1300,8 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
                 # 如果是普通字符串
                 friendly_name = name_obj
 
-    # 存储完整文本以便后续更新
-    name_label._full_text = friendly_name
-    # 初始设置省略文本（考虑边距）
-    font_metrics = name_label.fontMetrics()
-    text_margins = 8  # 文本左右边距总和
-    name_label.setText(font_metrics.elidedText(friendly_name, Qt.ElideRight, card_width - text_margins))
-    # 连接调整大小信号以在布局变化时重新计算省略
-    name_label.resizeEvent = self._handle_label_resize
+    # 使用自定义方法设置完整文本，让ElidedLabel内部处理文本省略
+    name_label.setFullText(friendly_name)
 
     # 添加标签显示区域
     tags_widget = QWidget()
@@ -1177,9 +1330,10 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
         # 自定义标签保持原样
         translated_tags.add(tag)
 
-    # 创建标签按钮
+    # 创建标签按钮 - 使用自定义的ElidedPushButton类来实现文本溢出控制
     tags_text = ", ".join(sorted(translated_tags))
-    tags_button = QPushButton(tags_text if tags_text else "无标签")
+    no_tags_text = self._tr_no_tags.get()
+    tags_button = ElidedPushButton(tags_text if tags_text else no_tags_text, thumbnail_container)
     tags_button.setObjectName(f"tags_button_{asset_id}")
     # 使用标签字体作为标签按钮的字体
     tags_button.setFont(self.tags_font)
@@ -1206,7 +1360,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     if is_dark:
         # 深色主题样式
         tags_button.setStyleSheet(f"""
-          QPushButton {{
+          ElidedPushButton {{
             background-color: rgba(65, 65, 65, 0.95);
             border: none;
             border-radius: {border_radius}px;
@@ -1217,26 +1371,26 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
             height: {tag_button_height}px;
             qproperty-flat: false;
           }}
-          QPushButton:hover {{
+          ElidedPushButton:hover {{
             background-color: rgba(85, 85, 85, 0.95);
             border: none;
             border-radius: {border_radius}px;
             color: #DDDDDD;
           }}
-          QPushButton:pressed {{
+          ElidedPushButton:pressed {{
             background-color: rgba(85, 85, 85, 0.95);
             border: none;
             border-radius: {border_radius}px;
             color: #DDDDDD;
           }}
-          QPushButton:focus {{
+          ElidedPushButton:focus {{
             background-color: rgba(65, 65, 65, 0.95);
             border: none;
             border-radius: {border_radius}px;
             color: #CCCCCC;
             outline: none;
           }}
-          QPushButton:flat {{
+          ElidedPushButton:flat {{
             border: none;
             border-radius: {border_radius}px;
           }}
@@ -1244,7 +1398,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     else:
         # 浅色主题样式 - 使用更柔和的颜色避免突兀，但增加字体颜色对比度提高可读性
         tags_button.setStyleSheet(f"""
-          QPushButton {{
+          ElidedPushButton {{
             background-color: rgba(220, 220, 220, 0.95);
             border: 1px solid rgba(200, 200, 200, 0.95);
             border-radius: {border_radius}px;
@@ -1255,48 +1409,29 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
             height: {tag_button_height}px;
             qproperty-flat: false;
           }}
-          QPushButton:hover {{
+          ElidedPushButton:hover {{
             background-color: rgba(230, 230, 230, 0.95);
             border-color: rgba(210, 210, 210, 0.95);
             border-radius: {border_radius}px;
             color: #000000;
           }}
-          QPushButton:pressed {{
+          ElidedPushButton:pressed {{
             background-color: rgba(230, 230, 230, 0.95);
             border-color: rgba(200, 200, 200, 0.95);
             border-radius: {border_radius}px;
             color: #000000;
           }}
-          QPushButton:focus {{
+          ElidedPushButton:focus {{
             background-color: rgba(220, 220, 220, 0.95);
             border: 1px solid rgba(200, 200, 200, 0.95);
             border-radius: {border_radius}px;
             color: #000000;
             outline: none;
           }}
-          QPushButton:flat {{
+          ElidedPushButton:flat {{
             border-radius: {border_radius}px;
           }}
         """)
-
-    # 简化实现：直接使用按钮的文本属性，避免嵌套QLabel导致的重叠问题
-    tags_button.setText(tags_text if tags_text else self._tr_no_tags.get())
-    # 存储完整文本以便后续更新
-    tags_button._full_text = tags_text if tags_text else self._tr_no_tags.get()
-
-    # 为标签按钮添加调整大小事件以正确处理文本省略
-    def resize_button_text(event, button=tags_button):
-      # 计算可用宽度（考虑边距）
-      if hasattr(button, '_full_text'):
-        font_metrics = button.fontMetrics()
-        # 按钮有内边距，需要减去
-        available_width = button.width() - 12  # 估计的内边距总和
-        elided_text = font_metrics.elidedText(button._full_text, Qt.ElideRight, available_width)
-        button.setText(elided_text)
-
-    tags_button.resizeEvent = resize_button_text
-    # 初始调整大小以确保文本正确省略
-    resize_button_text(None)
 
     tags_button.clicked.connect(lambda: self.open_tag_edit_dialog(asset_id, tags_button))
 
@@ -1448,26 +1583,31 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       # 移除布局项本身
       del item
 
+    # 清理所有引用字典，防止访问已删除的C++对象
     self.thumbnail_items.clear()
+    self.tag_buttons.clear()
     # 保留last_opened_asset_id，这样重新加载缩略图时可以恢复选中状态
 
   def _handle_label_resize(self, event):
-        """通用的标签大小调整处理方法"""
-        # 直接调用原始QLabel的resizeEvent方法
-        QLabel.resizeEvent(self, event)
+        """通用的标签大小调整处理方法 - 对于ElidedLabel已经不再需要，但保留以兼容可能的旧代码"""
+        # 对于ElidedLabel，我们不需要特殊处理，因为paintEvent会自动处理文本省略
+        # 但对于普通QLabel，我们仍然需要保留这个逻辑
+        if isinstance(self, QLabel) and not isinstance(self, ElidedLabel):
+            # 直接调用原始QLabel的resizeEvent方法
+            QLabel.resizeEvent(self, event)
 
-        # 只有当文本存在且宽度有变化时才重新计算省略
-        if hasattr(self, '_full_text') and self.width() > 0:
-          # 检查是否需要更新
-          current_width = self.width()
-          if not hasattr(self, '_last_width') or current_width != self._last_width:
-              # 记录当前宽度
-              self._last_width = current_width
-              # 重新计算省略文本，考虑边距
-              font_metrics = self.fontMetrics()
-              text_margins = 8  # 为文本预留边距
-              elided_text = font_metrics.elidedText(self._full_text, Qt.ElideRight, current_width - text_margins)
-          self.setText(elided_text)
+            # 只有当文本存在且宽度有变化时才重新计算省略
+            if hasattr(self, '_full_text') and self.width() > 0:
+              # 检查是否需要更新
+              current_width = self.width()
+              if not hasattr(self, '_last_width') or current_width != self._last_width:
+                  # 记录当前宽度
+                  self._last_width = current_width
+                  # 重新计算省略文本，考虑边距
+                  font_metrics = self.fontMetrics()
+                  text_margins = 8  # 为文本预留边距
+                  elided_text = font_metrics.elidedText(self._full_text, Qt.ElideRight, current_width - text_margins)
+              self.setText(elided_text)
 
   def on_thumbnail_generated(self, asset_id: str, thumbnail_path: str):
     """当缩略图生成完成后调用"""
@@ -1638,7 +1778,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     # 打开对话框
     dialog = self.TagEditDialog(asset_id, self, self)
     dialog.exec()
-    
+
     # 对话框关闭后，重置按钮状态
     if button:
       # 确保按钮不是按下状态
