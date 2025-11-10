@@ -13,7 +13,12 @@ from preppipe.util.imagepack import ImagePack, ImagePackDescriptor
 from ..toolwidgetinterface import *
 from ..forms.generated.ui_assetbrowserwidget import Ui_AssetBrowserWidget
 from ..settingsdict import SettingsDict
-from ..util.asset_thumbnail import generate_thumbnail_from_imagepack
+from ..util.asset_thumbnail import (
+    generate_thumbnail_from_imagepack,
+    get_thumbnail_manager,
+    get_scaled_pixmap_for_asset,
+    get_asset_thumbnail_path
+)
 from ..componentwidgets.flowlayout import FlowLayout
 
 TR_gui_tool_assetbrowser = TranslationDomain("gui_tool_assetbrowser")
@@ -132,21 +137,37 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
 
     # 字体缓存 - 预先创建并缓存字体以提高性能
     self.tags_font = QFont()
-    self.tags_font.setPointSizeF(self.tags_font.pointSizeF() * 0.9)
     # 创建名称标签使用的加粗字体缓存
     self.name_font = QFont()
     self.name_font.setWeight(QFont.Weight.Bold)
     # 缓存字体度量以避免重复计算
     self.tags_font_metrics = QFontMetrics(self.tags_font)
     self.name_font_metrics = QFontMetrics(self.name_font)
-    # 正常状态样式 - 透明的淡雅灰白色调卡牌效果
-    self.normal_style = "background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(245, 245, 245, 0.8), stop:1 rgba(232, 232, 232, 0.8)); border: 1px solid rgba(208, 208, 208, 0.8); border-radius: 8px; padding: 2px;"
-    # 悬浮状态样式 - 稍深一点的透明灰白色调
-    self.hover_style = "background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(240, 240, 240, 0.8), stop:1 rgba(224, 224, 224, 0.8)); border: 1px solid rgba(176, 176, 176, 0.8); border-radius: 8px; padding: 2px;"
-    # 选中状态样式 - 透明的淡雅浅灰色调
-    self.selected_style = "background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(232, 232, 232, 0.85), stop:1 rgba(224, 224, 224, 0.85)); border: 2px solid rgba(160, 160, 160, 0.85); border-radius: 8px; padding: 1px;"
-    # 选中且悬浮状态样式 - 稍深的透明灰色调
-    self.selected_hover_style = "background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(229, 229, 229, 0.85), stop:1 rgba(216, 216, 216, 0.85)); border: 2px solid rgba(128, 128, 128, 0.85); border-radius: 8px; padding: 1px;"
+
+    # 初始化样式字典 - 包含深色和浅色模式的样式
+    self.styles = {
+        'light': {
+            'normal': "background-color: rgba(230, 230, 230, 1.0); border: 1px solid rgba(200, 200, 200, 1.0); border-radius: 8px; padding: 2px;",
+            'hover': "background-color: rgba(210, 210, 210, 1.0); border: 1px solid rgba(180, 180, 180, 1.0); border-radius: 8px; padding: 2px;",
+            'selected': "background-color: rgba(200, 215, 240, 1.0); border: 2px solid #4a90e2; border-radius: 8px; padding: 1px;",
+            'selected_hover': "background-color: rgba(190, 205, 235, 1.0); border: 2px solid #3a80d2; border-radius: 8px; padding: 1px;",
+            'name_color': '#000000',
+            'image_background': '#f0f0f0'
+        },
+        'dark': {
+            'normal': "background-color: rgba(50, 50, 50, 1.0); border: 1px solid rgba(70, 70, 70, 1.0); border-radius: 8px; padding: 2px;",
+            'hover': "background-color: rgba(60, 60, 60, 1.0); border: none; border-radius: 8px; padding: 2px;",
+            'selected': "background-color: rgba(80, 80, 80, 1.0); border: none; border-radius: 8px; padding: 2px;",
+            'selected_hover': "background-color: rgba(100, 100, 100, 1.0); border: none; border-radius: 8px; padding: 2px;",
+            'name_color': '#ffffff',
+            'image_background': '#3a3a3a'
+        }
+    }
+    # 检测并设置当前主题样式
+    self._update_theme_styles()
+
+    # 监听系统主题变化通过重写changeEvent方法
+    # self.paletteChanged.connect已移除，因为QWidget没有这个信号
 
     # 绑定文本
     self.bind_text(self.ui.categoryTitleLabel.setText, self._tr_select_tag)
@@ -215,6 +236,13 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
             # 触发标签选择事件
             self.on_tag_selected(item)
             break
+
+  def changeEvent(self, event):
+    """重写changeEvent方法来监听系统主题变化"""
+    if event.type() == QEvent.PaletteChange:
+      # 系统主题变化时更新样式并重新应用所有缩略图的样式
+      self._on_palette_changed(self.palette())
+    super().changeEvent(event)
 
   def load_all_assets(self):
     """加载所有素材ID"""
@@ -343,50 +371,50 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
 
     # 尝试加载上次选中的标签，如果不存在则默认选择全部
     settings = SettingsDict.instance()
-    saved_tag = settings.get(self.SETTINGS_KEY_CURRENT_TAG, self._tr_all.get())
+    # 只保存和使用语义标识，不兼容旧版设置
+    semantic_tag = settings.get(self.SETTINGS_KEY_CURRENT_TAG, "all")
 
-    # 检查saved_tag是否是语义标识
-    if saved_tag in self.semantic_to_tag_text:
-      # 是语义标识，获取当前语言的标签文本
-      tag_text = self.semantic_to_tag_text[saved_tag]
-      # 确保使用语义标识调用
-      semantic_tag = saved_tag
-    else:
-      # 可能是旧版保存的标签文本，尝试转换为语义标识
-      semantic_tag = self.tag_text_to_semantic.get(saved_tag, "custom")
-      tag_text = saved_tag
-      # 如果找不到对应的语义标识，并且不是"全部"标签，则使用默认标签
-      if semantic_tag == "custom" and saved_tag != self._tr_all.get():
-        semantic_tag = "all"
-        tag_text = self._tr_all.get()
+    # 从语义标识获取显示文本
+    tag_text = self.semantic_to_tag_text.get(semantic_tag, self._tr_all.get())
+
+    # 确保使用有效的语义标识
+    if semantic_tag not in self.semantic_to_tag_text:
+      semantic_tag = "all"
+      tag_text = self._tr_all.get()
 
     # 更新设置，确保保存的是语义标识
     settings[self.SETTINGS_KEY_CURRENT_TAG] = semantic_tag
 
     self.current_tag = tag_text
     self.ui.categoryTitleLabel.setText(self.current_tag)
-    self.load_thumbnails_for_tag(semantic_tag)
 
     # 选中对应的标签项
-    # 查找与当前显示的标签文本匹配的列表项
-    tag_found = False
+    # 查找与当前标签匹配的列表项
     for i in range(self.ui.categoriesListWidget.count()):
       item = self.ui.categoriesListWidget.item(i)
-      if item.text() == self.current_tag:
+      item_text = item.text()
+
+      # 特殊处理"全部"标签，它可能显示为"全部 (数量)"
+      if semantic_tag == "all":
+        if item_text.startswith(self._tr_all.get()):
+          self.ui.categoriesListWidget.setCurrentItem(item)
+          break
+      # 普通标签处理 - 匹配显示文本
+      elif ' (' in item_text:
+        # 如果列表项包含计数，只比较标签名部分
+        if item_text.split(' (')[0] == tag_text:
+          self.ui.categoriesListWidget.setCurrentItem(item)
+          break
+      # 普通标签处理 - 无计数情况
+      elif item_text == tag_text:
         self.ui.categoriesListWidget.setCurrentItem(item)
-        tag_found = True
         break
 
-    # 如果没有找到，尝试使用语义标识对应的标签文本
-    if not tag_found and semantic_tag in self.semantic_to_tag_text:
-        target_tag_text = self.semantic_to_tag_text[semantic_tag]
-        for i in range(self.ui.categoriesListWidget.count()):
-          item = self.ui.categoriesListWidget.item(i)
-          if item.text() == target_tag_text:
-            self.ui.categoriesListWidget.setCurrentItem(item)
-            self.current_tag = target_tag_text
-            self.ui.categoryTitleLabel.setText(self.current_tag)
-            break
+    # 我们已经在第一个循环中处理了所有可能的标签情况，包括语义标识查找
+    # 如果未找到标签，保持当前设置不变
+
+    # 加载所选标签的缩略图
+    self.load_thumbnails_for_tag(semantic_tag)
 
   def update_tags_list(self):
     """更新标签列表显示，建立语义映射关系，同时显示标签对应的素材个数"""
@@ -546,23 +574,21 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
 
       # 从assets_by_tag获取该标签下的所有素材ID
       if display_tag in self.assets_by_tag:
-        asset_ids_to_show = list(self.assets_by_tag[display_tag].keys())
+        _, asset_dict = self.assets_by_tag[display_tag]
+        asset_ids_to_show = list(asset_dict.keys())
 
     if not asset_ids_to_show:
       return
 
-    # 获取缓存目录
+    # 获取缩略图管理器实例，使用当前应用的缓存目录
     cache_dir = self.get_thumbnail_cache_dir()
-
-    # 确保缓存目录存在
-    os.makedirs(cache_dir, exist_ok=True)
+    thumbnail_manager = get_thumbnail_manager(cache_dir)
 
     # 检查并生成缩略图
     for asset_id in asset_ids_to_show:
-      # 检查缓存是否存在
-      thumbnail_path = os.path.join(cache_dir, f"{asset_id}_thumbnail.png")
-
-      if os.path.exists(thumbnail_path):
+      # 尝试获取已存在的缩略图路径
+      thumbnail_path = thumbnail_manager.get_or_generate_thumbnail(asset_id)
+      if thumbnail_path:
         # 直接使用缓存
         self.thumbnail_cache[asset_id] = thumbnail_path
         self.add_thumbnail_to_flow(asset_id, thumbnail_path)
@@ -751,21 +777,38 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       super().__init__(parent)
       self.tag_text = tag_text
 
-      # 设置布局
+      # 设置布局，增加边距使标签块变大
       layout = QHBoxLayout(self)
-      layout.setContentsMargins(8, 4, 8, 4)
-      layout.setSpacing(4)
+      layout.setContentsMargins(12, 8, 12, 8)
+      layout.setSpacing(6)
 
-      # 创建标签文本
+      # 创建标签文本，使用更大的字体
       self.label = QLabel(tag_text)
-      self.label.setStyleSheet("color: #FFFFFF; font-size: 9pt; font-weight: 500;")
+      font = self.label.font()
+      font.setPointSize(font.pointSize() + 1)
+      self.label.setFont(font)
       layout.addWidget(self.label)
 
-      # 设置整个标签块的样式，添加悬浮效果
-      self.setStyleSheet(
-        "QWidget { background-color: rgba(65, 65, 65, 0.95); border: 1px solid rgba(70, 70, 70, 0.95); border-radius: 20px; padding: 2px; }"
-        "QWidget:hover { background-color: rgba(255, 0, 0, 0.3); border: 1px solid rgba(255, 0, 0, 0.5); }"
-      )
+      # 根据系统主题设置标签块样式
+      palette = self.palette()
+      bg_color = palette.color(QPalette.Window)
+      # 计算颜色亮度 (HSL亮度公式)
+      brightness = (0.299 * bg_color.red() + 0.587 * bg_color.green() + 0.114 * bg_color.blue()) / 255
+      # 判断是深色模式还是浅色模式
+      is_dark = brightness < 0.5
+
+      if is_dark:
+        # 深色主题样式
+        self.setStyleSheet(
+          "QWidget { background-color: rgba(65, 65, 65, 0.95); border: none; border-radius: 12px; padding: 4px 8px; }"
+          "QWidget:hover { background-color: rgba(85, 85, 85, 0.95); border: none; }"
+        )
+      else:
+        # 浅色主题样式
+        self.setStyleSheet(
+          "QWidget { background-color: rgba(220, 220, 220, 0.95); border: none; border-radius: 12px; padding: 4px 8px; }"
+          "QWidget:hover { background-color: rgba(200, 200, 200, 0.95); border: none; }"
+        )
 
       # 设置鼠标形状为手形，提示可点击
       self.setCursor(Qt.PointingHandCursor)
@@ -820,7 +863,20 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       edit_line_layout.addStretch()
 
       self.edit_line = QLineEdit()
-      self.edit_line.setStyleSheet("border: 1px solid #ccc; border-radius: 12px; padding: 4px 8px;")
+      # 根据系统主题设置输入框样式
+      palette = self.palette()
+      bg_color = palette.color(QPalette.Window)
+      # 计算颜色亮度 (HSL亮度公式)
+      brightness = (0.299 * bg_color.red() + 0.587 * bg_color.green() + 0.114 * bg_color.blue()) / 255
+      # 判断是深色模式还是浅色模式
+      is_dark = brightness < 0.5
+
+      if is_dark:
+        # 深色主题样式
+        self.edit_line.setStyleSheet("background-color: rgba(65, 65, 65, 0.95); border: none; border-radius: 12px; padding: 4px 8px; color: #CCCCCC;")
+      else:
+        # 浅色主题样式
+        self.edit_line.setStyleSheet("background-color: rgba(220, 220, 220, 0.95); border: none; border-radius: 12px; padding: 4px 8px; color: #000000;")
       self.edit_line.setPlaceholderText(self.asset_browser._tr_tag_edit_current_hint.get())
       self.edit_line.hide()
       self.edit_line.setFixedWidth(200)  # 设置固定宽度以便更好地居中
@@ -1023,7 +1079,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     # 创建图片标签
     image_label = QLabel()
     image_label.setAlignment(Qt.AlignCenter)
-    image_label.setStyleSheet("border: none;")
+    image_label.setStyleSheet(f"border: none; background-color: {self.image_background_color};")
     image_label.setMouseTracking(False)
 
     # 计算图片标签的大小
@@ -1042,14 +1098,8 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     # 设置图片标签固定大小
     image_label.setFixedSize(available_width, available_height)
 
-    # 获取资产类型信息
-    is_character, is_background = self._get_asset_type_info(asset_id)
-
-    # 加载并设置图片
-    pixmap = QPixmap(thumbnail_path)
-    if not pixmap.isNull():
-      # 使用提取的方法进行缩放
-      scaled_pixmap = self._scale_pixmap_for_asset(pixmap, available_width, available_height, is_character, is_background)
+    # 使用新的ThumbnailManager获取缩放后的pixmap
+    scaled_pixmap = get_scaled_pixmap_for_asset(asset_id, available_width, available_height)
 
     # 设置图片并确保居中显示
     image_label.setPixmap(scaled_pixmap)
@@ -1064,13 +1114,15 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     name_label = QLabel()
     name_label.setAlignment(Qt.AlignCenter)
     name_label.setWordWrap(False)  # 禁止自动换行
-    # 移除背景样式，使用简单的文本样式
-    name_label.setStyleSheet("color: #000000; padding: 4px 0;")
+    # 明确设置透明背景，确保没有任何背景色，并使用当前主题的文本颜色
+    name_label.setStyleSheet(f"color: {self.normal_style_name_color}; padding: 4px 0; background-color: transparent;")
     name_label.setMouseTracking(False)
     # 设置名称标签为自适应宽度策略
     name_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
     name_label.setMinimumHeight(name_label.fontMetrics().height() + 8)  # 保持足够的高度
     name_label.setTextInteractionFlags(Qt.NoTextInteraction)
+    # 添加属性标识，方便在更新主题时识别
+    name_label.setProperty("is_name_label", True)
 
     # 获取友好名称
     asset_manager = AssetManager.get_instance()
@@ -1135,41 +1187,97 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     # 使用缓存的name_font作为名称标签的字体（加粗效果）
     name_label.setFont(self.name_font)
 
-    # 设置按钮的大小策略
+    # 设置按钮的大小策略 - 使用固定高度而非最小高度
     tags_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-    tags_button.setMinimumHeight(tags_label_height)
-    tags_button.setFlat(True)
+    # 设置固定高度而不是最小高度，进一步增加按钮高度使其更大
+    tag_button_height = int(tags_label_height * 1.4)  # 进一步增加高度因子
+    tags_button.setFixedHeight(tag_button_height)
 
-    # 设置按钮样式 - 圆角标签按钮，使用深灰色以与其他元素区分
-    tags_button.setStyleSheet("""
-      QPushButton {
-        background-color: rgba(65, 65, 65, 0.95);
-        border: 1px solid rgba(70, 70, 70, 0.95);
-        border-radius: 20px;
-        color: #FFFFFF;
-        padding: 4px 14px;
-        font-size: 9pt;
-        font-weight: 500;
-        text-align: center;
-        outline: none;
-      }
-      QPushButton:hover {
-        background-color: rgba(85, 85, 85, 0.95);
-        border-color: rgba(90, 90, 90, 0.95);
-        color: #FFFFFF;
-      }
-      QPushButton:pressed {
-        background-color: rgba(85, 85, 85, 0.95);
-        border-color: rgba(70, 70, 70, 0.95);
-        color: #FFFFFF;
-      }
-      QPushButton:focus {
-        background-color: rgba(65, 65, 65, 0.95);
-        border: 1px solid rgba(70, 70, 70, 0.95);
-        color: #FFFFFF;
-        outline: none;
-      }
-    """)
+    # 计算合适的圆角值 - 设置为高度的一半以创建圆润效果
+    border_radius = tag_button_height // 2
+
+    # 设置按钮样式 - 根据主题使用不同的配色方案
+    # 获取当前窗口的调色板判断主题
+    palette = self.palette()
+    bg_color = palette.color(QPalette.Window)
+    brightness = (0.299 * bg_color.red() + 0.587 * bg_color.green() + 0.114 * bg_color.blue()) / 255
+    is_dark = brightness < 0.5
+
+    if is_dark:
+        # 深色主题样式
+        tags_button.setStyleSheet(f"""
+          QPushButton {{
+            background-color: rgba(65, 65, 65, 0.95);
+            border: none;
+            border-radius: {border_radius}px;
+            color: #CCCCCC;
+            padding: 0px 10px;
+            text-align: center;
+            outline: none;
+            height: {tag_button_height}px;
+            qproperty-flat: false;
+          }}
+          QPushButton:hover {{
+            background-color: rgba(85, 85, 85, 0.95);
+            border: none;
+            border-radius: {border_radius}px;
+            color: #DDDDDD;
+          }}
+          QPushButton:pressed {{
+            background-color: rgba(85, 85, 85, 0.95);
+            border: none;
+            border-radius: {border_radius}px;
+            color: #DDDDDD;
+          }}
+          QPushButton:focus {{
+            background-color: rgba(65, 65, 65, 0.95);
+            border: none;
+            border-radius: {border_radius}px;
+            color: #CCCCCC;
+            outline: none;
+          }}
+          QPushButton:flat {{
+            border: none;
+            border-radius: {border_radius}px;
+          }}
+        """)
+    else:
+        # 浅色主题样式 - 使用更柔和的颜色避免突兀，但增加字体颜色对比度提高可读性
+        tags_button.setStyleSheet(f"""
+          QPushButton {{
+            background-color: rgba(220, 220, 220, 0.95);
+            border: 1px solid rgba(200, 200, 200, 0.95);
+            border-radius: {border_radius}px;
+            color: #000000;
+            padding: 0px 10px;
+            text-align: center;
+            outline: none;
+            height: {tag_button_height}px;
+            qproperty-flat: false;
+          }}
+          QPushButton:hover {{
+            background-color: rgba(230, 230, 230, 0.95);
+            border-color: rgba(210, 210, 210, 0.95);
+            border-radius: {border_radius}px;
+            color: #000000;
+          }}
+          QPushButton:pressed {{
+            background-color: rgba(230, 230, 230, 0.95);
+            border-color: rgba(200, 200, 200, 0.95);
+            border-radius: {border_radius}px;
+            color: #000000;
+          }}
+          QPushButton:focus {{
+            background-color: rgba(220, 220, 220, 0.95);
+            border: 1px solid rgba(200, 200, 200, 0.95);
+            border-radius: {border_radius}px;
+            color: #000000;
+            outline: none;
+          }}
+          QPushButton:flat {{
+            border-radius: {border_radius}px;
+          }}
+        """)
 
     # 简化实现：直接使用按钮的文本属性，避免嵌套QLabel导致的重叠问题
     tags_button.setText(tags_text if tags_text else self._tr_no_tags.get())
@@ -1190,7 +1298,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     # 初始调整大小以确保文本正确省略
     resize_button_text(None)
 
-    tags_button.clicked.connect(lambda: self.open_tag_edit_dialog(asset_id))
+    tags_button.clicked.connect(lambda: self.open_tag_edit_dialog(asset_id, tags_button))
 
     # 存储标签按钮的asset_id，用于标识和后续更新
     tags_button._asset_id = asset_id
@@ -1208,8 +1316,11 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     container_layout.addWidget(name_label)
     container_layout.addWidget(tags_widget)
 
-    # 设置容器样式 - 更透明的背景，让图片和文字成为主体
-    thumbnail_container.setStyleSheet("background-color: rgba(255, 255, 255, 0.2); border: 1px solid rgba(200, 200, 200, 0.2); border-radius: 8px; padding: 2px;")
+    # 设置容器样式 - 使用定义的normal_style
+    thumbnail_container.setStyleSheet(self.normal_style)
+
+    # 确保name_label保持透明背景，不受容器样式影响，并使用当前主题的字体颜色
+    name_label.setStyleSheet(f"color: {self.normal_style_name_color}; padding: 4px 0; border: none; background-color: transparent;")
 
     # 添加到FlowLayout
     self.flow_layout.addWidget(thumbnail_container)
@@ -1231,8 +1342,10 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
 
     # 恢复上次选中的高亮状态
     if asset_id == self.last_opened_asset_id:
-      # 确保选中样式也使用更透明的背景
-      thumbnail_container.setStyleSheet("background-color: rgba(220, 230, 245, 0.2); border: 2px solid #4a90e2; border-radius: 8px; padding: 1px;")
+      # 使用定义的selected_style
+      thumbnail_container.setStyleSheet(self.selected_style)
+      # 确保name_label保持透明背景，不受选中样式影响，并使用当前主题的文本颜色
+      name_label.setStyleSheet(f"color: {self.normal_style_name_color}; padding: 4px 0; border: none; background-color: transparent;")
 
   def on_thumbnail_clicked(self, asset_id: str, event):
     """处理缩略图容器的点击事件"""
@@ -1309,23 +1422,19 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       need_update = (current_width != image_label._last_width or
                     current_height != image_label._last_height)
 
+    # 更新尺寸记录
+    image_label._last_width = current_width
+    image_label._last_height = current_height
+
     # 只有在需要更新且尺寸有效时才进行处理
     if need_update and current_width > 0 and current_height > 0:
       # 记录当前尺寸
       image_label._last_width = current_width
       image_label._last_height = current_height
 
-      # 加载并设置图片
-      pixmap = QPixmap(thumbnail_path)
-      if not pixmap.isNull():
-        # 获取资产类型信息
-        is_character, is_background = self._get_asset_type_info(asset_id)
-
-        # 使用提取的方法进行缩放
-        scaled_pixmap = self._scale_pixmap_for_asset(pixmap, current_width, current_height, is_character, is_background)
-
-        # 设置图片并确保居中显示
-        image_label.setPixmap(scaled_pixmap)
+      # 使用新的ThumbnailManager获取缩放后的pixmap
+      scaled_pixmap = get_scaled_pixmap_for_asset(asset_id, current_width, current_height)
+      image_label.setPixmap(scaled_pixmap)
 
   # calculate_grid_position方法已不再需要，因为FlowLayout会自动管理位置
 
@@ -1385,52 +1494,103 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
   def on_thumbnail_enter(self, asset_id: str, event: QEvent):
     """处理鼠标进入缩略图事件"""
     if asset_id in self.thumbnail_items:
-      # 设置更透明的悬浮样式，使图片和文字成为主体
+      # 使用定义的样式变量
       if asset_id == self.last_opened_asset_id:
-        # 选中项的悬浮状态 - 更暗的背景
-        self.thumbnail_items[asset_id].setStyleSheet("""
-          QWidget {
-            background-color: rgba(200, 210, 225, 0.3);
-            border: 2px solid #4a90e2;
-            border-radius: 8px;
-            padding: 1px;
-          }
-        """)
+        # 选中项的悬浮状态
+        self.thumbnail_items[asset_id].setStyleSheet(self.selected_hover_style)
       else:
-        # 普通项的悬浮状态 - 更暗的背景
-        self.thumbnail_items[asset_id].setStyleSheet("""
-          QWidget {
-            background-color: rgba(235, 235, 235, 0.3);
-            border: 1px solid rgba(180, 180, 180, 0.4);
-            border-radius: 8px;
-            padding: 2px;
-          }
-        """)
+        # 普通项的悬浮状态
+        self.thumbnail_items[asset_id].setStyleSheet(self.hover_style)
+
+      # 确保所有子组件保持正确的样式
+      # 根据是否有_full_text属性来区分名称标签和图片标签
+      for child in self.thumbnail_items[asset_id].findChildren(QLabel):
+        if hasattr(child, '_full_text'):
+          # 名称标签
+          child.setStyleSheet(f"color: {self.normal_style_name_color}; padding: 4px 0; border: none; background-color: transparent;")
+        else:
+          # 图片标签
+          child.setStyleSheet(f"border: none; background-color: {self.image_background_color};")
 
   def on_thumbnail_leave(self, asset_id: str, event: QEvent):
     """处理鼠标离开缩略图事件"""
     if asset_id in self.thumbnail_items:
-      # 恢复更透明的样式，使图片和文字成为主体
+      # 使用定义的样式变量
       if asset_id == self.last_opened_asset_id:
-        # 选中项 - 更透明
-        self.thumbnail_items[asset_id].setStyleSheet("""
-          QWidget {
-            background-color: rgba(220, 230, 245, 0.2);
-            border: 2px solid #4a90e2;
-            border-radius: 8px;
-            padding: 1px;
-          }
-        """)
+        # 选中项
+        self.thumbnail_items[asset_id].setStyleSheet(self.selected_style)
       else:
-        # 普通项 - 更透明
-        self.thumbnail_items[asset_id].setStyleSheet("""
-          QWidget {
-            background-color: rgba(255, 255, 255, 0.2);
-            border: 1px solid rgba(200, 200, 200, 0.2);
-            border-radius: 8px;
-            padding: 2px;
-          }
-        """)
+        # 普通项
+        self.thumbnail_items[asset_id].setStyleSheet(self.normal_style)
+
+      # 确保所有子组件恢复到初始状态的样式
+      # 根据是否有_full_text属性来区分名称标签和图片标签
+      for child in self.thumbnail_items[asset_id].findChildren(QLabel):
+        if hasattr(child, '_full_text'):
+          # 名称标签
+          child.setStyleSheet(f"color: {self.normal_style_name_color}; padding: 4px 0; border: none; background-color: transparent;")
+        else:
+          # 图片标签
+          child.setStyleSheet(f"border: none; background-color: {self.image_background_color};")
+
+      # 2. 确保标签按钮样式也恢复正确
+      for child in self.thumbnail_items[asset_id].findChildren(QPushButton):
+        if hasattr(child, '_asset_id') and child._asset_id == asset_id:
+          # 保持标签按钮的原始样式不变，只确保文本省略正确
+          if hasattr(child, 'resizeEvent') and callable(child.resizeEvent):
+            child.resizeEvent(None)
+
+  def _on_palette_changed(self, palette):
+    """当系统调色板变化时更新主题样式"""
+    self._update_theme_styles()
+    # 样式应用逻辑已在_update_theme_styles中实现
+
+  def _update_theme_styles(self):
+    """检测系统主题并更新样式"""
+    # 获取当前窗口的调色板
+    palette = self.palette()
+    # 获取背景颜色
+    bg_color = palette.color(QPalette.Window)
+    # 计算颜色亮度 (HSL亮度公式)
+    brightness = (0.299 * bg_color.red() + 0.587 * bg_color.green() + 0.114 * bg_color.blue()) / 255
+    # 判断是深色模式还是浅色模式
+    is_dark = brightness < 0.5
+    theme = 'dark' if is_dark else 'light'
+
+    # 更新当前样式引用
+    self.normal_style = self.styles[theme]['normal']
+    self.hover_style = self.styles[theme]['hover']
+    self.selected_style = self.styles[theme]['selected']
+    self.selected_hover_style = self.styles[theme]['selected_hover']
+    self.normal_style_name_color = self.styles[theme]['name_color']
+    self.image_background_color = self.styles[theme]['image_background']
+
+    # 重新应用样式到所有缩略图项
+    for asset_id, widget in self.thumbnail_items.items():
+      # 根据是否为选中状态应用不同样式
+      if asset_id == self.last_opened_asset_id:
+        widget.setStyleSheet(self.selected_style)
+      else:
+        widget.setStyleSheet(self.normal_style)
+
+      # 更新所有子标签的样式
+      for child in widget.findChildren(QLabel):
+        # 检查是否为名字标签或图片标签
+        # 对于名字标签，设置文本颜色
+        if child.property("is_name_label") or hasattr(child, "text") and child.text():
+          child.setStyleSheet(f"color: {self.normal_style_name_color}; padding: 4px 0; border: none; background-color: transparent;")
+        else:
+          # 对于图片标签，设置背景颜色
+          child.setStyleSheet(f"border: none; background-color: {self.image_background_color};")
+
+    # 更新标签按钮样式（如果有）
+    if hasattr(self, 'tags_flow_layout'):
+      for i in range(self.tags_flow_layout.count()):
+        widget = self.tags_flow_layout.itemAt(i).widget()
+        if widget:
+          # 重新应用标签按钮样式
+          # 这里可以根据需要添加具体的标签按钮样式更新逻辑
+          pass
 
   def on_thumbnail_clicked(self, asset_id: str, event: QMouseEvent):
     """处理缩略图点击事件，打开详情页面"""
@@ -1444,37 +1604,23 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       asset_manager = AssetManager.get_instance()
       asset = asset_manager.get_asset(asset_id)
       if isinstance(asset, ImagePack):
-        # 取消之前选中项的高亮 - 使用更透明样式
+        # 取消之前选中项的高亮 - 使用正常样式
         if self.last_opened_asset_id and self.last_opened_asset_id in self.thumbnail_items:
-          self.thumbnail_items[self.last_opened_asset_id].setStyleSheet("""
-            QWidget {
-              background-color: rgba(255, 255, 255, 0.2);
-              border: 1px solid rgba(200, 200, 200, 0.2);
-              border-radius: 8px;
-              padding: 2px;
-            }
-          """)
+          self.thumbnail_items[self.last_opened_asset_id].setStyleSheet(self.normal_style)
 
-        # 更新上次打开的资源ID并高亮当前项 - 使用更透明样式
+        # 更新上次打开的资源ID并高亮当前项 - 使用选中样式
         self.last_opened_asset_id = asset_id
-        if asset_id in self.thumbnail_items:
-          self.thumbnail_items[asset_id].setStyleSheet("""
-            QWidget {
-              background-color: rgba(220, 230, 245, 0.2);
-              border: 2px solid #4a90e2;
-              border-radius: 8px;
-              padding: 1px;
-            }
-          """)
+        self.thumbnail_items[asset_id].setStyleSheet(self.selected_style)
+
+        # 特别处理名字子组件，确保它没有边框且背景透明
+        for child in self.thumbnail_items[asset_id].findChildren(QLabel):
+          # 设置简单的样式，确保没有边框和背景色，并使用当前主题的文本颜色
+          child.setStyleSheet(f"color: {self.normal_style_name_color}; padding: 4px 0; border: none; background-color: transparent;")
 
         # 请求打开ImagePackWidget
         MainWindowInterface.getHandle(self).requestOpen(
           ImagePackWidget.getToolInfo(packid=asset_id)
         )
-    else:
-      # 对于右键点击，确保调用原有的mousePressEvent以显示上下文菜单
-      if asset_id in self.thumbnail_items:
-        QWidget.mousePressEvent(self.thumbnail_items[asset_id], event)
 
 
 
@@ -1487,10 +1633,20 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       widget=cls,
     )
 
-  def open_tag_edit_dialog(self, asset_id):
+  def open_tag_edit_dialog(self, asset_id, button=None):
     """打开标签编辑对话框"""
+    # 打开对话框
     dialog = self.TagEditDialog(asset_id, self, self)
     dialog.exec()
+    
+    # 对话框关闭后，重置按钮状态
+    if button:
+      # 确保按钮不是按下状态
+      button.setDown(False)
+      # 确保按钮获得正确的焦点状态
+      button.clearFocus()
+      # 更新按钮，确保样式正确应用
+      button.update()
 
   def update_thumbnail_tags(self):
     """更新现有缩略图的标签文本，而不重新加载整个缩略图"""
@@ -1608,7 +1764,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
         self.update_thumbnail_tags()
 
 
-# 缩略图生成工作线程类
+# 缩略图生成工作线程类 - 使用ThumbnailManager
 class ThumbnailGeneratorWorkerSignals(QObject):
   result = Signal(str, str)  # asset_id, thumbnail_path
 
@@ -1622,27 +1778,11 @@ class ThumbnailGeneratorWorker(QRunnable):
 
   def run(self):
     try:
-      # 获取图片包类型以确定合适的缩略图尺寸
-      descriptor = ImagePack.get_descriptor_by_id(self.asset_id)
-      pack_type = descriptor.get_image_pack_type() if descriptor else None
+      # 使用新的ThumbnailManager生成缩略图
+      thumbnail_manager = get_thumbnail_manager(self.cache_dir)
+      thumbnail_path = thumbnail_manager.get_or_generate_thumbnail(self.asset_id)
 
-      # 根据图片包类型设置不同的缩略图尺寸
-      if pack_type == ImagePackDescriptor.ImagePackType.BACKGROUND:
-        # 背景图使用宽屏比例
-        thumbnail_size = (192, 108)  # 基于标准宽屏比例
-      elif pack_type == ImagePackDescriptor.ImagePackType.CHARACTER:
-        # 立绘使用人物比例
-        thumbnail_size = (108, 192)  # 基于人物比例
-      else:
-        # 默认使用正方形
-        thumbnail_size = (128, 128)
-
-      # 生成缩略图，传入特定尺寸
-      image = generate_thumbnail_from_imagepack(self.asset_id, use_default_sizes=False, target_size=thumbnail_size)
-      if image:
-        # 保存缩略图
-        thumbnail_path = os.path.join(self.cache_dir, f"{self.asset_id}_thumbnail.png")
-        image.save(thumbnail_path)
+      if thumbnail_path:
         # 发送结果信号
         self.signals.result.emit(self.asset_id, thumbnail_path)
       else:
