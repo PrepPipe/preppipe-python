@@ -493,8 +493,6 @@ class ThumbnailManager:
         is_background = pack_type == descriptor.ImagePackType.BACKGROUND
     return is_character, is_background
 
-  # 此方法已在类的前面部分定义，避免重复
-
   def get_thumbnail_cache_dir(self) -> str:
     """
     获取缩略图缓存目录

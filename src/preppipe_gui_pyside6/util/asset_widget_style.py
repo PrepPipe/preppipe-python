@@ -4,8 +4,7 @@ from PySide6.QtWidgets import *
 
 
 class StyleManager:
-  """样式管理器，集中管理所有UI样式的定义和应用（全静态方法版本）"""
-  # 样式字典 - 包含深色和浅色模式的样式
+  """样式管理器，集中管理所有UI样式的定义和应用"""
   _styles = {
       'light': {
           'normal': "background-color: rgba(230, 230, 230, 1.0); border: 1px solid rgba(200, 200, 200, 1.0); border-radius: 8px; padding: 2px;",
@@ -72,7 +71,6 @@ class StyleManager:
     radius = height // 2
     styles = []
     for key, template in StyleManager._styles[theme].get('tags_button', {}).items():
-      # 使用字符串替换而不是format方法，避免花括号解析问题
       style = template.replace('{radius}', str(radius))
       style = style.replace('{height}', str(height))
       styles.append(style)
@@ -88,7 +86,6 @@ class StyleManager:
   @staticmethod
   def apply_style_to_thumbnail(widget, is_selected=False, is_hover=False, palette=None):
     """应用样式到缩略图部件"""
-    # 使用match语句替代多重ifelse，提高代码可读性
     match (is_selected, is_hover):
       case (True, True):
         widget.setStyleSheet(StyleManager.get_style('selected_hover', palette))

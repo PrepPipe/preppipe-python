@@ -20,6 +20,8 @@ from ..util.asset_thumbnail import (
 from ..util.asset_widget_style import StyleManager
 from ..componentwidgets.flowlayout import FlowLayout
 
+TR_gui_tool_assetbrowser = TranslationDomain("gui_tool_assetbrowser")
+
 def calculate_elided_text(widget, full_text, margin=10):
     """计算文本的省略版本
 
@@ -126,8 +128,6 @@ class ElidedLabel(QLabel):
         text_width = font_metrics.horizontalAdvance(self._full_text)
         # 添加内边距
         return QSize(text_width + 16, super().sizeHint().height())
-
-TR_gui_tool_assetbrowser = TranslationDomain("gui_tool_assetbrowser")
 
 class AssetBrowserWidget(QWidget, ToolWidgetInterface):
   ui: Ui_AssetBrowserWidget
@@ -643,10 +643,6 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
         worker = create_thumbnail_worker(asset_id, cache_dir)
         worker.signals.result.connect(self.on_thumbnail_generated)
         self.thread_pool.start(worker)
-
-
-
-
 
   def _on_container_resized(self, event):
     """当容器大小改变时重新调整布局"""
@@ -1242,7 +1238,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
           # 图片标签
           child.setStyleSheet(f"border: none; background-color: {self.image_background_color};")
 
-      # 2. 确保标签按钮样式也恢复正确
+      # 确保标签按钮样式也恢复正确
       for child in self.thumbnail_items[asset_id].findChildren(QPushButton):
         if hasattr(child, '_asset_id') and child._asset_id == asset_id:
           # 保持标签按钮的原始样式不变，只确保文本省略正确
