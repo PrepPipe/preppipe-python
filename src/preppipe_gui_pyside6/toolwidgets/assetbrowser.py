@@ -285,7 +285,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     self.name_font_metrics = QFontMetrics(self.name_font)
 
     # 创建样式管理器
-    self.style_manager = StyleManager(self)
+    # StyleManager现在使用静态方法，不需要实例化
     # 初始化当前样式引用
     self._update_theme_styles()
 
@@ -911,7 +911,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       layout.addWidget(self.label)
 
       # 使用样式管理器设置标签块样式
-      self.setStyleSheet(self.asset_browser.style_manager.get_tag_block_style())
+      self.setStyleSheet(StyleManager.get_tag_block_style())
 
       # 设置鼠标形状为手形，提示可点击
       self.setCursor(Qt.PointingHandCursor)
@@ -967,7 +967,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
 
       self.edit_line = QLineEdit()
       # 使用样式管理器设置输入框样式
-      self.edit_line.setStyleSheet(self.asset_browser.style_manager.get_style('edit_line'))
+      self.edit_line.setStyleSheet(StyleManager.get_style('edit_line'))
       self.edit_line.setPlaceholderText(self.asset_browser._tr_tag_edit_current_hint.get())
       self.edit_line.setFixedWidth(200)  # 设置固定宽度以便更好地居中
 
@@ -1304,7 +1304,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     border_radius = tag_button_height // 2
 
     # 使用样式管理器设置按钮样式
-    tags_button.setStyleSheet(self.style_manager.get_tags_button_style(tag_button_height))
+    tags_button.setStyleSheet(StyleManager.get_tags_button_style(tag_button_height))
 
     tags_button.clicked.connect(lambda: self.open_tag_edit_dialog(asset_id, tags_button))
 
@@ -1474,7 +1474,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     if asset_id in self.thumbnail_items:
       # 使用样式管理器应用悬浮样式
       is_selected = asset_id == self.last_opened_asset_id
-      self.style_manager.apply_style_to_thumbnail(self.thumbnail_items[asset_id], is_selected, True)
+      StyleManager.apply_style_to_thumbnail(self.thumbnail_items[asset_id], is_selected, True)
 
       # 确保所有子组件保持正确的样式
       # 根据是否有_full_text属性来区分名称标签和图片标签
@@ -1491,7 +1491,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     if asset_id in self.thumbnail_items:
       # 使用样式管理器应用普通样式
       is_selected = asset_id == self.last_opened_asset_id
-      self.style_manager.apply_style_to_thumbnail(self.thumbnail_items[asset_id], is_selected)
+      StyleManager.apply_style_to_thumbnail(self.thumbnail_items[asset_id], is_selected)
 
       # 确保所有子组件恢复到初始状态的样式
       # 根据是否有_full_text属性来区分名称标签和图片标签
@@ -1518,21 +1518,21 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
   def _update_theme_styles(self, palette=None):
     """检测系统主题并更新样式"""
     # 使用样式管理器更新主题
-    theme = self.style_manager._update_theme(palette)
+    theme = StyleManager.detect_theme(palette)
 
     # 更新当前样式引用
-    self.normal_style = self.style_manager.get_style('normal')
-    self.hover_style = self.style_manager.get_style('hover')
-    self.selected_style = self.style_manager.get_style('selected')
-    self.selected_hover_style = self.style_manager.get_style('selected_hover')
-    self.normal_style_name_color = self.style_manager.get_style('name_color')
-    self.image_background_color = self.style_manager.get_style('image_background')
+    self.normal_style = StyleManager.get_style('normal', palette)
+    self.hover_style = StyleManager.get_style('hover', palette)
+    self.selected_style = StyleManager.get_style('selected', palette)
+    self.selected_hover_style = StyleManager.get_style('selected_hover', palette)
+    self.normal_style_name_color = StyleManager.get_style('name_color', palette)
+    self.image_background_color = StyleManager.get_style('image_background', palette)
 
     # 重新应用样式到所有缩略图项
     for asset_id, widget in self.thumbnail_items.items():
       # 根据是否为选中状态应用不同样式
       is_selected = asset_id == self.last_opened_asset_id
-      self.style_manager.apply_style_to_thumbnail(widget, is_selected)
+      StyleManager.apply_style_to_thumbnail(widget, is_selected, palette=palette)
 
       # 更新所有子标签的样式
       for child in widget.findChildren(QLabel):
@@ -1549,7 +1549,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       for button in buttons:
         if hasattr(button, 'height'):
           height = button.height()
-          button.setStyleSheet(self.style_manager.get_tags_button_style(height))
+          button.setStyleSheet(StyleManager.get_tags_button_style(height))
 
   def on_thumbnail_clicked(self, asset_id: str, event: QMouseEvent):
     """处理缩略图点击事件，打开详情页面"""
@@ -1565,11 +1565,11 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       if isinstance(asset, ImagePack):
         # 取消之前选中项的高亮 - 使用正常样式
         if self.last_opened_asset_id and self.last_opened_asset_id in self.thumbnail_items:
-          self.style_manager.apply_style_to_thumbnail(self.thumbnail_items[self.last_opened_asset_id], False)
+          StyleManager.apply_style_to_thumbnail(self.thumbnail_items[self.last_opened_asset_id], False)
 
         # 更新上次打开的资源ID并高亮当前项 - 使用选中样式
         self.last_opened_asset_id = asset_id
-        self.style_manager.apply_style_to_thumbnail(self.thumbnail_items[asset_id], True)
+        StyleManager.apply_style_to_thumbnail(self.thumbnail_items[asset_id], True)
 
         # 特别处理名字子组件，确保它没有边框且背景透明
         for child in self.thumbnail_items[asset_id].findChildren(QLabel):
