@@ -9,7 +9,6 @@ import argparse
 
 import shutil
 from enum import IntEnum
-from tkinter import HORIZONTAL, NO, VERTICAL
 
 # 复合型组件的子组件枚举类型
 class DisplayableChildType(IntEnum):
@@ -51,7 +50,11 @@ class FguiToRenpyConverter:
     # 模态类界面名称，需要添加 Modal True。
     modal_screen_name_list = ['confirm']
 
+    # 选项分支界面。
+    choice_screen_name_list = ['choice']
 
+    # 对话界面
+    say_screen_name_list = ['say']
     
     def __init__(self, fgui_assets):
         self.fgui_assets = fgui_assets
@@ -360,8 +363,8 @@ class FguiToRenpyConverter:
         style_definition_code.append("")
 
         # 添加头部注释
-        slider_style_code.append("# 滑动条样式定义")
         slider_style_code.extend(bar_image_definition_code)
+        slider_style_code.append("# 滑动条样式定义")
         slider_style_code.extend(style_definition_code)
 
         self.style_code.extend(slider_style_code)
@@ -374,6 +377,14 @@ class FguiToRenpyConverter:
     @staticmethod
     def is_modal_screen(screen_name):
         return screen_name in FguiToRenpyConverter.modal_screen_name_list
+
+    @staticmethod
+    def is_choice_screen(screen_name):
+        return screen_name in FguiToRenpyConverter.choice_screen_name_list
+
+    @staticmethod
+    def is_say_screen(screen_name):
+        return screen_name in FguiToRenpyConverter.say_screen_name_list
 
     def generate_screen(self, component):
         """
@@ -410,7 +421,7 @@ class FguiToRenpyConverter:
         self.screen_has_dismiss = False
         self.dismiss_action_list.clear()
 
-        self.screen_definition_head.append("# 组件Screen")
+        self.screen_definition_head.append("# 界面定义")
         self.screen_definition_head.append(f"# 从FairyGUI组件{component.name}转换而来")
 
         id = component.id
@@ -418,6 +429,16 @@ class FguiToRenpyConverter:
 
         # 界面入参列表
         screen_params = ''
+        # choice界面的特殊处理
+        if self.is_choice_screen(screen_name):
+            self.generate_choice_screen(component)
+            return
+
+        # say界面的特殊处理
+        if self.is_say_screen(screen_name):
+            self.generate_say_screen(component)
+            return
+
         # confirm 界面固定入参
         if screen_name == 'confirm':
             screen_params = 'message, yes_action, no_action'
@@ -468,7 +489,14 @@ class FguiToRenpyConverter:
                     self.screen_ui_code.append(f"{self.indent_str}fixed:")
                     self.indent_level_up()
                     self.screen_ui_code.append(f"{self.indent_str}pos {displayable.xypos}")
-                    bar_value = displayable.custom_data if displayable.custom_data else displayable.slider_property.current_value
+                    # 若在自定义数据中指定了关联数据对象，则直接使用。
+                    if displayable.custom_data:
+                        bar_value = displayable.custom_data
+                    # 若未指定则在screen中生成一个临时变量
+                    else:
+                        variable_name = f"{screen_name}_{displayable.name}_barvalue"
+                        self.screen_ui_code.append(f"{self.indent_str}{self.generate_variable_definition_str(variable_name, current_value=displayable.slider_property.current_value)}")
+                        bar_value = self.generate_barvalue_definition_str(variable_name, min_value=displayable.slider_property.min_value, max_value=displayable.slider_property.max_value)
                     self.screen_ui_code.append(f"{self.indent_str}bar value {bar_value} style '{ref_com.name}' id '{screen_name}_{displayable.id}'")
                     self.indent_level_down()
                     continue
@@ -491,9 +519,164 @@ class FguiToRenpyConverter:
         self.screen_ui_code.append("")
         self.screen_code.extend(self.screen_ui_code)
 
+    def generate_choice_screen(self, component):
+        print("This is choice screen.")
+        caption_text = None
+        choice_button = None
+        choice_list = None
 
+        for displayable in component.display_list.displayable_list:
+            # 生成标题文本样式
+            if displayable.name == 'caption' and isinstance(displayable, FguiText):
+                self.generate_text_style(displayable, "choice_caption_text_style")
+                caption_text = displayable
+            # 查找第一个列表
+            if isinstance(displayable, FguiList) and choice_list == None:
+                choice_list = displayable
+                choice_button = self.fgui_assets.get_component_by_id(displayable.default_item_id)
 
-    def generate_button_parameter(self, button_title=None, original_actions_str=None):
+        # 检查查找结果
+        if choice_list == None:
+            print("Lack of choice button list.")
+            return
+        if not isinstance(choice_button, FguiButton):
+            print("Choice button list's item is not Button.")
+            return
+
+        # vbox的行距
+        vbox_spacing = choice_list.line_gap if choice_list else 0
+        screen_params = 'items'
+        self.reset_indent_level()
+        self.screen_definition_head.append(f"screen {component.name}({screen_params}):")
+        self.indent_level_up()
+        # 选项菜单标题
+        self.screen_ui_code.append(f"{self.indent_str}fixed:")
+        self.indent_level_up()
+        self.screen_ui_code.append(f"{self.indent_str}pos {caption_text.xypos}")
+        self.screen_ui_code.append(f"{self.indent_str}for i in items:")
+        self.indent_level_up()
+        self.screen_ui_code.append(f"{self.indent_str}if not i.action:")
+        self.indent_level_up()
+        self.screen_ui_code.append(f"{self.indent_str}text i.caption style 'choice_caption_text_style'")
+        self.indent_level_down(3)
+        # 选项菜单按钮列表
+        self.screen_ui_code.append(f"{self.indent_str}vbox:")
+        self.indent_level_up()
+        self.screen_ui_code.append(f"{self.indent_str}spacing {vbox_spacing}")
+        self.screen_ui_code.append(f"{self.indent_str}pos {choice_list.xypos}")
+        self.screen_ui_code.append(f"{self.indent_str}for i in items:")
+        self.indent_level_up()
+        self.screen_ui_code.append(f"{self.indent_str}if i.action:")
+        self.indent_level_up()
+        parameter_str = f"title=i.caption, actions=i.action"
+        self.screen_ui_code.append(f"{self.indent_str}use {choice_button.name}({parameter_str})")
+        self.reset_indent_level()
+
+        self.screen_ui_code.append("")
+        self.screen_code.extend(self.screen_definition_head)
+        self.screen_code.extend(self.screen_ui_code)
+        return
+
+    def generate_say_screen(self, component):
+        print("This is say screen.")
+        who_text = None
+        what_text = None
+        namebox = None
+        textbox = None
+        namebox_image = 'Null()'
+        textbox_image = 'Null()'
+        namebox_pos = (0, 0)
+        textbox_pos = (0, 0)
+
+        for displayable in component.display_list.displayable_list:
+            # 生成发言角色名的文本样式
+            if displayable.name == 'who' and isinstance(displayable, FguiText):
+                self.generate_text_style(displayable, "say_who_text_style")
+                who_text = displayable
+            # 生成发言内容的文本样式
+            if displayable.name == 'what' and isinstance(displayable, FguiText):
+                self.generate_text_style(displayable, "say_what_text_style")
+                what_text = displayable
+            # 角色名的背景
+            if displayable.name == 'namebox' and isinstance(displayable, FguiImage):
+                namebox = self.fgui_assets.get_component_by_id(displayable.src)
+                namebox_pos = displayable.xypos
+                namebox_image = f"'{self.get_image_name(displayable)}'"
+
+            # 发言内容的背景
+            if displayable.name == 'textbox' and isinstance(displayable, FguiImage):
+                textbox = self.fgui_assets.get_component_by_id(displayable.src)
+                textbox_pos = displayable.xypos
+                textbox_image = f"'{self.get_image_name(displayable)}'"
+
+        # 检查查找结果
+        if who_text == None:
+            print("Lack of who text component.")
+            return
+        if what_text == None:
+            print("Lack of what text component.")
+            return
+        if namebox:
+            print("Namebox background is Null.")
+        if textbox:
+            print("Textbox background is Null.")
+
+        screen_params = 'who, what'
+        self.reset_indent_level()
+        # say界面需要覆盖默认gui设置
+        self.screen_definition_head.append("# say界面")
+        self.screen_definition_head.append("style say_label is say_who_text_style")
+        self.screen_definition_head.append("style say_dialogue is say_what_text_style")
+        self.screen_definition_head.append(f"screen {component.name}({screen_params}):")
+        self.indent_level_up()
+        self.screen_ui_code.append(f"{self.indent_str}if who is not None:")
+        self.indent_level_up()
+        self.screen_ui_code.append(f"{self.indent_str}add {namebox_image}:")
+        self.indent_level_up()
+        self.screen_ui_code.append(f"{self.indent_str}pos {namebox_pos}")
+        self.indent_level_down()
+        self.screen_ui_code.append(f"{self.indent_str}text who id 'who' style 'say_who_text_style':")
+        self.indent_level_up()
+        self.screen_ui_code.append(f"{self.indent_str}pos {who_text.xypos}")
+        self.indent_level_down(2)
+        self.screen_ui_code.append(f"{self.indent_str}add {textbox_image}:")
+        self.indent_level_up()
+        self.screen_ui_code.append(f"{self.indent_str}pos {textbox_pos}")
+        self.indent_level_down()
+        self.screen_ui_code.append(f"{self.indent_str}text what id 'what' style 'say_what_text_style':")
+        self.indent_level_up()
+        self.screen_ui_code.append(f"{self.indent_str}pos {what_text.xypos}")
+        self.reset_indent_level()
+
+        self.screen_ui_code.append("")
+        self.screen_code.extend(self.screen_definition_head)
+        self.screen_code.extend(self.screen_ui_code)
+        return
+
+    # 根据图片组件对象获取图片名
+    def get_image_name(self, fgui_image):
+        if not isinstance(fgui_image, FguiImage):
+            print("It is not a Image object.")
+            return None
+        for image in self.fgui_assets.package_desc.image_list:
+            if fgui_image.src == image.id:
+                return image.name
+
+    @staticmethod
+    def generate_variable_definition_str(variable_name, current_value=None):
+        return f"default {variable_name} = {current_value}"
+
+    @staticmethod
+    def generate_barvalue_definition_str(barvalue_name, min_value=0, max_value=100, current_value=0, scope='local'):
+        barvalue_str = ''
+        barvalue_scope_str = ''
+        if scope in ('local', 'screen'):
+            barvalue_scope_str = scope.capitalize()
+        barvalue_str = f"{barvalue_scope_str}VariableValue('{barvalue_name}',min={min_value},max={max_value})"
+        return barvalue_str
+
+    @staticmethod
+    def generate_button_parameter(button_title=None, original_actions_str=None):
         parameter_str = ""
         title_str = ""
         actions_str = ""
@@ -529,7 +712,7 @@ class FguiToRenpyConverter:
             return
         # 样式具有固定一档的缩进
         style_indent = "    "
-        # default_title = fgui_text.text
+        self.style_code.append(f"# 文本{fgui_text.name}样式定义")
         # 定义样式
         self.style_code.append(f"style {style_name}:")
         self.style_code.append(f"{style_indent}xysize {fgui_text.size}")
@@ -542,8 +725,8 @@ class FguiToRenpyConverter:
         self.style_code.append(f"{style_indent}font '{text_font}'")
         self.style_code.append(f"{style_indent}size {fgui_text.font_size}")
         self.style_code.append(f"{style_indent}color '{fgui_text.text_color}'")
-        xalign, yalign = self.trans_text_align(fgui_text.align, fgui_text.v_align)
-        self.style_code.append(f"{style_indent}align ({xalign}, {yalign})")
+        # xalign, yalign = self.trans_text_align(fgui_text.align, fgui_text.v_align)
+        # self.style_code.append(f"{style_indent}align ({xalign}, {yalign})")
 
         text_outline_string = self.generate_text_outline_string(fgui_text)
         self.style_code.append(f"{style_indent}outlines {text_outline_string}")
@@ -669,7 +852,7 @@ class FguiToRenpyConverter:
         self.screen_ui_code.clear()
         self.has_dismiss = False
         self.dismiss_action_list.clear()
-        # self.style_code.clear()
+        self.style_code.clear()
 
         # 4种状态的子组件列表
         idle_child_list = []
@@ -719,7 +902,7 @@ class FguiToRenpyConverter:
             return
 
         # 生成按钮组件screen
-        self.screen_definition_head.append("# 按钮组件Screen")
+        self.screen_definition_head.append("# 按钮screen定义")
         self.screen_definition_head.append(f"# 从FairyGUI按钮组件{component.name}转换而来")
 
         id = component.id
@@ -728,6 +911,8 @@ class FguiToRenpyConverter:
         background = self.default_background
 
         default_title = ''
+        title_displayable = None
+        text_xalign, text_yalign = 0, 0
 
         for displayable in component.display_list.displayable_list:
             # 不带显示控制器表示始终显示
@@ -761,9 +946,10 @@ class FguiToRenpyConverter:
                 # 重置缩进级别
                 self.reset_indent_level()
                 default_title = displayable.text
+                title_displayable = displayable
+                text_xalign, text_yalign = self.trans_text_align(displayable.align, displayable.v_align)
                 # 定义样式
                 self.generate_text_style(displayable, f"{button_name}_text")
-                # self.screen_code.extend(self.style_code)
 
         # 根据state_children_dict生成各种对应状态的background
         # idle_background
@@ -802,7 +988,11 @@ class FguiToRenpyConverter:
         #     self.screen_ui_code.append(f"{self.indent_str}selected_hover_background '{button_name}_selected_hover_background'")
         # if state_children_dict['insensitive']:
         #     self.screen_ui_code.append(f"{self.indent_str}insensitive_background '{button_name}_insensitive_background'")
-        self.screen_ui_code.append(f"{self.indent_str}text title")
+        self.screen_ui_code.append(f"{self.indent_str}text title:")
+        # Ren'Py中没有文本相对自身组件的垂直对齐方式，尝试用整个文本组件的对齐来凑合。
+        self.indent_level_up()
+        self.screen_ui_code.append(f"{self.indent_str}align ({text_xalign},{text_yalign})")
+        self.indent_level_down()
         self.screen_ui_code.append(f"{self.indent_str}action actions")
         # 一些按钮特性
         # focus_mask，对应FGUI中的点击“测试”。
@@ -947,6 +1137,8 @@ class FguiToRenpyConverter:
                     image_code.append(f"{self.indent_str}rotate {fgui_image.rotation}")
                 if fgui_image.alpha != 1.0:
                     image_code.append(f"{self.indent_str}alpha {fgui_image.alpha}")
+                if fgui_image.multiply_color != "#ffffff":
+                    image_code.append(f"{self.indent_str}matrixcolor TintMatrix('{fgui_image.multiply_color}')")
                 if fgui_image.scale != (1.0, 1.0):
                     image_code.append(f"{self.indent_str}xzoom {fgui_image.scale[0]} yzoom {fgui_image.scale[1]}")
                 # 九宫格或平铺图片需要指定尺寸

@@ -366,6 +366,7 @@ class FguiWindow(FguiComponent):
 class FguiDisplayList:
     """
     FairyGUI组件内部显示列表，xml中displayList标签内容。
+    只要一个组件不为空组件，必定会有displayList。
     """
     def __init__(self, display_list_etree, package_desc_id=None):
         self.display_list_etree = display_list_etree
@@ -665,12 +666,25 @@ class FguiText(FguiDisplayable):
 class FguiImage(FguiDisplayable):
     """
     FairyGUI中的图片。
-    自身没有什么独特属性。
+    tag为image。
+    属性如下：
+    color-颜色：一个6位Hex字符串，表示显示时所有像素的RGA都要乘以该值
+    flip-翻转类型："hz"-水平、"vt"-垂直、"both"-水平+垂直。
+    fillMethod-填充方式："hz"-水平、"vt"-垂直、"radial90"-90度、"radial180"-180度、"radial360"-360度
+    fillOrigin-填充原点：0(默认值)、1、2、3。该值根据不同的填充方式有不同的含义。
+    fillAmount-填充比例：100(默认值)，一个介于0到100之间的整数。
+    样例：
+    <image id="n9_z1bv" name="n9" src="ndicp" xy="210,169" alpha="0.67" color="#000000" flip="both" fillMethod="hz" fillOrigin="1" fillAmount="55"/>
     """
     def __init__(self, display_item_tree):
         if display_item_tree.tag != "image" :
             raise ValueError("xml tag is not image.")
         super().__init__(display_item_tree)
+        self.multiply_color = self.display_item_tree.get("color", "#ffffff")
+        self.flip_type = self.display_item_tree.get("flip")
+        self.fill_method = self.display_item_tree.get("fillMethod")
+        self.fill_origin = self.display_item_tree.get("fillOrigin")
+        self.fill_amount = self.display_item_tree.get("fillAmount")
 
 class FguiListItem():
     """
