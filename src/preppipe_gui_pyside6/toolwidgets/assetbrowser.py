@@ -418,16 +418,15 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
               # 自定义标签保持原样
               display_tag = tag
 
-            # 确保标签存在于assets_by_tag中，并且直接添加素材（根据用户需求，不需要初始化为空）
+            # 确保标签存在于assets_by_tag中，并且直接添加素材
             if display_tag not in self.assets_by_tag:
               self.assets_by_tag[display_tag] = (None, {asset_id: asset})
             else:
               # 如果标签已存在，添加素材到现有字典
               _, asset_dict = self.assets_by_tag[display_tag]
               asset_dict[asset_id] = asset
-
-      # 素材已在上面的逻辑中添加，这里不再重复处理
       except Exception:
+        # 忽略获取素材失败的情况
         continue
 
     # 保存更新后的标签字典
@@ -645,83 +644,9 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
         worker.signals.result.connect(self.on_thumbnail_generated)
         self.thread_pool.start(worker)
 
-  def show_asset_context_menu(self, asset_id: str, pos: QPoint):
-    """显示素材的上下文菜单"""
-    menu = QMenu(self)
-    # 添加标签操作
-    tags_menu = menu.addMenu("标签")
 
-    # 获取当前素材的标签
-    tags_dict = self.get_tags_dict()
-    asset_tags = tags_dict.get(asset_id, set())
 
-    # 添加现有标签的勾选项
-    for tag in sorted(self.all_tags):
-      action = tags_menu.addAction(tag)
-      action.setCheckable(True)
-      action.setChecked(tag in asset_tags)
-      action.triggered.connect(lambda checked, t=tag: self.toggle_asset_tag(asset_id, t, checked))
 
-    # 显示菜单
-    menu.exec_(pos)
-
-  def toggle_asset_tag(self, asset_id: str, tag: str, checked: bool):
-    """切换素材的标签，始终使用语义标识存储"""
-    tags_dict = self.get_tags_dict()
-
-    if asset_id not in tags_dict:
-      tags_dict[asset_id] = set()
-
-    # 确定要使用的标签语义标识
-    tag_to_use = None
-    if tag in self.tag_text_to_semantic:
-      # 预定义标签，使用语义标识
-      tag_to_use = self.tag_text_to_semantic[tag]
-    else:
-      # 自定义标签，使用标签文本作为语义标识
-      tag_to_use = tag
-      # 确保映射关系存在
-      if tag not in self.tag_text_to_semantic:
-        self.tag_text_to_semantic[tag] = tag
-        self.semantic_to_tag_text[tag] = tag
-
-    # 获取素材对象
-    asset_manager = AssetManager.get_instance()
-    asset = asset_manager.get_asset(asset_id)
-
-    if checked:
-      # 检查标签是否已经存在（只检查语义标识）
-      if tag_to_use not in tags_dict[asset_id]:
-        tags_dict[asset_id].add(tag_to_use)
-      # 清理可能存在的显示文本标签，确保只存储语义标识
-      for existing_tag in list(tags_dict[asset_id]):
-        if existing_tag in self.tag_text_to_semantic and existing_tag != tag_to_use:
-          tags_dict[asset_id].discard(existing_tag)
-      # 更新assets_by_tag映射，直接添加素材（根据用户需求，不需要初始化为空）
-      if tag not in self.assets_by_tag:
-        self.assets_by_tag[tag] = (None, {asset_id: asset})
-      else:
-        _, asset_dict = self.assets_by_tag[tag]
-        asset_dict[asset_id] = asset
-    else:
-      # 移除标签，所有标签（包括预设标签）都应该可以被清空
-      # 检查标签是否存在
-      if tag_to_use in tags_dict[asset_id]:
-        # 只移除语义标识
-        tags_dict[asset_id].discard(tag_to_use)
-        # 更新assets_by_tag映射
-        if tag in self.assets_by_tag:
-          _, asset_dict = self.assets_by_tag[tag]
-          if asset_id in asset_dict:
-            del asset_dict[asset_id]
-          # 如果标签没有素材了，删除该标签
-          if not asset_dict:
-            del self.assets_by_tag[tag]
-
-    # 保存更新后的标签字典，确保只保存语义标识
-    self.save_tags_dict(tags_dict)
-    # 更新标签列表，显示最新的计数
-    self.update_tags_list()
 
   def _on_container_resized(self, event):
     """当容器大小改变时重新调整布局"""
@@ -1185,11 +1110,8 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     thumbnail_container.setStyleSheet(self.normal_style)
     # 确保name_label保持透明背景，不受容器样式影响，并使用当前主题的文本颜色
     name_label.setStyleSheet(f"color: {self.normal_style_name_color}; padding: 4px 0; border: none; background-color: transparent;")
-    # 设置右键菜单
-    thumbnail_container.setContextMenuPolicy(Qt.CustomContextMenu)
-    thumbnail_container.customContextMenuRequested.connect(
-      lambda pos, aid=asset_id: self.show_asset_context_menu(aid, thumbnail_container.mapToGlobal(pos))
-    )
+    # 设置右键菜单禁用，因为我们不使用上下文菜单
+    thumbnail_container.setContextMenuPolicy(Qt.NoContextMenu)
     # 设置鼠标事件处理
     thumbnail_container.setMouseTracking(True)
     thumbnail_container.enterEvent = lambda event, aid=asset_id: self.on_thumbnail_enter(aid, event)
