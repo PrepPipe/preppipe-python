@@ -263,6 +263,8 @@ class FguiComponent:
         # 点击测试区域，包含3个字段，分别为引用源src和组件内相对坐标x、y。
         hit_test = component_etree.get("hitTest")
         self.hit_test = FguiHitTest(hit_test) if hit_test else None
+        # 自定义数据。实际使用时，相同id的FguiDisplayable中的自定义数据优先。
+        self.custom_data = component_etree.get("customData")
 
         # 控制器，一般不超过1个。
         self.controller_list = []
