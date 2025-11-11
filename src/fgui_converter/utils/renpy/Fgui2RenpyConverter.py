@@ -45,7 +45,7 @@ class FguiToRenpyConverter:
     default_background = '#fff'
 
     # 菜单类界面名称，需要添加 tag menu。
-    menu_screen_name_list = ['main_menu', 'game_menu', 'save', 'load', 'preferences']
+    menu_screen_name_list = ['main_menu', 'game_menu', 'save', 'load', 'preferences', 'history', 'help', 'about']
 
     # 模态类界面名称，需要添加 Modal True。
     modal_screen_name_list = ['confirm']
@@ -476,11 +476,13 @@ class FguiToRenpyConverter:
                     self.screen_ui_code.append(f"{self.indent_str}fixed:")
                     self.indent_level_up()
                     self.screen_ui_code.append(f"{self.indent_str}pos {displayable.xypos}")
+                    # 取FguiComponent和FguiDisplayable对象的自定义数据作为action。FguiDisplayable对象中的自定义数据优先。
+                    actions = displayable.custom_data if displayable.custom_data else ref_com.custom_data
                     # 此处仅处理了title，而未处理selected_title。后续可能需要添加。
                     if displayable.button_property:
-                        parameter_str = self.generate_button_parameter(displayable.button_property.title, displayable.custom_data)
+                        parameter_str = self.generate_button_parameter(displayable.button_property.title, actions)
                     else:
-                        parameter_str = self.generate_button_parameter(None, displayable.custom_data)
+                        parameter_str = self.generate_button_parameter(None, actions)
                     self.screen_ui_code.append(f"{self.indent_str}use {ref_com.name}({parameter_str}) id '{screen_name}_{displayable.id}'")
                     self.indent_level_down()
                     continue
@@ -492,6 +494,9 @@ class FguiToRenpyConverter:
                     # 若在自定义数据中指定了关联数据对象，则直接使用。
                     if displayable.custom_data:
                         bar_value = displayable.custom_data
+                    # 否则再查找引用源对象的自定义数据
+                    elif ref_com.custom_data:
+                        bar_value = ref_com.custom_data
                     # 若未指定则在screen中生成一个临时变量
                     else:
                         variable_name = f"{screen_name}_{displayable.name}_barvalue"
@@ -966,7 +971,8 @@ class FguiToRenpyConverter:
 
         # 重置缩进级别
         self.reset_indent_level()
-        self.screen_definition_head.append(f"screen {button_name}(title='{default_title}', actions=NullAction()):")
+        default_actions = component.custom_data if component.custom_data else 'NullAction()'
+        self.screen_definition_head.append(f"screen {button_name}(title='{default_title}', actions={default_actions}):")
         self.indent_level_up()
         # 如果按钮有按下效果，添加自定义组件
         if component.button_down_effect:
@@ -1040,6 +1046,9 @@ class FguiToRenpyConverter:
             # 其他类型暂时用空对象占位
             else:
                 image_definitions.append(f"{self.indent_str}Null()")
+            image_definitions.append(f"{self.indent_str}pos {displayable.xypos}")
+            # TODO 其他transform property还待添加
+            # 也可考虑检查displayList中的子组件，将非默认值值生成在一个额外的容器中，便于用循环生成脚本。
             self.indent_level_down()
 
         image_definitions.append("")
