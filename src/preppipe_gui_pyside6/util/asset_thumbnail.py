@@ -7,9 +7,10 @@ import os
 import hashlib
 from pathlib import Path
 from PySide6.QtGui import QPixmap, QPainter, Qt
-from PySide6.QtCore import QSize
+from PySide6.QtCore import QSize, QThread, QObject, Signal
 from preppipe.assets.assetmanager import AssetManager
 from preppipe.util.imagepack import ImagePack, ImagePackDescriptor
+from preppipe_gui_pyside6.settingsdict import SettingsDict
 
 
 class ThumbnailManager:
@@ -473,36 +474,45 @@ class ThumbnailManager:
 
   def get_asset_type_info(self, asset_id: str) -> tuple[bool, bool]:
     """
-    获取资产的类型信息
+    获取资产类型信息（立绘、背景或其他）
 
     Args:
       asset_id: 资产ID
 
     Returns:
-      tuple[bool, bool]: (是否为角色资产, 是否为背景资产)
+      tuple[bool, bool]: (是否是立绘, 是否是背景)
     """
     is_character = False
     is_background = False
-
-    try:
-      asset = self.asset_manager.get_asset(asset_id)
-      if isinstance(asset, ImagePack):
-        descriptor = ImagePack.get_descriptor_by_id(asset_id)
-        if descriptor:
-          pack_type = descriptor.get_image_pack_type()
-          is_character = (pack_type == ImagePackDescriptor.ImagePackType.CHARACTER)
-          is_background = (pack_type == ImagePackDescriptor.ImagePackType.BACKGROUND)
-    except Exception:
-      pass
-
+    asset = self.asset_manager.get_asset(asset_id)
+    if isinstance(asset, ImagePack):
+      descriptor = ImagePack.get_descriptor_by_id(asset_id)
+      if descriptor:
+        pack_type = descriptor.get_image_pack_type()
+        is_character = pack_type == descriptor.ImagePackType.CHARACTER
+        is_background = pack_type == descriptor.ImagePackType.BACKGROUND
     return is_character, is_background
+
+  # 此方法已在类的前面部分定义，避免重复
+
+  def get_thumbnail_cache_dir(self) -> str:
+    """
+    获取缩略图缓存目录
+
+    Returns:
+      str: 缩略图缓存目录路径
+    """
+    temp_dir = SettingsDict.get_current_temp_dir()
+    cache_dir = os.path.join(temp_dir, "asset_thumbnails")
+    os.makedirs(cache_dir, exist_ok=True)
+    return cache_dir
 
 # 创建全局缩略图管理器实例
 _thumbnail_manager_instance = None
 
 def get_thumbnail_manager(cache_dir: str = None) -> ThumbnailManager:
   """
-  获取缩略图管理器的单例实例
+  获取缩略图管理器实例（单例模式）
 
   Args:
     cache_dir: 缩略图缓存目录，如果为None则使用默认目录
@@ -511,9 +521,65 @@ def get_thumbnail_manager(cache_dir: str = None) -> ThumbnailManager:
     ThumbnailManager: 缩略图管理器实例
   """
   global _thumbnail_manager_instance
-  if _thumbnail_manager_instance is None or cache_dir:
+  if _thumbnail_manager_instance is None:
+    _thumbnail_manager_instance = ThumbnailManager(cache_dir)
+  elif cache_dir and _thumbnail_manager_instance.cache_dir != cache_dir:
+    # 如果提供了缓存目录并且与当前实例不同，创建新实例
     _thumbnail_manager_instance = ThumbnailManager(cache_dir)
   return _thumbnail_manager_instance
+
+
+# 缩略图生成工作线程信号类
+class ThumbnailGeneratorWorkerSignals(QObject):
+  """
+  缩略图生成工作线程的信号类
+  """
+  # 结果信号：资产ID和缩略图路径
+  result = Signal(str, str)
+
+# 缩略图生成工作线程类
+class ThumbnailGeneratorWorker(QThread):
+  """
+  缩略图生成工作线程，用于异步生成缩略图
+  """
+  def __init__(self, asset_id: str, cache_dir: str = None):
+    """
+    初始化工作线程
+
+    Args:
+      asset_id: 资产ID
+      cache_dir: 缩略图缓存目录
+    """
+    super().__init__()
+    self.asset_id = asset_id
+    self.cache_dir = cache_dir
+    self.signals = ThumbnailGeneratorWorkerSignals()
+
+  def run(self):
+    """
+    运行工作线程，生成缩略图
+    """
+    # 获取缩略图管理器实例
+    thumbnail_manager = get_thumbnail_manager(self.cache_dir)
+    
+    # 生成缩略图并获取路径
+    thumbnail_path = thumbnail_manager.get_or_generate_thumbnail(self.asset_id)
+    
+    # 发送结果信号
+    self.signals.result.emit(self.asset_id, thumbnail_path or "")
+
+def create_thumbnail_worker(asset_id: str, cache_dir: str = None) -> ThumbnailGeneratorWorker:
+  """
+  创建缩略图生成工作线程实例
+
+  Args:
+    asset_id: 资产ID
+    cache_dir: 缩略图缓存目录，如果为None则使用默认目录
+
+  Returns:
+    ThumbnailGeneratorWorker: 缩略图生成工作线程实例
+  """
+  return ThumbnailGeneratorWorker(asset_id, cache_dir)
 
 # 保留原有函数以保持向后兼容性
 def generate_thumbnail_from_imagepack(

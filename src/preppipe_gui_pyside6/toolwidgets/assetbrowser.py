@@ -17,7 +17,8 @@ from ..util.asset_thumbnail import (
     generate_thumbnail_from_imagepack,
     get_thumbnail_manager,
     get_scaled_pixmap_for_asset,
-    get_asset_thumbnail_path
+    get_asset_thumbnail_path,
+    create_thumbnail_worker
 )
 from ..componentwidgets.flowlayout import FlowLayout
 
@@ -683,10 +684,8 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
 
   def get_thumbnail_cache_dir(self) -> str:
     """获取缩略图缓存目录"""
-    temp_dir = SettingsDict.get_current_temp_dir()
-    cache_dir = os.path.join(temp_dir, "asset_thumbnails")
-    os.makedirs(cache_dir, exist_ok=True)
-    return cache_dir
+    thumbnail_manager = get_thumbnail_manager()
+    return thumbnail_manager.get_thumbnail_cache_dir()
 
   def load_thumbnails_for_tag(self, tag: str):
     """加载指定标签的缩略图，预定义标签使用语义标识，自定义标签直接使用原始文本"""
@@ -732,7 +731,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
         self.add_thumbnail_to_flow(asset_id, thumbnail_path)
       else:
         # 异步生成缩略图
-        worker = ThumbnailGeneratorWorker(asset_id, cache_dir)
+        worker = create_thumbnail_worker(asset_id, cache_dir)
         worker.signals.result.connect(self.on_thumbnail_generated)
         self.thread_pool.start(worker)
 
@@ -1522,22 +1521,8 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
 
   def _scale_pixmap_for_asset(self, pixmap, width, height, is_character, is_background):
     """根据资产类型缩放像素图"""
-    if is_character:
-      # 立绘：优先适应高度，保持9:16比例
-      scaled_pixmap = pixmap.scaledToHeight(height, Qt.SmoothTransformation)
-      # 如果宽度超过可用宽度，则再按宽度缩放
-      if scaled_pixmap.width() > width:
-        scaled_pixmap = scaled_pixmap.scaledToWidth(width, Qt.SmoothTransformation)
-    elif is_background:
-      # 背景：优先适应宽度，保持16:9比例
-      scaled_pixmap = pixmap.scaledToWidth(width, Qt.SmoothTransformation)
-      # 如果高度超过可用高度，则再按高度缩放
-      if scaled_pixmap.height() > height:
-        scaled_pixmap = scaled_pixmap.scaledToHeight(height, Qt.SmoothTransformation)
-    else:
-      # 其他类型：使用KeepAspectRatio确保图片适应空间，但保持比例
-      scaled_pixmap = pixmap.scaled(width, height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-    return scaled_pixmap
+    thumbnail_manager = get_thumbnail_manager()
+    return thumbnail_manager.scale_pixmap_for_asset(pixmap, width, height, is_character, is_background)
 
   def _update_image_on_resize(self, event, image_label, thumbnail_path, asset_id):
     """当图片标签大小改变时更新图片"""
@@ -1587,27 +1572,6 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     self.thumbnail_items.clear()
     self.tag_buttons.clear()
     # 保留last_opened_asset_id，这样重新加载缩略图时可以恢复选中状态
-
-  def _handle_label_resize(self, event):
-        """通用的标签大小调整处理方法 - 对于ElidedLabel已经不再需要，但保留以兼容可能的旧代码"""
-        # 对于ElidedLabel，我们不需要特殊处理，因为paintEvent会自动处理文本省略
-        # 但对于普通QLabel，我们仍然需要保留这个逻辑
-        if isinstance(self, QLabel) and not isinstance(self, ElidedLabel):
-            # 直接调用原始QLabel的resizeEvent方法
-            QLabel.resizeEvent(self, event)
-
-            # 只有当文本存在且宽度有变化时才重新计算省略
-            if hasattr(self, '_full_text') and self.width() > 0:
-              # 检查是否需要更新
-              current_width = self.width()
-              if not hasattr(self, '_last_width') or current_width != self._last_width:
-                  # 记录当前宽度
-                  self._last_width = current_width
-                  # 重新计算省略文本，考虑边距
-                  font_metrics = self.fontMetrics()
-                  text_margins = 8  # 为文本预留边距
-                  elided_text = font_metrics.elidedText(self._full_text, Qt.ElideRight, current_width - text_margins)
-              self.setText(elided_text)
 
   def on_thumbnail_generated(self, asset_id: str, thumbnail_path: str):
     """当缩略图生成完成后调用"""
@@ -1902,32 +1866,3 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
             self.load_thumbnails_for_tag(tag_semantic)
         # 更新现有缩略图的标签文本
         self.update_thumbnail_tags()
-
-
-# 缩略图生成工作线程类 - 使用ThumbnailManager
-class ThumbnailGeneratorWorkerSignals(QObject):
-  result = Signal(str, str)  # asset_id, thumbnail_path
-
-
-class ThumbnailGeneratorWorker(QRunnable):
-  def __init__(self, asset_id: str, cache_dir: str):
-    super().__init__()
-    self.asset_id = asset_id
-    self.cache_dir = cache_dir
-    self.signals = ThumbnailGeneratorWorkerSignals()
-
-  def run(self):
-    try:
-      # 使用新的ThumbnailManager生成缩略图
-      thumbnail_manager = get_thumbnail_manager(self.cache_dir)
-      thumbnail_path = thumbnail_manager.get_or_generate_thumbnail(self.asset_id)
-
-      if thumbnail_path:
-        # 发送结果信号
-        self.signals.result.emit(self.asset_id, thumbnail_path)
-      else:
-        self.signals.result.emit(self.asset_id, "")
-    except Exception as e:
-      print(f"生成缩略图失败: {self.asset_id}, 错误: {e}")
-      # 如果生成失败，发送空路径
-      self.signals.result.emit(self.asset_id, "")
