@@ -88,11 +88,13 @@ class StyleManager:
   @staticmethod
   def apply_style_to_thumbnail(widget, is_selected=False, is_hover=False, palette=None):
     """应用样式到缩略图部件"""
-    if is_selected and is_hover:
-      widget.setStyleSheet(StyleManager.get_style('selected_hover', palette))
-    elif is_selected:
-      widget.setStyleSheet(StyleManager.get_style('selected', palette))
-    elif is_hover:
-      widget.setStyleSheet(StyleManager.get_style('hover', palette))
-    else:
-      widget.setStyleSheet(StyleManager.get_style('normal', palette))
+    # 使用match语句替代多重ifelse，提高代码可读性
+    match (is_selected, is_hover):
+      case (True, True):
+        widget.setStyleSheet(StyleManager.get_style('selected_hover', palette))
+      case (True, False):
+        widget.setStyleSheet(StyleManager.get_style('selected', palette))
+      case (False, True):
+        widget.setStyleSheet(StyleManager.get_style('hover', palette))
+      case (False, False):
+        widget.setStyleSheet(StyleManager.get_style('normal', palette))
