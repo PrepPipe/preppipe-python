@@ -20,6 +20,7 @@ from ..util.asset_thumbnail import (
     get_asset_thumbnail_path,
     create_thumbnail_worker
 )
+from ..util.asset_widget_style import StyleManager
 from ..componentwidgets.flowlayout import FlowLayout
 
 def calculate_elided_text(widget, full_text, margin=10):
@@ -283,26 +284,9 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     self.tags_font_metrics = QFontMetrics(self.tags_font)
     self.name_font_metrics = QFontMetrics(self.name_font)
 
-    # 初始化样式字典 - 包含深色和浅色模式的样式
-    self.styles = {
-        'light': {
-            'normal': "background-color: rgba(230, 230, 230, 1.0); border: 1px solid rgba(200, 200, 200, 1.0); border-radius: 8px; padding: 2px;",
-            'hover': "background-color: rgba(210, 210, 210, 1.0); border: 1px solid rgba(180, 180, 180, 1.0); border-radius: 8px; padding: 2px;",
-            'selected': "background-color: rgba(200, 215, 240, 1.0); border: 2px solid #4a90e2; border-radius: 8px; padding: 1px;",
-            'selected_hover': "background-color: rgba(190, 205, 235, 1.0); border: 2px solid #3a80d2; border-radius: 8px; padding: 1px;",
-            'name_color': '#000000',
-            'image_background': '#f0f0f0'
-        },
-        'dark': {
-            'normal': "background-color: rgba(50, 50, 50, 1.0); border: 1px solid rgba(70, 70, 70, 1.0); border-radius: 8px; padding: 2px;",
-            'hover': "background-color: rgba(60, 60, 60, 1.0); border: none; border-radius: 8px; padding: 2px;",
-            'selected': "background-color: rgba(80, 80, 80, 1.0); border: none; border-radius: 8px; padding: 2px;",
-            'selected_hover': "background-color: rgba(100, 100, 100, 1.0); border: none; border-radius: 8px; padding: 2px;",
-            'name_color': '#ffffff',
-            'image_background': '#3a3a3a'
-        }
-    }
-    # 检测并设置当前主题样式
+    # 创建样式管理器
+    self.style_manager = StyleManager(self)
+    # 初始化当前样式引用
     self._update_theme_styles()
 
     # 监听系统主题变化通过重写changeEvent方法
@@ -926,26 +910,8 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       self.label.setFont(font)
       layout.addWidget(self.label)
 
-      # 根据系统主题设置标签块样式
-      palette = self.palette()
-      bg_color = palette.color(QPalette.Window)
-      # 计算颜色亮度 (HSL亮度公式)
-      brightness = (0.299 * bg_color.red() + 0.587 * bg_color.green() + 0.114 * bg_color.blue()) / 255
-      # 判断是深色模式还是浅色模式
-      is_dark = brightness < 0.5
-
-      if is_dark:
-        # 深色主题样式
-        self.setStyleSheet(
-          "QWidget { background-color: rgba(65, 65, 65, 0.95); border: none; border-radius: 12px; padding: 4px 8px; }"
-          "QWidget:hover { background-color: rgba(85, 85, 85, 0.95); border: none; }"
-        )
-      else:
-        # 浅色主题样式
-        self.setStyleSheet(
-          "QWidget { background-color: rgba(220, 220, 220, 0.95); border: none; border-radius: 12px; padding: 4px 8px; }"
-          "QWidget:hover { background-color: rgba(200, 200, 200, 0.95); border: none; }"
-        )
+      # 使用样式管理器设置标签块样式
+      self.setStyleSheet(self.asset_browser.style_manager.get_tag_block_style())
 
       # 设置鼠标形状为手形，提示可点击
       self.setCursor(Qt.PointingHandCursor)
@@ -1000,20 +966,8 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       edit_line_layout.addStretch()
 
       self.edit_line = QLineEdit()
-      # 根据系统主题设置输入框样式
-      palette = self.palette()
-      bg_color = palette.color(QPalette.Window)
-      # 计算颜色亮度 (HSL亮度公式)
-      brightness = (0.299 * bg_color.red() + 0.587 * bg_color.green() + 0.114 * bg_color.blue()) / 255
-      # 判断是深色模式还是浅色模式
-      is_dark = brightness < 0.5
-
-      if is_dark:
-        # 深色主题样式
-        self.edit_line.setStyleSheet("background-color: rgba(65, 65, 65, 0.95); border: none; border-radius: 12px; padding: 4px 8px; color: #CCCCCC;")
-      else:
-        # 浅色主题样式
-        self.edit_line.setStyleSheet("background-color: rgba(220, 220, 220, 0.95); border: none; border-radius: 12px; padding: 4px 8px; color: #000000;")
+      # 使用样式管理器设置输入框样式
+      self.edit_line.setStyleSheet(self.asset_browser.style_manager.get_style('edit_line'))
       self.edit_line.setPlaceholderText(self.asset_browser._tr_tag_edit_current_hint.get())
       self.edit_line.setFixedWidth(200)  # 设置固定宽度以便更好地居中
 
@@ -1349,88 +1303,8 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     # 计算合适的圆角值 - 设置为高度的一半以创建圆润效果
     border_radius = tag_button_height // 2
 
-    # 设置按钮样式 - 根据主题使用不同的配色方案
-    # 获取当前窗口的调色板判断主题
-    palette = self.palette()
-    bg_color = palette.color(QPalette.Window)
-    brightness = (0.299 * bg_color.red() + 0.587 * bg_color.green() + 0.114 * bg_color.blue()) / 255
-    is_dark = brightness < 0.5
-
-    if is_dark:
-        # 深色主题样式
-        tags_button.setStyleSheet(f"""
-          ElidedPushButton {{
-            background-color: rgba(65, 65, 65, 0.95);
-            border: none;
-            border-radius: {border_radius}px;
-            color: #CCCCCC;
-            padding: 0px 10px;
-            text-align: center;
-            outline: none;
-            height: {tag_button_height}px;
-            qproperty-flat: false;
-          }}
-          ElidedPushButton:hover {{
-            background-color: rgba(85, 85, 85, 0.95);
-            border: none;
-            border-radius: {border_radius}px;
-            color: #DDDDDD;
-          }}
-          ElidedPushButton:pressed {{
-            background-color: rgba(85, 85, 85, 0.95);
-            border: none;
-            border-radius: {border_radius}px;
-            color: #DDDDDD;
-          }}
-          ElidedPushButton:focus {{
-            background-color: rgba(65, 65, 65, 0.95);
-            border: none;
-            border-radius: {border_radius}px;
-            color: #CCCCCC;
-            outline: none;
-          }}
-          ElidedPushButton:flat {{
-            border: none;
-            border-radius: {border_radius}px;
-          }}
-        """)
-    else:
-        # 浅色主题样式 - 使用更柔和的颜色避免突兀，但增加字体颜色对比度提高可读性
-        tags_button.setStyleSheet(f"""
-          ElidedPushButton {{
-            background-color: rgba(220, 220, 220, 0.95);
-            border: 1px solid rgba(200, 200, 200, 0.95);
-            border-radius: {border_radius}px;
-            color: #000000;
-            padding: 0px 10px;
-            text-align: center;
-            outline: none;
-            height: {tag_button_height}px;
-            qproperty-flat: false;
-          }}
-          ElidedPushButton:hover {{
-            background-color: rgba(230, 230, 230, 0.95);
-            border-color: rgba(210, 210, 210, 0.95);
-            border-radius: {border_radius}px;
-            color: #000000;
-          }}
-          ElidedPushButton:pressed {{
-            background-color: rgba(230, 230, 230, 0.95);
-            border-color: rgba(200, 200, 200, 0.95);
-            border-radius: {border_radius}px;
-            color: #000000;
-          }}
-          ElidedPushButton:focus {{
-            background-color: rgba(220, 220, 220, 0.95);
-            border: 1px solid rgba(200, 200, 200, 0.95);
-            border-radius: {border_radius}px;
-            color: #000000;
-            outline: none;
-          }}
-          ElidedPushButton:flat {{
-            border-radius: {border_radius}px;
-          }}
-        """)
+    # 使用样式管理器设置按钮样式
+    tags_button.setStyleSheet(self.style_manager.get_tags_button_style(tag_button_height))
 
     tags_button.clicked.connect(lambda: self.open_tag_edit_dialog(asset_id, tags_button))
 
@@ -1598,13 +1472,9 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
   def on_thumbnail_enter(self, asset_id: str, event: QEvent):
     """处理鼠标进入缩略图事件"""
     if asset_id in self.thumbnail_items:
-      # 使用定义的样式变量
-      if asset_id == self.last_opened_asset_id:
-        # 选中项的悬浮状态
-        self.thumbnail_items[asset_id].setStyleSheet(self.selected_hover_style)
-      else:
-        # 普通项的悬浮状态
-        self.thumbnail_items[asset_id].setStyleSheet(self.hover_style)
+      # 使用样式管理器应用悬浮样式
+      is_selected = asset_id == self.last_opened_asset_id
+      self.style_manager.apply_style_to_thumbnail(self.thumbnail_items[asset_id], is_selected, True)
 
       # 确保所有子组件保持正确的样式
       # 根据是否有_full_text属性来区分名称标签和图片标签
@@ -1619,13 +1489,9 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
   def on_thumbnail_leave(self, asset_id: str, event: QEvent):
     """处理鼠标离开缩略图事件"""
     if asset_id in self.thumbnail_items:
-      # 使用定义的样式变量
-      if asset_id == self.last_opened_asset_id:
-        # 选中项
-        self.thumbnail_items[asset_id].setStyleSheet(self.selected_style)
-      else:
-        # 普通项
-        self.thumbnail_items[asset_id].setStyleSheet(self.normal_style)
+      # 使用样式管理器应用普通样式
+      is_selected = asset_id == self.last_opened_asset_id
+      self.style_manager.apply_style_to_thumbnail(self.thumbnail_items[asset_id], is_selected)
 
       # 确保所有子组件恢复到初始状态的样式
       # 根据是否有_full_text属性来区分名称标签和图片标签
@@ -1646,36 +1512,27 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
 
   def _on_palette_changed(self, palette):
     """当系统调色板变化时更新主题样式"""
-    self._update_theme_styles()
+    self._update_theme_styles(palette)
     # 样式应用逻辑已在_update_theme_styles中实现
 
-  def _update_theme_styles(self):
+  def _update_theme_styles(self, palette=None):
     """检测系统主题并更新样式"""
-    # 获取当前窗口的调色板
-    palette = self.palette()
-    # 获取背景颜色
-    bg_color = palette.color(QPalette.Window)
-    # 计算颜色亮度 (HSL亮度公式)
-    brightness = (0.299 * bg_color.red() + 0.587 * bg_color.green() + 0.114 * bg_color.blue()) / 255
-    # 判断是深色模式还是浅色模式
-    is_dark = brightness < 0.5
-    theme = 'dark' if is_dark else 'light'
+    # 使用样式管理器更新主题
+    theme = self.style_manager._update_theme(palette)
 
     # 更新当前样式引用
-    self.normal_style = self.styles[theme]['normal']
-    self.hover_style = self.styles[theme]['hover']
-    self.selected_style = self.styles[theme]['selected']
-    self.selected_hover_style = self.styles[theme]['selected_hover']
-    self.normal_style_name_color = self.styles[theme]['name_color']
-    self.image_background_color = self.styles[theme]['image_background']
+    self.normal_style = self.style_manager.get_style('normal')
+    self.hover_style = self.style_manager.get_style('hover')
+    self.selected_style = self.style_manager.get_style('selected')
+    self.selected_hover_style = self.style_manager.get_style('selected_hover')
+    self.normal_style_name_color = self.style_manager.get_style('name_color')
+    self.image_background_color = self.style_manager.get_style('image_background')
 
     # 重新应用样式到所有缩略图项
     for asset_id, widget in self.thumbnail_items.items():
       # 根据是否为选中状态应用不同样式
-      if asset_id == self.last_opened_asset_id:
-        widget.setStyleSheet(self.selected_style)
-      else:
-        widget.setStyleSheet(self.normal_style)
+      is_selected = asset_id == self.last_opened_asset_id
+      self.style_manager.apply_style_to_thumbnail(widget, is_selected)
 
       # 更新所有子标签的样式
       for child in widget.findChildren(QLabel):
@@ -1687,14 +1544,12 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
           # 对于图片标签，设置背景颜色
           child.setStyleSheet(f"border: none; background-color: {self.image_background_color};")
 
-    # 更新标签按钮样式（如果有）
-    if hasattr(self, 'tags_flow_layout'):
-      for i in range(self.tags_flow_layout.count()):
-        widget = self.tags_flow_layout.itemAt(i).widget()
-        if widget:
-          # 重新应用标签按钮样式
-          # 这里可以根据需要添加具体的标签按钮样式更新逻辑
-          pass
+    # 更新标签按钮样式
+    for asset_id, buttons in self.tag_buttons.items():
+      for button in buttons:
+        if hasattr(button, 'height'):
+          height = button.height()
+          button.setStyleSheet(self.style_manager.get_tags_button_style(height))
 
   def on_thumbnail_clicked(self, asset_id: str, event: QMouseEvent):
     """处理缩略图点击事件，打开详情页面"""
@@ -1710,11 +1565,11 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       if isinstance(asset, ImagePack):
         # 取消之前选中项的高亮 - 使用正常样式
         if self.last_opened_asset_id and self.last_opened_asset_id in self.thumbnail_items:
-          self.thumbnail_items[self.last_opened_asset_id].setStyleSheet(self.normal_style)
+          self.style_manager.apply_style_to_thumbnail(self.thumbnail_items[self.last_opened_asset_id], False)
 
         # 更新上次打开的资源ID并高亮当前项 - 使用选中样式
         self.last_opened_asset_id = asset_id
-        self.thumbnail_items[asset_id].setStyleSheet(self.selected_style)
+        self.style_manager.apply_style_to_thumbnail(self.thumbnail_items[asset_id], True)
 
         # 特别处理名字子组件，确保它没有边框且背景透明
         for child in self.thumbnail_items[asset_id].findChildren(QLabel):
