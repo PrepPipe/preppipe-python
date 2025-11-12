@@ -19,9 +19,9 @@ init python:
         vec2 uv = v_tex_coord - vec2(0.5, 0.5);
         vec2 tex_pos = uv * u_model_size;
         float out_distance = roundedBoxSDF(tex_pos, u_model_size/2, u_radius);
-        float border_alpha = (1.0 - step(0.0, out_distance)) * u_stroke_color.a;
+        float border_alpha = (1.0 - step(0.0, out_distance));
         float in_distance = roundedBoxSDF(tex_pos, u_model_size/2-vec2(u_thickness,u_thickness), u_radius);
-        float fill_alpha = (1.0 - step(0.0, in_distance)) * u_rectangle_color.a;
+        float fill_alpha = (1.0 - step(0.0, in_distance));
         vec4 c1 = step(1-fill_alpha, 0) * u_rectangle_color;
         vec4 c2 = step(fill_alpha, 0) * border_alpha * u_stroke_color;
         gl_FragColor = c1 + c2;
@@ -47,9 +47,9 @@ init python:
         vec2 uv = v_tex_coord - vec2(0.5, 0.5);
         vec2 tex_pos = uv * u_model_size;
         float out_distance = roundedBoxSDF(tex_pos, u_model_size/2, u_radius);
-        float border_alpha = (1.0 - smoothstep(-u_edge_softness, u_edge_softness, out_distance)) * u_stroke_color.a;
+        float border_alpha = (1.0 - smoothstep(-u_edge_softness, u_edge_softness, out_distance));
         float in_distance = roundedBoxSDF(tex_pos, u_model_size/2-vec2(u_thickness,u_thickness), u_radius);
-        float fill_alpha = (1.0 - smoothstep(0, u_edge_softness, in_distance)) * u_rectangle_color.a;
+        float fill_alpha = (1.0 - smoothstep(0, u_edge_softness, in_distance));
         vec4 c1 = fill_alpha * u_rectangle_color;
         vec4 c2 = border_alpha * u_stroke_color;
         gl_FragColor = mix(c2, c1, fill_alpha);
