@@ -6,7 +6,7 @@ import sys
 import os
 import re
 import argparse
-
+import math
 import shutil
 from enum import IntEnum
 
@@ -45,7 +45,7 @@ class FguiToRenpyConverter:
     default_background = '#fff'
 
     # 菜单类界面名称，需要添加 tag menu。
-    menu_screen_name_list = ['main_menu', 'game_menu', 'save', 'load', 'preferences', 'history', 'help', 'about']
+    menu_screen_name_list = ['main_menu', 'game_menu', 'save', 'load', 'preferences', 'history', 'help', 'about', 'gallery']
 
     # 模态类界面名称，需要添加 Modal True。
     modal_screen_name_list = ['confirm']
@@ -58,6 +58,10 @@ class FguiToRenpyConverter:
 
     # 存档相关界面
     save_load_screen_name_list = ['save', 'load']
+
+    # 历史界面
+    history_screen_name_list = ['history']
+    history_item_screen_name_list = ['history_item']
     
     def __init__(self, fgui_assets):
         self.fgui_assets = fgui_assets
@@ -120,6 +124,9 @@ class FguiToRenpyConverter:
         image_definitions = []
         image_definitions.append("# 图像定义")
         image_definitions.append("# 从FairyGUI图集中提取的图像")
+
+        if not self.fgui_assets.fgui_image_set:
+            print("Image set is Null.")
 
         for sprite in self.fgui_assets.fgui_image_set:
             # 找到对应的图像信息
@@ -401,6 +408,14 @@ class FguiToRenpyConverter:
     def is_save_load_screen(screen_name : str):
         return screen_name in FguiToRenpyConverter.save_load_screen_name_list
 
+    @staticmethod
+    def is_history_screen(screen_name : str):
+        return screen_name in FguiToRenpyConverter.history_screen_name_list
+
+    @staticmethod
+    def is_history_item(screen_name : str):
+        return screen_name in FguiToRenpyConverter.history_item_screen_name_list
+
     def convert_component_display_list(self, component: FguiComponent, list_begin_index=0, list_end_index=-1):
         screen_ui_code = []
         # print(f"list_begin_index: {list_begin_index}, list_end_index: {list_end_index}")
@@ -526,6 +541,14 @@ class FguiToRenpyConverter:
         # save和load界面的特殊处理
         if self.is_save_load_screen(screen_name):
             self.generate_save_load_screen(component)
+            return
+
+        # history_item和history界面的特殊处理
+        if self.is_history_item(screen_name):
+            self.generate_history_item(component)
+            return
+        if self.is_history_screen(screen_name):
+            self.generate_history_screen(component)
             return
 
         # confirm 界面固定入参
@@ -755,6 +778,132 @@ class FguiToRenpyConverter:
         self.screen_code.extend(self.screen_ui_code)
         return
 
+    def generate_history_screen(self, component :FguiComponent):
+        print("This is history screen.")
+        self.screen_definition_head.clear()
+        self.screen_variable_code.clear()
+        self.screen_function_code.clear()
+        self.screen_ui_code.clear()
+        self.screen_has_dismiss = False
+        self.dismiss_action_list.clear()
+        history_item = None
+        displayable_list_len = len(component.display_list.displayable_list)
+        history_list = None
+        history_list_index = -1
+
+        for i in range(displayable_list_len):
+            displayable = component.display_list.displayable_list[i]
+            # 搜索名为 save_slot_list 的列表组件
+            if displayable.name == 'history_list' and isinstance(displayable, FguiList):
+                history_list = displayable
+                history_list_index = i
+                # 确认默认引用组件类型。
+                history_item = self.fgui_assets.get_component_by_id(history_list.default_item_id)
+                break
+        if not history_list:
+            print(f"{component.name} contains no history list.")
+            return
+        # 检查history_list默认引用组件类型是否为component
+        if not isinstance(history_item, FguiComponent):
+            print(f"{component.name} history list item is not Component.")
+            return
+
+        self.reset_indent_level()
+        self.screen_definition_head.append("# 对话历史界面")
+        self.screen_definition_head.append(f"screen {component.name}():")
+        self.indent_level_up()
+        self.screen_definition_head.append(f"{self.indent_str}tag menu")
+        self.screen_definition_head.append(f"{self.indent_str}predict False")
+        
+        # history_list 之前的组件
+        self.screen_ui_code.extend(self.convert_component_display_list(component, list_begin_index=0, list_end_index=history_list_index))
+
+        # history_list的处理
+        history_list_code = []
+        history_list_code.append(f"{self.indent_str}vpgrid:")
+        self.indent_level_up()
+        # 固定可拖拽
+        history_list_code.append(f"{self.indent_str}draggable True")
+        # 固定一列
+        history_list_code.append(f"{self.indent_str}cols 1")
+        history_list_code.append(f"{self.indent_str}yspacing {history_list.line_gap}")
+        history_list_code.append(f"{self.indent_str}pos {history_list.xypos}")
+        history_list_code.append(f"{self.indent_str}xysize {history_list.size}")
+        history_list_code.append(f"{self.indent_str}for h in _history_list:")
+        self.indent_level_up()
+        # item组件可能包含多个子组件，直接引用会出现vpgrid overfull错误
+        history_list_code.append(f"{self.indent_str}fixed:")
+        self.indent_level_up()
+        history_list_code.append(f"{self.indent_str}xysize {history_item.size}")
+        history_list_code.append(f"{self.indent_str}use {history_item.name}(h.who, h.what)")
+        self.indent_level_down(3)
+        self.screen_ui_code.extend(history_list_code)
+
+        # history_list 之后的组件
+        self.screen_ui_code.extend(self.convert_component_display_list(component, list_begin_index=history_list_index+1))
+        self.screen_ui_code.append("")
+        self.reset_indent_level()
+
+        self.screen_code.extend(self.screen_definition_head)
+        self.screen_code.extend(self.screen_ui_code)
+        return
+
+    def generate_history_item(self, component : FguiComponent):
+        print("This is history item.")
+        self.screen_definition_head.clear()
+        self.screen_variable_code.clear()
+        self.screen_function_code.clear()
+        self.screen_ui_code.clear()
+        self.screen_has_dismiss = False
+        self.dismiss_action_list.clear()
+        who_text = None
+        what_text = None
+        namebox = None
+        textbox = None
+        namebox_pos = (0, 0)
+        textbox_pos = (0, 0)
+        
+        for displayable in component.display_list.displayable_list:
+            # 生成发言角色名的文本样式
+            if displayable.name == 'who' and isinstance(displayable, FguiText):
+                self.generate_text_style(displayable, "history_who_text_style")
+                who_text = displayable
+            # 生成发言内容的文本样式
+            if displayable.name == 'what' and isinstance(displayable, FguiText):
+                self.generate_text_style(displayable, "history_what_text_style")
+                what_text = displayable
+        # 检查查找结果
+        if who_text == None:
+            print("Lack of who text component.")
+            return
+        if what_text == None:
+            print("Lack of what text component.")
+            return
+
+        who_text_str = f"{who_text.text}".replace("\n", "\\n").replace("\r", "\\n")
+        what_text_str = f"{what_text.text}".replace("\n", "\\n").replace("\r", "\\n")
+        screen_params = f"who='{who_text_str}', what='{what_text_str}'"
+        self.reset_indent_level()
+        # say界面需要覆盖默认gui设置
+        self.screen_definition_head.append("# history_item界面，用于显示一条对话记录。")
+        # self.screen_definition_head.append("style history_label is history_who_text_style")
+        # self.screen_definition_head.append("style history_dialogue is history_what_text_style")
+        self.screen_definition_head.append(f"screen {component.name}({screen_params}):")
+        self.indent_level_up()
+        self.screen_ui_code.append(f"{self.indent_str}text _(who) style 'history_who_text_style':")
+        self.indent_level_up()
+        self.screen_ui_code.append(f"{self.indent_str}pos {who_text.xypos}")
+        self.indent_level_down()
+        self.screen_ui_code.append(f"{self.indent_str}text _(what) style 'history_what_text_style':")
+        self.indent_level_up()
+        self.screen_ui_code.append(f"{self.indent_str}pos {what_text.xypos}")
+        self.reset_indent_level()
+
+        self.screen_ui_code.append("")
+        self.screen_code.extend(self.screen_definition_head)
+        self.screen_code.extend(self.screen_ui_code)
+
+
     def generate_say_screen(self, component : FguiComponent):
         print("This is say screen.")
         self.screen_definition_head.clear()
@@ -863,7 +1012,7 @@ class FguiToRenpyConverter:
     def generate_button_parameter(button_title=None, original_actions_str=None, icon=None):
         parameter_str = ""
         title_str = "title=''"
-        actions_str = "actions=None"
+        actions_str = "actions=NullAction()"
         icon_str = "icon=Null()"
         if button_title :
             title_str = f"title=\"{button_title}\"".replace("\n", "\\n").replace("\r", "\\n")
@@ -879,7 +1028,7 @@ class FguiToRenpyConverter:
     def generate_button_callable_parameter(button_title=None, actions=None, icon=None):
         parameter_str = ""
         title_str = "title=''"
-        actions_str = "actions=None"
+        actions_str = "actions=NullAction()"
         icon_str = "icon=Null()"
         if button_title :
             title_str = f"title={button_title}".replace("\n", "\\n").replace("\r", "\\n")
@@ -1568,8 +1717,9 @@ class FguiToRenpyConverter:
         # 若为组件
         if default_item:
             default_item_name = self.fgui_assets.get_componentname_by_id(fgui_list.default_item_id)
-            default_item_type = 'component'
-        # 若为图片
+            # default_item_type = 'component'
+            default_item_type = default_item.extention
+        # 若非组件
         else:
             default_item_name = self.fgui_assets.get_componentname_by_id(fgui_list.default_item_id)
             if default_item_name:
@@ -1578,43 +1728,110 @@ class FguiToRenpyConverter:
                 print("Ref com not found.")
                 return list_code
 
+        # 列表与默认元素尺寸，可能用于grid或vpgrid的行数与列数计算
+        list_xysize = fgui_list.size
+        default_item_size = default_item.size
+        list_length = len(fgui_list.item_list)
+        column_num = 1
+        row_num = 1
+        end_indent_level = 1
+
         # 根据“溢出处理”是否可见区分处理。
         # 若“可见”，则使用hbox、vbox和grid。
         if fgui_list.overflow == "visible":
             # 单列竖排，使用vbox
             if fgui_list.layout == "column":
                 list_code.append(f"{self.indent_str}vbox:")
+                self.indent_level_up()
+                if fgui_list.line_gap:
+                    list_code.append(f"{self.indent_str}spacing {fgui_list.line_gap}")
+
             # 单行横排，使用hbox
             elif fgui_list.layout == "row":
                 list_code.append(f"{self.indent_str}hbox:")
+                self.indent_level_up()
+                if fgui_list.line_gap:
+                    list_code.append(f"{self.indent_str}spacing {fgui_list.col_gap}")
+
             # 其他，使用grid
             else:
-                list_code.append(f"{self.indent_str}grid {fgui_list.line_item_count} {fgui_list.line_item_count2}:")
+                # FguiList中的line_item_count和line_item_count2可能为0，需要根据列表尺寸与元素尺寸计算实际的行数与列数。
+                if not (fgui_list.line_item_count and fgui_list.line_item_count2):
+                    # 横向流动，填充行，之后换行
+                    if fgui_list.layout == 'flow_hz' :
+                        column_num = math.floor(list_xysize[0] / default_item_size[0])
+                        row_num = math.ceil(list_length / column_num)
+                    # 纵向流动，先填充列，之后换列
+                    elif fgui_list.layout == 'flow_vt' :
+                        row_num = math.floor(list_xysize[1] / default_item_size[1])
+                        column_num = math.ceil(list_length / row_num)
+                    list_code.append(f"{self.indent_str}grid {column_num} {row_num}:")
+                else:
+                    list_code.append(f"{self.indent_str}grid {fgui_list.line_item_count} {fgui_list.line_item_count2}:")
+                self.indent_level_up()
+                if fgui_list.layout == 'flow_vt' :
+                    list_code.append(f"{self.indent_str}transpose True")
+                if fgui_list.line_gap:
+                    list_code.append(f"{self.indent_str}yspacing {fgui_list.line_gap}")
+                if fgui_list.col_gap:
+                    list_code.append(f"{self.indent_str}xspacing {fgui_list.col_gap}")
+            list_code.append(f"{self.indent_str}pos {fgui_list.xypos}")
+            list_code.append(f"{self.indent_str}xysize {fgui_list.size}")
 
         else:
-            list_code.append(f"{self.indent_str}vpgrid:")
+            end_indent_level = 2
+            list_code.append(f"{self.indent_str}viewport:")
             self.indent_level_up()
+            list_code.append(f"{self.indent_str}pos {fgui_list.xypos}")
+            list_code.append(f"{self.indent_str}xysize {fgui_list.size}")
+            if fgui_list.margin:
+                list_code.append(f"{self.indent_str}margin {fgui_list.margin}")
 
-            # 若“隐藏”，使用不可滚动的vpgrid
+            # 若“隐藏”，使用不可滚动的viewport
             if fgui_list.overflow == "hidden":
                 list_code.append(f"{self.indent_str}draggable False")
-                # 单列竖排
+                list_code.append(f"{self.indent_str}mousewheel False")
+                # 单列竖排，使用vbox
                 if fgui_list.layout == "column":
-                    cols = 1
-                    rows = item_number
-                # 单行横排
+                    list_code.append(f"{self.indent_str}vbox:")
+                    self.indent_level_up()
+                    if fgui_list.line_gap:
+                        list_code.append(f"{self.indent_str}spacing {fgui_list.line_gap}")
+
+                # 单行横排，使用hbox
                 elif fgui_list.layout == "row":
-                    cols = item_number
-                    rows = 1
-                # 其他
+                    list_code.append(f"{self.indent_str}hbox:")
+                    self.indent_level_up()
+                    if fgui_list.line_gap:
+                        list_code.append(f"{self.indent_str}spacing {fgui_list.col_gap}")
+
+                # 其他，使用grid
                 else:
-                    cols = fgui_list.line_item_count
-                    rows = fgui_list.line_item_count2
-                list_code.append(f"{self.indent_str}cols {cols}")
-                list_code.append(f"{self.indent_str}rows {rows}")
+                    # FguiList中的line_item_count和line_item_count2可能为0，需要根据列表尺寸与元素尺寸计算实际的行数与列数。
+                    if not (fgui_list.line_item_count and fgui_list.line_item_count2):
+                        # 横向流动，填充行，之后换行
+                        if fgui_list.layout == 'flow_hz' :
+                            column_num = math.floor(list_xysize[0] / default_item_size[0])
+                            row_num = math.ceil(list_length / column_num)
+                        # 纵向流动，先填充列，之后换列
+                        elif fgui_list.layout == 'flow_vt' :
+                            row_num = math.floor(list_xysize[1] / default_item_size[1])
+                            column_num = math.ceil(list_length / row_num)
+                        list_code.append(f"{self.indent_str}grid {column_num} {row_num}:")
+                    else:
+                        list_code.append(f"{self.indent_str}grid {fgui_list.line_item_count} {fgui_list.line_item_count2}:")
+                    self.indent_level_up()
+                    if fgui_list.layout == 'flow_vt' :
+                        list_code.append(f"{self.indent_str}transpose True")
+                    if fgui_list.line_gap:
+                        list_code.append(f"{self.indent_str}yspacing {fgui_list.line_gap}")
+                    if fgui_list.col_gap:
+                        list_code.append(f"{self.indent_str}xspacing {fgui_list.col_gap}")
+
             # 若“滚动”，使用可滚动的vpgrid。但RenPy无法限制某个轴能否滚动。
             elif fgui_list.overflow == "scroll":
                 list_code.append(f"{self.indent_str}draggable True")
+                list_code.append(f"{self.indent_str}mousewheel True")
                 # 垂直滚动
                 if fgui_list.scroll == "vertical":
                     pass
@@ -1626,43 +1843,63 @@ class FguiToRenpyConverter:
                     pass
                 # 单列竖排，使用vbox
                 if fgui_list.layout == "column":
-                    cols = 1
-                    rows = item_number
+                    list_code.append(f"{self.indent_str}vbox:")
+                    self.indent_level_up()
+                    if fgui_list.line_gap:
+                        list_code.append(f"{self.indent_str}spacing {fgui_list.line_gap}")
+
                 # 单行横排，使用hbox
                 elif fgui_list.layout == "row":
-                    cols = item_number
-                    rows = 1
+                    list_code.append(f"{self.indent_str}hbox:")
+                    self.indent_level_up()
+                    if fgui_list.line_gap:
+                        list_code.append(f"{self.indent_str}spacing {fgui_list.col_gap}")
+
                 # 其他，使用grid
                 else:
-                    cols = fgui_list.line_item_count
-                    rows = fgui_list.line_item_count2
-                list_code.append(f"{self.indent_str}cols {cols}")
-                list_code.append(f"{self.indent_str}rows {rows}")
-                if fgui_list.line_gap:
-                    list_code.append(f"{self.indent_str}yspacing {fgui_list.line_gap}")
-                if fgui_list.col_gap:
-                    list_code.append(f"{self.indent_str}xspacing {fgui_list.col_gap}")
-            self.indent_level_down()
+                    # FguiList中的line_item_count和line_item_count2可能为0，需要根据列表尺寸与元素尺寸计算实际的行数与列数。
+                    if not (fgui_list.line_item_count and fgui_list.line_item_count2):
+                        # 横向流动，填充行，之后换行
+                        if fgui_list.layout == 'flow_hz' :
+                            column_num = math.floor(list_xysize[0] / default_item_size[0])
+                            row_num = math.ceil(list_length / column_num)
+                        # 纵向流动，先填充列，之后换列
+                        elif fgui_list.layout == 'flow_vt' :
+                            row_num = math.floor(list_xysize[1] / default_item_size[1])
+                            column_num = math.ceil(list_length / row_num)
+                        list_code.append(f"{self.indent_str}grid {column_num} {row_num}:")
+                    else:
+                        list_code.append(f"{self.indent_str}grid {fgui_list.line_item_count} {fgui_list.line_item_count2}:")
+                    self.indent_level_up()
+                    if fgui_list.layout == 'flow_vt' :
+                        list_code.append(f"{self.indent_str}transpose True")
+                    if fgui_list.line_gap:
+                        list_code.append(f"{self.indent_str}yspacing {fgui_list.line_gap}")
+                    if fgui_list.col_gap:
+                        list_code.append(f"{self.indent_str}xspacing {fgui_list.col_gap}")
 
-        self.indent_level_up()
-        list_code.append(f"{self.indent_str}pos {fgui_list.xypos}")
-        list_code.append(f"{self.indent_str}xysize {fgui_list.size}")
-        if fgui_list.margin:
-            list_code.append(f"{self.indent_str}margin {fgui_list.margin}")
         # 添加元素
         for item in fgui_list.item_list:
             # 非默认元素
             if item.item_url:
+                # TODO 非默认元素待处理
                 pass
             # 默认元素
             else:
                 if default_item_type == "image":
                     list_code.append(f"{self.indent_str}add \'{default_item_name}\'")
-                elif default_item_type == "component":
+                elif default_item_type == "Button":
                     parameter_str = self.generate_button_parameter(item.item_title)
                     list_code.append(f"{self.indent_str}use {default_item_name}({parameter_str})")
+                else:
+                    # 非按钮组件可能包含多个子组件，直接引用会出现vpgrid overfull错误
+                    list_code.append(f"{self.indent_str}fixed:")
+                    self.indent_level_up()
+                    list_code.append(f"{self.indent_str}xysize {default_item.size}")
+                    list_code.append(f"{self.indent_str}use {default_item_name}()")
+                    self.indent_level_down()
 
-        self.indent_level_down()
+        self.indent_level_down(end_indent_level)
         return list_code
 
     def generate_renpy_code(self):
