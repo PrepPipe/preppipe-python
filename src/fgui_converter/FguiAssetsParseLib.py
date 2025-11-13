@@ -580,7 +580,8 @@ class FguiComponentPropertyBase:
 class FguiButtonProperty(FguiComponentPropertyBase):
     """
     组件子属性中的Button信息。
-    通常包括title和icon，分别表示标题(文本)和图标(装载器)
+    包括title和icon，分别表示标题(文本)和图标(装载器)。
+    若按钮与控制器连接，在此处记录关联控制器名与关联索引。
     """
     def __init__(self, component_property_tree):
         super().__init__(component_property_tree)
@@ -590,7 +591,10 @@ class FguiButtonProperty(FguiComponentPropertyBase):
         self.selected_title = self.component_property_tree.get("selectedTitle")
         self.icon = self.component_property_tree.get("icon")
         self.selected_icon = self.component_property_tree.get("selectedIcon")
-
+        self.checked = self.component_property_tree.get("checked", False)
+        self.controller_name = self.component_property_tree.get("controller")
+        self.controller_index = self.component_property_tree.get("page")
+        # TODO 待添加点击音效
 
 class FguiGraph(FguiDisplayable):
     """
@@ -841,7 +845,8 @@ class FguiGearBase:
         controller_index = gear_item_tree.get("pages")
         values = gear_item_tree.get("values")
         if controller_index:
-            self.controller_index = controller_index.split(",")
+            self.controller_index = [int(i) for i in controller_index.split(",")]
+            print(self.controller_index)
         self.values = None
         if values:
             self.values = values.split("|")
