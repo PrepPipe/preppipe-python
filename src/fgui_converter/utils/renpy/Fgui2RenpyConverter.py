@@ -439,6 +439,15 @@ class FguiToRenpyConverter:
                 pass
             # 其他组件
             else:
+                end_indent_level = 1
+
+                # 根据显示控制器gearDisplay设置显示条件
+                if displayable.gear_display:
+                    condition_str = f"showif {displayable.gear_display.controller_name} in {displayable.gear_display.controller_index}:"
+                    screen_ui_code.append(f"{self.indent_str}{condition_str}")
+                    self.indent_level_up()
+                    end_indent_level = 2
+                
                 # 根据引用源id查找组件
                 ref_com = self.fgui_assets.get_component_by_id(displayable.src)
                 # 按钮。可设置标题，并根据自定义数据字段设置action。
@@ -448,13 +457,20 @@ class FguiToRenpyConverter:
                     screen_ui_code.append(f"{self.indent_str}pos {displayable.xypos}")
                     # 取FguiComponent和FguiDisplayable对象的自定义数据作为action。FguiDisplayable对象中的自定义数据优先。
                     actions = displayable.custom_data if displayable.custom_data else ref_com.custom_data
+                    action_list = []
+                    if actions:
+                        action_list.append(actions)
                     # 此处仅处理了title，而未处理selected_title。后续可能需要添加。
                     if displayable.button_property:
+                        if displayable.button_property.controller_name:
+                            button_controller_action = f"SetScreenVariable('{displayable.button_property.controller_name}', {displayable.button_property.controller_index})"
+                            action_list.append(button_controller_action)
+                            actions = f"[{', '.join(action_list)}]"
                         parameter_str = self.generate_button_parameter(displayable.button_property.title, actions)
                     else:
                         parameter_str = self.generate_button_parameter(None, actions)
                     screen_ui_code.append(f"{self.indent_str}use {ref_com.name}({parameter_str}) id '{component.name}_{displayable.id}'")
-                    self.indent_level_down()
+                    self.indent_level_down(end_indent_level)
                     continue
                 # 滑动条
                 if ref_com.extention == "Slider" and ref_com.name != None:
@@ -473,16 +489,15 @@ class FguiToRenpyConverter:
                         screen_ui_code.append(f"{self.indent_str}{self.generate_variable_definition_str(variable_name, current_value=displayable.slider_property.current_value)}")
                         bar_value = self.generate_barvalue_definition_str(variable_name, min_value=displayable.slider_property.min_value, max_value=displayable.slider_property.max_value)
                     screen_ui_code.append(f"{self.indent_str}bar value {bar_value} style '{ref_com.name}' id '{component.name}_{displayable.id}'")
-                    self.indent_level_down()
+                    self.indent_level_down(end_indent_level)
                     continue
                 # 其他组件
                 screen_ui_code.append(f"{self.indent_str}fixed:")
                 self.indent_level_up()
                 screen_ui_code.append(f"{self.indent_str}pos {displayable.xypos}")
                 screen_ui_code.append(f"{self.indent_str}use {ref_com.name} id '{component.name}_{displayable.id}'")
-                self.indent_level_down()
-        # print("convert_component_display_list method:")
-        # print(screen_ui_code)
+                self.indent_level_down(end_indent_level)
+
         return screen_ui_code
 
     def generate_screen(self, component : FguiComponent):
@@ -566,6 +581,16 @@ class FguiToRenpyConverter:
         if self.is_modal_screen(screen_name):
             self.screen_ui_code.append(f"{self.indent_str}modal True")
             self.screen_ui_code.append(f"{self.indent_str}zorder 200\n")
+
+        # 根据控制器列表定义界面内变量
+        if component.controller_list:
+            self.screen_variable_code.append(f"{self.indent_str}# 由组件控制器生成的界面内控制变量：") 
+        for controller in component.controller_list:
+            if not isinstance(controller, FguiController):
+                print("Component controller object type is wrong.")
+                break
+            self.screen_variable_code.append(f"{self.indent_str}default {controller.name} = {controller.selected}")            
+
         self.screen_ui_code.extend(self.convert_component_display_list(component))
 
         self.screen_code.extend(self.screen_definition_head)
@@ -1283,7 +1308,7 @@ class FguiToRenpyConverter:
             # 其他状态根据枚举值加入各列表
             else:
                 for i in range(0, state_number):
-                    if str(i) in displayable.gear_display.controller_index:
+                    if i in displayable.gear_display.controller_index:
                         state_children_dict[state_index_name_dict[i]].append((displayable, FguiToRenpyConverter.get_child_type(displayable)))
                         continue
             # 图片组件
@@ -1488,6 +1513,15 @@ class FguiToRenpyConverter:
             print("It is not a image displayable.")
             return image_code
 
+        end_indent_level = 0
+
+        # 根据显示控制器gearDisplay设置显示条件
+        if fgui_image.gear_display:
+            condition_str = f"showif {fgui_image.gear_display.controller_name} in {fgui_image.gear_display.controller_index}:"
+            image_code.append(f"{self.indent_str}{condition_str}")
+            self.indent_level_up()
+            end_indent_level = 1
+
         for image in self.fgui_assets.package_desc.image_list:
             if fgui_image.src == image.id:
                 image_name = image.name
@@ -1525,6 +1559,7 @@ class FguiToRenpyConverter:
                     image_code.append(f"{self.indent_str}xysize {size}")
                 self.indent_level_down()
                 break
+        self.indent_level_down(end_indent_level)
         return image_code
 
     def generate_graph_displayable(self, fgui_graph : FguiGraph, component_name : str) -> list:
@@ -1558,6 +1593,16 @@ class FguiToRenpyConverter:
         if not isinstance(fgui_text, FguiText):
             print("It is not a text displayable.")
             return text_code
+
+
+        end_indent_level = 1
+
+        # 根据显示控制器gearDisplay设置显示条件
+        if fgui_text.gear_display:
+            condition_str = f"showif {fgui_text.gear_display.controller_name} in {fgui_text.gear_display.controller_index}:"
+            text_code.append(f"{self.indent_str}{condition_str}")
+            self.indent_level_up()
+            end_indent_level = 2
 
         # 直接定义text组件。
         # 处理换行符
@@ -1697,7 +1742,7 @@ class FguiToRenpyConverter:
         if fgui_text.is_input:
             self.indent_level_down()
 
-        self.indent_level_down()
+        self.indent_level_down(end_indent_level)
         return text_code
 
     def generate_list_displayable(self, fgui_list):
