@@ -110,10 +110,11 @@ def TransStrToBoolean(str):
 class FguiSpriteInfo:
     """
     FairyGUI资源包中的Sprite描述内容。
-    总计11个字段，包括image id、图集编号、在图集中的x坐标、在图集中的y坐标、image宽度、image高度、rotate、
-    原图相对image的x偏移、原图相对image的y偏移、原图宽度、原图高度。
+    支持7或11个字段：
+    - 7个字段：image id、图集编号、x、y、width、height、rotate
+    - 11个字段（完整）：再加上offset_x、offset_y、source_width、source_height
     """
-    def __init__(self, image_id, atlas_index, x, y, width, height, rotate, offset_x, offset_y, source_width, source_height):
+    def __init__(self, image_id, atlas_index, x, y, width, height, rotate, offset_x=0, offset_y=0, source_width=None, source_height=None):
         self.image_id = image_id
         self.atlas_index = int(atlas_index)
         self.x = int(x)
@@ -123,8 +124,9 @@ class FguiSpriteInfo:
         self.rotate = int(rotate)
         self.offset_x = int(offset_x)
         self.offset_y = int(offset_y)
-        self.source_width = int(source_width)
-        self.source_height = int(source_height)
+        # 若缺省原图尺寸，则默认与裁切后尺寸一致
+        self.source_width = int(source_width) if source_width is not None else int(width)
+        self.source_height = int(source_height) if source_height is not None else int(height)
 
     def __repr__(self):
         return f"FguiSpriteInfo({self.image_id}, {self.atlas_index}, {self.x}, {self.y}, {self.width}, {self.height}, {self.rotate}, {self.offset_x}, {self.offset_y}, {self.source_width}, {self.source_height})"
@@ -134,10 +136,14 @@ def ParseFguiSpriteDescFile(sprite_desc_file):
     fgui_image_sets = []
     with open(sprite_desc_file, "r", encoding="utf-8") as f:
         for line in f:
+            if line.startswith("//"):
+                continue
             parts = line.strip().split()
-            if len(parts) == 11:  # 确保每行有11个字段
+            if len(parts) == 11 or len(parts) == 7:  # 支持7或11个字段
                 obj = FguiSpriteInfo(*parts)
                 fgui_image_sets.append(obj)
+            else:
+                raise ValueError("Number of Sprite description's fields is neither 11 nor 7.")
     return fgui_image_sets
 
 # 从xml字符串创建lxml的etree对象
@@ -402,7 +408,7 @@ def hex_aarrggbb_to_rgba(hex_color):
 
     # 检查处理后的字符串长度是否为8或6
     if hex_str_len != 8 and hex_str_len != 6:
-        raise ValueError("输入的十六进制字符串必须是8位(AARRGGBB)或6位(RRGGBB)")
+        raise ValueError("Color String must be 8 characters(AARRGGBB) or 6 characters(RRGGBB)")
 
     # 6位字符则加上alpha通道的默认值 ff
     if hex_str_len ==6:
@@ -415,7 +421,7 @@ def hex_aarrggbb_to_rgba(hex_color):
         g = int(clean_hex[4:6], 16)
         b = int(clean_hex[6:8], 16)
     except ValueError:
-        raise ValueError("字符串包含无效的十六进制字符")
+        raise ValueError("Color Hex String contains invalid character.")
 
     return (r, g, b, a)
 
@@ -753,8 +759,8 @@ class FguiList(FguiDisplayable):
         margin = self.display_item_tree.get("margin")
         self.margin = tuple(map(int, margin.split(","))) if margin else None
         self.clip_softness = self.display_item_tree.get("clipSoftness", "0,0")
-        self.line_item_count = int(self.display_item_tree.get("lineItemCount", "1"))
-        self.line_item_count2 = int(self.display_item_tree.get("lineItemCount2", "1"))
+        self.line_item_count = int(self.display_item_tree.get("lineItemCount", "0"))
+        self.line_item_count2 = int(self.display_item_tree.get("lineItemCount2", "0"))
         self.line_gap = int(self.display_item_tree.get("lineGap", "0"))
         self.col_gap = int(self.display_item_tree.get("colGap", "0"))
         self.default_item_url = self.display_item_tree.get("defaultItem")
@@ -1069,16 +1075,16 @@ class FguiAssets():
         self.fgui_image_set.clear()
         self.fgui_atlas_dicts.clear()
 
-    def get_componentname_by_id(self, id):
+    def get_componentname_by_id(self, id : str) -> str:
         return self.package_desc.id_name_mapping[id]
 
-    def get_component_by_id(self, id):
+    def get_component_by_id(self, id : str) -> FguiComponent:
         for component in self.fgui_component_set:
             if component.id == id:
                 return component
         return None
 
-    def get_image_size_by_id(self, id):
+    def get_image_size_by_id(self, id : str):
         for image in self.fgui_image_set:
             if image.image_id == id:
                 return (image.width, image.height)
