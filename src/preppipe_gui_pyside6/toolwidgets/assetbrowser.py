@@ -955,32 +955,24 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     if asset_id in self.thumbnail_items:
       # 使用样式管理器应用悬浮样式
       is_selected = asset_id == self.last_opened_asset_id
-      StyleManager.apply_style_to_thumbnail(self.thumbnail_items[asset_id], is_selected, True)
+      StyleManager.apply_style(self.thumbnail_items[asset_id], is_selected, True)
       # 确保所有子组件保持正确的样式
       # 根据是否有_full_text属性来区分名称标签和图片标签
       for child in self.thumbnail_items[asset_id].findChildren(QLabel):
         if hasattr(child, '_full_text'):
-          # 名称标签
-          child.setStyleSheet(f"color: {self.normal_style_name_color}; padding: 4px 0; border: none; background-color: transparent;")
-        else:
-          # 图片标签
-          child.setStyleSheet(f"border: none; background-color: {self.image_background_color};")
+          StyleManager.apply_label_style(child)
 
   def on_thumbnail_leave(self, asset_id: str, event: QEvent):
     """处理鼠标离开缩略图事件"""
     if asset_id in self.thumbnail_items:
       # 使用样式管理器应用普通样式
       is_selected = asset_id == self.last_opened_asset_id
-      StyleManager.apply_style_to_thumbnail(self.thumbnail_items[asset_id], is_selected)
+      StyleManager.apply_style(self.thumbnail_items[asset_id], is_selected)
       # 确保所有子组件恢复到初始状态的样式
       # 根据是否有_full_text属性来区分名称标签和图片标签
       for child in self.thumbnail_items[asset_id].findChildren(QLabel):
         if hasattr(child, '_full_text'):
-          # 名称标签
-          child.setStyleSheet(f"color: {self.normal_style_name_color}; padding: 4px 0; border: none; background-color: transparent;")
-        else:
-          # 图片标签
-          child.setStyleSheet(f"border: none; background-color: {self.image_background_color};")
+          StyleManager.apply_label_style(child)
 
       # 确保标签按钮样式也恢复正确
       for child in self.thumbnail_items[asset_id].findChildren(QPushButton):
@@ -1011,17 +1003,15 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     for asset_id, widget in self.thumbnail_items.items():
       # 根据是否为选中状态应用不同样式
       is_selected = asset_id == self.last_opened_asset_id
-      StyleManager.apply_style_to_thumbnail(widget, is_selected, palette=palette)
+      StyleManager.apply_style(widget, is_selected, palette=palette)
 
       # 更新所有子标签的样式
       for child in widget.findChildren(QLabel):
         # 检查是否为名字标签或图片标签
         # 对于名字标签，设置文本颜色
-        if child.property("is_name_label") or hasattr(child, "text") and child.text():
-          child.setStyleSheet(f"color: {self.normal_style_name_color}; padding: 4px 0; border: none; background-color: transparent;")
-        else:
-          # 对于图片标签，设置背景颜色
-          child.setStyleSheet(f"border: none; background-color: {self.image_background_color};")
+        is_name = child.property("is_name_label") or (hasattr(child, "text") and child.text())
+        if is_name:
+          StyleManager.apply_label_style(child)
 
     # 更新标签按钮样式
     for asset_id, buttons in self.tag_buttons.items():
@@ -1043,14 +1033,14 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       if isinstance(asset, ImagePack):
         # 取消之前选中项的高亮 - 使用正常样式
         if self.last_opened_asset_id and self.last_opened_asset_id in self.thumbnail_items:
-          StyleManager.apply_style_to_thumbnail(self.thumbnail_items[self.last_opened_asset_id], False)
+          StyleManager.apply_style(self.thumbnail_items[self.last_opened_asset_id], False)
         # 更新上次打开的资源ID并高亮当前项 - 使用选中样式
         self.last_opened_asset_id = asset_id
-        StyleManager.apply_style_to_thumbnail(self.thumbnail_items[asset_id], True)
-        # 特别处理名字子组件，确保它没有边框且背景透明
+        StyleManager.apply_style(self.thumbnail_items[asset_id], True)
+        # 特别处理名字子组件
         for child in self.thumbnail_items[asset_id].findChildren(QLabel):
-          # 设置简单的样式，确保没有边框和背景色，并使用当前主题的文本颜色
-          child.setStyleSheet(f"color: {self.normal_style_name_color}; padding: 4px 0; border: none; background-color: transparent;")
+          if hasattr(child, '_full_text'):
+            StyleManager.apply_label_style(child)
         # 请求打开ImagePackWidget
         MainWindowInterface.getHandle(self).requestOpen(
           ImagePackWidget.getToolInfo(packid=asset_id)

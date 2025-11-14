@@ -6,46 +6,46 @@ from PySide6.QtWidgets import *
 class StyleManager:
   """样式管理器，集中管理所有UI样式的定义和应用"""
   _styles = {
-      'light': {
-          'normal': "background-color: rgba(230, 230, 230, 1.0); border: 1px solid rgba(200, 200, 200, 1.0); border-radius: 8px; padding: 2px;",
-          'hover': "background-color: rgba(210, 210, 210, 1.0); border: 1px solid rgba(180, 180, 180, 1.0); border-radius: 8px; padding: 2px;",
-          'selected': "background-color: rgba(200, 215, 240, 1.0); border: 2px solid #4a90e2; border-radius: 8px; padding: 1px;",
-          'selected_hover': "background-color: rgba(190, 205, 235, 1.0); border: 2px solid #3a80d2; border-radius: 8px; padding: 1px;",
-          'name_color': '#000000',
-          'image_background': '#f0f0f0',
-          'tag_block': {
-              'normal': "QWidget { background-color: rgba(220, 220, 220, 0.95); border: none; border-radius: 12px; padding: 4px 8px; }",
-              'hover': "QWidget:hover { background-color: rgba(200, 200, 200, 0.95); border: none; }"
-          },
-          'edit_line': "background-color: rgba(220, 220, 220, 0.95); border: none; border-radius: 12px; padding: 4px 8px; color: #000000;",
-          'tags_button': {
-              'normal': "ElidedPushButton { background-color: rgba(220, 220, 220, 0.95); border: 1px solid rgba(200, 200, 200, 0.95); border-radius: {radius}px; color: #000000; padding: 0px 10px; text-align: center; outline: none; height: {height}px; qproperty-flat: false; }",
-              'hover': "ElidedPushButton:hover { background-color: rgba(230, 230, 230, 0.95); border-color: rgba(210, 210, 210, 0.95); border-radius: {radius}px; color: #000000; }",
-              'pressed': "ElidedPushButton:pressed { background-color: rgba(230, 230, 230, 0.95); border-color: rgba(200, 200, 200, 0.95); border-radius: {radius}px; color: #000000; }",
-              'focus': "ElidedPushButton:focus { background-color: rgba(220, 220, 220, 0.95); border: 1px solid rgba(200, 200, 200, 0.95); border-radius: {radius}px; color: #000000; outline: none; }",
-              'flat': "ElidedPushButton:flat { border-radius: {radius}px; }"
-          }
+    'light': {
+      'normal': "background-color: rgba(230, 230, 230, 1.0); border: 1px solid rgba(200, 200, 200, 1.0); border-radius: 8px; padding: 2px;",
+      'hover': "background-color: rgba(210, 210, 210, 1.0); border: 1px solid rgba(180, 180, 180, 1.0); border-radius: 8px; padding: 2px;",
+      'selected': "background-color: rgba(200, 215, 240, 1.0); border: 2px solid #4a90e2; border-radius: 8px; padding: 1px;",
+      'selected_hover': "background-color: rgba(190, 205, 235, 1.0); border: 2px solid #3a80d2; border-radius: 8px; padding: 1px;",
+      'name_color': '#000000',
+      'image_background': '#f0f0f0',
+      'tag_block': {
+        'normal': "QWidget { background-color: rgba(220, 220, 220, 0.95); border: none; border-radius: 12px; padding: 4px 8px; }",
+        'hover': "QWidget:hover { background-color: rgba(200, 200, 200, 0.95); border: none; }"
       },
-      'dark': {
-          'normal': "background-color: rgba(50, 50, 50, 1.0); border: 1px solid rgba(70, 70, 70, 1.0); border-radius: 8px; padding: 2px;",
-          'hover': "background-color: rgba(60, 60, 60, 1.0); border: none; border-radius: 8px; padding: 2px;",
-          'selected': "background-color: rgba(80, 80, 80, 1.0); border: none; border-radius: 8px; padding: 2px;",
-          'selected_hover': "background-color: rgba(100, 100, 100, 1.0); border: none; border-radius: 8px; padding: 2px;",
-          'name_color': '#ffffff',
-          'image_background': '#3a3a3a',
-          'tag_block': {
-              'normal': "QWidget { background-color: rgba(65, 65, 65, 0.95); border: none; border-radius: 12px; padding: 4px 8px; }",
-              'hover': "QWidget:hover { background-color: rgba(85, 85, 85, 0.95); border: none; }"
-          },
-          'edit_line': "background-color: rgba(65, 65, 65, 0.95); border: none; border-radius: 12px; padding: 4px 8px; color: #CCCCCC;",
-          'tags_button': {
-              'normal': "ElidedPushButton { background-color: rgba(65, 65, 65, 0.95); border: none; border-radius: {radius}px; color: #CCCCCC; padding: 0px 10px; text-align: center; outline: none; height: {height}px; qproperty-flat: false; }",
-              'hover': "ElidedPushButton:hover { background-color: rgba(85, 85, 85, 0.95); border: none; border-radius: {radius}px; color: #DDDDDD; }",
-              'pressed': "ElidedPushButton:pressed { background-color: rgba(85, 85, 85, 0.95); border: none; border-radius: {radius}px; color: #DDDDDD; }",
-              'focus': "ElidedPushButton:focus { background-color: rgba(65, 65, 65, 0.95); border: none; border-radius: {radius}px; color: #CCCCCC; outline: none; }",
-              'flat': "ElidedPushButton:flat { border: none; border-radius: {radius}px; }"
-          }
+      'edit_line': "background-color: rgba(220, 220, 220, 0.95); border: none; border-radius: 12px; padding: 4px 8px; color: #000000;",
+      'tags_button': {
+        'normal': "ElidedPushButton { background-color: rgba(220, 220, 220, 0.95); border: 1px solid rgba(200, 200, 200, 0.95); border-radius: {radius}px; color: #000000; padding: 0px 10px; text-align: center; outline: none; height: {height}px; qproperty-flat: false; }",
+        'hover': "ElidedPushButton:hover { background-color: rgba(230, 230, 230, 0.95); border-color: rgba(210, 210, 210, 0.95); border-radius: {radius}px; color: #000000; }",
+        'pressed': "ElidedPushButton:pressed { background-color: rgba(230, 230, 230, 0.95); border-color: rgba(200, 200, 200, 0.95); border-radius: {radius}px; color: #000000; }",
+        'focus': "ElidedPushButton:focus { background-color: rgba(220, 220, 220, 0.95); border: 1px solid rgba(200, 200, 200, 0.95); border-radius: {radius}px; color: #000000; outline: none; }",
+        'flat': "ElidedPushButton:flat { border-radius: {radius}px; }"
       }
+    },
+    'dark': {
+      'normal': "background-color: rgba(50, 50, 50, 1.0); border: 1px solid rgba(70, 70, 70, 1.0); border-radius: 8px; padding: 2px;",
+      'hover': "background-color: rgba(60, 60, 60, 1.0); border: none; border-radius: 8px; padding: 2px;",
+      'selected': "background-color: rgba(80, 80, 80, 1.0); border: none; border-radius: 8px; padding: 2px;",
+      'selected_hover': "background-color: rgba(100, 100, 100, 1.0); border: none; border-radius: 8px; padding: 2px;",
+      'name_color': '#ffffff',
+      'image_background': '#3a3a3a',
+      'tag_block': {
+        'normal': "QWidget { background-color: rgba(65, 65, 65, 0.95); border: none; border-radius: 12px; padding: 4px 8px; }",
+        'hover': "QWidget:hover { background-color: rgba(85, 85, 85, 0.95); border: none; }"
+      },
+      'edit_line': "background-color: rgba(65, 65, 65, 0.95); border: none; border-radius: 12px; padding: 4px 8px; color: #CCCCCC;",
+      'tags_button': {
+        'normal': "ElidedPushButton { background-color: rgba(65, 65, 65, 0.95); border: none; border-radius: {radius}px; color: #CCCCCC; padding: 0px 10px; text-align: center; outline: none; height: {height}px; qproperty-flat: false; }",
+        'hover': "ElidedPushButton:hover { background-color: rgba(85, 85, 85, 0.95); border: none; border-radius: {radius}px; color: #DDDDDD; }",
+        'pressed': "ElidedPushButton:pressed { background-color: rgba(85, 85, 85, 0.95); border: none; border-radius: {radius}px; color: #DDDDDD; }",
+        'focus': "ElidedPushButton:focus { background-color: rgba(65, 65, 65, 0.95); border: none; border-radius: {radius}px; color: #CCCCCC; outline: none; }",
+        'flat': "ElidedPushButton:flat { border: none; border-radius: {radius}px; }"
+      }
+    }
   }
 
   @staticmethod
@@ -84,8 +84,8 @@ class StyleManager:
     return "\n".join(tag_block_styles.values())
 
   @staticmethod
-  def apply_style_to_thumbnail(widget, is_selected=False, is_hover=False, palette=None):
-    """应用样式到缩略图部件"""
+  def apply_style(widget, is_selected=False, is_hover=False, palette=None):
+    """应用样式到部件"""
     match (is_selected, is_hover):
       case (True, True):
         widget.setStyleSheet(StyleManager.get_style('selected_hover', palette))
@@ -95,3 +95,13 @@ class StyleManager:
         widget.setStyleSheet(StyleManager.get_style('hover', palette))
       case (False, False):
         widget.setStyleSheet(StyleManager.get_style('normal', palette))
+
+  @staticmethod
+  def apply_label_style(label, palette=None):
+    """应用样式到标签"""
+    theme = StyleManager.detect_theme(palette)
+    color = StyleManager._styles[theme].get('name_color', '#000000')
+    
+    # 直接设置标签样式
+    style = f"color: {color}; padding: 4px 0; border: none; background-color: transparent;"
+    label.setStyleSheet(style)
