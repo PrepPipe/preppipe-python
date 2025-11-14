@@ -88,6 +88,14 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
   # 虽然目前只有立绘视图使用但是我们都会提供
   layer_code_to_index : dict[str, int]
 
+  # 用于加速立绘视图
+  composition_cache : dict[int, ImageCompositionCache]
+  # 第一个不是基底的图层的下标
+  # 切换基底时，我们只需保存到比这个值小的最大的图层的缓存
+  composition_cache_min_volatile_layer : int
+  # 每组基底的 ImageCompositionCache.min_cached_layer
+  composition_cache_min_cached_layers : dict[int, int]
+
   _tr_composition_selection = TR_gui_tool_imagepack.tr("composition_selection",
     en="Composition Selection",
     zh_cn="差分选择",
@@ -120,6 +128,9 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
     self.composites_reverse_dict = None
     self.composite_code_to_index = None
     self.layer_code_to_index = {}
+    self.composition_cache = {}
+    self.composition_cache_min_volatile_layer = 0
+    self.composition_cache_min_cached_layers = {}
 
   _tr_no_mask = TR_gui_tool_imagepack.tr("no_mask",
     en="This image pack contains no customizable regions.",
@@ -240,11 +251,29 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
             base_checkbox.setChecked(True)
             base_checkbox.setEnabled(False)
             self.bind_text(base_checkbox.setText, preset_kind_base_tr)
+            base_layers = set()
             base_combo = QComboBox()
             for k, v in base_options.items():
               base_combo.addItem(k, v)
+              for layer in v:
+                base_layers.add(layer)
             grid_widgets.append((base_checkbox, base_combo, None))
             self.charactersprite_layer_base_combobox = base_combo
+            base_combo.currentIndexChanged.connect(self.handleCharacterCompositionChange_ByLayer)
+            for layerindex in range(len(self.pack.layers)):
+              layercode = ImagePackDescriptor.get_layer_code(self.pack.layers[layerindex].basename)
+              if layercode not in base_layers:
+                # 找到了第一个不属于基底的图层
+                self.composition_cache_min_volatile_layer = layerindex
+                # 我们需要找到每组基底中在该图层之下的最上层，缓存从这一层开始
+                for base_index, data in enumerate(base_options.values()):
+                  cur_min_cached_layer = 0
+                  for layercode in data:
+                    layerindex = self.layer_code_to_index[layercode]
+                    if layerindex < self.composition_cache_min_volatile_layer and layerindex > cur_min_cached_layer:
+                      cur_min_cached_layer = layerindex
+                  self.composition_cache_min_cached_layers[base_index] = cur_min_cached_layer
+                break
             # 然后是各种差分
             parts = charactersprite_gen["parts"]
             for kind_enum, kind_tr in ImagePack.PRESET_YAMLGEN_PARTS_KIND_PRESETS.values():
@@ -430,14 +459,22 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
       self.current_pack = self.pack
     else:
       self.current_pack = self.pack.fork_applying_mask(self.current_mask_params, enable_parallelization=True)
+    self.composition_cache.clear()
     QMetaObject.invokeMethod(self, "updateCurrentImage", Qt.QueuedConnection)
 
   @Slot()
   def updateCurrentImage(self):
+    composition_cache = None
+    if self.charactersprite_layer_base_combobox is not None:
+      base_index = self.charactersprite_layer_base_combobox.currentIndex()
+      composition_cache = self.composition_cache.get(base_index, None)
+      if composition_cache is None:
+        composition_cache = ImageCompositionCache(min_cached_layer=self.composition_cache_min_cached_layers.get(base_index, 0))
+        self.composition_cache[base_index] = composition_cache
     if isinstance(self.current_index, list):
-      img = self.current_pack.get_composed_image_lower(self.current_index)
+      img = self.current_pack.get_composed_image_lower(self.current_index, composition_cache=composition_cache)
     else:
-      img = self.current_pack.get_composed_image(self.current_index)
+      img = self.current_pack.get_composed_image(self.current_index, composition_cache=composition_cache)
     self.set_image(img)
 
   def set_image(self, image: PIL.Image.Image | ImageWrapper):

@@ -94,6 +94,20 @@ class ImageWrapper:
       return ImageWrapper(image=image, path=path)
     return ImageWrapper(image=image)
 
+@dataclasses.dataclass
+class ImageCompositionCache:
+  # 在 UI 预览中，我们可能会频繁切换组合中的某几层（比如面部表情相关图层）
+  # 如果每次 get_composed_image 都重新合成的话会非常慢
+  # 因此我们用这个类来缓存部分图层的组合结果
+  # 下标递增是从底层到顶层的部分组合结果（即 0 只是最底层， 1是最底层+次底层，以此类推）
+  layers : list[tuple[int, PIL.Image.Image | None]] = dataclasses.field(default_factory=list) # (layer index, composed image)
+  # 当用于角色立绘时，我们一般不会动基底的图层，所以基底图层的中间状态不用保留，到其他可变部分时再开始缓存
+  min_cached_layer : int = 0
+
+  def clear(self):
+    self.layers.clear()
+    self.min_cached_layer = 0
+
 @AssetClassDecl("imagepack")
 @ToolClassDecl("imagepack")
 class ImagePack(NamedAssetClassBase):
@@ -436,14 +450,14 @@ class ImagePack(NamedAssetClassBase):
     if "metadata" in manifest:
       self.opaque_metadata = ImagePack.recover_metadata_from_dict_serialized(manifest["metadata"])
 
-  def get_composed_image(self, index : int) -> ImageWrapper:
+  def get_composed_image(self, index : int, composition_cache: ImageCompositionCache | None = None) -> ImageWrapper:
     # 仅使用单个组合标号来获取
     if not self.is_imagedata_loaded():
       raise PPInternalError("Cannot compose images without loading the data")
     layer_indices = self.composites[index].layers
-    return self.get_composed_image_lower(layer_indices)
+    return self.get_composed_image_lower(layer_indices, composition_cache=composition_cache)
 
-  def get_composed_image_lower(self, layer_indices : list[int]) -> ImageWrapper:
+  def get_composed_image_lower(self, layer_indices : list[int], composition_cache: ImageCompositionCache | None = None) -> ImageWrapper:
     # 指定图层组合，可以是原来没有的图层
     if not self.is_imagedata_loaded():
       raise PPInternalError("Cannot compose images without loading the data")
@@ -455,13 +469,48 @@ class ImagePack(NamedAssetClassBase):
       if curlayer.offset_x == 0 and curlayer.offset_y == 0 and curlayer.width == self.width and curlayer.height == self.height:
         return curlayer.patch
 
-    result = PIL.Image.new("RGBA", (self.width, self.height))
+    # start = time.time()
+    result = None
+    if composition_cache is not None and len(composition_cache.layers) > 0:
+      layer_indices = layer_indices.copy()
+      isAllMatch = True
+      for i in range(min(len(composition_cache.layers), len(layer_indices))):
+        if layer_indices[i] != composition_cache.layers[i][0]:
+          isAllMatch = False
+          composition_cache.layers = composition_cache.layers[:i]
+          layer_indices = layer_indices[i:]
+          result = composition_cache.layers[-1][1]
+          if result is None:
+            raise PPInternalError("Cached composed image is None (min cached layer index too large?)")
+          break
+      if isAllMatch:
+        if len(layer_indices) <= len(composition_cache.layers):
+          # 完全命中缓存
+          result = composition_cache.layers[len(layer_indices)-1][1]
+          if result is None:
+            raise PPInternalError("Cached composed image is None (min cached layer index too large?)")
+          return ImageWrapper(image=result)
+        else:
+          # 已绘制的部分层数不够
+          layer_indices = layer_indices[len(composition_cache.layers):]
+          result = composition_cache.layers[-1][1]
+          if result is None:
+            raise PPInternalError("Cached composed image is None (min cached layer index too large?)")
+
+    if result is None:
+      result = PIL.Image.new("RGBA", (self.width, self.height))
 
     for li in layer_indices:
       layer = self.layers[li]
-      extended_patch = PIL.Image.new("RGBA", (self.width, self.height))
-      extended_patch.paste(layer.patch.get(), (layer.offset_x, layer.offset_y))
-      result = PIL.Image.alpha_composite(result, extended_patch)
+      cur = result.crop((layer.offset_x, layer.offset_y, layer.offset_x + layer.width, layer.offset_y + layer.height))
+      cur = PIL.Image.alpha_composite(cur, layer.patch.get())
+      if composition_cache is not None and li >= composition_cache.min_cached_layer:
+        result = result.copy()
+      result.paste(cur, (layer.offset_x, layer.offset_y))
+      if composition_cache is not None:
+        composition_cache.layers.append((li, result if li >= composition_cache.min_cached_layer else None))
+    # end = time.time()
+    # print(f"get_composed_image_lower: {end-start} s")
     return ImageWrapper(image=result)
 
   @staticmethod
