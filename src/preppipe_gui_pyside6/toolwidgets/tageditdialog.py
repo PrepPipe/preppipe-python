@@ -59,6 +59,10 @@ class TagEditDialog(QDialog):
       main_layout = QVBoxLayout(self)
       main_layout.setContentsMargins(16, 16, 16, 16)
       main_layout.setSpacing(16)
+      
+      # 启用布局的大小约束以确保对话框可以根据内容调整大小
+      main_layout.setSizeConstraint(QLayout.SetMinimumSize)
+      main_layout.setSizeConstraint(QLayout.SetDefaultConstraint)
 
       edit_line_container = QWidget()
       edit_line_layout = QHBoxLayout(edit_line_container)
@@ -124,7 +128,8 @@ class TagEditDialog(QDialog):
       tag_block.deleted.connect(self.on_tag_deleted)
       # 添加到流式布局中
       self.tags_layout.addWidget(tag_block)
-      self.tags_layout.update()
+      # 使用QTimer延迟更新对话框大小，确保Qt有足够时间完成内部布局计算
+      QTimer.singleShot(0, self._adjust_dialog_size)
 
     def update_completer_tags(self):
       """更新补全的标签列表"""
@@ -145,6 +150,8 @@ class TagEditDialog(QDialog):
 
           self.has_edited = True
           self.asset_browser.save_tags_dict(tags_dict)
+          # 使用QTimer延迟更新对话框大小，确保Qt有足够时间完成内部布局计算
+          QTimer.singleShot(0, self._adjust_dialog_size)
 
     def on_edit_return_pressed(self):
       """处理编辑框回车事件"""
@@ -190,7 +197,9 @@ class TagEditDialog(QDialog):
     def apply_changes(self):
       """应用所有更改到资产浏览器"""
       if self.has_edited:
-        self.asset_browser.update_thumbnail_tags()
+        # 只更新当前被编辑资产的标签，而不是所有资产
+        self.asset_browser.update_thumbnail_tags(self.asset_id)
+        # 加载标签列表以更新分类视图
         self.asset_browser.load_tags()
 
     def closeEvent(self, event):
@@ -202,3 +211,11 @@ class TagEditDialog(QDialog):
       """处理对话框确认事件"""
       self.apply_changes()
       super().accept()
+      
+    def _adjust_dialog_size(self):
+      """调整对话框大小的辅助方法，用于延迟调用以确保正确计算"""
+      # 先更新布局和几何信息
+      self.tags_layout.update()
+      self.updateGeometry()
+      # 然后调整对话框大小
+      self.adjustSize()

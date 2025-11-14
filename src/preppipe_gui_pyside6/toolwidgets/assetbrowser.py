@@ -1065,27 +1065,48 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       button.clearFocus()
       button.update()
 
-  def update_thumbnail_tags(self):
-    """更新现有缩略图的标签文本，而不重新加载整个缩略图"""
+  def update_thumbnail_tags(self, asset_id=None):
+    """更新现有缩略图的标签文本，而不重新加载整个缩略图
+    
+    Args:
+      asset_id: 可选参数，指定要更新的资产ID。如果为None，则更新所有资产的标签
+    """
     tags_dict = self.get_tags_dict()
 
-    for asset_id, thumbnail_widget in self.thumbnail_items.items():
-      asset_tags = tags_dict.get(asset_id, set())
-
-      translated_tags = set()
-      for tag in sorted(asset_tags):
-        if tag in self.semantic_to_tag_text:
-          translated_tags.add(self.semantic_to_tag_text[tag])
-        else:
-          translated_tags.add(tag)
-
-      tags_text = ", ".join(sorted(translated_tags))
-      if asset_id in self.tag_buttons:
-        for button in self.tag_buttons[asset_id]:
-          button._full_text = tags_text if tags_text else self._tr_no_tags.get()
-          if hasattr(button, 'resizeEvent'):
-            button.resizeEvent(None)
+    # 如果指定了asset_id，只更新该资产的标签
+    if asset_id:
+      self._update_single_asset_tags(asset_id, tags_dict)
+    else:
+      # 否则更新所有资产的标签
+      for asset_id_iter in self.thumbnail_items.keys():
+        self._update_single_asset_tags(asset_id_iter, tags_dict)
+  
+  def _update_single_asset_tags(self, asset_id, tags_dict):
+    """更新单个资产的标签显示"""
+    if asset_id not in self.thumbnail_items:
+      return
+      
+    asset_tags = tags_dict.get(asset_id, set())
+    
+    translated_tags = set()
+    for tag in sorted(asset_tags):
+      if tag in self.semantic_to_tag_text:
+        translated_tags.add(self.semantic_to_tag_text[tag])
       else:
+        translated_tags.add(tag)
+    
+    tags_text = ", ".join(sorted(translated_tags))
+    
+    # 尝试从tag_buttons字典中获取按钮
+    if asset_id in self.tag_buttons:
+      for button in self.tag_buttons[asset_id]:
+        button._full_text = tags_text if tags_text else self._tr_no_tags.get()
+        if hasattr(button, 'resizeEvent'):
+          button.resizeEvent(None)
+    else:
+      # 如果没找到，尝试从缩略图小部件中查找
+      thumbnail_widget = self.thumbnail_items.get(asset_id)
+      if thumbnail_widget:
         tags_button = thumbnail_widget.findChild(QPushButton, f"tags_button_{asset_id}")
         if tags_button:
           tags_button._full_text = tags_text if tags_text else self._tr_no_tags.get()
