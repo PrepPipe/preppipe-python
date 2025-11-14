@@ -846,7 +846,6 @@ class FguiGearBase:
         values = gear_item_tree.get("values")
         if controller_index:
             self.controller_index = [int(i) for i in controller_index.split(",")]
-            print(self.controller_index)
         self.values = None
         if values:
             self.values = values.split("|")
