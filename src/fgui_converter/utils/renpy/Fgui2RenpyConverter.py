@@ -708,6 +708,9 @@ class FguiToRenpyConverter:
         
         self.screen_definition_head.append("# 存档/读档 界面")
         self.screen_definition_head.append(f"screen {component.name}():")
+
+        # 菜单标签
+        self.screen_definition_head.append(f"{self.indent_str}tag menu")
         # save_slot_list 之前的组件
         self.screen_ui_code.extend(self.convert_component_display_list(component, list_begin_index=0, list_end_index=slot_list_index))
 
