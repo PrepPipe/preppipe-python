@@ -330,6 +330,82 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       if isinstance(asset, ImagePack):
         self.all_asset_ids.append(asset_id)
 
+  def _initialize_semantic_mappings(self):
+    """初始化语义标识与标签文本之间的映射关系"""
+    # 获取当前语言的标签文本
+    all_text = self._tr_all.get()
+    background_tag = self._tr_background.get()
+    character_tag = self._tr_character.get()
+    other_tag = self._tr_other.get()
+    
+    # 初始化语义映射关系
+    self.tag_text_to_semantic.clear()
+    self.semantic_to_tag_text.clear()
+    
+    # 添加预设标签的语义映射
+    self.tag_text_to_semantic[all_text] = "all"
+    self.semantic_to_tag_text["all"] = all_text
+    self.tag_text_to_semantic[background_tag] = "background"
+    self.semantic_to_tag_text["background"] = background_tag
+    self.tag_text_to_semantic[character_tag] = "character"
+    self.semantic_to_tag_text["character"] = character_tag
+    self.tag_text_to_semantic[other_tag] = "other"
+    self.semantic_to_tag_text["other"] = other_tag
+    
+  def _clean_and_normalize_tags_dict(self, tags_dict: dict) -> dict[str, set[str]]:
+    """清理和规范化标签字典，确保只包含语义标识
+    
+    Args:
+        tags_dict: 待清理的标签字典，格式为{asset_id: tags}
+        
+    Returns:
+        清理后的标签字典，格式为{asset_id: set[str]}
+    """
+    cleaned_dict = {}
+    
+    for asset_id, tags in tags_dict.items():
+      # 确保是集合类型
+      if isinstance(tags, set):
+        tag_set = tags
+      else:
+        tag_set = set(tags) if isinstance(tags, (list, set)) else {tags}
+      
+      cleaned_tags = set()
+      for tag in tag_set:
+        # 如果标签是显示文本，转换为语义标识
+        if tag in self.tag_text_to_semantic:
+          cleaned_tags.add(self.tag_text_to_semantic[tag])
+        else:
+          # 已经是语义标识或自定义标签，直接使用
+          cleaned_tags.add(tag)
+      
+      if cleaned_tags:
+        cleaned_dict[asset_id] = cleaned_tags
+    
+    return cleaned_dict
+    
+  def _translate_tags(self, tags: set[str]) -> set[str]:
+    """将语义标识转换为当前语言的显示文本
+    
+    Args:
+        tags: 语义标识集合
+        
+    Returns:
+        翻译后的标签显示文本集合
+    """
+    translated_tags = set()
+    
+    for tag in sorted(tags):
+      # 优先检查是否是语义标识
+      if tag in self.semantic_to_tag_text:
+        # 使用当前语言的翻译文本
+        translated_tags.add(self.semantic_to_tag_text[tag])
+      else:
+        # 自定义标签保持原样
+        translated_tags.add(tag)
+    
+    return translated_tags
+
   def load_tags(self):
     """从设置字典中加载标签并统一合并归类"""
     settings = SettingsDict.instance()
@@ -338,18 +414,14 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     self.assets_by_tag = OrderedDict()
     # 从assetmanager获取所有素材
     asset_manager = AssetManager.get_instance()
-    # 首先根据素材类型进行分类并建立预设标签的映射关系
-    # 初始化预设标签的语义映射
+    # 初始化语义映射关系
+    self._initialize_semantic_mappings()
+    
+    # 获取当前语言的标签文本
     background_tag = self._tr_background.get()
     character_tag = self._tr_character.get()
     other_tag = self._tr_other.get()
-    # 保存语义映射关系
-    self.tag_text_to_semantic[background_tag] = "background"
-    self.tag_text_to_semantic[character_tag] = "character"
-    self.tag_text_to_semantic[other_tag] = "other"
-    self.semantic_to_tag_text["background"] = background_tag
-    self.semantic_to_tag_text["character"] = character_tag
-    self.semantic_to_tag_text["other"] = other_tag
+    
     # 根据素材类型自动分类
     for asset_id in self.all_asset_ids:
       try:
@@ -371,8 +443,12 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
             # 检查是否有自定义标签设置
             has_custom_tags = asset_id in tags_dict and tags_dict[asset_id]
             # 添加到对应标签的素材映射
-            # 即使有自定义标签，也添加到预设标签的映射中，以便在预设标签下也能找到该素材
-            self.assets_by_tag[category_tag][asset_id] = asset
+            # 确保标签存在于assets_by_tag中
+            if category_tag not in self.assets_by_tag:
+              self.assets_by_tag[category_tag] = (None, {})
+            # 添加资产到映射
+            _, asset_dict = self.assets_by_tag[category_tag]
+            asset_dict[asset_id] = asset
             # 自动为资产添加类型标签，但仅在没有自定义标签的情况下
             if not has_custom_tags:
               if asset_id not in tags_dict:
@@ -382,28 +458,8 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       except Exception:
         continue
 
-    # 处理用户自定义标签 - 首先清理和规范化标签字典
-    cleaned_tags_dict = {}
-    for asset_id, tags in tags_dict.items():
-      cleaned_tags = set()
-      # 确保tags是集合类型
-      tag_set = set(tags) if isinstance(tags, (list, set)) else {tags}
-
-      for tag in tag_set:
-        # 检查标签是否是显示文本，如果是则转换为语义标识
-        if tag in self.tag_text_to_semantic:
-          # 是显示文本，转换为语义标识
-          semantic_tag = self.tag_text_to_semantic[tag]
-          cleaned_tags.add(semantic_tag)
-        elif tag in self.semantic_to_tag_text or not tag in self.tag_text_to_semantic:
-          # 已经是语义标识或自定义标签，直接使用
-          cleaned_tags.add(tag)
-
-      if cleaned_tags:
-        cleaned_tags_dict[asset_id] = cleaned_tags
-
-    # 使用清理后的标签字典更新tags_dict
-    tags_dict = cleaned_tags_dict
+    # 清理和规范化标签字典
+    tags_dict = self._clean_and_normalize_tags_dict(tags_dict)
 
     # 现在处理标签到素材的映射
     for asset_id, tags in tags_dict.items():
@@ -484,25 +540,13 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
 
   def update_tags_list(self):
     """更新标签列表显示，建立语义映射关系，同时显示标签对应的素材个数"""
-    # 获取"全部"文本，但不作为标签处理
-    all_text = self._tr_all.get()
-    # 确保预定义标签的映射关系存在（用于语言切换）
-    background_text = self._tr_background.get()
-    character_text = self._tr_character.get()
-    other_text = self._tr_other.get()
-    # 添加"全部"标签的语义映射（用于语言切换）
-    self.tag_text_to_semantic[all_text] = "all"
-    self.semantic_to_tag_text["all"] = all_text
-    self.tag_text_to_semantic[background_text] = "background"
-    self.semantic_to_tag_text["background"] = background_text
-    self.tag_text_to_semantic[character_text] = "character"
-    self.semantic_to_tag_text["character"] = character_text
-    self.tag_text_to_semantic[other_text] = "other"
-    self.semantic_to_tag_text["other"] = other_text
+    # 初始化语义映射关系
+    self._initialize_semantic_mappings()
     self.ui.categoriesListWidget.clear()
 
     # 添加一个特殊的"全部"列表项（默认选中），这不是一个真正的标签
     all_count = len(self.all_asset_ids)
+    all_text = self._tr_all.get()
     all_item = QListWidgetItem(f"{all_text} ({all_count})")
     font = all_item.font()
     font.setBold(True)
@@ -526,41 +570,13 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     """获取标签字典，并确保只包含语义标识"""
     settings = SettingsDict.instance()
     tags_dict = settings.get(self.SETTINGS_KEY_TAGS, {})
-    # 确保返回的是dict[str, set[str]]格式，并清理显示文本标签
-    result = {}
-    for asset_name, tags in tags_dict.items():
-      # 确保是集合类型
-      if isinstance(tags, set):
-        tag_set = set(tags)
-      else:
-        tag_set = set(tags)
-      # 清理集合中的显示文本标签，只保留语义标识
-      cleaned_tags = set()
-      for tag in tag_set:
-        # 如果标签是显示文本，找到对应的语义标识
-        if tag in self.tag_text_to_semantic:
-          cleaned_tags.add(self.tag_text_to_semantic[tag])
-        else:
-          # 已经是语义标识或自定义标签
-          cleaned_tags.add(tag)
-      result[asset_name] = cleaned_tags
-
-    return result
+    # 使用通用函数清理和规范化标签字典
+    return self._clean_and_normalize_tags_dict(tags_dict)
 
   def save_tags_dict(self, tags_dict: dict[str, set[str]]):
     """保存标签字典，并确保只保存语义标识"""
-    # 清理标签字典，确保只保存语义标识而不是显示文本
-    cleaned_dict = {}
-    for asset_name, tags in tags_dict.items():
-      cleaned_tags = set()
-      for tag in tags:
-        # 如果标签是显示文本，找到对应的语义标识
-        if tag in self.tag_text_to_semantic:
-          cleaned_tags.add(self.tag_text_to_semantic[tag])
-        else:
-          # 已经是语义标识或自定义标签
-          cleaned_tags.add(tag)
-      cleaned_dict[asset_name] = cleaned_tags
+    # 使用通用函数清理和规范化标签字典
+    cleaned_dict = self._clean_and_normalize_tags_dict(tags_dict)
     settings = SettingsDict.instance()
     settings[self.SETTINGS_KEY_TAGS] = cleaned_dict
 
@@ -809,16 +825,8 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     # 加载标签
     tags_dict = self.get_tags_dict()
     asset_tags = tags_dict.get(asset_id, set())
-    # 转换标签为翻译后的文本，确保每个标签只显示一次
-    translated_tags = set()
-    for tag in sorted(asset_tags):
-      # 优先检查是否是语义标识
-      if tag in self.semantic_to_tag_text:
-        # 使用当前语言的翻译文本
-        translated_tags.add(self.semantic_to_tag_text[tag])
-      else:
-        # 自定义标签保持原样
-        translated_tags.add(tag)
+    # 转换标签为翻译后的文本
+    translated_tags = self._translate_tags(asset_tags)
     # 创建标签按钮 - 使用自定义的ElidedPushButton类来实现文本溢出控制
     tags_text = ", ".join(sorted(translated_tags))
     no_tags_text = self._tr_no_tags.get()
@@ -1103,14 +1111,8 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       return
 
     asset_tags = tags_dict.get(asset_id, set())
-
-    translated_tags = set()
-    for tag in sorted(asset_tags):
-      if tag in self.semantic_to_tag_text:
-        translated_tags.add(self.semantic_to_tag_text[tag])
-      else:
-        translated_tags.add(tag)
-
+    # 使用通用函数翻译标签
+    translated_tags = self._translate_tags(asset_tags)
     tags_text = ", ".join(sorted(translated_tags))
 
     # 尝试从tag_buttons字典中获取按钮

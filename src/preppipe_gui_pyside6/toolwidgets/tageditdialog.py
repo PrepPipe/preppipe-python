@@ -110,12 +110,8 @@ class TagEditDialog(QDialog):
       tags_dict = self.asset_browser.get_tags_dict()
       asset_tags = tags_dict.get(self.asset_id, set())
 
-      display_tags = []
-      for tag in asset_tags:
-        if tag in self.asset_browser.semantic_to_tag_text:
-          display_tags.append(self.asset_browser.semantic_to_tag_text[tag])
-        else:
-          display_tags.append(tag)
+      # 使用assetbrowser中的函数转换标签
+      display_tags = list(self.asset_browser._translate_tags(asset_tags))
 
       for tag in sorted(display_tags):
         self.add_tag_block(tag)
@@ -141,7 +137,10 @@ class TagEditDialog(QDialog):
       """处理标签删除事件"""
       tags_dict = self.asset_browser.get_tags_dict()
       if self.asset_id in tags_dict:
-        semantic_tag = self.asset_browser.tag_text_to_semantic.get(tag_text, tag_text)
+        # 获取标签的语义标识
+        semantic_tag = tag_text
+        if tag_text in self.asset_browser.tag_text_to_semantic:
+          semantic_tag = self.asset_browser.tag_text_to_semantic[tag_text]
         if semantic_tag in tags_dict[self.asset_id]:
           tags_dict[self.asset_id].remove(semantic_tag)
 
@@ -162,11 +161,10 @@ class TagEditDialog(QDialog):
           self.edit_line.setFocus()
           return
 
+        # 获取新标签的语义标识
         new_semantic = new_text
-        for tag_text, semantic in self.asset_browser.tag_text_to_semantic.items():
-          if tag_text == new_text:
-            new_semantic = semantic
-            break
+        if new_text in self.asset_browser.tag_text_to_semantic:
+          new_semantic = self.asset_browser.tag_text_to_semantic[new_text]
 
         tags_dict = self.asset_browser.get_tags_dict()
         if new_semantic in tags_dict[self.asset_id]:
