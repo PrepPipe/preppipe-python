@@ -8,6 +8,8 @@ from ..componentwidgets.flowlayout import FlowLayout
 from preppipe.util.imagepack import ImagePack
 from ..util.tagmanager import TagManager
 
+TR_gui_tageditdialog=TranslationDomain("gui_tageditdialog")
+
 class TagBlock(QWidget):
     """自定义标签块组件"""
     deleted = Signal(str)  # 标签被删除时发出信号
@@ -36,6 +38,21 @@ class TagBlock(QWidget):
 
 class TagEditDialog(QDialog):
     """标签编辑对话框，用于编辑素材的标签"""
+    _tr_tag_edit_hint = TR_gui_tageditdialog.tr("tageditdialog_tag_edit_hint",
+        en="Click tag to edit, press Delete to remove",
+        zh_cn="单击标签编辑，按Delete键删除",
+        zh_hk="單擊標籤編輯，按Delete鍵删除",
+    )
+    _tr_tag_edit_title = TR_gui_tageditdialog.tr("tageditdialog_tag_edit_title",
+        en="Edit Tags",
+        zh_cn="编辑标签",
+        zh_hk="編輯標籤",
+    )
+    _tr_confirm = TR_gui_tageditdialog.tr("tageditdialog_confirm",
+        en="Confirm",
+        zh_cn="确定",
+        zh_hk="確定",
+    )
     def __init__(self, asset_id, asset_browser, parent=None):
       super().__init__(parent)
       self.asset_id = asset_id
@@ -54,7 +71,8 @@ class TagEditDialog(QDialog):
               asset_name = name_obj.get()
           elif name_obj:
               asset_name = name_obj
-      self.setWindowTitle(f"{self.asset_browser.tag_manager.get_tr_tag_edit_title()}：{asset_name}")
+      title_text = self._tr_tag_edit_title.get() if isinstance(self._tr_tag_edit_title, Translatable) else self._tr_tag_edit_title
+      self.setWindowTitle(f"{title_text}：{asset_name}")
       self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
       self.setMinimumWidth(400)
 
@@ -73,12 +91,15 @@ class TagEditDialog(QDialog):
 
       self.edit_line = QLineEdit()
       self.edit_line.setStyleSheet(StyleManager.get_style('edit_line'))
+      # 设置placeholder文本而不是单独的标签
+      hint_text = self._tr_tag_edit_hint.get() if isinstance(self._tr_tag_edit_hint, Translatable) else self._tr_tag_edit_hint
+      self.edit_line.setPlaceholderText(hint_text)
       # 这里仍使用asset_browser中的变量，因为它与界面交互相关
       self.edit_line.setFixedWidth(200)
       edit_line_layout.addWidget(self.edit_line)
       edit_line_layout.addStretch()
       main_layout.addWidget(edit_line_container)
-
+      
       self.tags_container = QWidget()
       self.tags_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
       self.tags_layout = FlowLayout(self.tags_container)
@@ -143,7 +164,7 @@ class TagEditDialog(QDialog):
       """处理标签删除事件"""
       # 获取标签的语义标识
       semantic_tag = self.tag_manager.get_tag_semantic(tag_text)
-      
+
       # 从资产中移除标签
       if self.tag_manager.remove_tag_from_asset(self.asset_id, semantic_tag):
         self.has_edited = True
@@ -154,7 +175,8 @@ class TagEditDialog(QDialog):
       """处理编辑框回车事件"""
       new_text = self.edit_line.text().strip()
       if new_text:
-        if new_text == self.asset_browser.tag_manager.get_tr_all():
+        all_text = self.tag_manager.get_tr_all()
+        if new_text == all_text:
           self.edit_line.clear()
           self.edit_line.setFocus()
           return

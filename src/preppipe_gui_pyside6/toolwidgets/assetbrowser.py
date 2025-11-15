@@ -21,7 +21,10 @@ from ..util.tagmanager import TagManager
 from .tageditdialog import TagEditDialog
 from preppipe_gui_pyside6.util.asset_widget_style import StyleManager
 
-TR_gui_assetbrowser=TranslationDomain("gui_assetbrowser")
+TR_gui_tool_assetbrowser = TranslationDomain("gui_tool_assetbrowser")
+
+# 常量定义，保持与TranslationDomain一致
+TRANSLATION_DOMAIN = "gui_tool_assetbrowser"
 
 class ElidedWidgetBase:
     """文本省略处理的基础类（mixin类）
@@ -150,29 +153,36 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
   all_asset_ids: list[str]
 
   # 工具名称和提示信息
-  _tr_toolname_assetbrowser = TR_gui_assetbrowser.tr("toolname_assetbrowser",
+  _tr_toolname_assetbrowser = TR_gui_tool_assetbrowser.tr("toolname_assetbrowser",
     en="Asset Browser",
     zh_cn="素材浏览器",
     zh_hk="素材瀏覽器",
   )
 
-  _tr_tooltip_assetbrowser = TR_gui_assetbrowser.tr("tooltip_assetbrowser",
+  _tr_tooltip_assetbrowser = TR_gui_tool_assetbrowser.tr("tooltip_assetbrowser",
     en="Browse and manage your assets with thumbnails",
     zh_cn="浏览和管理带有缩略图的素材",
     zh_hk="瀏覽和管理帶有縮圖的素材",
   )
 
   # 标签编辑相关提示
-  _tr_tag_edit_hint = TR_gui_assetbrowser.tr("tag_edit_hint",
+  _tr_tag_edit_hint = TR_gui_tool_assetbrowser.tr("tag_edit_hint",
     en="Click tag to edit, press Delete to remove",
     zh_cn="单击标签编辑，按Delete键删除",
     zh_hk="單擊標籤編輯，按Delete鍵删除",
   )
 
-  _tr_tag_edit_current_hint = TR_gui_assetbrowser.tr("tag_edit_current_hint",
+  _tr_tag_edit_current_hint = TR_gui_tool_assetbrowser.tr("tag_edit_current_hint",
     en="Enter to add new tag, click tag to delete",
     zh_cn="Enter添加新标签，点击标签删除",
     zh_hk="Enter添加新標籤，點擊標籤刪除",
+  )
+
+  # "无标签"提示文本
+  _tr_no_tags = TR_gui_tool_assetbrowser.tr("tagmanager_no_tags",
+    en="No tags",
+    zh_cn="无标签",
+    zh_hk="無標籤",
   )
 
   def __init__(self, parent: QWidget):
@@ -205,7 +215,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     self._update_theme_styles()
     # 监听系统主题变化通过重写changeEvent方法
     # 绑定文本
-    self.bind_text(self.ui.categoryTitleLabel.setText, TR_gui_assetbrowser.tr("select_tag",
+    self.bind_text(self.ui.categoryTitleLabel.setText, TR_gui_tool_assetbrowser.tr("select_tag",
       en="Select a tag",
       zh_cn="选择一个标签",
       zh_hk="選擇一個標籤",
@@ -389,7 +399,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     settings[self.SETTINGS_KEY_CURRENT_TAG] = semantic_tag
 
     self.current_tag = tag_text
-    self.ui.categoryTitleLabel.setText(tag_text)
+    self.ui.categoryTitleLabel.setText(self.current_tag)
 
     # 选中对应的标签项
     # 查找与当前标签匹配的列表项
@@ -685,7 +695,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     translated_tags = self.tag_manager.translate_tags(asset_tags)
     # 创建标签按钮 - 使用自定义的ElidedPushButton类来实现文本溢出控制
     tags_text = ", ".join(sorted(translated_tags))
-    no_tags_text = self.tag_manager.get_tr_no_tags()
+    no_tags_text = self._tr_no_tags.get() if isinstance(self._tr_no_tags, Translatable) else self._tr_no_tags
     tags_button = ElidedPushButton(tags_text if tags_text else no_tags_text, thumbnail_container)
     tags_button.setObjectName(f"tags_button_{asset_id}")
     # 使用标签字体作为标签按钮的字体
@@ -971,7 +981,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     # 尝试从tag_buttons字典中获取按钮
     if asset_id in self.tag_buttons:
       for button in self.tag_buttons[asset_id]:
-        button._full_text = tags_text if tags_text else self.tag_manager.get_tr_no_tags()
+        button._full_text = tags_text if tags_text else self._tr_no_tags.get() if isinstance(self._tr_no_tags, Translatable) else self._tr_no_tags
         if hasattr(button, 'resizeEvent'):
           button.resizeEvent(None)
     else:
@@ -980,7 +990,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       if thumbnail_widget:
         tags_button = thumbnail_widget.findChild(QPushButton, f"tags_button_{asset_id}")
         if tags_button:
-          tags_button._full_text = tags_text if tags_text else self.tag_manager.get_tr_no_tags()
+          tags_button._full_text = tags_text if tags_text else self._tr_no_tags.get() if isinstance(self._tr_no_tags, Translatable) else self._tr_no_tags
           if hasattr(tags_button, 'resizeEvent'):
             tags_button.resizeEvent(None)
 

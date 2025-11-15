@@ -5,10 +5,7 @@ from typing import Dict, Set, Optional
 from ..settingsdict import SettingsDict
 from preppipe.language import TranslationDomain, Translatable
 
-
-# 创建翻译域
 TR_gui_util_tagmanager = TranslationDomain("gui_util_tagmanager")
-
 
 class TagManager:
     """标签管理器，采用单例模式实现
@@ -47,36 +44,17 @@ class TagManager:
         zh_cn="其他",
         zh_hk="其他",
     )
-    _tr_no_tags = TR_gui_util_tagmanager.tr("tagmanager_no_tags",
-        en="No tags",
-        zh_cn="无标签",
-        zh_hk="無標籤",
-    )
-    _tr_tag_edit_hint = TR_gui_util_tagmanager.tr("tagmanager_tag_edit_hint",
-        en="Enter tags, separated by commas",
-        zh_cn="输入标签，用逗号分隔",
-        zh_hk="輸入標籤，用逗號分隔",
-    )
-    _tr_tag_edit_title = TR_gui_util_tagmanager.tr("tagmanager_tag_edit_title",
-        en="Edit Tags",
-        zh_cn="编辑标签",
-        zh_hk="編輯標籤",
-    )
-    _tr_confirm = TR_gui_util_tagmanager.tr("tagmanager_confirm",
-        en="Confirm",
-        zh_cn="确定",
-        zh_hk="確定",
-    )
     _tr_tag_edit_current_hint = TR_gui_util_tagmanager.tr("tagmanager_tag_edit_current_hint",
-        en="Current tags",
-        zh_cn="当前标签",
-        zh_hk="當前標籤",
+        en="Current tags:",
+        zh_cn="当前标签：",
+        zh_hk="當前標籤：",
     )
     _tr_select_tag = TR_gui_util_tagmanager.tr("tagmanager_select_tag",
-        en="Select a tag",
+        en="Select tag",
         zh_cn="选择标签",
         zh_hk="選擇標籤",
     )
+
 
     def __new__(cls):
         """单例模式的创建方法"""
@@ -111,7 +89,7 @@ class TagManager:
     def _add_tag_mapping(self, translatable_obj, semantic):
         """
         添加标签映射，遍历翻译对象的所有可能翻译
-        
+
         Args:
             translatable_obj: Translatable类型的翻译对象
             semantic: 对应的语义标识
@@ -121,7 +99,7 @@ class TagManager:
             # 遍历所有可能的翻译字符串，为每个翻译都建立映射
             for candidate_text in translatable_obj.get_all_candidates():
                 self.tag_text_to_semantic[candidate_text] = semantic
-        
+
         # 保留原始翻译对象以便正确显示
         self.semantic_to_tag_text[semantic] = translatable_obj
 
@@ -353,21 +331,9 @@ class TagManager:
         """获取"其他"标签的翻译文本"""
         return self._tr_other.get() if isinstance(self._tr_other, Translatable) else self._tr_other
 
-    def get_tr_no_tags(self) -> str:
-        """获取"无标签"的翻译文本"""
-        return self._tr_no_tags.get() if isinstance(self._tr_no_tags, Translatable) else self._tr_no_tags
 
-    def get_tr_tag_edit_hint(self) -> str:
-        """获取标签编辑提示的翻译文本"""
-        return self._tr_tag_edit_hint.get() if isinstance(self._tr_tag_edit_hint, Translatable) else self._tr_tag_edit_hint
 
-    def get_tr_tag_edit_title(self) -> str:
-        """获取标签编辑标题的翻译文本"""
-        return self._tr_tag_edit_title.get() if isinstance(self._tr_tag_edit_title, Translatable) else self._tr_tag_edit_title
 
-    def get_tr_confirm(self) -> str:
-        """获取"确定"按钮的翻译文本"""
-        return self._tr_confirm.get() if isinstance(self._tr_confirm, Translatable) else self._tr_confirm
 
     def get_tr_tag_edit_current_hint(self) -> str:
         """获取当前标签提示的翻译文本"""
