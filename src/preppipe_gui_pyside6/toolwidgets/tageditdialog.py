@@ -6,6 +6,7 @@ from preppipe.assets.assetmanager import AssetManager
 from preppipe_gui_pyside6.util.asset_widget_style import StyleManager
 from ..componentwidgets.flowlayout import FlowLayout
 from preppipe.util.imagepack import ImagePack
+from ..util.tagmanager import TagManager
 
 class TagBlock(QWidget):
     """自定义标签块组件"""
@@ -40,6 +41,7 @@ class TagEditDialog(QDialog):
       self.asset_id = asset_id
       self.asset_browser = asset_browser
       self.has_edited = False  # 编辑状态标志
+      self.tag_manager = TagManager.get_instance()
       # 获取素材名称
       asset_manager = AssetManager.get_instance()
       asset = asset_manager.get_asset(asset_id)
@@ -52,14 +54,14 @@ class TagEditDialog(QDialog):
               asset_name = name_obj.get()
           elif name_obj:
               asset_name = name_obj
-      self.setWindowTitle(f"{self.asset_browser._tr_tag_edit_title.get()}：{asset_name}")
+      self.setWindowTitle(f"{self.asset_browser.tag_manager.get_tr_tag_edit_title()}：{asset_name}")
       self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
       self.setMinimumWidth(400)
 
       main_layout = QVBoxLayout(self)
       main_layout.setContentsMargins(16, 16, 16, 16)
       main_layout.setSpacing(16)
-      
+
       # 启用布局的大小约束以确保对话框可以根据内容调整大小
       main_layout.setSizeConstraint(QLayout.SetMinimumSize)
       main_layout.setSizeConstraint(QLayout.SetDefaultConstraint)
@@ -71,7 +73,7 @@ class TagEditDialog(QDialog):
 
       self.edit_line = QLineEdit()
       self.edit_line.setStyleSheet(StyleManager.get_style('edit_line'))
-      self.edit_line.setPlaceholderText(self.asset_browser._tr_tag_edit_current_hint.get())
+      # 这里仍使用asset_browser中的变量，因为它与界面交互相关
       self.edit_line.setFixedWidth(200)
       edit_line_layout.addWidget(self.edit_line)
       edit_line_layout.addStretch()
@@ -107,11 +109,9 @@ class TagEditDialog(QDialog):
           item.widget().deleteLater()
         del item
 
-      tags_dict = self.asset_browser.get_tags_dict()
-      asset_tags = tags_dict.get(self.asset_id, set())
-
-      # 使用assetbrowser中的函数转换标签
-      display_tags = list(self.asset_browser._translate_tags(asset_tags))
+      # 使用标签管理器获取资产的标签并转换为显示文本
+      asset_tags = self.tag_manager.get_asset_tags(self.asset_id)
+      display_tags = list(self.tag_manager.translate_tags(asset_tags))
 
       for tag in sorted(display_tags):
         self.add_tag_block(tag)
@@ -129,52 +129,48 @@ class TagEditDialog(QDialog):
 
     def update_completer_tags(self):
       """更新补全的标签列表"""
-      all_tags = set(self.asset_browser.assets_by_tag.keys())
-      tags_model = QStringListModel(sorted(all_tags))
+      # 使用标签管理器获取所有可用标签
+      tags_dict = self.tag_manager.get_tags_dict()
+      all_tags = set()
+      for tags in tags_dict.values():
+        all_tags.update(tags)
+      # 转换为显示文本
+      display_tags = self.tag_manager.translate_tags(all_tags)
+      tags_model = QStringListModel(sorted(display_tags))
       self.completer.setModel(tags_model)
 
     def on_tag_deleted(self, tag_text):
       """处理标签删除事件"""
-      tags_dict = self.asset_browser.get_tags_dict()
-      if self.asset_id in tags_dict:
-        # 获取标签的语义标识
-        semantic_tag = tag_text
-        if tag_text in self.asset_browser.tag_text_to_semantic:
-          semantic_tag = self.asset_browser.tag_text_to_semantic[tag_text]
-        if semantic_tag in tags_dict[self.asset_id]:
-          tags_dict[self.asset_id].remove(semantic_tag)
-
-          if not tags_dict[self.asset_id]:
-            del tags_dict[self.asset_id]
-
-          self.has_edited = True
-          self.asset_browser.save_tags_dict(tags_dict)
-          # 使用QTimer延迟更新对话框大小，确保Qt有足够时间完成内部布局计算
-          QTimer.singleShot(0, self._adjust_dialog_size)
+      # 获取标签的语义标识
+      semantic_tag = self.tag_manager.get_tag_semantic(tag_text)
+      
+      # 从资产中移除标签
+      if self.tag_manager.remove_tag_from_asset(self.asset_id, semantic_tag):
+        self.has_edited = True
+        # 使用QTimer延迟更新对话框大小，确保Qt有足够时间完成内部布局计算
+        QTimer.singleShot(0, self._adjust_dialog_size)
 
     def on_edit_return_pressed(self):
       """处理编辑框回车事件"""
       new_text = self.edit_line.text().strip()
       if new_text:
-        if new_text == self.asset_browser._tr_all.get():
+        if new_text == self.asset_browser.tag_manager.get_tr_all():
           self.edit_line.clear()
           self.edit_line.setFocus()
           return
 
         # 获取新标签的语义标识
-        new_semantic = new_text
-        if new_text in self.asset_browser.tag_text_to_semantic:
-          new_semantic = self.asset_browser.tag_text_to_semantic[new_text]
+        new_semantic = self.tag_manager.get_tag_semantic(new_text)
 
-        tags_dict = self.asset_browser.get_tags_dict()
-        if new_semantic in tags_dict[self.asset_id]:
+        # 检查标签是否已存在
+        if new_semantic in self.tag_manager.get_asset_tags(self.asset_id):
           self.edit_line.clear()
           self.edit_line.setFocus()
           return
 
-        tags_dict[self.asset_id].add(new_semantic)
+        # 添加标签到资产
+        self.tag_manager.add_tag_to_asset(self.asset_id, new_semantic)
         self.has_edited = True
-        self.asset_browser.save_tags_dict(tags_dict)
         self.add_tag_block(new_text)
 
       self.edit_line.clear()
@@ -209,7 +205,7 @@ class TagEditDialog(QDialog):
       """处理对话框确认事件"""
       self.apply_changes()
       super().accept()
-      
+
     def _adjust_dialog_size(self):
       """调整对话框大小的辅助方法，用于延迟调用以确保正确计算"""
       # 先更新布局和几何信息
