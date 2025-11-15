@@ -25,7 +25,7 @@ class TagBlock(QWidget):
       self.label.setFont(font)
       layout.addWidget(self.label)
 
-      self.setStyleSheet(StyleManager.get_tag_block_style())
+      StyleManager.apply_tag_block_style(self)
       self.setCursor(Qt.PointingHandCursor)
 
     def mousePressEvent(self, event):

@@ -13,6 +13,7 @@ class StyleManager:
       'selected_hover': "background-color: rgba(190, 205, 235, 1.0); border: 2px solid #3a80d2; border-radius: 8px; padding: 1px;",
       'name_color': '#000000',
       'image_background': '#f0f0f0',
+      'image_label': "border: none; background-color: {image_background};",
       'tag_block': {
         'normal': "QWidget { background-color: rgba(220, 220, 220, 0.95); border: none; border-radius: 12px; padding: 4px 8px; }",
         'hover': "QWidget:hover { background-color: rgba(200, 200, 200, 0.95); border: none; }"
@@ -33,6 +34,7 @@ class StyleManager:
       'selected_hover': "background-color: rgba(100, 100, 100, 1.0); border: none; border-radius: 8px; padding: 2px;",
       'name_color': '#ffffff',
       'image_background': '#3a3a3a',
+      'image_label': "border: none; background-color: {image_background};",
       'tag_block': {
         'normal': "QWidget { background-color: rgba(65, 65, 65, 0.95); border: none; border-radius: 12px; padding: 4px 8px; }",
         'hover': "QWidget:hover { background-color: rgba(85, 85, 85, 0.95); border: none; }"
@@ -75,6 +77,18 @@ class StyleManager:
       style = style.replace('{height}', str(height))
       styles.append(style)
     return "\n".join(styles)
+    
+  @staticmethod
+  def apply_tags_button_style(button, height, palette=None):
+    """应用标签按钮样式到按钮部件
+    
+    Args:
+        button: 要应用样式的按钮部件
+        height: 按钮高度
+        palette: 调色板，如果为None则使用当前应用调色板
+    """
+    style = StyleManager.get_tags_button_style(height, palette)
+    button.setStyleSheet(style)
 
   @staticmethod
   def get_tag_block_style(palette=None):
@@ -82,6 +96,17 @@ class StyleManager:
     theme = StyleManager.detect_theme(palette)
     tag_block_styles = StyleManager._styles[theme].get('tag_block', {})
     return "\n".join(tag_block_styles.values())
+    
+  @staticmethod
+  def apply_tag_block_style(widget, palette=None):
+    """应用标签块样式到部件
+    
+    Args:
+        widget: 要应用样式的部件
+        palette: 调色板，如果为None则使用当前应用调色板
+    """
+    style = StyleManager.get_tag_block_style(palette)
+    widget.setStyleSheet(style)
 
   @staticmethod
   def apply_style(widget, is_selected=False, is_hover=False, palette=None):
@@ -99,9 +124,36 @@ class StyleManager:
   @staticmethod
   def apply_label_style(label, palette=None):
     """应用样式到标签"""
+    # 使用通用样式应用方法
+    StyleManager.apply_style_to_widget(label, 'name_color', palette=palette)
+  
+  @staticmethod
+  def apply_image_label_style(label, palette=None):
+    """应用样式到图片标签"""
     theme = StyleManager.detect_theme(palette)
-    color = StyleManager._styles[theme].get('name_color', '#000000')
+    image_background = StyleManager._styles[theme].get('image_background', '#f0f0f0')
+    # 使用通用样式应用方法并传递背景色参数
+    StyleManager.apply_style_to_widget(label, 'image_label', palette=palette, image_background=image_background)
+  
+  @staticmethod
+  def apply_style_to_widget(widget, style_name, palette=None, **kwargs):
+    """通用样式应用方法，减少代码重复
     
-    # 直接设置标签样式
-    style = f"color: {color}; padding: 4px 0; border: none; background-color: transparent;"
-    label.setStyleSheet(style)
+    Args:
+        widget: 要应用样式的部件
+        style_name: 样式名称
+        palette: 调色板，如果为None则使用当前应用调色板
+        **kwargs: 用于样式字符串格式化的额外参数
+    """
+    theme = StyleManager.detect_theme(palette)
+    
+    # 特殊处理name_color样式，因为它需要构建完整的样式字符串
+    if style_name == 'name_color':
+        color = StyleManager._styles[theme].get('name_color', '#000000')
+        style = f"color: {color}; padding: 4px 0; border: none; background-color: transparent;"
+    else:
+        template = StyleManager.get_style(style_name, palette)
+        # 应用额外参数进行格式化
+        style = template.format(**kwargs)
+    
+    widget.setStyleSheet(style)
