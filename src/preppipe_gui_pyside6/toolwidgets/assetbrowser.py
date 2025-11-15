@@ -637,7 +637,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       if thumbnail_path:
         # 直接使用缓存
         self.thumbnail_cache[asset_id] = thumbnail_path
-        self.add_thumbnail_to_flow(asset_id, thumbnail_path)
+        self.add_thumbnail_to_flow(asset_id)
       else:
         # 异步生成缩略图
         worker = create_thumbnail_worker(asset_id, cache_dir)
@@ -835,7 +835,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     tags_button.setFixedHeight(tag_button_height)
     # 使用样式管理器设置按钮样式
     StyleManager.apply_tags_button_style(tags_button, tag_button_height)
-    tags_button.clicked.connect(lambda: self.open_tag_edit_dialog(asset_id, tags_button))
+    tags_button.clicked.connect(lambda: self.on_tags_button_clicked(asset_id, tags_button))
     # 存储标签按钮的asset_id，用于标识和后续更新
     tags_button._asset_id = asset_id
     # 存储按钮引用
@@ -867,7 +867,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
 
     return thumbnail_container
 
-  def add_thumbnail_to_flow(self, asset_id: str, thumbnail_path: str):
+  def add_thumbnail_to_flow(self, asset_id: str):
     """将缩略图添加到流布局中，使用根据容器大小动态计算的尺寸"""
     # 计算最佳卡片大小
     container_width = self.ui.thumbnailsContainerWidget.width()
@@ -941,7 +941,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       # 缓存缩略图路径
       self.thumbnail_cache[asset_id] = thumbnail_path
       # 添加到流布局
-      self.add_thumbnail_to_flow(asset_id, thumbnail_path)
+      self.add_thumbnail_to_flow(asset_id)
 
       # 如果是最后打开的资源，更新其样式为选中样式
       if self.last_opened_asset_id and self.last_opened_asset_id == asset_id:
@@ -1052,6 +1052,24 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       tooltip=cls._tr_tooltip_assetbrowser,
       widget=cls,
     )
+
+  def on_tags_button_clicked(self, asset_id, button):
+    """处理标签按钮点击事件，先执行选中高亮逻辑，再打开标签编辑对话框"""
+    # 执行与资产卡片点击相同的选中高亮逻辑
+    # 取消之前选中项的高亮
+    if self.last_opened_asset_id!=asset_id:
+      if self.last_opened_asset_id and self.last_opened_asset_id in self.thumbnail_items:
+        StyleManager.apply_style(self.thumbnail_items[self.last_opened_asset_id], False)
+      # 更新上次打开的资源ID并高亮当前项
+      self.last_opened_asset_id = asset_id
+      StyleManager.apply_style(self.thumbnail_items[asset_id], True)
+      # 特别处理名字子组件
+      for child in self.thumbnail_items[asset_id].findChildren(QLabel):
+        if hasattr(child, '_full_text'):
+          StyleManager.apply_label_style(child)
+
+    # 然后打开标签编辑对话框
+    self.open_tag_edit_dialog(asset_id, button)
 
   def open_tag_edit_dialog(self, asset_id, button=None):
     """打开标签编辑对话框"""
