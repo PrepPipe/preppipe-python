@@ -448,7 +448,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       if self.asset_cards and current_width > 0:
         # 计算最佳卡片大小
         card_width = self._calculate_optimal_card_width(current_width)
-        card_height = int(card_width * 1.2)  # 保持1:1.2的宽高比
+        card_height = int(card_width * 1.2)
 
         # 更新FlowLayout中的项目大小
         self.flow_layout.setItemSize(QSize(card_width, card_height))
@@ -545,8 +545,8 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     image_label.setFixedSize(available_width, available_height)
     # 获取缩略图管理器
     thumbnail_manager = get_thumbnail_manager()
-    # 使用ThumbnailManager获取缩放后的pixmap
-    scaled_pixmap = thumbnail_manager.get_scaled_pixmap(asset_id, available_width, available_height)
+    # 使用ThumbnailManager获取缩放后的pixmap，传递margin_ratio参数以确保与缩略图处理逻辑兼容
+    scaled_pixmap = thumbnail_manager.get_scaled_pixmap(asset_id, available_width, available_height, margin_ratio=0.05)
     # 设置图片并确保居中显示
     image_label.setPixmap(scaled_pixmap)
     # 记录当前尺寸，避免不必要的更新
@@ -646,7 +646,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     # 计算最佳卡片大小
     container_width = self.ui.thumbnailsContainerWidget.width()
     card_width = self._calculate_optimal_card_width(container_width)
-    card_height = int(card_width * 1.2)  # 保持1:1.2的宽高比
+    card_height = int(card_width * 1.5)  # 增加高度，现在为1:1.5的宽高比
     # 创建资产卡片
     asset_card = self._create_asset_card(asset_id, card_width, card_height)
     # 添加到FlowLayout
@@ -683,8 +683,8 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       # 获取缩略图管理器
       thumbnail_manager = get_thumbnail_manager()
 
-      # 使用ThumbnailManager获取缩放后的pixmap
-      scaled_pixmap = thumbnail_manager.get_scaled_pixmap(asset_id, current_width, current_height)
+      # 使用ThumbnailManager获取缩放后的pixmap，传递margin_ratio参数以确保与缩略图处理逻辑兼容
+      scaled_pixmap = thumbnail_manager.get_scaled_pixmap(asset_id, current_width, current_height, margin_ratio=0.05)
       image_label.setPixmap(scaled_pixmap)
 
   def clear_asset_cards(self):
@@ -894,7 +894,6 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     self.load_tags()
 
     if current_semantic:
-      target_text = self.tag_manager.get_tag_display_text(current_semantic)
       for i in range(self.ui.categoriesListWidget.count()):
         item = self.ui.categoriesListWidget.item(i)
         # 直接使用TagListItem的语义标识进行匹配

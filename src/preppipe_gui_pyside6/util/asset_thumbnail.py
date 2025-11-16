@@ -59,7 +59,8 @@ class ThumbnailManager:
     asset_id: str,
     crop_region: tuple[int, int, int, int] | None = None,
     target_size: tuple[int, int] | None = None,
-    use_default_sizes: bool = True
+    use_default_sizes: bool = True,
+    margin_ratio: float = 0.  # 预留空白比例，默认为0.%
   ) -> PIL.Image.Image | None:
     """
     【内部方法】从打包好的图片素材包中基于第一个差分生成缩略图
@@ -69,6 +70,7 @@ class ThumbnailManager:
       crop_region: 截取区域，格式为 (left, top, right, bottom)，None表示使用整个图像
       target_size: 期望的缩略图尺寸，格式为 (width, height)，None表示不调整大小
       use_default_sizes: 是否使用默认尺寸策略（背景512x288，立绘288x512）
+      margin_ratio: 预留空白比例，默认为5%，确保素材与边框有一定间距
 
     Returns:
       PIL.Image.Image: 生成的缩略图，如果无法生成则返回None
@@ -89,46 +91,62 @@ class ThumbnailManager:
       image_wrapper = asset.get_composed_image(0)
       image = image_wrapper.get()
 
+      # 确定最终目标尺寸
       if use_default_sizes:
         pack_type = descriptor.get_image_pack_type()
-
         if pack_type == descriptor.ImagePackType.BACKGROUND:
           final_target_size = self.DEFAULT_BACKGROUND_SIZE
-          if crop_region is not None:
-            image = image.crop(crop_region)
-          image = image.resize(final_target_size, resample=PIL.Image.Resampling.LANCZOS)
-
         elif pack_type == descriptor.ImagePackType.CHARACTER:
           final_target_size = self.DEFAULT_CHARACTER_SIZE
-          bbox_left, bbox_top, bbox_right, bbox_bottom = descriptor.bbox
-
-          # 计算bbox中心点和裁剪区域
-          bbox_center_x = (bbox_left + bbox_right) // 2
-          bbox_center_y = (bbox_top + bbox_bottom) // 2
-          bbox_width = bbox_right - bbox_left
-          bbox_height = bbox_bottom - bbox_top
-          crop_size = max(bbox_width, bbox_height) * 1.5
-
-          # 计算默认裁剪区域
-          crop_left = max(0, int(bbox_center_x - crop_size // 2))
-          crop_top = max(0, int(bbox_center_y - crop_size // 2))
-          crop_right = min(image.width, int(bbox_center_x + crop_size // 2))
-          crop_bottom = min(image.height, int(bbox_center_y + crop_size // 2))
-
-          # 使用用户提供的裁剪区域（如果有）
-          if crop_region is not None:
-            crop_left, crop_top, crop_right, crop_bottom = crop_region
-
-          image = image.crop((crop_left, crop_top, crop_right, crop_bottom))
-          image = image.resize(final_target_size, resample=PIL.Image.Resampling.LANCZOS)
-
+        else:
+          # 其他类型使用默认背景尺寸
+          final_target_size = self.DEFAULT_BACKGROUND_SIZE
       else:
-        # 用户模式
-        if crop_region is not None:
-          image = image.crop(crop_region)
+        final_target_size = target_size
 
-        if target_size is not None:
-          image = image.resize(target_size, resample=PIL.Image.Resampling.LANCZOS)
+      # 应用裁剪区域
+      if crop_region is not None:
+        image = image.crop(crop_region)
+      elif descriptor.get_image_pack_type() == descriptor.ImagePackType.CHARACTER:
+        # 对于角色立绘，默认使用包围盒裁剪
+        bbox_left, bbox_top, bbox_right, bbox_bottom = descriptor.bbox
+        image = image.crop((bbox_left, bbox_top, bbox_right, bbox_bottom))
+
+      # 实现基于目标尺寸的等比例缩放，预留一定空白
+      if final_target_size is not None:
+        # 计算可用绘制区域（减去预留空白）
+        available_width = int(final_target_size[0] * (1 - 2 * margin_ratio))
+        available_height = int(final_target_size[1] * (1 - 2 * margin_ratio))
+
+        # 计算缩放比例，保持宽高比
+        original_width, original_height = image.size
+        scale_x = available_width / original_width
+        scale_y = available_height / original_height
+        scale_factor = min(scale_x, scale_y)  # 使用较小的缩放因子以确保完全可见
+
+        # 计算新的尺寸
+        new_width = int(original_width * scale_factor)
+        new_height = int(original_height * scale_factor)
+
+        # 缩放图片
+        resized_image = image.resize((new_width, new_height), resample=PIL.Image.Resampling.LANCZOS)
+
+        # 创建新的目标尺寸画布，添加预留空白
+        result_image = PIL.Image.new('RGBA', final_target_size, (255, 255, 255, 0))  # 透明背景
+
+        # 计算居中位置（考虑预留空白）
+        paste_x = (final_target_size[0] - new_width) // 2
+        paste_y = (final_target_size[1] - new_height) // 2
+
+        # 将缩放后的图片粘贴到目标画布上
+        result_image.paste(resized_image, (paste_x, paste_y))
+        image = result_image
+      elif use_default_sizes:
+        # 如果没有指定目标尺寸但使用默认尺寸，保持原有逻辑
+        if descriptor.get_image_pack_type() == descriptor.ImagePackType.BACKGROUND:
+          image = image.resize(self.DEFAULT_BACKGROUND_SIZE, resample=PIL.Image.Resampling.LANCZOS)
+        elif descriptor.get_image_pack_type() == descriptor.ImagePackType.CHARACTER:
+          image = image.resize(self.DEFAULT_CHARACTER_SIZE, resample=PIL.Image.Resampling.LANCZOS)
 
       return image
 
@@ -189,9 +207,9 @@ class ThumbnailManager:
     return None
 
   def get_pixmap_for_asset(self, asset_id: str, width: int, height: int,
-                          is_character: bool = False, is_background: bool = False) -> QPixmap:
+                          is_character: bool = False, is_background: bool = False, margin_ratio: float = 0.05) -> QPixmap:
     """
-    【公共API】获取指定资产的QPixmap对象，并根据资产类型和目标尺寸进行缩放
+    【公共API】获取指定资产的QPixmap对象，并根据资产类型和目标尺寸进行缩放，预留一定比例的空白
 
     Args:
       asset_id: 资产的唯一标识符
@@ -199,9 +217,10 @@ class ThumbnailManager:
       height: 目标高度
       is_character: 是否为角色立绘资产，影响缩放策略
       is_background: 是否为背景资产，影响缩放策略
+      margin_ratio: 预留空白比例，默认为5%
 
     Returns:
-      QPixmap: 适用于UI显示的图片对象
+      QPixmap: 适用于UI显示的图片对象，包含预留空白
     """
     # 获取缩略图路径
     thumbnail_path = self.get_or_generate_thumbnail(asset_id)
@@ -209,28 +228,30 @@ class ThumbnailManager:
     if thumbnail_path and os.path.exists(thumbnail_path):
       pixmap = QPixmap(thumbnail_path)
       if not pixmap.isNull():
-        return self.scale_pixmap_for_asset(pixmap, width, height, is_character, is_background)
+        # 传递margin_ratio参数给scale_pixmap_for_asset方法
+        return self.scale_pixmap_for_asset(pixmap, width, height, is_character, is_background, margin_ratio=margin_ratio)
 
     # 返回占位符图片
     return self.get_placeholder_pixmap(width, height)
 
-  def get_scaled_pixmap(self, asset_id: str, width: int, height: int) -> QPixmap:
+  def get_scaled_pixmap(self, asset_id: str, width: int, height: int, margin_ratio: float = 0.05) -> QPixmap:
     """
     【公共API】获取指定资产的缩放后的pixmap，自动判断资产类型
 
-    自动识别资产类型并应用适当的缩放策略。
+    自动识别资产类型并应用适当的缩放策略，预留一定比例的空白。
 
     Args:
       asset_id: 资产ID
       width: 目标宽度
       height: 目标高度
+      margin_ratio: 预留空白比例，默认为5%
 
     Returns:
-      QPixmap: 按照指定尺寸缩放后的图片对象
+      QPixmap: 按照指定尺寸缩放后的图片对象，包含预留空白
     """
-    # 获取资产类型信息并调用核心方法
+    # 获取资产类型信息并调用核心方法，传递margin_ratio参数
     is_character, is_background = self._get_asset_type_info(asset_id)
-    return self.get_pixmap_for_asset(asset_id, width, height, is_character, is_background)
+    return self.get_pixmap_for_asset(asset_id, width, height, is_character, is_background, margin_ratio=margin_ratio)
 
   def _get_cached_thumbnail_path(self, asset_id: str) -> str | None:
     """
@@ -260,9 +281,9 @@ class ThumbnailManager:
     return None
 
   def scale_pixmap_for_asset(self, pixmap: QPixmap, width: int, height: int,
-                            is_character: bool, is_background: bool) -> QPixmap:
+                            is_character: bool, is_background: bool, margin_ratio: float = 0.05) -> QPixmap:
     """
-    根据资产类型和目标尺寸缩放QPixmap
+    根据资产类型和目标尺寸缩放QPixmap，预留一定比例的空白
 
     Args:
       pixmap: 原始QPixmap对象
@@ -270,6 +291,7 @@ class ThumbnailManager:
       height: 目标高度
       is_character: 是否为角色资产
       is_background: 是否为背景资产
+      margin_ratio: 预留空白比例，默认为5%
 
     Returns:
       QPixmap: 缩放后的QPixmap对象
@@ -277,39 +299,86 @@ class ThumbnailManager:
     original_width = pixmap.width()
     original_height = pixmap.height()
 
-    # 计算新的尺寸，根据资产类型选择不同的策略
-    if is_character:
-      # 角色立绘：优先保证高度
-      scale_factor = height / original_height
-      new_width = int(original_width * scale_factor)
+    # 计算可用绘制区域（减去预留空白）
+    available_width = int(width * (1 - 2 * margin_ratio))
+    available_height = int(height * (1 - 2 * margin_ratio))
 
-      # 如果宽度超出目标宽度，调整缩放比例
-      if new_width > width:
-        scale_factor = width / original_width
-        new_width = width
-        new_height = int(original_height * scale_factor)
-      else:
-        new_height = height
-    elif is_background:
-      # 背景：优先保证宽度
-      scale_factor = width / original_width
-      new_height = int(original_height * scale_factor)
+    # 计算缩放比例，保持宽高比
+    scale_x = available_width / original_width
+    scale_y = available_height / original_height
+    scale_factor = min(scale_x, scale_y)  # 使用较小的缩放因子以确保完全可见
 
-      # 如果高度超出目标高度，调整缩放比例
-      if new_height > height:
-        scale_factor = height / original_height
-        new_width = int(original_width * scale_factor)
-        new_height = height
-      else:
-        new_width = width
-    else:
-      # 其他资产：简单保持宽高比
-      scaled_pixmap = pixmap.scaled(width, height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-      return self._create_centered_pixmap(scaled_pixmap, width, height)
+    # 计算新的尺寸
+    new_width = int(original_width * scale_factor)
+    new_height = int(original_height * scale_factor)
 
-    # 缩放图片并居中
+    # 缩放图片
     scaled_pixmap = pixmap.scaled(new_width, new_height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+
+    # 创建居中放置的目标尺寸pixmap，包含预留空白
     return self._create_centered_pixmap(scaled_pixmap, width, height)
+
+  def generate_all_thumbnails(self, output_dir: str | None = None,
+                             file_format: str = 'png',
+                             crop_region: tuple[int, int, int, int] | None = None,
+                             target_size: tuple[int, int] | None = None,
+                             use_default_sizes: bool = True) -> dict[str, str]:
+    """
+    【公共API】批量生成所有图片素材包的缩略图
+
+    异步生成所有图片素材包的缩略图，支持自定义输出目录、格式、裁剪区域和目标尺寸。
+    根据资产类型自动选择适当的缩放策略，确保缩略图质量和比例。
+
+    Args:
+      output_dir: 输出目录路径，如果为None则使用默认缓存目录
+      file_format: 输出图片格式，默认为'png'
+      crop_region: 截取区域，格式为 (left, top, right, bottom)，None表示使用整个图像
+      target_size: 期望的缩略图尺寸，格式为 (width, height)，None表示不调整大小
+      use_default_sizes: 是否使用默认尺寸策略（背景512x288，立绘288x512）
+
+    Returns:
+      dict[str, str]: 生成的缩略图映射字典，键为素材包ID，值为生成的缩略图文件路径
+    """
+    # 如果指定了输出目录，使用它
+    current_cache_dir = output_dir if output_dir else self.cache_dir
+
+    # 确保输出目录存在
+    Path(current_cache_dir).mkdir(parents=True, exist_ok=True)
+
+    result = {}
+
+    # 遍历所有资源
+    for asset_id, _ in self.asset_manager._assets.items():
+      try:
+        asset = self.asset_manager.get_asset(asset_id)
+        if not isinstance(asset, ImagePack):
+          continue
+
+        # 根据参数选择生成方式，传递margin_ratio参数
+        if crop_region or target_size or not use_default_sizes or output_dir:
+          # 使用指定参数生成缩略图，包含预留空白
+          thumbnail = self._generate_thumbnail_from_imagepack(
+              asset_id, crop_region, target_size, use_default_sizes, margin_ratio=0.05
+          )
+          if thumbnail is not None:
+            # 保存缩略图到文件
+            filename = f"{asset_id}_thumbnail.{file_format.lower()}"
+            filepath = os.path.join(current_cache_dir, filename)
+            thumbnail.save(filepath)
+            # 更新内存缓存
+            self.thumbnail_cache[asset_id] = filepath
+            result[asset_id] = filepath
+        else:
+          # 使用默认方法获取缩略图
+          thumbnail_path = self.get_or_generate_thumbnail(asset_id)
+          if thumbnail_path:
+            result[asset_id] = thumbnail_path
+
+      except Exception as e:
+        print(f"Error processing asset {asset_id}: {e}")
+        continue
+
+    return result
 
   def _create_centered_pixmap(self, scaled_pixmap: QPixmap, target_width: int, target_height: int) -> QPixmap:
     """
