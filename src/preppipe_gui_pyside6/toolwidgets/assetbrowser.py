@@ -3,22 +3,21 @@
 
 from typing import Tuple
 from collections import OrderedDict
-from PySide6.QtCore import *
-from PySide6.QtGui import *
-from PySide6.QtWidgets import *
+from PySide6.QtWidgets import QWidget, QVBoxLayout,  QPushButton, QSizePolicy, QLabel, QListWidgetItem, QLayout
+from PySide6.QtCore import Qt, QSize, QThread, QMetaObject, Q_ARG
+from PySide6.QtGui import QFontMetrics, QFont, QMouseEvent
+from ..componentwidgets.assetcardwidget import ElidedLabel, ElidedPushButton
 from preppipe.language import *
 from preppipe.assets.assetmanager import AssetManager
 from preppipe.util.imagepack import ImagePack, ImagePackDescriptor
 from ..toolwidgetinterface import *
 from ..forms.generated.ui_assetbrowserwidget import Ui_AssetBrowserWidget
 from ..settingsdict import SettingsDict
-from ..util.asset_thumbnail import (
-    get_thumbnail_manager,
-    get_scaled_pixmap_for_asset,
-    create_thumbnail_worker
-)
 from ..util.tagmanager import TagManager
+from ..util.asset_thumbnail import get_thumbnail_manager, create_thumbnail_worker
+from ..mainwindowinterface import MainWindowInterface
 from .tageditdialog import TagEditDialog
+from .imagepack import ImagePackWidget
 from preppipe_gui_pyside6.util.asset_widget_style import StyleManager
 
 TR_gui_tool_assetbrowser = TranslationDomain("gui_tool_assetbrowser")
@@ -26,112 +25,30 @@ TR_gui_tool_assetbrowser = TranslationDomain("gui_tool_assetbrowser")
 # 常量定义，保持与TranslationDomain一致
 TRANSLATION_DOMAIN = "gui_tool_assetbrowser"
 
-class ElidedWidgetBase:
-    """文本省略处理的基础类（mixin类）
+class TagListItem(QListWidgetItem):
+  """标签列表项类，扩展QListWidgetItem以存储标签语义信息
 
-    提供通用的文本省略处理功能，可被按钮、标签等组件继承使用
+  封装标签的语义标识和原始文本，避免需要从显示文本中解析信息
+  """
+  def __init__(self, display_text, semantic_tag=None, is_all_tag=False):
+    """初始化标签列表项
+
+    Args:
+      display_text: 显示在UI上的文本
+      semantic_tag: 标签的语义标识
+      is_all_tag: 是否为"全部"标签
     """
-    def __init__(self):
-        self._full_text = ''
-        self._elide_margin = 10
+    super().__init__(display_text)
+    self.semantic_tag = semantic_tag
+    self.is_all_tag = is_all_tag
 
-    def setFullText(self, text):
-        """设置完整文本"""
-        self._full_text = text
-        self._update_elided_text()
-        self.update()
+  def get_semantic_tag(self):
+    """获取标签的语义标识"""
+    return self.semantic_tag
 
-    def getFullText(self):
-        """获取完整文本"""
-        return self._full_text
-
-    def setElideMargin(self, margin):
-        """设置省略文本计算时的边距"""
-        self._elide_margin = margin
-        self._update_elided_text()
-        self.update()
-
-    def _calculate_elided_text(self, text=None, margin=None):
-        """计算文本的省略版本
-
-        Args:
-            text: 可选，要计算的文本，如果未提供则使用_full_text
-            margin: 可选，边距像素，如果未提供则使用_elide_margin
-
-        Returns:
-            省略后的文本字符串
-        """
-        target_text = text if text is not None else self._full_text
-        target_margin = margin if margin is not None else self._elide_margin
-
-        if not target_text:
-            return ''
-        # 获取字体度量对象
-        font_metrics = self.fontMetrics()
-        # 计算可用宽度（考虑边距）
-        available_width = max(self.width() - target_margin, 0)
-        # 计算省略文本
-        return font_metrics.elidedText(target_text, Qt.ElideRight, available_width)
-
-    def _update_elided_text(self):
-        """更新省略文本
-
-        子类需要重写此方法来实际设置省略后的文本
-        """
-        pass
-
-    def resizeEvent(self, event):
-        """处理组件大小变化事件，重新计算省略文本"""
-        # 调用原始的resizeEvent方法
-        if hasattr(super(), 'resizeEvent'):
-            super().resizeEvent(event)
-        self._update_elided_text()
-
-class ElidedPushButton(QPushButton, ElidedWidgetBase):
-    """自定义的按钮类，用于实现文本溢出控制"""
-    def __init__(self, text, parent):
-        # 初始化时使用空文本
-        QPushButton.__init__(self, '', parent)
-        ElidedWidgetBase.__init__(self)
-        self.setFullText(text)
-        self.setMouseTracking(True)
-
-    def _update_elided_text(self):
-        """更新省略文本"""
-        elided_text = self._calculate_elided_text()
-        QPushButton.setText(self, elided_text)
-
-    def sizeHint(self):
-        """提供合适的大小提示"""
-        # 基于完整文本计算合适的宽度
-        font_metrics = self.fontMetrics()
-        text_width = font_metrics.horizontalAdvance(self.getFullText())
-        # 添加内边距
-        return QSize(text_width, QPushButton.sizeHint(self).height())
-
-class ElidedLabel(QLabel, ElidedWidgetBase):
-    """自定义的标签类，用于实现文本溢出控制"""
-    def __init__(self, text='', parent=None):
-        # 初始化时使用空文本
-        QLabel.__init__(self, '', parent)
-        ElidedWidgetBase.__init__(self)
-        self.setElideMargin(8)  # 设置边距为8
-        self.setFullText(text)
-        self.setWordWrap(False)
-        self.setAlignment(Qt.AlignCenter)  # 设置文本居中对齐
-
-    def _update_elided_text(self):
-        """更新省略文本"""
-        elided_text = self._calculate_elided_text()
-        QLabel.setText(self, elided_text)
-
-    def sizeHint(self):
-        """提供合适的大小提示"""
-        # 基于完整文本计算合适的宽度
-        font_metrics = self.fontMetrics()
-        text_width = font_metrics.horizontalAdvance(self.getFullText())
-        # 添加内边距
-        return QSize(text_width + 16, QLabel.sizeHint(self).height())
+  def is_all(self):
+    """判断是否为"全部"标签"""
+    return self.is_all_tag
 
 class AssetBrowserWidget(QWidget, ToolWidgetInterface):
   ui: Ui_AssetBrowserWidget
@@ -143,12 +60,9 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
   current_tag: str
   # 标签到素材的映射字典，格式：{tag_name: Tuple[QListWidgetItem, dict[asset_id: asset_object]]}
   assets_by_tag: OrderedDict[str, Tuple[QListWidgetItem, dict[str, object]]]
-  # 缩略图缓存字典
-  thumbnail_cache: dict[str, str]
-  # 用于异步加载的线程池
-  thread_pool: QThreadPool
-  # 缩略图容器字典，用于快速访问
-  thumbnail_items: dict[str, QWidget]
+
+  # 资产卡片字典，用于快速访问
+  asset_cards: dict[str, QWidget]
   # 所有素材ID列表
   all_asset_ids: list[str]
 
@@ -158,31 +72,22 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     zh_cn="素材浏览器",
     zh_hk="素材瀏覽器",
   )
-
   _tr_tooltip_assetbrowser = TR_gui_tool_assetbrowser.tr("tooltip_assetbrowser",
     en="Browse and manage your assets with thumbnails",
     zh_cn="浏览和管理带有缩略图的素材",
     zh_hk="瀏覽和管理帶有縮圖的素材",
   )
-
-  # 标签编辑相关提示
-  _tr_tag_edit_hint = TR_gui_tool_assetbrowser.tr("tag_edit_hint",
-    en="Click tag to edit, press Delete to remove",
-    zh_cn="单击标签编辑，按Delete键删除",
-    zh_hk="單擊標籤編輯，按Delete鍵删除",
-  )
-
-  _tr_tag_edit_current_hint = TR_gui_tool_assetbrowser.tr("tag_edit_current_hint",
-    en="Enter to add new tag, click tag to delete",
-    zh_cn="Enter添加新标签，点击标签删除",
-    zh_hk="Enter添加新標籤，點擊標籤刪除",
-  )
-
   # "无标签"提示文本
   _tr_no_tags = TR_gui_tool_assetbrowser.tr("tagmanager_no_tags",
     en="No tags",
     zh_cn="无标签",
     zh_hk="無標籤",
+  )
+  # "选择标签"提示文本
+  _tr_select_tag = TR_gui_tool_assetbrowser.tr("select_tag",
+    en="Select a tag",
+    zh_cn="选择一个标签",
+    zh_hk="選擇一個標籤",
   )
 
   def __init__(self, parent: QWidget):
@@ -190,14 +95,15 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     self.ui = Ui_AssetBrowserWidget()
     self.ui.setupUi(self)
     self.current_tag = ""
-    self.assets_by_tag = OrderedDict()  # 使用有序字典，保持标签添加顺序
-    self.thumbnail_cache = {}
-    self.thread_pool = QThreadPool()
-    self.thumbnail_items = {}
+    self.assets_by_tag = OrderedDict[str, Tuple[QListWidgetItem, dict[str, object]]]()
+    self.asset_cards = {}
     self.all_asset_ids = []
+    # 存储"全部"标签项的映射
+    self.all_tag_item = None
+    # 缩略图加载状态标志
     # 上次打开的素材ID
     self.last_opened_asset_id = None
-      # 获取标签管理器单例
+    # 获取标签管理器单例
     self.tag_manager = TagManager.get_instance()
     # 用于存储标签按钮的引用
     self.tag_buttons = {}
@@ -215,11 +121,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     self._update_theme_styles()
     # 监听系统主题变化通过重写changeEvent方法
     # 绑定文本
-    self.bind_text(self.ui.categoryTitleLabel.setText, TR_gui_tool_assetbrowser.tr("select_tag",
-      en="Select a tag",
-      zh_cn="选择一个标签",
-      zh_hk="選擇一個標籤",
-    ))
+    self.bind_text(self.ui.categoryTitleLabel.setText, self._tr_select_tag)
     # 连接信号槽
     self.ui.categoriesListWidget.itemClicked.connect(self.on_tag_selected)
     # 禁用横向滚动条
@@ -242,16 +144,9 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     saved_tag = settings.get(self.SETTINGS_KEY_CURRENT_TAG)
     if saved_tag:
       # 识别保存标签的语义类别（不依赖于语言）
-      tag_semantic_category = None
-      if saved_tag in ["All", "全部"]:
-        tag_semantic_category = "all"
-      elif saved_tag in ["Background", "背景"]:
-        tag_semantic_category = "background"
-      elif saved_tag in ["Character", "立绘", "立繪"]:
-        tag_semantic_category = "character"
-      elif saved_tag in ["Other", "其他"]:
-        tag_semantic_category = "other"
-      else:
+      # 直接使用TagManager获取语义标识，更好地支持多语言
+      tag_semantic_category = self.tag_manager.get_tag_semantic(saved_tag)
+      if tag_semantic_category not in ["all", "background", "character", "other"]:
         # 自定义标签
         tag_semantic_category = "custom"
 
@@ -273,13 +168,27 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
 
       # 查找并选中对应的标签
       if target_tag:
-        for i in range(self.ui.categoriesListWidget.count()):
-          item = self.ui.categoriesListWidget.item(i)
-          if item and item.text() == target_tag:
-            self.ui.categoriesListWidget.setCurrentItem(item)
-            # 触发标签选择事件
-            self.on_tag_selected(item)
-            break
+        # 特殊处理"全部"标签，直接选择索引0的项目
+        if target_tag == self.tag_manager.get_tr_all():
+          if self.ui.categoriesListWidget.count() > 0:
+            all_item = self.ui.categoriesListWidget.item(0)
+            self.ui.categoriesListWidget.setCurrentItem(all_item)
+            self.on_tag_selected(all_item)
+        else:
+          # 尝试直接从assets_by_tag获取标签项
+          if target_tag in self.assets_by_tag:
+            item, _ = self.assets_by_tag[target_tag]
+            if item:
+              self.ui.categoriesListWidget.setCurrentItem(item)
+              self.on_tag_selected(item)
+          else:
+            # 回退到循环查找（保留兼容性）
+            for i in range(1, self.ui.categoriesListWidget.count()):  # 从索引1开始，跳过"全部"标签
+              item = self.ui.categoriesListWidget.item(i)
+              if item and (item.text() == target_tag or item.text().startswith(f"{target_tag} (")):
+                self.ui.categoriesListWidget.setCurrentItem(item)
+                self.on_tag_selected(item)
+                break
 
   def changeEvent(self, event):
     """重写changeEvent方法来监听系统主题变化"""
@@ -402,32 +311,22 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     self.ui.categoryTitleLabel.setText(self.current_tag)
 
     # 选中对应的标签项
-    # 查找与当前标签匹配的列表项
-    for i in range(self.ui.categoriesListWidget.count()):
-      item = self.ui.categoriesListWidget.item(i)
-      item_text = item.text()
-
-      # 特殊处理"全部"标签，它可能显示为"全部 (数量)"
-      if semantic_tag == "all":
-        if item_text.startswith(self.tag_manager.get_tr_all()):
+    # 优先使用保存的引用或直接索引
+    if semantic_tag == "all":
+      # 特殊处理"全部"标签，直接选择索引0的项目或使用保存的引用
+      if self.all_tag_item:
+        self.ui.categoriesListWidget.setCurrentItem(self.all_tag_item)
+      elif self.ui.categoriesListWidget.count() > 0:
+        self.ui.categoriesListWidget.setCurrentItem(self.ui.categoriesListWidget.item(0))
+    else:
+      # 尝试直接从assets_by_tag获取标签项
+      tag_text = self.tag_manager.get_tag_display_text(semantic_tag)
+      if tag_text in self.assets_by_tag:
+        item, _ = self.assets_by_tag[tag_text]
+        if item:
           self.ui.categoriesListWidget.setCurrentItem(item)
-          break
-      # 普通标签处理 - 匹配显示文本
-      elif ' (' in item_text:
-        # 如果列表项包含计数，只比较标签名部分
-        if item_text.split(' (')[0] == tag_text:
-          self.ui.categoriesListWidget.setCurrentItem(item)
-          break
-      # 普通标签处理 - 无计数情况
-      elif item_text == tag_text:
-        self.ui.categoriesListWidget.setCurrentItem(item)
-        break
 
-    # 我们已经在第一个循环中处理了所有可能的标签情况，包括语义标识查找
-    # 如果未找到标签，保持当前设置不变
-
-    # 加载所选标签的缩略图
-    self.load_thumbnails_for_tag(semantic_tag)
+    self.load_asset_cards_for_tag(semantic_tag)
 
   def update_tags_list(self):
     """更新标签列表显示，同时显示标签对应的素材个数"""
@@ -436,11 +335,13 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     # 添加一个特殊的"全部"列表项（默认选中），这不是一个真正的标签
     all_count = len(self.all_asset_ids)
     all_text = self.tag_manager.get_tr_all()
-    all_item = QListWidgetItem(f"{all_text} ({all_count})")
+    all_item = TagListItem(f"{all_text} ({all_count})", semantic_tag="all", is_all_tag=True)
     font = all_item.font()
     font.setBold(True)
     all_item.setFont(font)
     self.ui.categoriesListWidget.addItem(all_item)
+    # 保存"全部"标签项的引用
+    self.all_tag_item = all_item
 
     # 添加所有实际标签（按添加顺序）
     for tag in self.assets_by_tag.keys():
@@ -448,55 +349,53 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       count = len(self.assets_by_tag[tag][1])
       # 只显示有素材的标签
       if count > 0:
-        item = QListWidgetItem(f"{tag} ({count})")
+        # 获取标签的语义标识
+        semantic_tag = self.tag_manager.tag_text_to_semantic.get(tag, tag)
+        # 使用TagListItem替代普通QListWidgetItem
+        item = TagListItem(f"{tag} ({count})", semantic_tag=semantic_tag)
         self.ui.categoriesListWidget.addItem(item)
+        # 更新assets_by_tag字典中的TagListItem引用
+        _, asset_dict = self.assets_by_tag[tag]
+        self.assets_by_tag[tag] = (item, asset_dict)
         # 确保标签的映射关系存在
         if tag not in self.tag_manager.tag_text_to_semantic:
           self.tag_manager.add_custom_tag_mapping(tag, tag)
+          self.tag_manager.add_custom_tag_mapping(tag, tag)
 
-  def save_tags(self):
-    """保存标签到设置字典"""
-    # 直接使用TagManager，无需额外的代理方法
-    pass  # 实际上不需要执行任何操作，因为TagManager会自动保存
 
-  def on_tag_selected(self, item: QListWidgetItem):
+
+  def on_tag_selected(self, item: TagListItem):
     """当用户从分类列表中选择一个标签时调用"""
+    # 直接使用完整的显示文本作为当前标签标题
     display_text = item.text()
-    if ' (' in display_text:
-      tag_text = display_text.split(' (')[0]
-    else:
-      tag_text = display_text
-
-    # 获取当前标签文本用于显示
-    self.current_tag = tag_text
+    self.current_tag = display_text
     self.ui.categoryTitleLabel.setText(self.current_tag)
 
-    # 特殊处理"全部"列表项，直接使用"all"语义
-    if tag_text == self.tag_manager.get_tr_all():
+    # 获取标签的语义标识
+    if item.is_all():
       tag_semantic = "all"
     else:
-      # 对于实际标签，获取其语义标识
-      tag_semantic = self.tag_manager.get_tag_semantic(self.current_tag)
+      tag_semantic = item.get_semantic_tag()
 
     # 保存当前选中的标签语义标识到设置
     settings = SettingsDict.instance()
     settings[self.SETTINGS_KEY_CURRENT_TAG] = tag_semantic
 
-    # 加载对应的缩略图
-    self.load_thumbnails_for_tag(tag_semantic)
+    # 加载对应的资产卡片
+    self.load_asset_cards_for_tag(tag_semantic)
 
-  def get_thumbnail_cache_dir(self) -> str:
-    """获取缩略图缓存目录"""
-    thumbnail_manager = get_thumbnail_manager()
-    return thumbnail_manager.get_thumbnail_cache_dir()
 
-  def load_thumbnails_for_tag(self, tag: str):
-    """加载指定标签的缩略图，预定义标签使用语义标识，自定义标签直接使用原始文本"""
-    # 清空现有缩略图
-    self.clear_thumbnails()
+
+  def load_asset_cards_for_tag(self, tag: str):
+    """加载指定标签的资产卡片，预定义标签使用语义标识，自定义标签直接使用原始文本"""
+    # 清空现有资产卡片
+    self.clear_asset_cards()
+    # 重置资产卡片加载状态
+    self.asset_cards_loaded = False
+    # 记录需要异步生成的缩略图数量
+    self._async_thumbnails_remaining = 0
     # 获取要显示的素材ID列表
     asset_ids_to_show = []
-    asset_manager = AssetManager.get_instance()
     # 确定要显示的素材
     if tag == "all":
       # 显示所有素材（对应"全部"特殊选项）
@@ -509,49 +408,54 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
         _, asset_dict = self.assets_by_tag[display_tag]
         asset_ids_to_show = list(asset_dict.keys())
     if not asset_ids_to_show:
+      # 如果没有素材要显示，设置加载完成状态
+      self.asset_cards_loaded = True
       return
-    # 获取缩略图管理器实例，使用当前应用的缓存目录
-    cache_dir = self.get_thumbnail_cache_dir()
-    thumbnail_manager = get_thumbnail_manager(cache_dir)
+    # 获取缩略图管理器实例，使用单例模式
+    thumbnail_manager = get_thumbnail_manager()
     # 检查并生成缩略图
     for asset_id in asset_ids_to_show:
-      # 尝试获取已存在的缩略图路径
+      # 使用ThumbnailManager获取或生成缩略图
       thumbnail_path = thumbnail_manager.get_or_generate_thumbnail(asset_id)
       if thumbnail_path:
-        # 直接使用缓存
-        self.thumbnail_cache[asset_id] = thumbnail_path
-        self.add_thumbnail_to_flow(asset_id)
+        # 直接使用缓存的缩略图路径
+        self.add_asset_card_to_flow(asset_id)
       else:
-        # 异步生成缩略图
-        worker = create_thumbnail_worker(asset_id, cache_dir)
-        worker.signals.result.connect(self.on_thumbnail_generated)
-        self.thread_pool.start(worker)
+        # 增加异步缩略图计数
+        self._async_thumbnails_remaining += 1
+        # 使用ThumbnailManager的线程池异步生成缩略图
+        worker = create_thumbnail_worker(asset_id)
+        worker.signals.result.connect(self.on_asset_thumbnail_generated)
+        thumbnail_manager.get_thread_pool().start(worker)
+
+    # 如果没有异步缩略图需要生成，则设置为已加载完成
+    if self._async_thumbnails_remaining == 0:
+      self.asset_cards_loaded = True
 
   def _on_container_resized(self, event):
     """当容器大小改变时重新调整布局"""
-    # 直接调用原始QWidget的resizeEvent方法
+    # 调用原始QWidget的resizeEvent方法
     QWidget.resizeEvent(self.ui.thumbnailsScrollAreaWidgetContents, event)
 
-    # 获取当前容器宽度
     current_width = self.ui.thumbnailsContainerWidget.width()
 
-    # 检查是否需要重新布局（初始化时或宽度实际变化时）
+    # 检查是否需要重新布局
     if not hasattr(self, '_last_container_width') or current_width != self._last_container_width:
       # 记录当前宽度
       self._last_container_width = current_width
 
-      # 如果有缩略图，智能调整缩略图大小而不是重新加载
-      if self.thumbnail_items and current_width > 0:
-        # 计算最佳缩略图大小
+      # 如果有资产卡片，智能调整卡片大小而不是重新加载
+      if self.asset_cards and current_width > 0:
+        # 计算最佳卡片大小
         card_width = self._calculate_optimal_card_width(current_width)
         card_height = int(card_width * 1.2)  # 保持1:1.2的宽高比
 
         # 更新FlowLayout中的项目大小
         self.flow_layout.setItemSize(QSize(card_width, card_height))
 
-        # 为每个缩略图调整内部元素大小
-        for asset_id, widget in self.thumbnail_items.items():
-          # 调整缩略图容器大小
+        # 为每个资产卡片调整内部元素大小
+        for asset_id, widget in self.asset_cards.items():
+          # 调整卡片容器大小
           widget.setFixedSize(card_width, card_height)
 
           # 找到内部的图像标签并调整
@@ -612,20 +516,11 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     return card_width
 
   def _create_asset_card(self, asset_id: str, card_width: int, card_height: int) -> QWidget:
-    """创建资产卡片组件
-
-    Args:
-        asset_id: 资产ID
-        card_width: 卡片宽度
-        card_height: 卡片高度
-
-    Returns:
-        构建好的资产卡片QWidget
-    """
-    # 创建缩略图容器
-    thumbnail_container = QWidget()
-    thumbnail_container.setFixedSize(card_width, card_height)
-    container_layout = QVBoxLayout(thumbnail_container)
+    """创建资产卡片组件"""
+    # 创建资产卡片容器
+    asset_card_container = QWidget()
+    asset_card_container.setFixedSize(card_width, card_height)
+    container_layout = QVBoxLayout(asset_card_container)
     # 设置布局参数，增加内边距使内容在卡牌中有更好的视觉效果
     container_layout.setContentsMargins(8, 8, 8, 8)
     container_layout.setSpacing(6)
@@ -648,8 +543,10 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
                                       name_label_height + tags_label_height + layout_spacing)
     # 设置图片标签固定大小
     image_label.setFixedSize(available_width, available_height)
-    # 使用新的ThumbnailManager获取缩放后的pixmap
-    scaled_pixmap = get_scaled_pixmap_for_asset(asset_id, available_width, available_height)
+    # 获取缩略图管理器
+    thumbnail_manager = get_thumbnail_manager()
+    # 使用ThumbnailManager获取缩放后的pixmap
+    scaled_pixmap = thumbnail_manager.get_scaled_pixmap(asset_id, available_width, available_height)
     # 设置图片并确保居中显示
     image_label.setPixmap(scaled_pixmap)
     # 记录当前尺寸，避免不必要的更新
@@ -696,7 +593,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     # 创建标签按钮 - 使用自定义的ElidedPushButton类来实现文本溢出控制
     tags_text = ", ".join(sorted(translated_tags))
     no_tags_text = self._tr_no_tags.get() if isinstance(self._tr_no_tags, Translatable) else self._tr_no_tags
-    tags_button = ElidedPushButton(tags_text if tags_text else no_tags_text, thumbnail_container)
+    tags_button = ElidedPushButton(tags_text if tags_text else no_tags_text, asset_card_container)
     tags_button.setObjectName(f"tags_button_{asset_id}")
     # 使用标签字体作为标签按钮的字体
     tags_button.setFont(self.tags_font)
@@ -721,47 +618,49 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     container_layout.addWidget(name_label)
     container_layout.addWidget(tags_button)
     # 设置容器样式 - 使用StyleManager统一应用
-    StyleManager.apply_style(thumbnail_container, False)
+    StyleManager.apply_style(asset_card_container, False)
     # 确保name_label保持透明背景，不受容器样式影响，并使用当前主题的文本颜色
     # 使用StyleManager统一应用标签样式
     StyleManager.apply_label_style(name_label)
     # 设置右键菜单禁用，因为我们不使用上下文菜单
-    thumbnail_container.setContextMenuPolicy(Qt.NoContextMenu)
+    asset_card_container.setContextMenuPolicy(Qt.NoContextMenu)
     # 设置鼠标事件处理
-    thumbnail_container.setMouseTracking(True)
-    thumbnail_container.enterEvent = lambda event, aid=asset_id: self.on_thumbnail_enter(aid)
-    thumbnail_container.leaveEvent = lambda event, aid=asset_id: self.on_thumbnail_leave(aid)
-    thumbnail_container.mousePressEvent = lambda event, aid=asset_id: self.on_thumbnail_clicked(aid, event)
+    asset_card_container.setMouseTracking(True)
+    asset_card_container.enterEvent = lambda event, aid=asset_id: self.on_asset_card_enter(aid)
+    asset_card_container.leaveEvent = lambda event, aid=asset_id: self.on_asset_card_leave(aid)
+    asset_card_container.mousePressEvent = lambda event, aid=asset_id: self.on_asset_card_clicked(aid, event)
     # 恢复上次选中的高亮状态
     if asset_id == self.last_opened_asset_id:
       # 使用StyleManager统一应用选中样式
-      StyleManager.apply_style(thumbnail_container, True)
+      StyleManager.apply_style(asset_card_container, True)
       # 确保name_label保持透明背景，不受选中样式影响
       StyleManager.apply_label_style(name_label)
 
-    return thumbnail_container
+    return asset_card_container
 
-  def add_thumbnail_to_flow(self, asset_id: str):
-    """将缩略图添加到流布局中，使用根据容器大小动态计算的尺寸"""
+  def add_asset_card_to_flow(self, asset_id: str):
+    """将资产卡片添加到流布局中，使用根据容器大小动态计算的尺寸
+
+    使用ThumbnailManager单例获取资产的缩略图并创建卡片。
+    """
     # 计算最佳卡片大小
     container_width = self.ui.thumbnailsContainerWidget.width()
     card_width = self._calculate_optimal_card_width(container_width)
     card_height = int(card_width * 1.2)  # 保持1:1.2的宽高比
     # 创建资产卡片
-    thumbnail_container = self._create_asset_card(asset_id, card_width, card_height)
+    asset_card = self._create_asset_card(asset_id, card_width, card_height)
     # 添加到FlowLayout
-    self.flow_layout.addWidget(thumbnail_container)
+    self.flow_layout.addWidget(asset_card)
 
     # 存储到字典中以便后续访问
-    self.thumbnail_items[asset_id] = thumbnail_container
+    self.asset_cards[asset_id] = asset_card
 
 
   def _update_image_on_resize(self, event, image_label, asset_id):
     """当图片标签大小改变时更新图片"""
-    # 直接调用原始QLabel的resizeEvent方法
+    # 调用原始QLabel的resizeEvent方法
     QLabel.resizeEvent(image_label, event)
 
-    # 添加宽度跟踪，避免频繁更新
     current_width = image_label.width()
     current_height = image_label.height()
 
@@ -781,13 +680,16 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     # 只有在需要更新且尺寸有效时才进行处理
     if need_update and current_width > 0 and current_height > 0:
 
-      # 使用新的ThumbnailManager获取缩放后的pixmap
-      scaled_pixmap = get_scaled_pixmap_for_asset(asset_id, current_width, current_height)
+      # 获取缩略图管理器
+      thumbnail_manager = get_thumbnail_manager()
+
+      # 使用ThumbnailManager获取缩放后的pixmap
+      scaled_pixmap = thumbnail_manager.get_scaled_pixmap(asset_id, current_width, current_height)
       image_label.setPixmap(scaled_pixmap)
 
-  def clear_thumbnails(self):
-    """清空缩略图流布局，确保删除所有布局项"""
-    # 删除所有布局项，包括widget和非widget项
+  def clear_asset_cards(self):
+    """清空资产卡片流布局"""
+    # 删除所有布局项
     while self.flow_layout.count() > 0:
       item = self.flow_layout.takeAt(0)
       if item.widget() is not None:
@@ -795,75 +697,71 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       # 移除布局项本身
       del item
 
-    # 清理所有引用字典，防止访问已删除的C++对象
-    self.thumbnail_items.clear()
+    # 清理引用字典
+    self.asset_cards.clear()
     self.tag_buttons.clear()
-    # 保留last_opened_asset_id，这样重新加载缩略图时可以恢复选中状态
 
-  def on_thumbnail_generated(self, asset_id: str, thumbnail_path: str):
-    """当缩略图生成完成后调用"""
-    # 检查是否是主线程，如果不是，使用信号槽机制切换到主线程
+  def on_asset_thumbnail_generated(self, asset_id: str, thumbnail_path: str):
+    """当资产缩略图生成完成后调用"""
+    # 检查是否是主线程
     if QThread.currentThread() != QApplication.instance().thread():
       # 在主线程中调用此方法
-      QMetaObject.invokeMethod(self, 'on_thumbnail_generated',
+      QMetaObject.invokeMethod(self, 'on_asset_thumbnail_generated',
                               Qt.QueuedConnection,
                               Q_ARG(str, asset_id),
                               Q_ARG(str, thumbnail_path))
       return
 
     if thumbnail_path:
-      # 缓存缩略图路径
-      self.thumbnail_cache[asset_id] = thumbnail_path
       # 添加到流布局
-      self.add_thumbnail_to_flow(asset_id)
+      self.add_asset_card_to_flow(asset_id)
 
       # 如果是最后打开的资源，更新其样式为选中样式
       if self.last_opened_asset_id and self.last_opened_asset_id == asset_id:
-        if asset_id in self.thumbnail_items:
-          StyleManager.apply_style(self.thumbnail_items[asset_id], True)
+        if asset_id in self.asset_cards:
+          StyleManager.apply_style(self.asset_cards[asset_id], True)
 
-  def on_thumbnail_enter(self, asset_id: str):
-    """处理鼠标进入缩略图事件"""
-    if asset_id in self.thumbnail_items:
-      # 使用样式管理器应用悬浮样式
+    # 减少异步缩略图计数并检查是否所有缩略图都已生成
+    if hasattr(self, '_async_thumbnails_remaining'):
+      self._async_thumbnails_remaining -= 1
+      if self._async_thumbnails_remaining <= 0:
+        self.asset_cards_loaded = True
+
+  def on_asset_card_enter(self, asset_id: str):
+    """处理鼠标进入资产卡片事件"""
+    if asset_id in self.asset_cards:
+      # 应用悬浮样式
       is_selected = asset_id == self.last_opened_asset_id
-      StyleManager.apply_style(self.thumbnail_items[asset_id], is_selected, True)
-      # 确保所有子组件保持正确的样式
-      # 根据是否有_full_text属性来区分名称标签和图片标签
-      for child in self.thumbnail_items[asset_id].findChildren(QLabel):
+      StyleManager.apply_style(self.asset_cards[asset_id], is_selected, True)
+      # 更新子组件样式
+      for child in self.asset_cards[asset_id].findChildren(QLabel):
         if hasattr(child, '_full_text'):
           StyleManager.apply_label_style(child)
 
-  def on_thumbnail_leave(self, asset_id: str):
-    """处理鼠标离开缩略图事件"""
-    if asset_id in self.thumbnail_items:
-      # 使用样式管理器应用普通样式
+  def on_asset_card_leave(self, asset_id: str):
+    """处理鼠标离开资产卡片事件"""
+    if asset_id in self.asset_cards:
+      # 应用普通样式
       is_selected = asset_id == self.last_opened_asset_id
-      StyleManager.apply_style(self.thumbnail_items[asset_id], is_selected)
-      # 确保所有子组件恢复到初始状态的样式
-      # 根据是否有_full_text属性来区分名称标签和图片标签
-      for child in self.thumbnail_items[asset_id].findChildren(QLabel):
+      StyleManager.apply_style(self.asset_cards[asset_id], is_selected)
+      # 更新子组件样式
+      for child in self.asset_cards[asset_id].findChildren(QLabel):
         if hasattr(child, '_full_text'):
           StyleManager.apply_label_style(child)
 
-      # 确保标签按钮样式也恢复正确
-      for child in self.thumbnail_items[asset_id].findChildren(QPushButton):
+      # 更新标签按钮样式
+      for child in self.asset_cards[asset_id].findChildren(QPushButton):
         if hasattr(child, '_asset_id') and child._asset_id == asset_id:
-          # 保持标签按钮的原始样式不变，只确保文本省略正确
           if hasattr(child, 'resizeEvent') and callable(child.resizeEvent):
             child.resizeEvent(None)
 
   def _on_palette_changed(self, palette):
     """当系统调色板变化时更新主题样式"""
     self._update_theme_styles(palette)
-    # 样式应用逻辑已在_update_theme_styles中实现
 
   def _update_theme_styles(self, palette=None):
     """检测系统主题并更新样式"""
-    # 使用样式管理器更新主题
-    theme = StyleManager.detect_theme(palette)
-
-    # 更新当前样式引用
+    # 更新样式引用
     self.normal_style = StyleManager.get_style('normal', palette)
     self.hover_style = StyleManager.get_style('hover', palette)
     self.selected_style = StyleManager.get_style('selected', palette)
@@ -871,8 +769,8 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     self.normal_style_name_color = StyleManager.get_style('name_color', palette)
     self.image_background_color = StyleManager.get_style('image_background', palette)
 
-    # 重新应用样式到所有缩略图项
-    for asset_id, widget in self.thumbnail_items.items():
+    # 重新应用样式到所有资产卡片
+    for asset_id, widget in self.asset_cards.items():
       # 根据是否为选中状态应用不同样式
       is_selected = asset_id == self.last_opened_asset_id
       StyleManager.apply_style(widget, is_selected, palette=palette)
@@ -892,25 +790,21 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
           height = button.height()
           StyleManager.apply_tags_button_style(button, height)
 
-  def on_thumbnail_clicked(self, asset_id: str, event: QMouseEvent):
-    """处理缩略图点击事件，打开详情页面"""
-    # 只有左键点击才打开详情页面
-    if event.button() == Qt.LeftButton:
-      from ..mainwindowinterface import MainWindowInterface
-      from .imagepack import ImagePackWidget
-      from preppipe.util.imagepack import ImagePack
-      # 检查是否为ImagePack类型的资源
-      asset_manager = AssetManager.get_instance()
-      asset = asset_manager.get_asset(asset_id)
+  def on_asset_card_clicked(self, asset_id: str, event: QMouseEvent):
+      """处理资产卡片点击事件，打开详情页面"""
+      if event.button() == Qt.LeftButton:
+        # 检查是否为ImagePack类型的资源
+        asset_manager = AssetManager.get_instance()
+        asset = asset_manager.get_asset(asset_id)
       if isinstance(asset, ImagePack):
         # 取消之前选中项的高亮 - 使用正常样式
-        if self.last_opened_asset_id and self.last_opened_asset_id in self.thumbnail_items:
-          StyleManager.apply_style(self.thumbnail_items[self.last_opened_asset_id], False)
+        if self.last_opened_asset_id and self.last_opened_asset_id in self.asset_cards:
+          StyleManager.apply_style(self.asset_cards[self.last_opened_asset_id], False)
         # 更新上次打开的资源ID并高亮当前项 - 使用选中样式
         self.last_opened_asset_id = asset_id
-        StyleManager.apply_style(self.thumbnail_items[asset_id], True)
+        StyleManager.apply_style(self.asset_cards[asset_id], True)
         # 特别处理名字子组件
-        for child in self.thumbnail_items[asset_id].findChildren(QLabel):
+        for child in self.asset_cards[asset_id].findChildren(QLabel):
           if hasattr(child, '_full_text'):
             StyleManager.apply_label_style(child)
         # 请求打开ImagePackWidget
@@ -928,17 +822,16 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     )
 
   def on_tags_button_clicked(self, asset_id, button):
-    """处理标签按钮点击事件，先执行选中高亮逻辑，再打开标签编辑对话框"""
-    # 执行与资产卡片点击相同的选中高亮逻辑
-    # 取消之前选中项的高亮
+    """处理标签按钮点击事件"""
+    # 执行选中高亮逻辑
     if self.last_opened_asset_id!=asset_id:
-      if self.last_opened_asset_id and self.last_opened_asset_id in self.thumbnail_items:
-        StyleManager.apply_style(self.thumbnail_items[self.last_opened_asset_id], False)
+      if self.last_opened_asset_id and self.last_opened_asset_id in self.asset_cards:
+        StyleManager.apply_style(self.asset_cards[self.last_opened_asset_id], False)
       # 更新上次打开的资源ID并高亮当前项
       self.last_opened_asset_id = asset_id
-      StyleManager.apply_style(self.thumbnail_items[asset_id], True)
-      # 特别处理名字子组件
-      for child in self.thumbnail_items[asset_id].findChildren(QLabel):
+      StyleManager.apply_style(self.asset_cards[asset_id], True)
+      # 更新名字子组件样式
+      for child in self.asset_cards[asset_id].findChildren(QLabel):
         if hasattr(child, '_full_text'):
           StyleManager.apply_label_style(child)
 
@@ -955,26 +848,22 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       button.clearFocus()
       button.update()
 
-  def update_thumbnail_tags(self, asset_id=None):
-    """更新现有缩略图的标签文本，而不重新加载整个缩略图
-
-    Args:
-      asset_id: 可选参数，指定要更新的资产ID。如果为None，则更新所有资产的标签
-    """
+  def update_asset_card_tags(self, asset_id=None):
+    """更新现有资产卡片的标签文本"""
     # 如果指定了asset_id，只更新该资产的标签
     if asset_id:
       self._update_single_asset_tags(asset_id)
     else:
       # 否则更新所有资产的标签
-      for asset_id_iter in self.thumbnail_items.keys():
+      for asset_id_iter in self.asset_cards.keys():
         self._update_single_asset_tags(asset_id_iter)
 
   def _update_single_asset_tags(self, asset_id):
     """更新单个资产的标签显示"""
-    if asset_id not in self.thumbnail_items:
+    if asset_id not in self.asset_cards:
       return
 
-    # 直接使用TagManager获取资产的显示标签
+    # 获取资产的显示标签
     asset_tags = self.tag_manager.get_asset_tags_display(asset_id)
     tags_text = ", ".join(sorted(asset_tags))
 
@@ -985,10 +874,10 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
         if hasattr(button, 'resizeEvent'):
           button.resizeEvent(None)
     else:
-      # 如果没找到，尝试从缩略图小部件中查找
-      thumbnail_widget = self.thumbnail_items.get(asset_id)
-      if thumbnail_widget:
-        tags_button = thumbnail_widget.findChild(QPushButton, f"tags_button_{asset_id}")
+      # 如果没找到，尝试从资产卡片小部件中查找
+      asset_card_widget = self.asset_cards.get(asset_id)
+      if asset_card_widget:
+        tags_button = asset_card_widget.findChild(QPushButton, f"tags_button_{asset_id}")
         if tags_button:
           tags_button._full_text = tags_text if tags_text else self._tr_no_tags.get() if isinstance(self._tr_no_tags, Translatable) else self._tr_no_tags
           if hasattr(tags_button, 'resizeEvent'):
@@ -1000,17 +889,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     current_semantic = None
     current_item = self.ui.categoriesListWidget.currentItem()
     if current_item:
-      display_text = current_item.text()
-      if ' (' in display_text:
-        tag_text = display_text.split(' (')[0]
-      else:
-        tag_text = display_text
-
-      if tag_text == self.tag_manager.get_tr_all():
-        current_semantic = "all"
-      else:
-        # 使用TagManager获取标签的语义
-        current_semantic = self.tag_manager.get_tag_semantic(tag_text)
+      current_semantic = current_item.get_semantic_tag()
 
     self.load_tags()
 
@@ -1018,36 +897,40 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       target_text = self.tag_manager.get_tag_display_text(current_semantic)
       for i in range(self.ui.categoriesListWidget.count()):
         item = self.ui.categoriesListWidget.item(i)
-        if item:
-          display_text = item.text()
-          if ' (' in display_text:
-            tag_text = display_text.split(' (')[0]
-          else:
-            tag_text = display_text
+        # 直接使用TagListItem的语义标识进行匹配
+        if item.get_semantic_tag() == current_semantic:
+          self.ui.categoriesListWidget.setCurrentItem(item)
+          # 使用完整的显示文本作为标题
+          self.current_tag = item.text()
+          self.ui.categoryTitleLabel.setText(self.current_tag)
 
-          if tag_text == target_text:
-            self.ui.categoriesListWidget.setCurrentItem(item)
-            self.current_tag = target_text
-            self.ui.categoryTitleLabel.setText(self.current_tag)
-            self.update_thumbnail_tags()
+          # 语言切换时，如果有选中的标签分类，只更新当前显示的资产标签
+          # 这样避免不必要的全部更新，提高性能
+          if hasattr(self, 'asset_cards_loaded') and self.asset_cards_loaded:
+            # 只更新当前加载的资产卡片对应的资产标签
+            for asset_id in list(self.asset_cards.keys()):
+              self._update_single_asset_tags(asset_id)
 
-            if hasattr(self, 'load_thumbnails_for_tag'):
-              self.load_thumbnails_for_tag(current_semantic)
-            break
+          if hasattr(self, 'load_thumbnails_for_tag'):
+            self.load_asset_cards_for_tag(current_semantic)
+          break
     elif not current_item:
       if self.ui.categoriesListWidget.count() > 0:
         self.ui.categoriesListWidget.setCurrentRow(0)
         first_item = self.ui.categoriesListWidget.item(0)
         if first_item:
+          # 使用完整的显示文本作为标题
           display_text = first_item.text()
-          if ' (' in display_text:
-            tag_text = display_text.split(' (')[0]
-          else:
-            tag_text = display_text
-          self.current_tag = tag_text
+          self.current_tag = display_text
           self.ui.categoryTitleLabel.setText(self.current_tag)
 
-          tag_semantic = self.tag_manager.get_tag_semantic(tag_text)
+          # 直接从TagListItem获取语义标识
+          # 所有标签列表项都应该是TagListItem类型
+          tag_semantic = first_item.get_semantic_tag()
           if hasattr(self, 'load_thumbnails_for_tag'):
-            self.load_thumbnails_for_tag(tag_semantic)
-        self.update_thumbnail_tags()
+            self.load_asset_cards_for_tag(tag_semantic)
+
+        # 同样，只更新当前加载的资产卡片对应的资产标签
+        if hasattr(self, 'asset_cards_loaded') and self.asset_cards_loaded:
+          for asset_id in list(self.asset_cards.keys()):
+            self._update_single_asset_tags(asset_id)
