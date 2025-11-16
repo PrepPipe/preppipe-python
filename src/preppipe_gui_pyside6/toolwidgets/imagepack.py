@@ -181,6 +181,7 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
         nameLabel = QLabel(trname.get())
         self.bind_text(nameLabel.setText, trname)
         inputWidget = MaskInputWidget()
+        inputWidget.setDefaultColor(self.pack.masks[index].mask_color)
         match mask.get_param_type():
           case ImagePackDescriptor.MaskParamType.IMAGE:
             inputWidget.setIsColorOnly(False)

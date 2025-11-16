@@ -178,6 +178,9 @@ class MaskInputWidget(QWidget, TranslatableWidgetInterface):
   def getIsColorOnly(self) -> bool:
     return self.is_color_only
 
+  def setDefaultColor(self, color : Color):
+    self.last_color = QColor(color.r, color.g, color.b)
+
   def showMenu(self):
     menu = QMenu(self)
     action_color = menu.addAction(self._tr_set_color_fill.get())
