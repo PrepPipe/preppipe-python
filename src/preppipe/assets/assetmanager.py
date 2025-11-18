@@ -27,6 +27,7 @@ import pickle
 import collections
 import yaml
 import shutil
+import PIL.Image
 import PIL.ImageFont
 from ..language import *
 from ..exceptions import *
@@ -36,6 +37,8 @@ from .assetclassdecl import *
 from ..util.message import MessageHandler
 from ..util.nameconvert import *
 from .. import __version__
+
+PIL.Image.MAX_IMAGE_PIXELS = None # 取消对大图的警告；现在有的立绘素材已经比默认值大了
 
 @dataclasses.dataclass
 class AssetManifestObject:
