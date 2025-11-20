@@ -125,8 +125,8 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     self.ui.categoriesListWidget.itemClicked.connect(self.on_tag_selected)
     # 禁用横向滚动条
     self.ui.thumbnailsScrollArea.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-    # 允许垂直滚动条根据需要显示
-    self.ui.thumbnailsScrollArea.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+    # 始终显示垂直滚动条，确保布局一致性
+    self.ui.thumbnailsScrollArea.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
     # 直接使用UI文件中定义的FlowLayout
     self.flow_layout = self.ui.thumbnailsFlowLayout
     self.flow_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
@@ -200,10 +200,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       if isinstance(asset, ImagePack):
         self.all_asset_ids.append(asset_id)
 
-  # 移除_initialize_semantic_mappings方法，因为语义映射完全由TagManager管理
 
-  # 移除代理方法，直接使用TagManager的相应方法
-  # _clean_and_normalize_tags_dict和_translate_tags已不再需要
 
   def load_tags(self):
     """从TagManager加载标签并统一合并归类"""
@@ -346,7 +343,6 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
           self.tag_manager.add_custom_tag_mapping(tag, tag)
 
   def on_tag_selected(self, item: TagListItem):
-    """当用户从分类列表中选择一个标签时调用"""
     display_text = item.text()
     self.current_tag = display_text
     self.ui.categoryTitleLabel.setText(self.current_tag)
@@ -362,7 +358,6 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     self.load_asset_cards_for_tag(tag_semantic)
 
   def load_asset_cards_for_tag(self, tag: str):
-    """加载指定标签的资产卡片，预定义标签使用语义标识，自定义标签直接使用原始文本"""
     # 清空现有资产卡片
     self.clear_asset_cards()
     self.asset_cards_loaded = False
@@ -401,7 +396,6 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       self.asset_cards_loaded = True
 
   def _on_container_resized(self, event):
-    """当容器大小改变时重新调整布局"""
     # 调用原始QWidget的resizeEvent方法
     QWidget.resizeEvent(self.ui.thumbnailsScrollAreaWidgetContents, event)
 
@@ -460,40 +454,64 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
 
     # 通知FlowLayout更新布局
     self.flow_layout.update()
+    
+
 
     return event
 
   def _calculate_optimal_card_width(self, container_width):
-    """根据容器宽度计算最佳卡片宽度"""
+    """根据容器宽度计算最佳卡片宽度，确保精确计算避免布局错误"""
     # 最小卡片宽度
     min_card_width = 160
     # 获取间距
     spacing = self.flow_layout.spacing()
-    # 计算可显示的最大列数
-    columns = max(1, container_width // (min_card_width + spacing))
-    # 限制最小列数为2
-    if container_width >= min_card_width * 2 + spacing:
-      columns = max(columns, 2)
+    # 添加额外的安全边界，确保布局计算有足够的余量
+    extra_safety_margin = 3
+    # 计算可显示的最大列数，使用更保守的计算方式
+    # 每列所需的最小空间 = 最小宽度 + 间距（除了最后一列）
+    # 考虑到计算误差，为每列预留额外的安全空间
+    columns = 1
+    if container_width > min_card_width:
+      # 先计算理论最大列数
+      theoretical_max_columns = (container_width + spacing) // (min_card_width + spacing)
+      # 保守地选择列数，确保有足够的空间
+      columns = min(theoretical_max_columns, 5)  # 限制最大列数，避免过窄
+      # 进行实际验证，确保选择的列数能够适应容器
+      while columns > 1:
+        total_required_width = columns * min_card_width + (columns - 1) * spacing
+        if total_required_width <= container_width:
+          break
+        columns -= 1
+      # 确保至少有2列，除非容器实在太小
+      if container_width >= min_card_width * 2 + spacing:
+        columns = max(columns, 2)
+
     # 计算卡片宽度
     if columns > 1:
-      card_width = (container_width - (columns - 1) * spacing) // columns
+      # 使用精确的整数计算，确保每列均匀分布
+      available_space = container_width - (columns - 1) * spacing
+      # 使用整除运算确保整数结果
+      card_width = available_space // columns
       # 确保卡片宽度不小于最小宽度
       card_width = max(card_width, min_card_width)
+      # 添加双重安全边界，避免任何可能的浮点精度问题或计算误差
+      card_width = card_width - extra_safety_margin
     else:
-      # 单列时，使用最小宽度但不超过容器宽度
-      card_width = min(min_card_width, container_width)
+      # 单列时，使用最小宽度但不超过容器宽度，并添加安全边界
+      card_width = min(min_card_width, container_width - extra_safety_margin)
+
+    # 确保卡片宽度始终为正数
+    card_width = max(100, card_width)  # 设置最小100像素宽度，确保可用性
     return card_width
 
   def _create_asset_card(self, asset_id: str, card_width: int, card_height: int) -> QWidget:
     """创建资产卡片组件
-    
-    将卡片创建过程拆分为多个子方法，提高代码的可读性和可维护性。
-    
+
     Args:
         asset_id: 资产的唯一标识符
         card_width: 卡片的宽度
         card_height: 卡片的高度
-        
+
     Returns:
         配置完成的资产卡片Widget
     """
@@ -508,14 +526,14 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     # 设置事件处理
     self._setup_card_events(container, asset_id)
     return container
-    
+
   def _create_card_container(self, card_width: int, card_height: int) -> QWidget:
     """创建卡片容器和基本布局
-    
+
     Args:
         card_width: 卡片的宽度
         card_height: 卡片的高度
-        
+
     Returns:
         配置好的卡片容器Widget
     """
@@ -532,16 +550,19 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     # 设置右键菜单禁用
     container.setContextMenuPolicy(Qt.NoContextMenu)
     return container
-    
+
   def _add_image_section(self, container: QWidget, asset_id: str, card_width: int, card_height: int) -> QLabel:
     """添加图片部分到卡片容器
-    
+
+    确保所有类型的资产卡片（角色立绘和背景）使用统一的图片处理逻辑，避免布局差异。
+    对所有类型卡片应用相同的尺寸计算、边距和缩放参数。
+
     Args:
         container: 卡片容器Widget
         asset_id: 资产的唯一标识符
         card_width: 卡片的宽度
         card_height: 卡片的高度
-        
+
     Returns:
         创建的图片标签
     """
@@ -551,7 +572,9 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     # 使用StyleManager应用图片标签样式
     StyleManager.apply_image_label_style(image_label)
     image_label.setMouseTracking(False)
-    
+
+    # 为所有类型卡片设置统一的可用空间计算，使用整数运算避免浮点精度问题
+    # 为所有类型卡片使用统一的边距比例，确保一致的显示效果
     # 获取布局并计算图片标签的大小
     layout = container.layout()
     layout_margins = layout.contentsMargins()
@@ -559,37 +582,37 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     # 计算名称和标签的高度
     name_label_height = self.name_font_metrics.height()
     tags_label_height = self.tags_font_metrics.height()
-    # 计算图片区域的可用空间
-    available_width = card_width - (layout_margins.left() + layout_margins.right())
-    available_height = card_height - (layout_margins.top() + layout_margins.bottom() +
-                                      name_label_height + tags_label_height + layout_spacing)
+    # 计算图片区域的可用空间，确保使用整数运算
+    available_width = int(card_width - (layout_margins.left() + layout_margins.right()))
+    available_height = int(card_height - (layout_margins.top() + layout_margins.bottom() +
+                                      name_label_height + tags_label_height + layout_spacing))
     # 设置图片标签固定大小
     image_label.setFixedSize(available_width, available_height)
-    
+
     # 获取缩略图管理器
     thumbnail_manager = get_thumbnail_manager()
-    # 使用ThumbnailManager获取缩放后的pixmap，传递margin_ratio参数
+    # 使用ThumbnailManager获取缩放后的pixmap，对所有类型卡片使用统一的margin_ratio参数
     scaled_pixmap = thumbnail_manager.get_scaled_pixmap(asset_id, available_width, available_height, margin_ratio=0.05)
     # 设置图片并确保居中显示
     image_label.setPixmap(scaled_pixmap)
-    
+
     # 记录当前尺寸，避免不必要的更新
     image_label._last_width = available_width
     image_label._last_height = available_height
     # 连接图片标签的调整大小信号以更新图片
     image_label.resizeEvent = lambda event, img=image_label, aid=asset_id: self._update_image_on_resize(event, img, aid)
-    
+
     # 添加到布局
     layout.addWidget(image_label)
     return image_label
-    
+
   def _add_name_section(self, container: QWidget, asset_id: str) -> ElidedLabel:
     """添加名称部分到卡片容器
-    
+
     Args:
         container: 卡片容器Widget
         asset_id: 资产的唯一标识符
-        
+
     Returns:
         创建的名称标签
     """
@@ -603,7 +626,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     name_label.setTextInteractionFlags(Qt.NoTextInteraction)
     # 添加属性标识，方便在更新主题时识别
     name_label.setProperty("is_name_label", True)
-    
+
     # 获取友好名称
     asset_manager = AssetManager.get_instance()
     asset = asset_manager.get_asset(asset_id)
@@ -619,7 +642,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
             elif name_obj:
                 # 如果是普通字符串
                 friendly_name = name_obj
-    
+
     # 使用自定义方法设置完整文本，让ElidedLabel内部处理文本省略
     name_label.setFullText(friendly_name)
     # 使用缓存的name_font作为名称标签的字体（加粗效果）
@@ -627,18 +650,18 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     # 使用StyleManager应用标签样式
     StyleManager.apply_label_style(name_label)
     name_label.setMouseTracking(False)
-    
+
     # 添加到布局
     container.layout().addWidget(name_label)
     return name_label
-    
+
   def _add_tags_section(self, container: QWidget, asset_id: str) -> ElidedPushButton:
     """添加标签部分到卡片容器
-    
+
     Args:
         container: 卡片容器Widget
         asset_id: 资产的唯一标识符
-        
+
     Returns:
         创建的标签按钮
     """
@@ -646,13 +669,13 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     asset_tags = self.tag_manager.get_asset_tags(asset_id)
     # 转换标签为翻译后的文本
     translated_tags = self.tag_manager.translate_tags(asset_tags)
-    
+
     # 创建标签按钮 - 使用自定义的ElidedPushButton类来实现文本溢出控制
     tags_text = ", ".join(sorted(translated_tags))
     no_tags_text = self._tr_no_tags.get() if isinstance(self._tr_no_tags, Translatable) else self._tr_no_tags
     tags_button = ElidedPushButton(tags_text if tags_text else no_tags_text, container)
     tags_button.setObjectName(f"tags_button_{asset_id}")
-    
+
     # 使用标签字体作为标签按钮的字体
     tags_button.setFont(self.tags_font)
     # 设置按钮的大小策略 - 使用固定高度而非最小高度
@@ -662,24 +685,24 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     tags_button.setFixedHeight(tag_button_height)
     # 使用样式管理器设置按钮样式
     StyleManager.apply_tags_button_style(tags_button, tag_button_height)
-    
+
     # 连接点击信号
     tags_button.clicked.connect(lambda: self.on_tags_button_clicked(asset_id, tags_button))
     # 存储标签按钮的asset_id，用于标识和后续更新
     tags_button._asset_id = asset_id
-    
+
     # 存储按钮引用
     if asset_id not in self.tag_buttons:
       self.tag_buttons[asset_id] = []
     self.tag_buttons[asset_id].append(tags_button)
-    
+
     # 添加到布局
     container.layout().addWidget(tags_button)
     return tags_button
-    
+
   def _setup_card_events(self, container: QWidget, asset_id: str):
     """设置卡片的鼠标事件处理
-    
+
     Args:
         container: 卡片容器Widget
         asset_id: 资产的唯一标识符
@@ -689,7 +712,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     container.enterEvent = lambda event, aid=asset_id: self.on_asset_card_enter(aid)
     container.leaveEvent = lambda event, aid=asset_id: self.on_asset_card_leave(aid)
     container.mousePressEvent = lambda event, aid=asset_id: self.on_asset_card_clicked(aid, event)
-    
+
     # 恢复上次选中的高亮状态
     if asset_id == self.last_opened_asset_id:
       # 使用StyleManager统一应用选中样式
@@ -718,12 +741,16 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
 
 
   def _update_image_on_resize(self, event, image_label, asset_id):
-    """当图片标签大小改变时更新图片"""
     # 调用原始QLabel的resizeEvent方法
     QLabel.resizeEvent(image_label, event)
 
-    current_width = image_label.width()
-    current_height = image_label.height()
+    # 获取新尺寸并转换为整数，避免浮点精度问题
+    current_width = int(image_label.width())
+    current_height = int(image_label.height())
+
+    # 添加额外的安全检查，确保尺寸有效
+    if current_width <= 1 or current_height <= 1:
+      return  # 避免极端情况下的无效尺寸
 
     # 初始化属性（如果不存在）
     if not hasattr(image_label, '_last_width'):
@@ -735,7 +762,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     need_update = (current_width != image_label._last_width or
                   current_height != image_label._last_height)
 
-    # 更新尺寸记录
+    # 更新尺寸记录，确保使用整数
     image_label._last_width = current_width
     image_label._last_height = current_height
 
@@ -745,12 +772,16 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       # 获取缩略图管理器
       thumbnail_manager = get_thumbnail_manager()
 
+      # 添加微小的安全边界，确保缩放时不会超出标签边界
+      # 减去1像素作为额外的安全余量
+      safe_width = max(1, current_width - 1)
+      safe_height = max(1, current_height - 1)
+
       # 使用ThumbnailManager获取缩放后的pixmap，传递margin_ratio参数以确保与缩略图处理逻辑兼容
-      scaled_pixmap = thumbnail_manager.get_scaled_pixmap(asset_id, current_width, current_height, margin_ratio=0.05)
+      scaled_pixmap = thumbnail_manager.get_scaled_pixmap(asset_id, safe_width, safe_height, margin_ratio=0.05)
       image_label.setPixmap(scaled_pixmap)
 
   def clear_asset_cards(self):
-    """清空资产卡片流布局"""
     # 删除所有布局项
     while self.flow_layout.count() > 0:
       item = self.flow_layout.takeAt(0)
@@ -790,7 +821,6 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       self.asset_cards_loaded = True
 
   def on_asset_card_enter(self, asset_id: str):
-    """处理鼠标进入资产卡片事件"""
     if asset_id in self.asset_cards:
       # 应用悬浮样式
       is_selected = asset_id == self.last_opened_asset_id
@@ -801,7 +831,6 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
           StyleManager.apply_label_style(child)
 
   def on_asset_card_leave(self, asset_id: str):
-    """处理鼠标离开资产卡片事件"""
     if asset_id in self.asset_cards:
       # 应用普通样式
       is_selected = asset_id == self.last_opened_asset_id
@@ -886,7 +915,6 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     )
 
   def on_tags_button_clicked(self, asset_id, button):
-    """处理标签按钮点击事件"""
     # 执行选中高亮逻辑
     if self.last_opened_asset_id!=asset_id:
       if self.last_opened_asset_id and self.last_opened_asset_id in self.asset_cards:
@@ -904,7 +932,6 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     self.open_tag_edit_dialog(asset_id, button)
 
   def open_tag_edit_dialog(self, asset_id, button=None):
-    """打开标签编辑对话框"""
     dialog = TagEditDialog(asset_id, self, self)
     dialog.exec()
 
@@ -914,7 +941,6 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       button.update()
 
   def update_asset_card_tags(self, asset_id=None):
-    """更新现有资产卡片的标签文本"""
     # 如果指定了asset_id，只更新该资产的标签
     if asset_id:
       self._update_single_asset_tags(asset_id)
@@ -924,7 +950,6 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
         self._update_single_asset_tags(asset_id_iter)
 
   def _update_single_asset_tags(self, asset_id):
-    """更新单个资产的标签显示"""
     if asset_id not in self.asset_cards:
       return
 

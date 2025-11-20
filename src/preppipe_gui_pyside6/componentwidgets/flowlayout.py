@@ -3,12 +3,11 @@ from PySide6.QtWidgets import QLayout
 
 
 class FlowLayout(QLayout):
-    def __init__(self, parent=None, margin=0, spacing=0):
+    def __init__(self, parent=None, margin=4, spacing=3):
         super().__init__(parent)
         if parent is not None:
             self.setContentsMargins(margin, margin, margin, margin)
-        self._horizontal_spacing = spacing
-        self._vertical_spacing = spacing
+        self.setSpacing(spacing)
         self._item_list = []
         self._item_size = QSize(160, 200)
 
@@ -85,34 +84,62 @@ class FlowLayout(QLayout):
         return size
 
     def _do_layout(self, rect, test_only):
-        x = rect.x() + self.contentsMargins().left()
-        y = rect.y() + self.contentsMargins().top()
+        # 使用整数运算处理边距和坐标
+        margins = self.contentsMargins()
+        margin_left = int(margins.left())
+        margin_top = int(margins.top())
+        margin_right = int(margins.right())
+        margin_bottom = int(margins.bottom())
+        
+        x = rect.x() + margin_left
+        y = rect.y() + margin_top
         line_height = 0
 
-        horizontal_spacing = self.horizontalSpacing()
-        vertical_spacing = self.verticalSpacing()
-        margins = self.contentsMargins()
+        # 计算最大可用宽度，确保使用整数运算
+        max_width = int(rect.width() - margin_left - margin_right)
+        content_right = rect.x() + rect.width() - margin_right
 
-        available_width = rect.width() - margins.left() - margins.right()
+        # 获取间距，确保使用整数
+        horizontal_spacing = int(self.horizontalSpacing())
+        vertical_spacing = int(self.verticalSpacing())
 
         for item in self._item_list:
+            # 获取项目尺寸，确保使用整数
             item_size = item.sizeHint() if item.sizeHint().isValid() else self._item_size
-
-            if item_size.width() > available_width:
-                item_size.setWidth(available_width)
-
-            if x + item_size.width() > rect.right() - margins.right():
-                x = rect.x() + margins.left()
-                y += line_height + vertical_spacing
+            item_width = int(item_size.width())
+            item_height = int(item_size.height())
+            
+            # 确保项目宽度不超过内容区域，添加额外的安全边界
+            max_item_width = max_width - 2  # 2像素安全边界
+            if item_width > max_item_width:
+                item_width = max_item_width
+            
+            # 计算下一个项目的X坐标
+            next_x = x + item_width + horizontal_spacing
+            
+            # 添加5像素安全边界用于换行判断，确保在边界情况下不会出现布局问题
+            if next_x + 5 > content_right and line_height > 0:
+                # 换行处理，重置X坐标，增加Y坐标
+                x = rect.x() + margin_left
+                y = y + line_height + vertical_spacing
+                next_x = x + item_width + horizontal_spacing
                 line_height = 0
-
+            
+            # 确保项目尺寸使用整数
+            safe_width = item_width
+            safe_height = item_height
+            
             if not test_only:
-                item.setGeometry(QRect(QPoint(x, y), item_size))
+                # 确保所有坐标使用整数，避免像素对齐问题
+                item.setGeometry(QRect(int(x), int(y), safe_width, safe_height))
 
-            x += item_size.width() + horizontal_spacing
-            line_height = max(line_height, item_size.height())
+            # 更新X坐标和行高
+            x = next_x
+            line_height = max(line_height, safe_height)
 
-        return y + line_height + margins.bottom()
+        # 计算最终高度，考虑底部边距
+        final_height = y + line_height + margin_bottom - rect.y()
+        return final_height
 
     def setItemSize(self, size):
         """设置所有项目的统一大小"""

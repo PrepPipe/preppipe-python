@@ -66,9 +66,8 @@ class ElidedWidgetBase:
 
   def resizeEvent(self, event):
     """处理组件大小变化事件，重新计算省略文本"""
-    # 调用原始的resizeEvent方法
-    if hasattr(super(), 'resizeEvent'):
-      super().resizeEvent(event)
+    # 直接调用父类的resizeEvent方法
+    super().resizeEvent(event)
     self._update_elided_text()
 
 
