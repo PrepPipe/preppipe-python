@@ -77,11 +77,11 @@ class StyleManager:
       style = style.replace('{height}', str(height))
       styles.append(style)
     return "\n".join(styles)
-    
+
   @staticmethod
   def apply_tags_button_style(button, height, palette=None):
     """应用标签按钮样式到按钮部件
-    
+
     Args:
         button: 要应用样式的按钮部件
         height: 按钮高度
@@ -96,11 +96,11 @@ class StyleManager:
     theme = StyleManager.detect_theme(palette)
     tag_block_styles = StyleManager._styles[theme].get('tag_block', {})
     return "\n".join(tag_block_styles.values())
-    
+
   @staticmethod
   def apply_tag_block_style(widget, palette=None):
     """应用标签块样式到部件
-    
+
     Args:
         widget: 要应用样式的部件
         palette: 调色板，如果为None则使用当前应用调色板
@@ -126,7 +126,7 @@ class StyleManager:
     """应用样式到标签"""
     # 使用通用样式应用方法
     StyleManager.apply_style_to_widget(label, 'name_color', palette=palette)
-  
+
   @staticmethod
   def apply_image_label_style(label, palette=None):
     """应用样式到图片标签"""
@@ -134,11 +134,11 @@ class StyleManager:
     image_background = StyleManager._styles[theme].get('image_background', '#f0f0f0')
     # 使用通用样式应用方法并传递背景色参数
     StyleManager.apply_style_to_widget(label, 'image_label', palette=palette, image_background=image_background)
-  
+
   @staticmethod
   def apply_style_to_widget(widget, style_name, palette=None, **kwargs):
     """通用样式应用方法，减少代码重复
-    
+
     Args:
         widget: 要应用样式的部件
         style_name: 样式名称
@@ -146,7 +146,7 @@ class StyleManager:
         **kwargs: 用于样式字符串格式化的额外参数
     """
     theme = StyleManager.detect_theme(palette)
-    
+
     # 特殊处理name_color样式，因为它需要构建完整的样式字符串
     if style_name == 'name_color':
         color = StyleManager._styles[theme].get('name_color', '#000000')
@@ -155,5 +155,5 @@ class StyleManager:
         template = StyleManager.get_style(style_name, palette)
         # 应用额外参数进行格式化
         style = template.format(**kwargs)
-    
+
     widget.setStyleSheet(style)
