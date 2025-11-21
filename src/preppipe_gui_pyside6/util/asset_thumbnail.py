@@ -22,7 +22,6 @@ class ThumbnailManager:
   - clear_cache: 清理内存和磁盘缓存
   """
 
-  # 默认缩略图尺寸
   DEFAULT_BACKGROUND_SIZE = (512, 288)  # 16:9
   DEFAULT_CHARACTER_SIZE = (288, 512)   # 9:16
 
@@ -30,10 +29,8 @@ class ThumbnailManager:
     """
     初始化缩略图管理器
     """
-    # 初始化线程锁
     self._lock = threading.RLock()
 
-    # 设置缓存目录
     if cache_dir is None:
       # 使用项目根目录下的thumbnails文件夹作为默认缓存目录
       self.cache_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
@@ -41,7 +38,6 @@ class ThumbnailManager:
     else:
       self.cache_dir = cache_dir
 
-    # 确保缓存目录存在
     Path(self.cache_dir).mkdir(parents=True, exist_ok=True)
 
     # 缩略图缓存字典，用于内存缓存
@@ -91,20 +87,15 @@ class ThumbnailManager:
       image_wrapper = asset.get_composed_image(0)
       image = image_wrapper.get()
 
-      # 确定最终目标尺寸
       if use_default_sizes:
         pack_type = descriptor.get_image_pack_type()
         if pack_type == descriptor.ImagePackType.BACKGROUND:
           final_target_size = self.DEFAULT_BACKGROUND_SIZE
         elif pack_type == descriptor.ImagePackType.CHARACTER:
           final_target_size = self.DEFAULT_CHARACTER_SIZE
-        else:
-          # 其他类型使用默认背景尺寸
-          final_target_size = self.DEFAULT_BACKGROUND_SIZE
       else:
         final_target_size = target_size
 
-      # 应用裁剪区域
       if crop_region is not None:
         image = image.crop(crop_region)
       elif descriptor.get_image_pack_type() == descriptor.ImagePackType.CHARACTER:
@@ -112,33 +103,25 @@ class ThumbnailManager:
         bbox_left, bbox_top, bbox_right, bbox_bottom = descriptor.bbox
         image = image.crop((bbox_left, bbox_top, bbox_right, bbox_bottom))
 
-      # 实现基于目标尺寸的等比例缩放，预留一定空白
       if final_target_size is not None:
-        # 计算可用绘制区域（减去预留空白）
         available_width = int(final_target_size[0] * (1 - 2 * margin_ratio))
         available_height = int(final_target_size[1] * (1 - 2 * margin_ratio))
 
-        # 计算缩放比例，保持宽高比
         original_width, original_height = image.size
         scale_x = available_width / original_width
         scale_y = available_height / original_height
         scale_factor = min(scale_x, scale_y)  # 使用较小的缩放因子以确保完全可见
 
-        # 计算新的尺寸
         new_width = int(original_width * scale_factor)
         new_height = int(original_height * scale_factor)
 
-        # 缩放图片
         resized_image = image.resize((new_width, new_height), resample=PIL.Image.Resampling.LANCZOS)
 
-        # 创建新的目标尺寸画布，添加预留空白
         result_image = PIL.Image.new('RGBA', final_target_size, (255, 255, 255, 0))  # 透明背景
 
-        # 计算居中位置（考虑预留空白）
         paste_x = (final_target_size[0] - new_width) // 2
         paste_y = (final_target_size[1] - new_height) // 2
 
-        # 将缩放后的图片粘贴到目标画布上
         result_image.paste(resized_image, (paste_x, paste_y))
         image = result_image
       elif use_default_sizes:
@@ -165,7 +148,6 @@ class ThumbnailManager:
     Returns:
       str: 缩略图的完整文件路径
     """
-    # 生成唯一的文件名，包含资产ID和尺寸信息
     size_str = f"_{target_size[0]}x{target_size[1]}" if target_size else ""
     filename = f"{asset_id}_thumbnail{size_str}.png"
     return os.path.join(self.cache_dir, filename)
@@ -180,7 +162,6 @@ class ThumbnailManager:
     Returns:
       str | None: 成功时返回缩略图文件路径，失败时返回None
     """
-    # 首先尝试获取已缓存的路径
     cached_path = self._get_cached_thumbnail_path(asset_id)
     if cached_path:
       return cached_path
@@ -193,10 +174,8 @@ class ThumbnailManager:
 
       thumbnail = self._generate_thumbnail_from_imagepack(asset_id)
       if thumbnail is not None:
-        # 确保目录存在
         os.makedirs(os.path.dirname(self._get_thumbnail_path(asset_id)), exist_ok=True)
 
-        # 保存缩略图
         thumbnail.save(self._get_thumbnail_path(asset_id))
 
         # 再次调用_get_cached_thumbnail_path以更新缓存
@@ -222,7 +201,6 @@ class ThumbnailManager:
     Returns:
       QPixmap: 适用于UI显示的图片对象，包含预留空白
     """
-    # 获取缩略图路径
     thumbnail_path = self.get_or_generate_thumbnail(asset_id)
 
     if thumbnail_path and os.path.exists(thumbnail_path):
@@ -231,7 +209,6 @@ class ThumbnailManager:
         # 传递margin_ratio参数给scale_pixmap_for_asset方法
         return self.scale_pixmap_for_asset(pixmap, width, height, is_character, is_background, margin_ratio=margin_ratio)
 
-    # 返回占位符图片
     return self.get_placeholder_pixmap(width, height)
 
   def get_scaled_pixmap(self, asset_id: str, width: int, height: int, margin_ratio: float = 0.05) -> QPixmap:
@@ -263,18 +240,14 @@ class ThumbnailManager:
     Returns:
       str | None: 缩略图路径，如果不存在则返回None
     """
-    # 检查缓存中是否已存在
     if asset_id in self.thumbnail_cache:
       thumbnail_path = self.thumbnail_cache[asset_id]
       if os.path.exists(thumbnail_path):
         return thumbnail_path
-      # 如果缓存路径不存在，移除缓存项
       del self.thumbnail_cache[asset_id]
 
-    # 如果缓存中不存在，尝试获取缩略图路径
     thumbnail_path = self._get_thumbnail_path(asset_id)
     if os.path.exists(thumbnail_path):
-      # 更新缓存
       self.thumbnail_cache[asset_id] = thumbnail_path
       return thumbnail_path
 
@@ -299,14 +272,12 @@ class ThumbnailManager:
     original_width = pixmap.width()
     original_height = pixmap.height()
 
-    # 计算可用绘制区域（减去预留空白）
     available_width = int(width * (1 - 2 * margin_ratio))
     available_height = int(height * (1 - 2 * margin_ratio))
 
-    # 计算缩放比例，保持宽高比
     scale_x = available_width / original_width
     scale_y = available_height / original_height
-    scale_factor = min(scale_x, scale_y)  # 使用较小的缩放因子以确保完全可见
+    scale_factor = min(scale_x, scale_y)
 
     # 计算新的尺寸
     new_width = int(original_width * scale_factor)
@@ -354,7 +325,7 @@ class ThumbnailManager:
         if not isinstance(asset, ImagePack):
           continue
 
-        # 根据参数选择生成方式，传递margin_ratio参数
+        # 根据参数选择生成方式
         if crop_region or target_size or not use_default_sizes or output_dir:
           # 使用指定参数生成缩略图，包含预留空白
           thumbnail = self._generate_thumbnail_from_imagepack(
@@ -427,68 +398,6 @@ class ThumbnailManager:
     painter.end()
 
     return placeholder
-
-  def generate_all_thumbnails(self, output_dir: str | None = None,
-                             file_format: str = 'png',
-                             crop_region: tuple[int, int, int, int] | None = None,
-                             target_size: tuple[int, int] | None = None,
-                             use_default_sizes: bool = True) -> dict[str, str]:
-    """
-    【公共API】批量生成所有图片素材包的缩略图
-
-    异步生成所有图片素材包的缩略图，支持自定义输出目录、格式、裁剪区域和目标尺寸。
-    根据资产类型自动选择适当的缩放策略，确保缩略图质量和比例。
-
-    Args:
-      output_dir: 输出目录路径，如果为None则使用默认缓存目录
-      file_format: 输出图片格式，默认为'png'
-      crop_region: 截取区域，格式为 (left, top, right, bottom)，None表示使用整个图像
-      target_size: 期望的缩略图尺寸，格式为 (width, height)，None表示不调整大小
-      use_default_sizes: 是否使用默认尺寸策略（背景512x288，立绘288x512）
-
-    Returns:
-      dict[str, str]: 生成的缩略图映射字典，键为素材包ID，值为生成的缩略图文件路径
-    """
-    # 如果指定了输出目录，使用它
-    current_cache_dir = output_dir if output_dir else self.cache_dir
-
-    # 确保输出目录存在
-    Path(current_cache_dir).mkdir(parents=True, exist_ok=True)
-
-    result = {}
-
-    # 遍历所有资源
-    for asset_id, _ in self.asset_manager._assets.items():
-      try:
-        asset = self.asset_manager.get_asset(asset_id)
-        if not isinstance(asset, ImagePack):
-          continue
-
-        # 根据参数选择生成方式
-        if crop_region or target_size or not use_default_sizes or output_dir:
-          # 使用指定参数生成缩略图
-            thumbnail = self._generate_thumbnail_from_imagepack(
-                asset_id, crop_region, target_size, use_default_sizes
-            )
-            if thumbnail is not None:
-              # 保存缩略图到文件
-              filename = f"{asset_id}_thumbnail.{file_format.lower()}"
-              filepath = os.path.join(current_cache_dir, filename)
-              thumbnail.save(filepath)
-              # 更新内存缓存
-              self.thumbnail_cache[asset_id] = filepath
-              result[asset_id] = filepath
-        else:
-          # 使用默认方法获取缩略图
-          thumbnail_path = self.get_or_generate_thumbnail(asset_id)
-          if thumbnail_path:
-            result[asset_id] = thumbnail_path
-
-      except Exception as e:
-        print(f"Error processing asset {asset_id}: {e}")
-        continue
-
-    return result
 
   def clear_cache(self, clear_memory: bool = True, clear_disk: bool = False):
     """
