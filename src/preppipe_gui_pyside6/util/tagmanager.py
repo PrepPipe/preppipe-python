@@ -44,6 +44,11 @@ class TagManager:
         zh_cn="其他",
         zh_hk="其他",
     )
+    _tr_no_tags = TR_gui_util_tagmanager.tr("tagmanager_no_tags",
+        en="No tags",
+        zh_cn="无标签",
+        zh_hk="無標籤",
+    )
 
     def __new__(cls):
         """单例模式的创建方法 - 在非多线程环境下简化实现"""
@@ -207,3 +212,7 @@ class TagManager:
     def get_tr_other(self) -> str:
         """获取"其他"标签的翻译文本"""
         return self._ensure_string(self._tr_other)
+
+    def get_tr_no_tags(self) -> str:
+        """获取"无标签"文本的翻译"""
+        return self._ensure_string(self._tr_no_tags)
