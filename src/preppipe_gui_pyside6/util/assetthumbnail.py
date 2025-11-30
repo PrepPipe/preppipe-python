@@ -9,7 +9,7 @@ from PySide6.QtCore import QThreadPool
 from PySide6.QtGui import QPixmap, QPainter, Qt
 from preppipe.assets.assetmanager import AssetManager
 from preppipe.util.imagepack import ImagePack
-from ..settingsdict import get_executable_base_dir
+from ..settingsdict import SettingsDict
 
 
 class ThumbnailManager:
@@ -23,7 +23,7 @@ class ThumbnailManager:
     self._lock = threading.RLock()
 
     if cache_dir is None:
-      base_dir = get_executable_base_dir()
+      base_dir = SettingsDict.get_executable_base_dir()
       self.cache_dir = os.path.join(base_dir, 'thumbnails')
     else:
       self.cache_dir = cache_dir

@@ -20,7 +20,7 @@ from .imagepack import ImagePackWidget
 
 TR_gui_tool_assetbrowser = TranslationDomain("gui_tool_assetbrowser")
 
-SETTINGS_KEY_CURRENT_TAG = "persistent/assetmanager/current_tag"
+SETTINGS_KEY_CURRENT_TAG = "assetmanager/current_tag"
 
 class TagListItem(QListWidgetItem):
   def __init__(self, display_text, semantic_tag=None, is_all_tag=False):
@@ -86,7 +86,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     semantic_tag = settings.get(SETTINGS_KEY_CURRENT_TAG, AssetTagType.ALL.semantic)
     tag_text = self.tag_manager.get_tag_display_text(semantic_tag)
 
-    if self.tag_manager.get_tag_semantic(tag_text) != semantic_tag:
+    if self.tag_manager.get_tag_semantic(tag_text) != semantic_tag or semantic_tag not in self.assets_by_tag:
       semantic_tag = AssetTagType.ALL.semantic
       tag_text = self.tag_manager.get_tr_all()
 
@@ -186,16 +186,17 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     all_item.setFont(font)
     self.ui.categoriesListWidget.addItem(all_item)
     self.all_tag_item = all_item
-    for tag in self.assets_by_tag.keys():
-      count = len(self.assets_by_tag[tag][1])
+    asset_by_tag_changes = OrderedDict()
+    for tag, (_, asset_dict) in self.assets_by_tag.items():
+      count = len(asset_dict)
       if count > 0:
         semantic_tag = self.tag_manager.tag_text_to_semantic.get(tag, tag)
         item = TagListItem(f"{tag} ({count})", semantic_tag=semantic_tag)
         self.ui.categoriesListWidget.addItem(item)
-        _, asset_dict = self.assets_by_tag[tag]
-        self.assets_by_tag[tag] = (item, asset_dict)
+        asset_by_tag_changes[tag] = (item, asset_dict)
         if tag not in self.tag_manager.tag_text_to_semantic:
           self.tag_manager.add_custom_tag_mapping(tag, tag)
+    self.assets_by_tag.update(asset_by_tag_changes)
 
   def on_tag_selected(self, item: TagListItem):
     display_text = item.text()

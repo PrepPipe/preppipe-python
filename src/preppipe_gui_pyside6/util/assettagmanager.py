@@ -165,7 +165,6 @@ class AssetTagManager:
 
     is_recent_updated = False
     if tag_semantic not in recent_tags:
-      recent_tags.remove(tag_semantic)
       is_recent_updated = True
 
       if len(recent_tags) == MAX_RECENT_TAGS:

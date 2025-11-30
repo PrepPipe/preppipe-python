@@ -171,6 +171,9 @@ src/preppipe_gui_pyside6/forms/generated
 *.settings.db
 *.settings.db.*
 
+# thumbnails
+thumbnails
+
 # version files for pyinstaller build
 versionfile_*.txt
 
