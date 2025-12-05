@@ -12,10 +12,10 @@ from preppipe.util.imagepack import ImagePack
 from ..settingsdict import SettingsDict
 from PySide6.QtCore import QRunnable, Signal, QObject, Slot
 
-DEFAULT_BACKGROUND_SIZE = (512, 288) # 16:9
-DEFAULT_CHARACTER_SIZE = (288, 512) # 9:16
-
 class ThumbnailManager:
+  DEFAULT_BACKGROUND_SIZE = (512, 288) # 16:9
+  DEFAULT_CHARACTER_SIZE = (288, 512) # 9:16
+
   _lock: threading.RLock
   cache_dir: str
   thumbnail_cache: dict[str, str]
