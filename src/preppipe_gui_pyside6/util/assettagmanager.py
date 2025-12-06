@@ -5,6 +5,8 @@ import enum
 from typing import Optional, Any
 from PySide6.QtCore import Signal, QObject
 from ..settingsdict import SettingsDict
+from preppipe.assets.assetmanager import AssetManager
+from preppipe.util.imagepack import *
 from preppipe.language import TranslationDomain, Translatable
 
 TR_gui_util_assettagmanager = TranslationDomain("gui_util_assettagmanager")
@@ -186,7 +188,22 @@ class AssetTagManager(QObject):
     return display_tags
 
   def get_asset_tags(self, asset_id: str) -> set[str]:
-    return self.get_tags_dict().get(asset_id, set())
+    result = set()
+    result.update(self.get_tags_dict().get(asset_id, set()))
+    result.add(self.get_asset_type_tag(asset_id).semantic)
+    return result
+
+  def get_asset_type_tag(self, asset_id: str) -> AssetTagType:
+    asset = AssetManager.get_instance().get_asset(asset_id)
+    if isinstance(asset, ImagePack):
+      descriptor = ImagePack.get_descriptor_by_id(asset_id)
+      if descriptor:
+        pack_type = descriptor.get_image_pack_type()
+        if pack_type == ImagePackDescriptor.ImagePackType.BACKGROUND:
+          return AssetTagType.BACKGROUND
+        elif pack_type == ImagePackDescriptor.ImagePackType.CHARACTER:
+          return AssetTagType.CHARACTER_SPRITE
+    return AssetTagType.OTHER
 
   def get_all_tags(self) -> set[str]:
     return {
