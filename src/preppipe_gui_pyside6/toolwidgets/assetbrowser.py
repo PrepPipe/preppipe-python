@@ -127,32 +127,14 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     asset_manager = AssetManager.get_instance()
     self.assets_by_tag.clear()
 
-    background_tag = self.tag_manager.get_tr_background()
-    character_tag = self.tag_manager.get_tr_character()
-    other_tag = self.tag_manager.get_tr_other()
-
     # 初始化基于资产类型的分类标签
     for asset_id in self.all_asset_ids:
-      try:
-        asset = asset_manager.get_asset(asset_id)
-        if isinstance(asset, ImagePack):
-          descriptor = ImagePack.get_descriptor_by_id(asset_id)
-          if descriptor:
-            pack_type = descriptor.get_image_pack_type()
-            if pack_type == ImagePackDescriptor.ImagePackType.BACKGROUND:
-              category_tag = background_tag
-            elif pack_type == ImagePackDescriptor.ImagePackType.CHARACTER:
-              category_tag = character_tag
-            else:
-              category_tag = other_tag
-
-            # 只添加资产到对应分类，不修改tags_dict
-            if category_tag not in self.assets_by_tag:
-              self.assets_by_tag[category_tag] = (None, [asset_id])
-              continue
-            self.assets_by_tag[category_tag][1].append(asset_id)
-      except Exception:
-        continue
+      category_tag = str(self.tag_manager.get_asset_type_tag(asset_id).translatable)
+      # 只添加资产到对应分类，不修改tags_dict
+      if category_tag not in self.assets_by_tag:
+        self.assets_by_tag[category_tag] = (None, [asset_id])
+      else:
+        self.assets_by_tag[category_tag][1].append(asset_id)
 
     # 基于现有标签构建标签-资产对应关系
     for asset_id, tags in tags_dict.items():
