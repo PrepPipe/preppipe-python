@@ -3044,6 +3044,66 @@ class ImagePackDescriptor:
     IMAGE = enum.auto() # 图片选区
     COLOR = enum.auto() # 颜色选区
 
+  class ImagePackPresetTag(enum.Enum):
+    BACKGROUND_TEMPLATE = enum.auto(), ImagePack.TR_imagepack.tr("presettag_background_template",
+      en="Background Template",
+      zh_cn="背景模板",
+      zh_hk="背景模板"
+    )
+    BACKGROUND_SPECIAL = enum.auto(), ImagePack.TR_imagepack.tr("presettag_background_special",
+      en="Special Background",
+      zh_cn="特殊背景",
+      zh_hk="特殊背景"
+    )
+    BACKGROUND_INDOOR = enum.auto(), ImagePack.TR_imagepack.tr("presettag_background_indoor",
+      en="Indoor",
+      zh_cn="室内",
+      zh_hk="室內"
+    )
+    BACKGROUND_OUTDOOR = enum.auto(), ImagePack.TR_imagepack.tr("presettag_background_outdoor",
+      en="Outdoor",
+      zh_cn="室外",
+      zh_hk="室外"
+    )
+    BACKGROUND_NATURAL = enum.auto(), ImagePack.TR_imagepack.tr("presettag_background_natural",
+      en="Natural",
+      zh_cn="自然",
+      zh_hk="自然"
+    )
+    BACKGROUND_URBAN = enum.auto(), ImagePack.TR_imagepack.tr("presettag_background_manmade",
+      en="Urban",
+      zh_cn="城市",
+      zh_hk="城市",
+    )
+    BACKGROUND_HOME = enum.auto(), ImagePack.TR_imagepack.tr("presettag_background_home",
+      en="Home",
+      zh_cn="家",
+      zh_hk="家",
+    )
+    BACKGROUND_SCHOOL = enum.auto(), ImagePack.TR_imagepack.tr("presettag_background_school",
+      en="School",
+      zh_cn="学校",
+      zh_hk="學校",
+    )
+    BACKGROUND_PUBLIC_INTERIOR = enum.auto(), ImagePack.TR_imagepack.tr("presettag_background_public_interior",
+      en="Public Interior",
+      zh_cn="公共室内场所",
+      zh_hk="公共室內場所",
+    )
+    CHARACTERSPRITE_MALE = enum.auto(), ImagePack.TR_imagepack.tr("presettag_character_male",
+      en="Male Sprite",
+      zh_cn="男性立绘",
+      zh_hk="男性立绘"
+    )
+    CHARACTERSPRITE_FEMALE = enum.auto(), ImagePack.TR_imagepack.tr("presettag_character_female",
+      en="Female Sprite",
+      zh_cn="女性立绘",
+      zh_hk="女性立绘"
+    )
+    @property
+    def translatable(self) -> Translatable:
+      return self.value[1]
+
   class MaskType(enum.Enum):
     # 背景的选区类型
     BACKGROUND_SCREEN = enum.auto(), ImagePack.TR_imagepack.tr("maskparam_screen",
@@ -3137,6 +3197,7 @@ class ImagePackDescriptor:
   packtype : ImagePackType # 图片组的类型
   masktypes : tuple[MaskType, ...] # 有几个选区、各自的类型
   custom_masktype_names : list[Translatable] # 如果图片包有自定义的选区类型，那么它们的名称存在这里
+  preset_tags : tuple[ImagePackPresetTag, ...] # UI 中素材浏览器下所用的默认预设标签
   composites_code : list[str] # 各个差分组合的编号（字母数字组合）
   composites_layers : list[list[int]] # 各个差分组合所用的图层
   composites_references : dict[str, Translatable] # 如果某些差分组合有（非编号的）名称，那么它们的名称存在这里
@@ -3153,6 +3214,7 @@ class ImagePackDescriptor:
       'packtype': self.packtype.name,
       'masktypes': [m.name for m in self.masktypes],
       'custom_masktype_names': self.custom_masktype_names,
+      'preset_tags': [tag.name for tag in self.preset_tags],
       'composites_code': self.composites_code,
       'composites_layers': self.composites_layers,
       'composites_references': self.composites_references,
@@ -3169,6 +3231,7 @@ class ImagePackDescriptor:
     self.packtype = ImagePackDescriptor.ImagePackType[state['packtype']]
     self.masktypes = tuple([ImagePackDescriptor.MaskType[s] for s in state['masktypes']])
     self.custom_masktype_names = state['custom_masktype_names']
+    self.preset_tags = tuple([ImagePackDescriptor.ImagePackPresetTag[tag] for tag in state['preset_tags']])
     self.composites_code = state['composites_code']
     self.composites_layers = state['composites_layers']
     self.composites_references = state['composites_references']
@@ -3204,6 +3267,10 @@ class ImagePackDescriptor:
         num_custom += 1
       else:
         yield mask, mask.trname
+
+  def get_preset_tags(self) -> typing.Iterable[ImagePackPresetTag]:
+    # 获取该图片组所有的预设标签
+    return self.preset_tags
 
   def get_all_composites(self) -> typing.Iterable[str]:
     # 获取该图片组所有的组合
@@ -3304,6 +3371,7 @@ class ImagePackDescriptor:
           case _:
             masktypelist.append(ImagePackDescriptor.MaskType.CHARACTER_COLOR_DECORATE)
     self.masktypes = tuple(masktypelist)
+    self.preset_tags = ()
     self.custom_masktype_names = []
     # 从图片包组合的名称中提取编号
     regex_pattern = re.compile(r'^(?P<code>[A-Z0-9]+)(?:-.+)?$')
@@ -3405,6 +3473,17 @@ class ImagePackDescriptor:
       else:
         raise PPInternalError("Invalid mask type: " + str(masks))
       self.masktypes = tuple(masktypelist)
+    if "preset_tags" in references:
+      used_keys.add("preset_tags")
+      preset_tags = references["preset_tags"]
+      if not isinstance(preset_tags, list):
+        raise PPInternalError("Invalid preset tags: " + str(preset_tags))
+      tags = []
+      for t in preset_tags:
+        if not isinstance(t, str):
+          raise PPInternalError("Invalid preset tag: " + str(t))
+        tags.append(ImagePackDescriptor.ImagePackPresetTag[t])
+      self.preset_tags = tuple(tags)
     if "composites" in references:
       used_keys.add("composites")
       valid_composites = set(self.composites_code)
@@ -3450,7 +3529,8 @@ class ImagePackDescriptor:
     if isinstance(self.description, Translatable):
       result["description"] = self.description.dump_candidates_json()
     result["packtype"] = self.packtype.name
-    result["composites_code"] = self.composites_code
+    result["preset_tags"] = [tag.name for tag in self.preset_tags]
+    result["composites_code_size"] = len(self.composites_code)
     if len(self.composites_references) > 0:
       reference_dict = {}
       for k, v in self.composites_references.items():

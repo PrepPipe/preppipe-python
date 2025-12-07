@@ -47,16 +47,19 @@ class AssetTagType(enum.Enum):
   def translatable(self) -> Translatable:
     return self.value[1]
 
-  @property
-  def semantic(self) -> str:
-    return self.name.lower()
-
 class AssetTagManager(QObject):
   """素材标签管理器，采用单例模式实现，默认仅从主线程中通过UI交互编辑，较低频操作
 
   负责管理素材标签的增删改查、语义映射、标签字典的持久化等功能，同时管理标签相关的多语言翻译
 
   """
+
+  # 每个分类标签下有哪些预设标签
+  # 枚举类型有可能在多种分类标签下共用，即从分类标签到预设标签的映射是多对一的关系
+  ASSET_PRESET_TAG_MAP : dict[AssetTagType, enum.Enum] = {
+    AssetTagType.BACKGROUND: ImagePackDescriptor.ImagePackPresetTag,
+    AssetTagType.CHARACTER_SPRITE: ImagePackDescriptor.ImagePackPresetTag,
+  }
 
   _instance: Optional['AssetTagManager'] = None
   tags_updated = Signal()
@@ -81,6 +84,13 @@ class AssetTagManager(QObject):
       cls._instance = cls()
     return cls._instance
 
+  @staticmethod
+  def get_semantic_tag(tag : enum.Enum | str) -> str:
+    if isinstance(tag, enum.Enum):
+      return tag.name.lower()
+    else:
+      return tag
+
   def _ensure_string(self, obj: Any) -> str:
     return str(obj)
 
@@ -95,7 +105,11 @@ class AssetTagManager(QObject):
     self.semantic_to_tag_text.clear()
 
     for tag_type in AssetTagType:
-      self._add_tag_mapping(tag_type.translatable, tag_type.semantic)
+      self._add_tag_mapping(tag_type.translatable, self.get_semantic_tag(tag_type))
+      if tag_type in self.ASSET_PRESET_TAG_MAP:
+        dest_preset_type = self.ASSET_PRESET_TAG_MAP[tag_type]
+        for preset_tag in dest_preset_type:
+          self._add_tag_mapping(preset_tag.translatable, self.get_semantic_tag(preset_tag))
 
   def get_tag_semantic(self, tag_text: str) -> str:
     return self.tag_text_to_semantic.get(tag_text, tag_text)
@@ -190,7 +204,9 @@ class AssetTagManager(QObject):
   def get_asset_tags(self, asset_id: str) -> set[str]:
     result = set()
     result.update(self.get_tags_dict().get(asset_id, set()))
-    result.add(self.get_asset_type_tag(asset_id).semantic)
+    # 准备开始 v2 改动了就把下面这行的 # 去掉
+    # result.update(self.get_asset_preset_tag(asset_id))
+    result.add(self.get_semantic_tag(self.get_asset_type_tag(asset_id)))
     return result
 
   def get_asset_type_tag(self, asset_id: str) -> AssetTagType:
@@ -204,6 +220,16 @@ class AssetTagManager(QObject):
         elif pack_type == ImagePackDescriptor.ImagePackType.CHARACTER:
           return AssetTagType.CHARACTER_SPRITE
     return AssetTagType.OTHER
+
+  def get_asset_preset_tag(self, asset_id: str) -> set[str]:
+    results = set()
+    asset = AssetManager.get_instance().get_asset(asset_id)
+    if isinstance(asset, ImagePack):
+      descriptor = ImagePack.get_descriptor_by_id(asset_id)
+      if descriptor:
+        for preset_tag in descriptor.preset_tags:
+          results.add(self.get_semantic_tag(preset_tag))
+    return results
 
   def get_all_tags(self) -> set[str]:
     return {
@@ -226,12 +252,24 @@ class AssetTagManager(QObject):
 
   def get_asset_tag_type_from_semantic(self, semantic: str) -> Optional[AssetTagType]:
     for tag_type in AssetTagType:
-      if tag_type.semantic == semantic:
+      if self.get_semantic_tag(tag_type) == semantic:
         return tag_type
     return None
 
+  def get_asset_preset_tag_from_semantic(self, semantic: str) -> tuple[AssetTagType, enum.Enum] | None:
+    for tag_type in AssetTagType:
+      if tag_type in self.ASSET_PRESET_TAG_MAP:
+        dest_enum_type = self.ASSET_PRESET_TAG_MAP[tag_type]
+        for preset_tag in dest_enum_type:
+          if self.get_semantic_tag(preset_tag) == semantic:
+            return tag_type, preset_tag
+    return None
   def is_preset_tag(self, semantic: str) -> bool:
-    return self.get_asset_tag_type_from_semantic(semantic) is not None
+    if self.get_asset_tag_type_from_semantic(semantic) is not None:
+      return True
+    if self.get_asset_preset_tag_from_semantic(semantic) is not None:
+      return True
+    return False
 
   def update_asset_tags(self, asset_id: str, new_tags: set[str]) -> None:
     tags_dict = self.get_tags_dict()
