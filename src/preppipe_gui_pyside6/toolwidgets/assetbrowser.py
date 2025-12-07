@@ -86,17 +86,17 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     self.load_tags()
 
     settings = SettingsDict.instance()
-    semantic_tag = settings.get(SETTINGS_KEY_CURRENT_TAG, AssetTagType.ALL.semantic)
+    semantic_tag = settings.get(SETTINGS_KEY_CURRENT_TAG, AssetTagManager.get_semantic_tag(AssetTagType.ALL))
     tag_text = self.tag_manager.get_tag_display_text(semantic_tag)
 
     if self.tag_manager.get_tag_semantic(tag_text) != semantic_tag or semantic_tag not in self.assets_by_tag:
-      semantic_tag = AssetTagType.ALL.semantic
+      semantic_tag = AssetTagManager.get_semantic_tag(AssetTagType.ALL)
       tag_text = self.tag_manager.get_tr_all()
 
     settings[SETTINGS_KEY_CURRENT_TAG] = semantic_tag
     self.current_tag = tag_text
     self.ui.categoryTitleLabel.setText(self.current_tag)
-    if semantic_tag == AssetTagType.ALL.semantic:
+    if semantic_tag == AssetTagManager.get_semantic_tag(AssetTagType.ALL):
       if self.all_tag_item:
         self.ui.categoriesListWidget.setCurrentItem(self.all_tag_item)
       else:
@@ -161,7 +161,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     # 添加ALL标签
     all_count = len(self.all_asset_ids)
     all_text = self.tag_manager.get_tr_all()
-    all_item = TagListItem(f"{all_text} ({all_count})", semantic_tag=AssetTagType.ALL.semantic)
+    all_item = TagListItem(f"{all_text} ({all_count})", semantic_tag=AssetTagManager.get_semantic_tag(AssetTagType.ALL))
     font = all_item.font()
     font.setBold(True)
     all_item.setFont(font)
@@ -227,7 +227,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
   def load_asset_cards_for_tag(self, tag: str):
     self.clear_asset_cards()
 
-    if tag == AssetTagType.ALL.semantic:
+    if tag == AssetTagManager.get_semantic_tag(AssetTagType.ALL):
       # 显示所有资产
       current_asset_ids = self.all_asset_ids
     else:
