@@ -591,6 +591,22 @@ class FguiToRenpyConverter:
                 break
             self.screen_variable_code.append(f"{self.indent_str}default {controller.name} = {controller.selected}")            
 
+        # 根据组件的可见区域性质，决定是否加一层viewport。
+        if component.overflow == "hidden":
+            self.screen_ui_code.append(f"{self.indent_str}viewport:")
+            self.indent_level_up()
+            self.screen_ui_code.append(f"{self.indent_str}xysize {component.size}")
+        elif component.overflow == "scroll":
+            self.screen_ui_code.append(f"{self.indent_str}viewport:")
+            self.indent_level_up()
+            self.screen_ui_code.append(f"{self.indent_str}xysize {component.size}")
+            self.screen_ui_code.append(f"{self.indent_str}draggable True") 
+            # 在Ren'Py中实际可能无法滚动。
+            # 需要添加一个fixed组件，并设置一个合适的xysize。该xysize应为容纳所有子组件的包围框。
+            self.screen_ui_code.append(f"{self.indent_str}fixed:")
+            self.indent_level_up()
+            self.screen_ui_code.append(f"{self.indent_str}xysize ({component.bbox_width}, {component.bbox_height})")
+
         self.screen_ui_code.extend(self.convert_component_display_list(component))
 
         self.screen_code.extend(self.screen_definition_head)
@@ -890,16 +906,23 @@ class FguiToRenpyConverter:
         textbox = None
         namebox_pos = (0, 0)
         textbox_pos = (0, 0)
+        who_index = 0
+        what_index = 0
         
-        for displayable in component.display_list.displayable_list:
+        display_list_len = len(component.display_list.displayable_list)
+        for i in range(display_list_len):
+            displayable = component.display_list.displayable_list[i]
             # 生成发言角色名的文本样式
             if displayable.name == 'who' and isinstance(displayable, FguiText):
                 self.generate_text_style(displayable, "history_who_text_style")
                 who_text = displayable
+                who_index = i
             # 生成发言内容的文本样式
             if displayable.name == 'what' and isinstance(displayable, FguiText):
                 self.generate_text_style(displayable, "history_what_text_style")
                 what_text = displayable
+                what_index = i
+
         # 检查查找结果
         if who_text == None:
             print("Lack of who text component.")
@@ -908,8 +931,10 @@ class FguiToRenpyConverter:
             print("Lack of what text component.")
             return
 
-        who_text_str = f"{who_text.text}".replace("\n", "\\n").replace("\r", "\\n")
-        what_text_str = f"{what_text.text}".replace("\n", "\\n").replace("\r", "\\n")
+        # who_text_str = f"{who_text.text}".replace("\n", "\\n").replace("\r", "\\n")
+        # what_text_str = f"{what_text.text}".replace("\n", "\\n").replace("\r", "\\n")
+        who_text_str = ''
+        what_text_str = '无对话记录。'
         screen_params = f"who='{who_text_str}', what='{what_text_str}'"
         self.reset_indent_level()
         # say界面需要覆盖默认gui设置
@@ -918,6 +943,15 @@ class FguiToRenpyConverter:
         # self.screen_definition_head.append("style history_dialogue is history_what_text_style")
         self.screen_definition_head.append(f"screen {component.name}({screen_params}):")
         self.indent_level_up()
+
+        # 不包含who和what的displayList部分按顺序放在前面
+        index_min = min(what_index, who_index)
+        index_max = max(what_index, who_index)
+        self.screen_ui_code.extend(self.convert_component_display_list(component, list_begin_index=0, list_end_index=index_min))
+        self.screen_ui_code.extend(self.convert_component_display_list(component, list_begin_index=index_min+1, list_end_index=index_max))
+        self.screen_ui_code.extend(self.convert_component_display_list(component, list_begin_index=index_max+1))
+
+        # who和what固定放在后面，显示在其他组件之上。
         self.screen_ui_code.append(f"{self.indent_str}text _(who) style 'history_who_text_style':")
         self.indent_level_up()
         self.screen_ui_code.append(f"{self.indent_str}pos {who_text.xypos}")
@@ -953,6 +987,7 @@ class FguiToRenpyConverter:
             # 生成发言角色名的文本样式
             if displayable.name == 'who' and isinstance(displayable, FguiText):
                 self.generate_text_style(displayable, "say_who_text_style")
+                self.generate_text_style(displayable, "say_label")
                 who_text = displayable
             # 生成发言内容的文本样式
             if displayable.name == 'what' and isinstance(displayable, FguiText):
@@ -1092,6 +1127,7 @@ class FguiToRenpyConverter:
         self.style_code.append(f"# 文本{fgui_text.name}样式定义")
         # 定义样式
         self.style_code.append(f"style {style_name}:")
+        self.style_code.append(f"{style_indent}anchor {fgui_text.pivot}")
         self.style_code.append(f"{style_indent}xysize {fgui_text.size}")
         # 字体可能为空，改为Ren'Py内置默认字体SourceHanSansLite
         text_font =  fgui_text.font if fgui_text.font else "SourceHanSansLite"
@@ -1721,6 +1757,10 @@ class FguiToRenpyConverter:
         # Ren'Py中只有文本宽度小于组件宽度的水平方向对齐设置
         xalign, yalign = self.trans_text_align(fgui_text.align, fgui_text.v_align)
         text_code.append(f"{self.indent_str}textalign {xalign}")
+        # 不自动换行
+        text_code.append(f"{self.indent_str}layout 'nobreak'")
+            
+
         # 粗体、斜体、下划线、删除线
         if fgui_text.bold:
             text_code.append(f"{self.indent_str}bold {fgui_text.bold}")
