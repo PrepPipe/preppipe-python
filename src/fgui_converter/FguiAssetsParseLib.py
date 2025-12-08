@@ -261,6 +261,8 @@ class FguiComponent:
         self.package_desc_id = package_desc_id
         size = component_etree.get("size")
         self.size = tuple(map(int, size.split(","))) if size else (0,0)
+        self.overflow = component_etree.get("overflow", "visible")
+        self.scroll = component_etree.get("scroll", "vertical")
         self.extention = component_etree.get("extention")
         self.mask = component_etree.get("mask")
         # 轴心。默认值为(0.0, 0.0)。
@@ -271,6 +273,10 @@ class FguiComponent:
         self.hit_test = FguiHitTest(hit_test) if hit_test else None
         # 自定义数据。实际使用时，相同id的FguiDisplayable中的自定义数据优先。
         self.custom_data = component_etree.get("customData")
+
+        #包含所有子组件的包围框尺寸，初始值为组件尺寸。
+        self.bbox_width = self.size[0]
+        self.bbox_height = self.size[1]
 
         # 控制器，一般不超过1个。
         self.controller_list = []
@@ -286,6 +292,9 @@ class FguiComponent:
             # 显示内容
             elif (self.component_etree[i].tag == "displayList"):
                 self.display_list = FguiDisplayList(self.component_etree[i], self.package_desc_id)
+                for displayable in self.display_list.displayable_list:
+                    self.bbox_width = max(self.bbox_width, displayable.xypos[0] + displayable.size[0])
+                    self.bbox_height = max(self.bbox_height, displayable.xypos[1] + displayable.size[1])
 
     def __repr__(self):
         return f"FguiComponent({self.id}, {self.name}, {self.size}, {self.extention}, {self.mask})"
