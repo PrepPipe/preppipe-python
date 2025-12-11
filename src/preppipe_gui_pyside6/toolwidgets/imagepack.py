@@ -6,6 +6,7 @@ from PySide6.QtGui import *
 from PySide6.QtCore import *
 from preppipe.assets.assetmanager import *
 from preppipe.util.imagepack import *
+from preppipe.frontend.vnmodel import vnutil,vnparser
 from ..forms.generated.ui_imagepackwidget import Ui_ImagePackWidget
 from ..componentwidgets.imageviewerwidget import ImageViewerWidget
 from ..componentwidgets.maskinputwidget import MaskInputWidget
@@ -142,6 +143,11 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
     zh_cn="该图片包没有差分组合。",
     zh_hk="該圖片包沒有差分組合。",
   )
+  _tr_no_description = TR_gui_tool_imagepack.tr("no_description",
+    en="This image pack contains no description.",
+    zh_cn="该图片包没有描述。",
+    zh_hk="該圖片包沒有描述。",
+  )
   _tr_preset_label = TR_gui_tool_imagepack.tr("preset_label",
     en="Preset",
     zh_cn="预设",
@@ -157,6 +163,155 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
     zh_cn="应用",
     zh_hk="應用",
   )
+  _tr_bracket_round = TR_gui_tool_imagepack.tr("bracket_round",
+    en="({value})",
+    zh_cn="（{value}）",
+    zh_hk="（{value}）",
+  )
+  _tr_bracket_square = TR_gui_tool_imagepack.tr("bracket_square",
+    en="[{value}]",
+    zh_cn="【{value}】",
+    zh_hk="【{value}】",
+  )
+  _tr_using_in_script = TR_gui_tool_imagepack.tr("using_in_script",
+    en="Using in Script:",
+    zh_cn="在剧本中使用：",
+    zh_hk="在剧本中使用：",
+  )
+  _tr_colon = TR_gui_tool_imagepack.tr("colon",
+    en=": ",
+    zh_cn="：",
+    zh_hk="：",
+  )
+  _tr_comma = TR_gui_tool_imagepack.tr("comma",
+    en=", ",
+    zh_cn="，",
+    zh_hk="，",
+  )
+  _tr_place_1 = TR_gui_tool_imagepack.tr("place_1",
+    en="Place1",
+    zh_cn="地点1",
+    zh_hk="地點1",
+  )
+  _tr_character_1 = TR_gui_tool_imagepack.tr("character_1",
+    en="Character1",
+    zh_cn="角色1",
+    zh_hk="角色1",
+  )
+
+  def _get_current_composite_name(self) -> str:
+    ref=self.descriptor.composites_references
+    if isinstance(self.current_index, list):
+      layers=self.pack.layers
+      layer_codes = []
+      for layer_index in self.current_index:
+        layer = layers[layer_index]
+        layer_codes.append(ImagePackDescriptor.get_layer_code(layer.basename))
+
+      # 检查是否有预定义的基底组合缩写（如 B0=L1L2...）
+      if charactersprite_gen := self.pack.opaque_metadata.get("charactersprite_gen", None):
+        base_options = charactersprite_gen["bases"]
+        # 尝试匹配基底组合，选择最完全匹配的（包含最多图层的）
+        best_base_abbr = None
+        best_base_codes = []
+        for base_abbr, base_layer_codes in base_options.items():
+          if set(base_layer_codes).issubset(set(layer_codes)):
+            # 如果当前基底组合比之前找到的更完全（包含更多图层），则更新最佳匹配
+            if len(base_layer_codes) > len(best_base_codes):
+              best_base_abbr = base_abbr
+              best_base_codes = base_layer_codes
+
+        if best_base_abbr:
+          # 使用最完全匹配的基底组合
+          remaining_codes = [code for code in layer_codes if code not in best_base_codes]
+          return best_base_abbr + ''.join(remaining_codes)
+
+      # 如果没有匹配的基底组合，直接返回所有图层代码的拼接
+      return ''.join(layer_codes)
+    composite_code = self.descriptor.composites_code[self.current_index]
+    if composite_code in ref:
+      return ref[composite_code].get()
+    return composite_code
+
+  def _get_place_1_composition(self,composition_text:str) -> str:
+    return f"{self._tr_place_1.get()}{self._tr_bracket_round.get().format(value=composition_text)}"
+
+  def _build_modify_string(self, base_name: str) -> str:
+    preset_params = [base_name]
+    if self.current_mask_params:
+      for mask_type, mask_value in zip(self.descriptor.get_masks(), self.current_mask_params):
+        mask_name = mask_type.trname.get().lower()
+        if isinstance(mask_value, Color):
+          color_hex = mask_value.get_string()
+          preset_params.append(f"{mask_name}={color_hex}")
+    return f"{vnutil._tr_imagepreset.get()}{self._tr_bracket_round.get().format(value=self._tr_comma.get().join(preset_params))}"
+
+  def _update_description(self):
+    desc=self.descriptor.description
+    desc_list:list[str]=[]
+    match self.descriptor.packtype:
+      case ImagePackDescriptor.ImagePackType.CHARACTER:
+        '''角色描述格式（无差分不显示composite)：
+        name(composite_name) (#composite_index)
+
+        description
+
+        using_in_script
+        【decl:ch1】
+          * character:preset(name)
+        【character_enter:ch1】
+        '''
+        base_name=self.descriptor.topref.get()
+        name,ch1=base_name,self._tr_character_1.get()
+        if len(self.descriptor.composites_code):
+          name=f"{base_name}{self._tr_bracket_round.get().format(value=self._get_current_composite_name())}"
+          # 只有当current_index是预设组合时才显示索引
+          if isinstance(self.current_index, int):
+            name=f"{name} {self._tr_bracket_round.get().format(value=f'#{self.current_index}')}"
+        decl=f"{vnparser.cmd_character_decl.CMD_INFO.name_tr.get()}{self._tr_colon.get()}{ch1}"
+        preset=f"{vnparser._tr_chdecl_sprite.get()}{self._tr_colon.get()}{self._build_modify_string(base_name)}"
+        action=f"{vnparser.cmd_character_entry.CMD_INFO.name_tr.get()}{self._tr_colon.get()}{ch1}"
+
+        desc_list.append(name)
+        desc_list.append('')
+        desc_list.append(desc.get() if desc else self._tr_no_description.get())
+        desc_list.append('')
+        desc_list.append(self._tr_using_in_script.get())
+        desc_list.append(self._tr_bracket_square.get().format(value=decl))
+        desc_list.append(f"  * {preset}")
+        desc_list.append(self._tr_bracket_square.get().format(value=action))
+      case ImagePackDescriptor.ImagePackType.BACKGROUND:
+        '''背景描述格式（无差分不显示composite)：
+        name(composite_name) (#composite_index)
+
+        description
+
+        using_in_script
+        【decl:scene1】
+          * background:preset(name)
+        【switch_scene:scene1(composite_name)】
+        '''
+        name=self.descriptor.topref.get()
+        base_name=name
+        composition=''
+        if len(self.descriptor.composites_code):
+          composition=self._get_current_composite_name()
+          name=f"{base_name}{self._tr_bracket_round.get().format(value=composition)}"
+          name=f"{name} {self._tr_bracket_round.get().format(value=f'#{self.current_index}')}"
+        decl=f"{vnparser.cmd_scene_decl.CMD_INFO.name_tr.get()}{self._tr_colon.get()}{self._tr_place_1.get()}"
+        preset=f"{vnparser._tr_scenedecl_background.get()}{self._tr_colon.get()}{self._build_modify_string(base_name)}"
+        action=f"{vnparser.cmd_switch_scene.CMD_INFO.name_tr.get()}{self._tr_colon.get()}{self._get_place_1_composition(composition)}"
+
+        desc_list.append(name)
+        desc_list.append('')
+        desc_list.append(desc.get() if desc else self._tr_no_description.get())
+        desc_list.append('')
+        desc_list.append(self._tr_using_in_script.get())
+        desc_list.append(self._tr_bracket_square.get().format(value=decl))
+        desc_list.append(f"  * {preset}")
+        desc_list.append(self._tr_bracket_square.get().format(value=action))
+
+    self.ui.infoLabel.setText('\n'.join(desc_list))
 
   def setData(self, packid : str | None = None, category_kind : ImagePackDescriptor.ImagePackType | None = None):
     if category_kind is not None:
@@ -326,6 +481,7 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
       self.ui.sourceGroupBox.setLayout(layout)
     # setData() 需要尽快返回，让组件先显示出来，后续再更新内容
     QMetaObject.invokeMethod(self, "finalize_init", Qt.QueuedConnection)
+    self._update_description()
 
   @Slot()
   def finalize_init(self):
@@ -347,8 +503,8 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
 
   def update_text(self):
     super().update_text()
-    if self.charactersprite_layer_preset_combobox:
-      self.charactersprite_update_layer_preset_combobox_text()
+    self._update_description()
+    self.charactersprite_update_layer_preset_combobox_text()
 
   @Slot(int)
   def handleMaskParamUpdate(self, index : int):
@@ -356,6 +512,7 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
       raise RuntimeError("current_mask_params is None")
     widget = self.mask_param_widgets[index]
     self.current_mask_params[index] = widget.getValue()
+    self._update_description()
     WaitDialog.long_running_operation_start()
     QMetaObject.invokeMethod(self, "updateCurrentPack", Qt.QueuedConnection)
 
@@ -371,6 +528,7 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
     if self.current_index == new_index:
       return
     self.current_index = new_index
+    self._update_description()
     QMetaObject.invokeMethod(self, "updateCurrentImage", Qt.QueuedConnection)
 
   def updateCharacterCompositionPanelFromCurrentIndex(self):
@@ -433,6 +591,7 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
       self.updateCharacterCompositionPanelFromCurrentIndex()
       if self.current_index != new_index:
         self.current_index = new_index
+        self._update_description()
         QMetaObject.invokeMethod(self, "updateCurrentImage", Qt.QueuedConnection)
 
   @Slot()
@@ -452,6 +611,7 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
     new_index = current_index if current_index is not None else current_layers
     if self.current_index != new_index:
       self.current_index = new_index
+      self._update_description()
       QMetaObject.invokeMethod(self, "updateCurrentImage", Qt.QueuedConnection)
 
   @Slot()
