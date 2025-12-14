@@ -1,4 +1,5 @@
 import functools
+import sys
 import PIL.ImageQt
 from ..toolwidgetinterface import *
 from PySide6.QtWidgets import *
@@ -116,7 +117,6 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
     self.ui.viewerLayout.addWidget(self.viewer)
     self.bind_text(self.ui.sourceGroupBox.setTitle, self._tr_composition_selection)
     self.bind_text(self.ui.forkParamGroupBox.setTitle, self._tr_mask_parameters)
-    self.ui.infoLabel.setText('') # 在详细信息功能完成前先隐藏该标签
     self.current_index = 0
     self.current_mask_params = None
     self.mask_param_widgets = []
@@ -163,15 +163,35 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
     zh_cn="应用",
     zh_hk="應用",
   )
-  _tr_bracket_round = TR_gui_tool_imagepack.tr("bracket_round",
-    en="({value})",
-    zh_cn="（{value}）",
-    zh_hk="（{value}）",
+  _tr_parenthesis_start = TR_gui_tool_imagepack.tr("parenthesis_start",
+    en="(",
+    zh_cn="（",
+    zh_hk="（",
   )
-  _tr_bracket_square = TR_gui_tool_imagepack.tr("bracket_square",
-    en="[{value}]",
-    zh_cn="【{value}】",
-    zh_hk="【{value}】",
+  _tr_parenthesis_end = TR_gui_tool_imagepack.tr("parenthesis_end",
+    en=")",
+    zh_cn="）",
+    zh_hk="）",
+  )
+  _tr_squarebracket_start = TR_gui_tool_imagepack.tr("squarebracket_start",
+    en="[",
+    zh_cn="【",
+    zh_hk="【",
+  )
+  _tr_squarebracket_end = TR_gui_tool_imagepack.tr("squarebracket_end",
+    en="]",
+    zh_cn="】",
+    zh_hk="】",
+  )
+  _tr_not_listed = TR_gui_tool_imagepack.tr("not_listed",
+    en="Not Listed",
+    zh_cn="未列举",
+    zh_hk="未列举",
+  )
+  _tr_modified = TR_gui_tool_imagepack.tr("modified",
+    en="Modified",
+    zh_cn="已修改",
+    zh_hk="已修改",
   )
   _tr_using_in_script = TR_gui_tool_imagepack.tr("using_in_script",
     en="Using in Script:",
@@ -197,6 +217,11 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
     en="Character1",
     zh_cn="角色1",
     zh_hk="角色1",
+  )
+  _tr_version_1 = TR_gui_tool_imagepack.tr("version_1",
+    en="Version1",
+    zh_cn="差分1",
+    zh_hk="差分1",
   )
 
   def _get_current_composite_name(self) -> str:
@@ -233,85 +258,299 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
       return ref[composite_code].get()
     return composite_code
 
-  def _get_place_1_composition(self,composition_text:str) -> str:
-    return f"{self._tr_place_1.get()}{self._tr_bracket_round.get().format(value=composition_text)}"
+  # =================================================================
+  # 以下都是 _update_description 需要用到的内容
+  # =================================================================
 
-  def _build_modify_string(self, base_name: str) -> str:
-    preset_params = [base_name]
+  # D:\My\Path\Script.docx --> D:\My\Path\Image\Version1_Image.png
+  #    ^^ Dir1                            ^   ^
+  #       ^^ Dir2                         |   |
+  #            ^^^^^^^^^^^ ScriptFileName |   |
+  #                                       ----- ImageRelDir
+  _tr_example_relpath_dir1 = TR_gui_tool_imagepack.tr("example_relpath_dir1",
+    en="My",
+    zh_cn="我的",
+    zh_hk="我的",
+  )
+  _tr_example_relpath_dir2 = TR_gui_tool_imagepack.tr("example_relpath_dir2",
+    en="Path",
+    zh_cn="路径",
+    zh_hk="路徑",
+  )
+  _tr_example_relpath_script_file = TR_gui_tool_imagepack.tr("example_relpath_script_file",
+    en="Script.docx",
+    zh_cn="剧本.docx",
+    zh_hk="劇本.docx",
+  )
+  _tr_example_relpath_image_rel_dir = TR_gui_tool_imagepack.tr("example_relpath_image_rel_dir",
+    en="Image",
+    zh_cn="图片",
+    zh_hk="圖片",
+  )
+  _tr_example_relpath_explanation = TR_gui_tool_imagepack.tr("example_relpath_explanation",
+    en="(Assuming the script is at \"{script}\" and the image is at \"{image}\")",
+    zh_cn="（假设剧本在 \"{script}\"，图片在 \"{image}\"）",
+    zh_hk="（假設劇本在 \"{script}\"，圖片在 \"{image}\"）"
+  )
+  def _feature_unsupported_require_export_get_example_paths(self) -> tuple[str, str, str]:
+    # ("D:\My\Path\Script.docx",
+    #  "D:\My\Path\Image\Version1_Image.png",
+    #  "Image\Version1_Image")
+    base_path = os.path.join(self._tr_example_relpath_dir1.get(), self._tr_example_relpath_dir2.get())
+    image_str = self._tr_example_relpath_image_rel_dir.get()
+    # Windows 的话加上 D:
+    if sys.platform == "win32":
+      base_path = os.path.join("D:", base_path)
+    script_path = os.path.join(base_path, self._tr_example_relpath_script_file.get())
+    image_path = os.path.join(base_path, image_str, image_str + "1.png")
+    ref_path = os.path.join(image_str, image_str + "1")
+    return (script_path, image_path, ref_path)
+
+  tr_mask_charactersprite_args_explanation = TR_gui_tool_imagepack.tr("mask_charactersprite_args_explanation",
+    en="In the main pipeline, we only implemented following arguments for character sprites masking : {args}. Rest of arguments are not supported yet.",
+    zh_cn="主管线中，我们只提供了角色立绘中以下选区参数的支持：{args}。其他参数暂不支持。",
+    zh_hk="主管線中，我們只提供了角色立繪中以下選區參數的支持：{args}。其他參數暫不支持。",
+  )
+  class MainPipelineSupportMissingKind(enum.Enum):
+    COMPOSITION_NOT_ENUMERATED = enum.auto(), TR_gui_tool_imagepack.tr("composition_not_enumerated_info",
+      en="Composition not enumerated",
+      zh_cn="差分组合未列举",
+      zh_hk="差分組合未列舉",
+    )
+    MASK_TEXT_WITH_COLOR = enum.auto(), TR_gui_tool_imagepack.tr("mask_text_with_color_info",
+      en="Colored text for mask",
+      zh_cn="选区使用了带颜色的文本",
+      zh_hk="選區使用了帶顏色的文本",
+    )
+    MASK_CHARACTERSPRITE_ARGS = enum.auto(), TR_gui_tool_imagepack.tr("mask_charactersprite_args_info",
+      en="Character sprite modified with unsupported mask args",
+      zh_cn="角色立绘使用了不支持的选区参数",
+      zh_hk="角色立繪使用了不支持的選區參數",
+    )
+
+    @property
+    def trname(self) -> Translatable:
+      return self.value[1]
+
+    def get_explanation(self) -> str:
+      match self:
+        case self.MASK_CHARACTERSPRITE_ARGS:
+          return ImagePackWidget.tr_mask_charactersprite_args_explanation.format(args=', '.join([
+            ImagePackDescriptor.MaskType.CHARACTER_COLOR_CLOTH.trname.get(),
+            ImagePackDescriptor.MaskType.CHARACTER_COLOR_HAIR.trname.get(),
+            ImagePackDescriptor.MaskType.CHARACTER_COLOR_DECORATE.trname.get(),
+          ]))
+        case _:
+          return ""
+    def will_fix(self) -> bool:
+      match self:
+        case self.MASK_CHARACTERSPRITE_ARGS | self.MASK_TEXT_WITH_COLOR:
+          return True
+        case _:
+          return False
+  def _is_mainpipeline_support_missing(self) -> list[MainPipelineSupportMissingKind] | None:
+    # 检查当前差分组合、选区修改是否在主管线中有支持
+    # 如果暂未支持，我们需要在这里提示用户保存图片并将其作为用户素材导入
+    result = []
+    if not isinstance(self.current_index, int):
+      result.append(self.MainPipelineSupportMissingKind.COMPOSITION_NOT_ENUMERATED)
     if self.current_mask_params:
       for mask_type, mask_value in zip(self.descriptor.get_masks(), self.current_mask_params):
-        mask_name = mask_type.trname.get().lower()
-        if isinstance(mask_value, Color):
-          color_hex = mask_value.get_string()
-          preset_params.append(f"{mask_name}={color_hex}")
-    return f"{vnutil._tr_imagepreset.get()}{self._tr_bracket_round.get().format(value=self._tr_comma.get().join(preset_params))}"
+        if mask_value is None:
+          continue
+        if self.descriptor.packtype == ImagePackDescriptor.ImagePackType.CHARACTER:
+          if mask_type not in (ImagePackDescriptor.MaskType.CHARACTER_COLOR_CLOTH,
+                               ImagePackDescriptor.MaskType.CHARACTER_COLOR_HAIR,
+                               ImagePackDescriptor.MaskType.CHARACTER_COLOR_DECORATE):
+            result.append(self.MainPipelineSupportMissingKind.MASK_CHARACTERSPRITE_ARGS)
+        if isinstance(mask_value, tuple) and isinstance(mask_value[1], Color) and mask_value[1] != Color(0,0,0):
+          result.append(self.MainPipelineSupportMissingKind.MASK_TEXT_WITH_COLOR)
+    if len(result) > 0:
+      return result
+    return None
 
+  _tr_missing_support_will_fix = TR_gui_tool_imagepack.tr("missing_support_will_fix",
+    en="We will implement support during the next major refactor.",
+    zh_cn="我们将在下次重构时添加对其的支持。",
+    zh_hk="我們將在下次重構時添加對其的支持。",
+  )
+  _tr_not_supported_desc = TR_gui_tool_imagepack.tr("not_supported_desc",
+    en="Current image (composition) is **not directly supported in the main pipeline** ({reasons}). To use it, please export it as PNG and use it as a custom image:",
+    zh_cn="当前的图片（组合）**不支持在主管线中直接使用**（{reasons}）。如需使用，请将其导出为 PNG 图片并以自定义图片的方式使用：",
+    zh_hk="當前的圖片（組合）**不支持在主管線中直接使用**（{reasons}）。如需使用，請將其導出為 PNG 圖片並以自定義圖片的方式使用：",
+  )
   def _update_description(self):
-    desc=self.descriptor.description
-    desc_list:list[str]=[]
+    # 描述模板：
+    # 名称(差分组合) [(#组合下标，如果有的话)][（已修改）]
+    #
+    # 描述
+    #
+    # 在剧本中使用：
+    # <样例>
+
+    P_S = self._tr_parenthesis_start.get() # '('
+    P_E = self._tr_parenthesis_end.get() # ')'
+    Q_S = self._tr_squarebracket_start.get() # '['
+    Q_E = self._tr_squarebracket_end.get() # ']'
+    CLN = self._tr_colon.get() # ': '
+    CMA = self._tr_comma.get() # ', '
+
+    # 首先是名称行
+    line_name_fields = [] # 除去名称之外的第一行的内容
+    composition_display_name = "" # 在首行名称中显示的名称
+    composition_ref_name = "" # 在剧本写法样例中引用的名称
+    if len(self.descriptor.composites_code):
+      composition_display_name = self._get_current_composite_name()
+      line_name_fields.append(f"{P_S}{composition_display_name}{P_E}")
+      index_field = ""
+      if isinstance(self.current_index, int):
+        index_field = f"\\#{self.current_index}"
+        composition_ref_name = composition_display_name
+      else:
+        index_field = f"{P_S}{self._tr_not_listed}{P_E}"
+        composition_ref_name = ""
+      line_name_fields.append(index_field)
+    if self.isCurrentPackModified():
+      line_name_fields.append(f"{P_S}{self._tr_modified}{P_E}")
+    base_name = self.descriptor.topref.get()
+    line_name = base_name + ' '.join(line_name_fields)
+    desc = self.descriptor.description
+    line_desc = desc.get() if desc else self._tr_no_description.get()
+    info_lines = [
+      line_name,
+      line_desc,
+    ]
+
+    # 然后是样例部分
+    # [decl_cmd: decl_value]
+    # * decl_listhead: preset_expr
+    #   - version1: <example_relpath> 如果必须导出之后使用的话
+    # [apply_cmd: decl_value(composition_ref_name)]
     match self.descriptor.packtype:
       case ImagePackDescriptor.ImagePackType.CHARACTER:
-        '''角色描述格式（无差分不显示composite)：
-        name(composite_name) (#composite_index)
-
-        description
-
-        using_in_script
-        【decl:ch1】
-          * character:preset(name)
-        【character_enter:ch1】
-        '''
-        base_name=self.descriptor.topref.get()
-        name,ch1=base_name,self._tr_character_1.get()
-        if len(self.descriptor.composites_code):
-          name=f"{base_name}{self._tr_bracket_round.get().format(value=self._get_current_composite_name())}"
-          # 只有当current_index是预设组合时才显示索引
-          if isinstance(self.current_index, int):
-            name=f"{name} {self._tr_bracket_round.get().format(value=f'#{self.current_index}')}"
-        decl=f"{vnparser.cmd_character_decl.CMD_INFO.name_tr.get()}{self._tr_colon.get()}{ch1}"
-        preset=f"{vnparser._tr_chdecl_sprite.get()}{self._tr_colon.get()}{self._build_modify_string(base_name)}"
-        action=f"{vnparser.cmd_character_entry.CMD_INFO.name_tr.get()}{self._tr_colon.get()}{ch1}"
-
-        desc_list.append(name)
-        desc_list.append('')
-        desc_list.append(desc.get() if desc else self._tr_no_description.get())
-        desc_list.append('')
-        desc_list.append(self._tr_using_in_script.get())
-        desc_list.append(self._tr_bracket_square.get().format(value=decl))
-        desc_list.append(f"  * {preset}")
-        desc_list.append(self._tr_bracket_square.get().format(value=action))
+        tr_decl_cmd = vnparser.cmd_character_decl.CMD_INFO.name_tr
+        tr_decl_value = self._tr_character_1
+        tr_decl_listhead = vnparser._tr_chdecl_sprite
+        tr_apply_cmd = vnparser.cmd_character_entry.CMD_INFO.name_tr
       case ImagePackDescriptor.ImagePackType.BACKGROUND:
-        '''背景描述格式（无差分不显示composite)：
-        name(composite_name) (#composite_index)
+        tr_decl_cmd = vnparser.cmd_scene_decl.CMD_INFO.name_tr
+        tr_decl_value = self._tr_place_1
+        tr_decl_listhead = vnparser._tr_scenedecl_background
+        tr_apply_cmd = vnparser.cmd_switch_scene.CMD_INFO.name_tr
+    # 构造 decl_listhead 后面跟的内容
+    missing_support_list = self._is_mainpipeline_support_missing()
+    preset_expr = f"{vnutil._tr_imagepreset}{P_S}{base_name}"
+    if self.current_mask_params:
+      preset_params = []
+      for mask_index, (mask_type, mask_value) in enumerate(zip(self.descriptor.get_masks(), self.current_mask_params)):
+        if mask_value is None:
+          continue
+        # 排除不支持的参数项
+        if self.descriptor.packtype == ImagePackDescriptor.ImagePackType.CHARACTER:
+          if mask_type not in (ImagePackDescriptor.MaskType.CHARACTER_COLOR_CLOTH,
+                               ImagePackDescriptor.MaskType.CHARACTER_COLOR_HAIR,
+                               ImagePackDescriptor.MaskType.CHARACTER_COLOR_DECORATE):
+            continue
+        mask_name = mask_type.trname.get()
+        value_expr = ""
+        if isinstance(mask_value, Color):
+          value_expr = mask_value.get_string()
+        elif isinstance(mask_value, PIL.Image.Image):
+          value_expr = '"' + self.mask_param_widgets[mask_index].getImageFilePath() + '"'
+        else:
+          assert isinstance(mask_value, tuple)
+          mask_text, mask_color = mask_value
+          value_expr = '"' + mask_text + '"'
+        preset_params.append(f"{mask_name}={value_expr}")
+      if len(preset_params) > 0:
+        preset_expr += CMA + CMA.join(preset_params)
+    preset_expr += P_E
 
-        description
+    example_path_ref = '' # 只有不能直接使用图片时才会用到
 
-        using_in_script
-        【decl:scene1】
-          * background:preset(name)
-        【switch_scene:scene1(composite_name)】
-        '''
-        name=self.descriptor.topref.get()
-        base_name=name
-        composition=''
-        if len(self.descriptor.composites_code):
-          composition=self._get_current_composite_name()
-          name=f"{base_name}{self._tr_bracket_round.get().format(value=composition)}"
-          name=f"{name} {self._tr_bracket_round.get().format(value=f'#{self.current_index}')}"
-        decl=f"{vnparser.cmd_scene_decl.CMD_INFO.name_tr.get()}{self._tr_colon.get()}{self._tr_place_1.get()}"
-        preset=f"{vnparser._tr_scenedecl_background.get()}{self._tr_colon.get()}{self._build_modify_string(base_name)}"
-        action=f"{vnparser.cmd_switch_scene.CMD_INFO.name_tr.get()}{self._tr_colon.get()}{self._get_place_1_composition(composition)}"
+    # 先判断有无缺失功能，追加说明
+    example_markdown_lines_prepend = []
+    example_markdown_lines = []
+    example_markdown_lines_append = []
+    if missing_support_list:
+      will_fix_issues = []
+      with_explanations = {}
+      explanation_need_index = False
+      example_path_script = ''
+      example_path_image = ''
+      # 判断我们是否需要给每个不支持的功能加数字标注
+      # （reason 项是 1:<reason1>, 2:<reason2>...）
+      for index, reason in enumerate(missing_support_list):
+        if reason.will_fix():
+          will_fix_issues.append(index)
+        explanation = reason.get_explanation()
+        if len(explanation) > 0:
+          with_explanations[index] = explanation
+      if len(will_fix_issues) > 0 and len(will_fix_issues) < len(missing_support_list):
+        # 不加数字标注的话，要么都会修，要么都不会修，否则就要加
+        explanation_need_index = True
+      if len(with_explanations) > 0:
+        # 如果某项有补充说明，则需要加数字标注
+        explanation_need_index = True
+      # 构造 _tr_not_supported_desc 所需的原因综述
+      reasons_entries = []
+      if explanation_need_index:
+        for index, reason in enumerate(missing_support_list):
+          reasons_entries.append(f"{index + 1}{CLN}{reason.trname}")
+      else:
+        for reason in missing_support_list:
+          reasons_entries.append(reason.trname.get())
+      example_markdown_lines_prepend.append(self._tr_not_supported_desc.format(reasons=CMA.join(reasons_entries)))
+      composition_ref_name = ''
 
-        desc_list.append(name)
-        desc_list.append('')
-        desc_list.append(desc.get() if desc else self._tr_no_description.get())
-        desc_list.append('')
-        desc_list.append(self._tr_using_in_script.get())
-        desc_list.append(self._tr_bracket_square.get().format(value=decl))
-        desc_list.append(f"  * {preset}")
-        desc_list.append(self._tr_bracket_square.get().format(value=action))
+      # 预先准备后续要用的解释原因的字符串
+      example_path_script, example_path_image, example_path_ref = self._feature_unsupported_require_export_get_example_paths()
+      example_markdown_lines_append.append(self._tr_example_relpath_explanation.format(script=example_path_script, image=example_path_image))
+      if len(will_fix_issues) > 0:
+        will_fix_line = self._tr_missing_support_will_fix.get()
+        if explanation_need_index:
+          will_fix_line = ",".join([str(index+1) for index in will_fix_issues]) + CLN + will_fix_line
+        example_markdown_lines_append.append(will_fix_line)
+      if len(with_explanations) > 0:
+        for index, explanation in with_explanations.items():
+          example_markdown_lines_append.append(f"{index + 1}{CLN}{explanation}")
+    else:
+      example_markdown_lines_prepend.append(self._tr_using_in_script.get())
 
-    self.ui.infoLabel.setText('\n'.join(desc_list))
+    if len(composition_display_name) > 0:
+      # 只在有差分的时候加这段
+      if len(composition_ref_name) == 0:
+        composition_ref_name = self._tr_version_1.get()
+
+    # 构造命令样例本身
+    example_markdown_lines.append(f"{Q_S}{tr_decl_cmd}{CLN}{tr_decl_value}{Q_E}")
+    example_markdown_lines.append("")
+    example_markdown_lines.append(f"* {tr_decl_listhead}{CLN}{preset_expr}")
+    if missing_support_list:
+      example_markdown_lines.append(f"  - {self._tr_version_1.get()}: \"{example_path_ref}\"")
+
+    example_markdown_lines.append("")
+    composition_ref_str = ''
+    if len(composition_ref_name) > 0:
+      composition_ref_str = f"{P_S}{composition_ref_name}{P_E}"
+    example_markdown_lines.append(f"{Q_S}{tr_apply_cmd}{CLN}{tr_decl_value}{composition_ref_str}{Q_E}")
+
+    # 把所有内容拼起来
+    # 只有 example_markdown_lines 是以单个 \n 分隔，其他都需要 \n\n
+    self.ui.infoTextEdit.setMarkdown(''.join([
+      "\n\n".join(info_lines),
+      "\n\n",
+      "\n\n".join(example_markdown_lines_prepend),
+      "\n\n",
+      "---",
+      "\n\n",
+      '\n'.join(example_markdown_lines),
+      "\n\n",
+      "---",
+      "\n\n",
+      "\n\n".join(example_markdown_lines_append),
+    ]))
+    self.ui.infoTextEdit.document().setIndentWidth(20) # 默认 40 太宽了
 
   def setData(self, packid : str | None = None, category_kind : ImagePackDescriptor.ImagePackType | None = None):
     if category_kind is not None:
@@ -614,9 +853,12 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
       self._update_description()
       QMetaObject.invokeMethod(self, "updateCurrentImage", Qt.QueuedConnection)
 
+  def isCurrentPackModified(self):
+    return self.current_mask_params is not None and any(param is not None for param in self.current_mask_params)
+
   @Slot()
   def updateCurrentPack(self):
-    if self.current_mask_params is None or all(param is None for param in self.current_mask_params):
+    if not self.isCurrentPackModified():
       self.current_pack = self.pack
     else:
       self.current_pack = self.pack.fork_applying_mask(self.current_mask_params, enable_parallelization=True)
