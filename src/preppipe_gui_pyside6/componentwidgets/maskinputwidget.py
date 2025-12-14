@@ -172,6 +172,11 @@ class MaskInputWidget(QWidget, TranslatableWidgetInterface):
   def getValue(self) -> Color | PIL.Image.Image | tuple[str, Color] | None:
     return self.current_value_converted
 
+  def getImageFilePath(self) -> str:
+    assert self.current_type == "image"
+    assert isinstance(self.current_value, str)
+    return self.current_value
+
   def setIsColorOnly(self, is_color_only: bool):
     self.is_color_only = is_color_only
 
