@@ -354,7 +354,7 @@ class TagEditDialog(QDialog):
       item = self.recent_tags_layout.takeAt(0)
       if item.widget():
         item.widget().deleteLater()
-    recent_display_tags = self.tag_manager.get_recent_tags_display()
+    recent_display_tags = self.tag_manager.get_recent_tags_display(self.asset_id)
     for display_tag in recent_display_tags:
       self.add_recent_tag_block(display_tag)
     self.recent_tags_title.setVisible(True)

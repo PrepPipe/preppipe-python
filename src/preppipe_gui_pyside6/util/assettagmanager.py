@@ -164,7 +164,14 @@ class AssetTagManager(QObject):
     if self.is_preset_tag(tag_semantic):
       return False, False
 
-    recent_tags = SettingsDict.instance().get(SETTINGS_KEY_RECENT_TAGS, [])
+    asset_type = self.get_asset_type_tag(asset_id)
+    asset_type_semantic = self.get_semantic_tag(asset_type)
+
+    recent_tags_dict = SettingsDict.instance().get(SETTINGS_KEY_RECENT_TAGS, {})
+    if recent_tags_dict is None:
+      recent_tags_dict = {}
+
+    recent_tags = recent_tags_dict.get(asset_type_semantic, [])
     if recent_tags is None:
       recent_tags = []
 
@@ -174,7 +181,8 @@ class AssetTagManager(QObject):
       if len(recent_tags) == MAX_RECENT_TAGS:
         recent_tags.pop()
       recent_tags.insert(0, tag_semantic)
-      SettingsDict.instance()[SETTINGS_KEY_RECENT_TAGS] = recent_tags
+      recent_tags_dict[asset_type_semantic] = recent_tags
+      SettingsDict.instance()[SETTINGS_KEY_RECENT_TAGS] = recent_tags_dict
 
     if temporary:
       return True, is_recent_updated
@@ -188,11 +196,16 @@ class AssetTagManager(QObject):
     self._save_tags_dict(tags_dict)
     return True, is_recent_updated
 
-  def get_recent_tags(self) -> list[str]:
-    return SettingsDict.instance().get(SETTINGS_KEY_RECENT_TAGS, [])
+  def get_recent_tags(self, asset_id: str) -> list[str]:
+    recent_tags_dict = SettingsDict.instance().get(SETTINGS_KEY_RECENT_TAGS, {})
+    if recent_tags_dict is None:
+      recent_tags_dict = {}
+    asset_type = self.get_asset_type_tag(asset_id)
+    asset_type_semantic = self.get_semantic_tag(asset_type)
+    return recent_tags_dict.get(asset_type_semantic, [])
 
-  def get_recent_tags_display(self) -> list[str]:
-    recent_semantic_tags = self.get_recent_tags()
+  def get_recent_tags_display(self, asset_id: str) -> list[str]:
+    recent_semantic_tags = self.get_recent_tags(asset_id)
     display_tags = []
 
     for semantic_tag in recent_semantic_tags:
