@@ -57,6 +57,7 @@ class AssetTagManager(QObject):
   # 每个分类标签下有哪些预设标签
   # 枚举类型有可能在多种分类标签下共用，即从分类标签到预设标签的映射是多对一的关系
   ASSET_PRESET_TAG_MAP : dict[AssetTagType, enum.Enum] = {
+    AssetTagType.ALL: ImagePackDescriptor.ImagePackPresetTag,
     AssetTagType.BACKGROUND: ImagePackDescriptor.ImagePackPresetTag,
     AssetTagType.CHARACTER_SPRITE: ImagePackDescriptor.ImagePackPresetTag,
   }
@@ -217,8 +218,7 @@ class AssetTagManager(QObject):
   def get_asset_tags(self, asset_id: str) -> set[str]:
     result = set()
     result.update(self.get_tags_dict().get(asset_id, set()))
-    # 准备开始 v2 改动了就把下面这行的 # 去掉
-    # result.update(self.get_asset_preset_tag(asset_id))
+    result.update(self.get_asset_preset_tag(asset_id))
     result.add(self.get_semantic_tag(self.get_asset_type_tag(asset_id)))
     return result
 
@@ -303,3 +303,121 @@ class AssetTagManager(QObject):
 
     custom_tags.sort(key=lambda x: x[1])
     return custom_tags
+
+  def get_tags_for_category(self, category_semantic: str) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """获取特定分类下的预设标签和自定义标签
+
+    Args:
+      category_semantic: 分类标签的语义标识
+
+    Returns:
+      tuple: (预设标签列表, 自定义标签列表)，每个列表包含(语义标识, 显示文本)元组
+    """
+    category_tag = self.get_asset_tag_type_from_semantic(category_semantic)
+    if not category_tag:
+      return [], []
+
+    # 获取该分类下的预设标签
+    preset_tags = []
+    if category_tag in self.ASSET_PRESET_TAG_MAP:
+      dest_enum_type = self.ASSET_PRESET_TAG_MAP[category_tag]
+
+      if category_tag == AssetTagType.ALL:
+        # 对于ALL分类，仅显示在所有分类下都有对应资产的预设标签
+        # 首先获取所有分类
+        all_categories = [AssetTagType.CHARACTER_SPRITE, AssetTagType.BACKGROUND]
+
+        # 获取每个预设标签在哪些分类中存在对应的资产
+        preset_tag_categories = {}
+
+        # 遍历所有资产，检查它们的预设标签
+        asset_manager = AssetManager.get_instance()
+        for asset_id in asset_manager._assets.keys():
+          asset_type = self.get_asset_type_tag(asset_id)
+          if asset_type in all_categories:
+            for preset_tag_semantic in self.get_asset_preset_tag(asset_id):
+              if preset_tag_semantic not in preset_tag_categories:
+                preset_tag_categories[preset_tag_semantic] = set()
+              preset_tag_categories[preset_tag_semantic].add(asset_type)
+
+        # 只添加在所有分类中都有对应资产的预设标签
+        for preset_tag in dest_enum_type:
+          semantic = self.get_semantic_tag(preset_tag)
+          if semantic in preset_tag_categories and len(preset_tag_categories[semantic]) == len(all_categories):
+            display_text = self.get_tag_display_text(semantic)
+            preset_tags.append((semantic, display_text))
+      else:
+        # 对于其他分类，显示所有预设标签
+        for preset_tag in dest_enum_type:
+          semantic = self.get_semantic_tag(preset_tag)
+          display_text = self.get_tag_display_text(semantic)
+          preset_tags.append((semantic, display_text))
+
+    # 获取该分类下的自定义标签
+    custom_tags = []
+    tags_dict = self.get_tags_dict()
+
+    if category_tag == AssetTagType.ALL:
+      # 对于ALL分类，仅显示在所有分类下都存在的自定义标签
+      # 首先获取所有分类
+      all_categories = [AssetTagType.CHARACTER_SPRITE, AssetTagType.BACKGROUND]
+
+      # 获取每个自定义标签在哪些分类中出现
+      tag_categories = {}
+      for asset_id, tags in tags_dict.items():
+        asset_type = self.get_asset_type_tag(asset_id)
+        if asset_type in all_categories:
+          for tag in tags:
+            if not self.is_preset_tag(tag):
+              if tag not in tag_categories:
+                tag_categories[tag] = set()
+              tag_categories[tag].add(asset_type)
+
+      # 只添加在所有分类中都出现的标签
+      for tag in tag_categories:
+        if len(tag_categories[tag]) == len(all_categories):
+          display_text = self.get_tag_display_text(tag)
+          custom_tags.append((tag, display_text))
+    else:
+      # 对于其他分类，只显示对应分类的自定义标签
+      for asset_id, tags in tags_dict.items():
+        asset_type = self.get_asset_type_tag(asset_id)
+        if asset_type == category_tag:
+          for tag in tags:
+            if not self.is_preset_tag(tag):
+              display_text = self.get_tag_display_text(tag)
+              if (tag, display_text) not in custom_tags:
+                custom_tags.append((tag, display_text))
+
+    # 按显示文本排序
+    custom_tags.sort(key=lambda x: x[1])
+
+    return preset_tags, custom_tags
+
+  def get_assets_for_category_and_tag(self, category_semantic: str, tag_semantic: str) -> list[str]:
+    """获取同时拥有特定分类和标签的素材ID列表
+
+    Args:
+      category_semantic: 分类标签的语义标识
+      tag_semantic: 自定义或预设标签的语义标识
+
+    Returns:
+      list: 符合条件的素材ID列表
+    """
+    result = []
+    category_tag = self.get_asset_tag_type_from_semantic(category_semantic)
+
+    # 从AssetManager获取所有资产ID
+    asset_manager = AssetManager.get_instance()
+    for asset_id in asset_manager._assets.keys():
+      try:
+        asset_type = self.get_asset_type_tag(asset_id)
+        # 如果是ALL分类，只要资产拥有该标签就返回；否则只返回指定分类下拥有该标签的资产
+        if category_tag == AssetTagType.ALL or asset_type == category_tag:
+          asset_tags = self.get_asset_tags(asset_id)
+          if tag_semantic in asset_tags:
+            result.append(asset_id)
+      except Exception:
+        continue
+
+    return result
