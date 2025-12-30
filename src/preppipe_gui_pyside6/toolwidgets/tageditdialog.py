@@ -161,6 +161,16 @@ class TagEditDialog(QDialog):
     zh_cn="输入标签（回车添加）",
     zh_hk="輸入標籤（回車添加）",
   )
+  _tr_preset_tag_warning_title = TR_gui_tageditdialog.tr("tageditdialog_preset_tag_warning_title",
+    en="Cannot add preset tag",
+    zh_cn="无法添加预设标签",
+    zh_hk="無法添加預設標籤",
+  )
+  _tr_preset_tag_warning_message = TR_gui_tageditdialog.tr("tageditdialog_preset_tag_warning_message",
+    en="Preset tags cannot be manually added for now. Please contact support if you have any advice!",
+    zh_cn="预设标签目前不支持手动添加。如果您有任何建议，欢迎联系开发者交流！",
+    zh_hk="预设標籤目前不支持手動添加。如果您有任何建議，歡迎聯繫開發者交流！",
+  )
   def __init__(self, asset_id, parent=None):
     super().__init__(parent)
     self.asset_id = asset_id
@@ -354,7 +364,7 @@ class TagEditDialog(QDialog):
       item = self.recent_tags_layout.takeAt(0)
       if item.widget():
         item.widget().deleteLater()
-    recent_display_tags = self.tag_manager.get_recent_tags_display()
+    recent_display_tags = self.tag_manager.get_recent_tags_display(self.asset_id)
     for display_tag in recent_display_tags:
       self.add_recent_tag_block(display_tag)
     self.recent_tags_title.setVisible(True)
@@ -420,6 +430,7 @@ class TagEditDialog(QDialog):
 
     new_semantic = self.tag_manager.get_tag_semantic(tag_text)
     if self.tag_manager.is_preset_tag(new_semantic):
+      QMessageBox.warning(self, self._tr_preset_tag_warning_title.get(), self._tr_preset_tag_warning_message.get())
       return
 
     if (new_semantic in self.original_tags and new_semantic not in self.removed_tags) or \

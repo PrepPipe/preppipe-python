@@ -30,6 +30,20 @@ class AssetCardStyleManager:
         'pressed': "QPushButton:pressed { background-color: rgba(245, 245, 245, 0.95); border-color: rgba(220, 220, 220, 0.95); border-radius: {radius}px; color: #000000; }",
         'focus': "QPushButton:focus { background-color: rgba(235, 235, 235, 0.95); border: 1px solid rgba(220, 220, 220, 0.95); border-radius: {radius}px; color: #000000; outline: none; }",
         'flat': "QPushButton:flat { border-radius: {radius}px; }"
+      },
+      'tags_button_notag': {
+        'normal': "QPushButton { background-color: rgba(235, 235, 235, 0.95); border: 1px solid rgba(220, 220, 220, 0.95); border-radius: {radius}px; color: #999999; padding: 0px 10px; text-align: center; outline: none; height: {height}px; qproperty-flat: false; }",
+        'hover': "QPushButton:hover { background-color: rgba(245, 245, 245, 0.95); border-color: rgba(230, 230, 230, 0.95); border-radius: {radius}px; color: #999999; }",
+        'pressed': "QPushButton:pressed { background-color: rgba(245, 245, 245, 0.95); border-color: rgba(220, 220, 220, 0.95); border-radius: {radius}px; color: #999999; }",
+        'focus': "QPushButton:focus { background-color: rgba(235, 235, 235, 0.95); border: 1px solid rgba(220, 220, 220, 0.95); border-radius: {radius}px; color: #999999; outline: none; }",
+        'flat': "QPushButton:flat { border-radius: {radius}px; }"
+      },
+      'preset_tags_button': {
+        'normal': "QPushButton { background-color: rgba(200, 200, 200, 0.95); border: 1px solid rgba(180, 180, 180, 0.95); border-radius: {radius}px; color: #333333; padding: 0px 10px; text-align: center; outline: none; height: {height}px; qproperty-flat: false; }",
+        'hover': "QPushButton:hover { background-color: rgba(210, 210, 210, 0.95); border-color: rgba(190, 190, 190, 0.95); border-radius: {radius}px; color: #333333; }",
+        'pressed': "QPushButton:pressed { background-color: rgba(210, 210, 210, 0.95); border-color: rgba(180, 180, 180, 0.95); border-radius: {radius}px; color: #333333; }",
+        'focus': "QPushButton:focus { background-color: rgba(200, 200, 200, 0.95); border: 1px solid rgba(180, 180, 180, 0.95); border-radius: {radius}px; color: #333333; outline: none; }",
+        'flat': "QPushButton:flat { border-radius: {radius}px; }"
       }
     },
     'dark': {
@@ -46,6 +60,20 @@ class AssetCardStyleManager:
         'hover': "QPushButton:hover { background-color: rgba(85, 85, 85, 0.95); border: none; border-radius: {radius}px; color: #DDDDDD; }",
         'pressed': "QPushButton:pressed { background-color: rgba(85, 85, 85, 0.95); border: none; border-radius: {radius}px; color: #DDDDDD; }",
         'focus': "QPushButton:focus { background-color: rgba(65, 65, 65, 0.95); border: none; border-radius: {radius}px; color: #CCCCCC; outline: none; }",
+        'flat': "QPushButton:flat { border: none; border-radius: {radius}px; }"
+      },
+      'tags_button_notag': {
+        'normal': "QPushButton { background-color: rgba(65, 65, 65, 0.95); border: none; border-radius: {radius}px; color: #666666; padding: 0px 10px; text-align: center; outline: none; height: {height}px; qproperty-flat: false; }",
+        'hover': "QPushButton:hover { background-color: rgba(85, 85, 85, 0.95); border: none; border-radius: {radius}px; color: #666666; }",
+        'pressed': "QPushButton:pressed { background-color: rgba(85, 85, 85, 0.95); border: none; border-radius: {radius}px; color: #666666; }",
+        'focus': "QPushButton:focus { background-color: rgba(65, 65, 65, 0.95); border: none; border-radius: {radius}px; color: #666666; outline: none; }",
+        'flat': "QPushButton:flat { border: none; border-radius: {radius}px; }"
+      },
+      'preset_tags_button': {
+        'normal': "QPushButton { background-color: rgba(45, 45, 45, 0.95); border: none; border-radius: {radius}px; color: #AAAAAA; padding: 0px 10px; text-align: center; outline: none; height: {height}px; qproperty-flat: false; }",
+        'hover': "QPushButton:hover { background-color: rgba(55, 55, 55, 0.95); border: none; border-radius: {radius}px; color: #BBBBBB; }",
+        'pressed': "QPushButton:pressed { background-color: rgba(55, 55, 55, 0.95); border: none; border-radius: {radius}px; color: #BBBBBB; }",
+        'focus': "QPushButton:focus { background-color: rgba(45, 45, 45, 0.95); border: none; border-radius: {radius}px; color: #AAAAAA; outline: none; }",
         'flat': "QPushButton:flat { border: none; border-radius: {radius}px; }"
       }
     }
@@ -67,20 +95,24 @@ class AssetCardStyleManager:
     return AssetCardStyleManager._styles[theme].get(style_name, "")
 
   @staticmethod
-  def get_tags_button_style(height, palette=None):
+  def get_tags_button_style(height, palette=None, is_preset=False, is_tag_empty=False):
     """获取标签按钮样式，根据高度动态计算圆角"""
     theme = AssetCardStyleManager.detect_theme(palette)
     radius = height // 2
+    if is_preset:
+      style_key = 'preset_tags_button'
+    else:
+      style_key = 'tags_button_notag' if is_tag_empty else 'tags_button'
     styles = []
-    for key, template in AssetCardStyleManager._styles[theme].get('tags_button', {}).items():
+    for key, template in AssetCardStyleManager._styles[theme][style_key].items():
       style = template.replace('{radius}', str(radius))
       style = style.replace('{height}', str(height))
       styles.append(style)
     return "\n".join(styles)
 
   @staticmethod
-  def apply_tags_button_style(button, height, palette=None):
-    style = AssetCardStyleManager.get_tags_button_style(height, palette)
+  def apply_tags_button_style(button, height, palette=None, is_preset=False, is_tag_empty=False):
+    style = AssetCardStyleManager.get_tags_button_style(height, palette, is_preset, is_tag_empty)
     button.setStyleSheet(style)
 
   @staticmethod
@@ -123,10 +155,10 @@ class AssetCardWidget(QPushButton):
   右键菜单：可进行查看详情（等同左键）、快捷添加最近标签、编辑标签（等同点击标签按钮）
   """
 
-  _tr_no_tags = TR_gui_assetcardwidget.tr("assetcardwidget_no_tags",
-    en="No tags",
-    zh_cn="无标签",
-    zh_hk="无标签",
+  _tr_no_preset_tags = TR_gui_assetcardwidget.tr("assetcardwidget_no_preset_tags",
+    en="(No preset tags)",
+    zh_cn="（无预设标签）",
+    zh_hk="（无预设标签）",
   )
   _tr_show_detail = TR_gui_assetcardwidget.tr("assetcardwidget_show_detail",
     en="Show detail",
@@ -148,6 +180,11 @@ class AssetCardWidget(QPushButton):
     zh_cn="（无自定义标签）",
     zh_hk="（无自定义标签）",
   )
+  _tr_square_bracket_template=TR_gui_assetcardwidget.tr("assetcardwidget_square_bracket",
+    en="[{value}]",
+    zh_cn="【{value}】",
+    zh_hk="【{value}】",
+  )
 
   clicked = Signal(str, QMouseEvent)
   tags_button_clicked = Signal(str, QPushButton)
@@ -157,12 +194,14 @@ class AssetCardWidget(QPushButton):
   _is_hovered: bool
   _thumbnail_loaded: bool
   _name_full_text: str
-  _tags_full_text: str
+  _custom_tags_full_text: str
+  _preset_tags_full_text: str
   name_font: QFont
   tags_font: QFont
   name_font_metrics: QFontMetrics
   tags_font_metrics: QFontMetrics
-  tags_button: QPushButton
+  custom_tags_button: QPushButton
+  preset_tags_button: QPushButton
   layout: QVBoxLayout
   image_label: QLabel
   name_label: QLabel
@@ -175,7 +214,8 @@ class AssetCardWidget(QPushButton):
     self._thumbnail_loaded = False
 
     self._name_full_text = ''
-    self._tags_full_text = ''
+    self._custom_tags_full_text = ''
+    self._preset_tags_full_text = ''
 
     self.name_font = name_font or QFont()
     self.tags_font = tags_font or QFont()
@@ -184,7 +224,8 @@ class AssetCardWidget(QPushButton):
     self.name_font_metrics = QFontMetrics(self.name_font)
     self.tags_font_metrics = QFontMetrics(self.tags_font)
 
-    self.tags_button = None
+    self.custom_tags_button = None
+    self.preset_tags_button = None
     self._initialize_ui(width, height)
 
   def _calculate_elided_text(self, text, widget, margin):
@@ -201,7 +242,8 @@ class AssetCardWidget(QPushButton):
   def _update_elided_text(self):
     size = self.name_label.size()
     self.name_label.resizeEvent(QResizeEvent(size, size))
-    self.tags_button.resizeEvent(None)
+    self.custom_tags_button.resizeEvent(None)
+    self.preset_tags_button.resizeEvent(None)
 
   def _initialize_ui(self, width: int, height: int):
     self.setFixedSize(width, height)
@@ -276,31 +318,58 @@ class AssetCardWidget(QPushButton):
     self.layout.addWidget(self.name_label)
 
   def _create_tags_section(self):
-    self.tags_button = QPushButton("", self)
-    self.tags_button.setFont(self.tags_font)
-    self.tags_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-    self.tags_button.setMouseTracking(True)
+    self.custom_tags_button = QPushButton("", self)
+    self.custom_tags_button.setFont(self.tags_font)
+    self.custom_tags_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+    self.custom_tags_button.setMouseTracking(True)
 
-    original_resize_event = self.tags_button.resizeEvent
-    def custom_resize_event(event):
-      fixed_width = self.tags_button.width()
-      fixed_height = self.tags_button.height()
+    original_custom_resize_event = self.custom_tags_button.resizeEvent
+    def custom_tags_resize_event(event):
+      fixed_width = self.custom_tags_button.width()
+      fixed_height = self.custom_tags_button.height()
 
-      original_resize_event(event)
-      if self._tags_full_text:
-        self.tags_button.setText(self._calculate_elided_text(self._tags_full_text, self.tags_button, 10))
+      original_custom_resize_event(event)
+      if self._custom_tags_full_text:
+        self.custom_tags_button.setText(self._calculate_elided_text(self._custom_tags_full_text, self.custom_tags_button, 10))
 
-      self.tags_button.setFixedWidth(fixed_width)
-      self.tags_button.setFixedHeight(fixed_height)
-    self.tags_button.resizeEvent = custom_resize_event
+      self.custom_tags_button.setFixedWidth(fixed_width)
+      self.custom_tags_button.setFixedHeight(fixed_height)
+    self.custom_tags_button.resizeEvent = custom_tags_resize_event
+
+    self.preset_tags_button = QPushButton("", self)
+    self.preset_tags_button.setFont(self.tags_font)
+    self.preset_tags_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+    self.preset_tags_button.setMouseTracking(False)
+    self.preset_tags_button.setEnabled(False)
+
+    original_preset_resize_event = self.preset_tags_button.resizeEvent
+    def preset_tags_resize_event(event):
+      fixed_width = self.preset_tags_button.width()
+      fixed_height = self.preset_tags_button.height()
+
+      original_preset_resize_event(event)
+      if self._preset_tags_full_text:
+        self.preset_tags_button.setText(self._calculate_elided_text(self._preset_tags_full_text, self.preset_tags_button, 10))
+
+      self.preset_tags_button.setFixedWidth(fixed_width)
+      self.preset_tags_button.setFixedHeight(fixed_height)
+    self.preset_tags_button.resizeEvent = preset_tags_resize_event
 
     tag_button_height = int(self.tags_font_metrics.height() * 1.4)
-    self.tags_button.setFixedHeight(tag_button_height)
-    self.tags_button.setFixedWidth(self.width() - self.layout.contentsMargins().left() - self.layout.contentsMargins().right())
-    AssetCardStyleManager.apply_tags_button_style(self.tags_button, tag_button_height)
+    button_width = self.width() - self.layout.contentsMargins().left() - self.layout.contentsMargins().right()
 
-    self.tags_button.clicked.connect(self._on_tags_button_clicked)
-    self.layout.addWidget(self.tags_button)
+    self.custom_tags_button.setFixedHeight(tag_button_height)
+    self.custom_tags_button.setFixedWidth(button_width)
+    AssetCardStyleManager.apply_tags_button_style(self.custom_tags_button, tag_button_height, is_preset=False, is_tag_empty=True)
+    self.custom_tags_button.clicked.connect(self._on_tags_button_clicked)
+
+    self.preset_tags_button.setFixedHeight(tag_button_height)
+    self.preset_tags_button.setFixedWidth(button_width)
+    AssetCardStyleManager.apply_tags_button_style(self.preset_tags_button, tag_button_height, is_preset=True)
+
+    # 添加到布局
+    self.layout.addWidget(self.custom_tags_button)
+    self.layout.addWidget(self.preset_tags_button)
 
   def enterEvent(self, event):
     super().enterEvent(event)
@@ -319,10 +388,10 @@ class AssetCardWidget(QPushButton):
 
   def _on_tags_button_clicked(self):
     self.set_selected(True)
-    self.tags_button_clicked.emit(self.asset_id, self.tags_button)
-    self.tags_button.setDown(False)
-    self.tags_button.clearFocus()
-    self.tags_button.update()
+    self.tags_button_clicked.emit(self.asset_id, self.custom_tags_button)
+    self.custom_tags_button.setDown(False)
+    self.custom_tags_button.clearFocus()
+    self.custom_tags_button.update()
 
   def _get_asset_name(self):
     asset = AssetManager.get_instance().get_asset(self.asset_id)
@@ -335,20 +404,35 @@ class AssetCardWidget(QPushButton):
     self.update_tags()
 
   def update_name(self):
-    self._name_full_text = self._get_asset_name()
+    tag_manager = AssetTagManager.get_instance()
+    asset_type = tag_manager.get_asset_type_tag(self.asset_id)
+    type_translation = asset_type.translatable.get()
+    prefix = self._tr_square_bracket_template.get()
+    self._name_full_text = f"{prefix.format(value=type_translation)}{self._get_asset_name()}"
     self.name_label.setText(self._calculate_elided_text(self._name_full_text, self.name_label, 8))
 
   def update_tags(self):
-    asset_tags = AssetTagManager.get_instance().get_asset_tags_display(self.asset_id)
-    self._tags_full_text = ", ".join(sorted(asset_tags)) if asset_tags else self._tr_no_tags.get()
+    tag_manager = AssetTagManager.get_instance()
+    all_asset_tags = tag_manager.get_asset_tags(self.asset_id)
+    custom_tags = []
+    preset_tags = []
 
-    current_width = self.tags_button.width()
-    current_height = self.tags_button.height()
+    for tag_semantic in all_asset_tags:
+      display_text = tag_manager.get_tag_display_text(tag_semantic)
+      if tag_manager.is_preset_tag(tag_semantic):
+        if tag_manager.get_asset_tag_type_from_semantic(tag_semantic) is None:
+          preset_tags.append(display_text)
+      else:
+        custom_tags.append(display_text)
 
-    self.tags_button.resizeEvent(None)
+    self._custom_tags_full_text = ", ".join(custom_tags) if custom_tags else self._tr_no_custom_tags.get()
+    self.custom_tags_button.resizeEvent(None)
 
-    self.tags_button.setFixedWidth(current_width)
-    self.tags_button.setFixedHeight(current_height)
+    self._preset_tags_full_text = ", ".join(preset_tags) if preset_tags else self._tr_no_preset_tags.get()
+    self.preset_tags_button.resizeEvent(None)
+
+    is_custom_tag_empty = len(custom_tags) == 0
+    AssetCardStyleManager.apply_tags_button_style(self.custom_tags_button, self.custom_tags_button.height(), is_preset=False, is_tag_empty=is_custom_tag_empty)
 
   def set_selected(self, selected: bool):
     if self._is_selected != selected:
@@ -426,7 +510,7 @@ class AssetCardWidget(QPushButton):
     add_tag_menu.setStyleSheet(menu_style)
 
     tag_manager = AssetTagManager.get_instance()
-    recent_tags_display = tag_manager.get_recent_tags_display()
+    recent_tags_display = tag_manager.get_recent_tags_display(self.asset_id)
 
     if recent_tags_display:
       for tag_display in recent_tags_display:
@@ -435,9 +519,9 @@ class AssetCardWidget(QPushButton):
         tag_action.triggered.connect(lambda checked=False, tag=tag_semantic: self._add_tag_to_asset(tag))
         add_tag_menu.addAction(tag_action)
     else:
-      no_tags_action = QAction(self._tr_no_custom_tags.get(), self)
-      no_tags_action.setDisabled(True)
-      add_tag_menu.addAction(no_tags_action)
+      no_preset_tags_action = QAction(self._tr_no_custom_tags.get(), self)
+      no_preset_tags_action.setDisabled(True)
+      add_tag_menu.addAction(no_preset_tags_action)
 
     menu.exec_(self.mapToGlobal(position))
 
@@ -450,5 +534,7 @@ class AssetCardWidget(QPushButton):
     AssetCardStyleManager.apply_style(self, self._is_selected, self._is_hovered, palette=palette)
     AssetCardStyleManager.apply_label_style(self.name_label)
     AssetCardStyleManager.apply_image_label_style(self.image_label)
-    AssetCardStyleManager.apply_tags_button_style(self.tags_button, self.tags_button.height())
+    is_custom_tag_empty = self._custom_tags_full_text == self._tr_no_custom_tags.get()
+    AssetCardStyleManager.apply_tags_button_style(self.custom_tags_button, self.custom_tags_button.height(), is_preset=False, is_tag_empty=is_custom_tag_empty)
+    AssetCardStyleManager.apply_tags_button_style(self.preset_tags_button, self.preset_tags_button.height(), is_preset=True)
     self._update_elided_text()
