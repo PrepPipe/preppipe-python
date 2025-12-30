@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2025 PrepPipe's Contributors
 # SPDX-License-Identifier: Apache-2.0
 
-from PySide6.QtWidgets import QWidget, QListWidgetItem
+from PySide6.QtWidgets import QWidget, QTreeWidgetItem
 from PySide6.QtCore import Qt, QEvent
 from PySide6.QtGui import QFontMetrics, QFont, QMouseEvent
 from ..componentwidgets.assetcardwidget import AssetCardWidget
@@ -20,21 +20,27 @@ TR_gui_tool_assetbrowser = TranslationDomain("gui_tool_assetbrowser")
 
 SETTINGS_KEY_CURRENT_TAG = "assetmanager/current_tag"
 
-class TagListItem(QListWidgetItem):
-  def __init__(self, display_text, semantic_tag):
-    super().__init__(display_text)
-    self.semantic_tag = semantic_tag
+class TagTreeItem(QTreeWidgetItem):
+  semantic_tag_path: list[str]
+  asset_ids: set[str]
+
+  def __init__(self, display_text: str, semantic_tag_path: list[str], asset_ids: set[str], parent: QTreeWidgetItem = None):
+    super().__init__(parent)
+    self.setText(0, f"{display_text} ({len(asset_ids)})")
+    self.semantic_tag_path = semantic_tag_path
+    self.asset_ids = asset_ids
+
+class CategoryTreeItem(TagTreeItem):
+  item_by_tags: dict[str,TagTreeItem]
+
+  def __init__(self, display_text: str, semantic_tag_path: list[str], asset_ids: set[str], parent: QTreeWidgetItem = None):
+    super().__init__(display_text, semantic_tag_path, asset_ids, parent)
+    self.item_by_tags = {}
 
 class AssetBrowserWidget(QWidget, ToolWidgetInterface):
   ui: Ui_AssetBrowserWidget
 
   current_tag: str
-  assets_by_tag: dict[str, tuple[TagListItem, list[str]]]
-  '''
-  dict[标签列表显示的tag,tuple[taglistitem,list[assetid]]] \n
-  tagmanager和语言发生变化时更新的全局映射，\n
-  用于快捷访问当前语言环境下标签对应的列表项和素材id列表，便于恢复上次打开的状态。
-  '''
 
   asset_cards: dict[str, AssetCardWidget]
   '''当前标签下素材id对应的卡片，用于选中状态和tageditdialog等状态更新'''
@@ -61,10 +67,8 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     self.ui = Ui_AssetBrowserWidget()
     self.ui.setupUi(self)
     self.current_tag = ""
-    self.assets_by_tag = {}
     self.asset_cards = {}
     self.all_asset_ids = []
-    self.all_tag_item = None
     self.last_opened_asset_id = None
     self.tag_manager = AssetTagManager.get_instance()
     self.tag_manager.tags_updated.connect(self._on_tags_updated)
@@ -76,7 +80,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     self.name_font_metrics = QFontMetrics(self.name_font)
 
     self.bind_text(self.ui.categoryTitleLabel.setText, self._tr_select_tag)
-    self.ui.categoriesListWidget.itemClicked.connect(self.on_tag_selected)
+    self.ui.categoriesTreeWidget.itemClicked.connect(self.on_tag_selected)
     self.ui.thumbnailsScrollArea.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
     self.ui.thumbnailsScrollArea.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
     self.flow_layout = self.ui.thumbnailsFlowLayout
@@ -86,28 +90,53 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     self.load_tags()
 
     settings = SettingsDict.instance()
-    semantic_tag = settings.get(SETTINGS_KEY_CURRENT_TAG, AssetTagManager.get_semantic_tag(AssetTagType.ALL))
-    tag_text = self.tag_manager.get_tag_display_text(semantic_tag)
+    saved_semantic_tag_path = settings.get(SETTINGS_KEY_CURRENT_TAG, [AssetTagManager.get_semantic_tag(AssetTagType.ALL)])
 
-    if self.tag_manager.get_tag_semantic(tag_text) != semantic_tag or semantic_tag not in self.assets_by_tag:
-      semantic_tag = AssetTagManager.get_semantic_tag(AssetTagType.ALL)
-      tag_text = self.tag_manager.get_tr_all()
+    if not isinstance(saved_semantic_tag_path, list):
+      saved_semantic_tag_path = [saved_semantic_tag_path]
 
-    settings[SETTINGS_KEY_CURRENT_TAG] = semantic_tag
-    self.current_tag = tag_text
-    self.ui.categoryTitleLabel.setText(self.current_tag)
-    if semantic_tag == AssetTagManager.get_semantic_tag(AssetTagType.ALL):
-      if self.all_tag_item:
-        self.ui.categoriesListWidget.setCurrentItem(self.all_tag_item)
-      else:
-        self.ui.categoriesListWidget.setCurrentItem(self.ui.categoriesListWidget.item(0))
-    else:
-      tag_text = self.tag_manager.get_tag_display_text(semantic_tag)
-      if tag_text in self.assets_by_tag:
-        item, _ = self.assets_by_tag[tag_text]
-        if item:
-          self.ui.categoriesListWidget.setCurrentItem(item)
-    self.load_asset_cards_for_tag(semantic_tag)
+    target_item = None
+    target_path = None
+
+    def find_item_by_path(tree_item: QTreeWidgetItem, path: list[str]) -> TagTreeItem | None:
+      if not path:
+        return None
+      if not isinstance(tree_item, TagTreeItem):
+        return None
+      if tree_item.semantic_tag_path == path:
+        return tree_item
+      for i in range(tree_item.childCount()):
+        child = tree_item.child(i)
+        if isinstance(child, TagTreeItem):
+          result = find_item_by_path(child, path)
+          if result:
+            return result
+      return None
+
+    for i in range(self.ui.categoriesTreeWidget.topLevelItemCount()):
+      top_item = self.ui.categoriesTreeWidget.topLevelItem(i)
+      if isinstance(top_item, TagTreeItem):
+        found = find_item_by_path(top_item, saved_semantic_tag_path)
+        if found:
+          target_item = found
+          target_path = saved_semantic_tag_path
+          break
+
+    if not target_item:
+      all_semantic = AssetTagManager.get_semantic_tag(AssetTagType.ALL)
+      target_path = [all_semantic]
+      for i in range(self.ui.categoriesTreeWidget.topLevelItemCount()):
+        top_item = self.ui.categoriesTreeWidget.topLevelItem(i)
+        if isinstance(top_item, TagTreeItem) and top_item.semantic_tag_path == target_path:
+          target_item = top_item
+          break
+
+    if target_item:
+      self.ui.categoriesTreeWidget.setCurrentItem(target_item)
+      self.current_tag = target_item.text(0)
+      self.ui.categoryTitleLabel.setText(self._get_tag_path_display_text(target_path))
+      settings[SETTINGS_KEY_CURRENT_TAG] = target_path
+      self.load_asset_cards_for_tag(target_item.asset_ids)
 
   def changeEvent(self, event):
     if event.type() == QEvent.PaletteChange:
@@ -122,126 +151,122 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       if isinstance(asset, ImagePack):
         self.all_asset_ids.append(asset_id)
 
-  def load_tags(self):
-    tags_dict = self.tag_manager.get_tags_dict()
-    asset_manager = AssetManager.get_instance()
-    self.assets_by_tag.clear()
+  def _build_category_tree_item(self, category_type: AssetTagType) -> CategoryTreeItem:
+    category_semantic = self.tag_manager.get_semantic_tag(category_type)
+    category_display_text = self.tag_manager.get_tag_display_text(category_semantic)
 
-    # 初始化基于资产类型的分类标签
+    category_asset_ids = set()
     for asset_id in self.all_asset_ids:
-      category_tag = str(self.tag_manager.get_asset_type_tag(asset_id).translatable)
-      # 只添加资产到对应分类，不修改tags_dict
-      if category_tag not in self.assets_by_tag:
-        self.assets_by_tag[category_tag] = (None, [asset_id])
-      else:
-        self.assets_by_tag[category_tag][1].append(asset_id)
+      asset_type_tag = self.tag_manager.get_asset_type_tag(asset_id)
+      if asset_type_tag == category_type:
+        category_asset_ids.add(asset_id)
 
-    # 基于现有标签构建标签-资产对应关系
-    for asset_id, tags in tags_dict.items():
-      try:
-        asset = asset_manager.get_asset(asset_id)
-        if isinstance(asset, ImagePack):
-          for tag in tags:
-            display_tag = self.tag_manager.get_tag_display_text(tag)
+    category_item = CategoryTreeItem(
+      category_display_text,
+      [category_semantic],
+      category_asset_ids
+    )
+    font = category_item.font(0)
+    font.setBold(True)
+    category_item.setFont(0, font)
 
-            if display_tag not in self.assets_by_tag:
-              self.assets_by_tag[display_tag] = (None, [asset_id])
-            else:
-              _, asset_ids = self.assets_by_tag[display_tag]
-              if asset_id not in asset_ids:
-                asset_ids.append(asset_id)
-      except Exception:
-        continue
+    tag_to_assets = {}
 
+    for asset_id in category_asset_ids:
+      asset_tags = self.tag_manager.get_asset_tags(asset_id)
+      for tag_semantic in asset_tags:
+        if self.tag_manager.get_asset_tag_type_from_semantic(tag_semantic):
+          continue
+        if tag_semantic not in tag_to_assets:
+          tag_to_assets[tag_semantic] = set()
+        tag_to_assets[tag_semantic].add(asset_id)
+
+    for tag_semantic, asset_ids in tag_to_assets.items():
+      tag_display_text = self.tag_manager.get_tag_display_text(tag_semantic)
+      tag_item = TagTreeItem(
+        tag_display_text,
+        [category_semantic, tag_semantic],
+        asset_ids,
+        category_item
+      )
+      category_item.item_by_tags[tag_semantic] = tag_item
+
+    return category_item
+
+  def _build_all_category_tree_item(self, other_categories: list[CategoryTreeItem]) -> CategoryTreeItem:
+    all_semantic = self.tag_manager.get_semantic_tag(AssetTagType.ALL)
+    all_display_text = self.tag_manager.get_tag_display_text(all_semantic)
+
+    all_asset_ids = set(self.all_asset_ids)
+    all_item = CategoryTreeItem(
+      all_display_text,
+      [all_semantic],
+      all_asset_ids
+    )
+    font = all_item.font(0)
+    font.setBold(True)
+    all_item.setFont(0, font)
+
+    common_tags:dict[str,int] = {}
+    for category_item in other_categories:
+      for tag_semantic, tag_item in category_item.item_by_tags.items():
+        if tag_semantic not in common_tags:
+          common_tags[tag_semantic] = 0
+        common_tags[tag_semantic] += 1
+
+    for tag_semantic, count in common_tags.items():
+      if count == len(other_categories):
+        common_asset_ids = set.union(*[category_item.item_by_tags[tag_semantic].asset_ids for category_item in other_categories])
+        if common_asset_ids:
+          tag_display_text = self.tag_manager.get_tag_display_text(tag_semantic)
+          tag_item = TagTreeItem(
+            tag_display_text,
+            [all_semantic, tag_semantic],
+            common_asset_ids,
+            all_item
+          )
+          all_item.item_by_tags[tag_semantic] = tag_item
+          all_item.addChild(tag_item)
+
+    return all_item
+
+  def load_tags(self):
     self.update_tags_list()
 
   def update_tags_list(self):
-    self.ui.categoriesListWidget.clear()
+    self.ui.categoriesTreeWidget.clear()
 
-    # 添加ALL标签
-    all_count = len(self.all_asset_ids)
-    all_text = self.tag_manager.get_tr_all()
-    all_item = TagListItem(f"{all_text} ({all_count})", semantic_tag=AssetTagManager.get_semantic_tag(AssetTagType.ALL))
-    font = all_item.font()
-    font.setBold(True)
-    all_item.setFont(font)
-    self.ui.categoriesListWidget.addItem(all_item)
-    self.all_tag_item = all_item
+    background_item = self._build_category_tree_item(AssetTagType.BACKGROUND)
+    character_item = self._build_category_tree_item(AssetTagType.CHARACTER_SPRITE)
 
-    # 添加预设标签：立绘
-    character_tag = self.tag_manager.get_tr_character()
-    character_count = 0
-    if character_tag in self.assets_by_tag:
-      _, asset_ids = self.assets_by_tag[character_tag]
-      character_count = len(asset_ids)
-    character_item = TagListItem(f"{character_tag} ({character_count})", semantic_tag="character")
-    font = character_item.font()
-    font.setBold(True)
-    character_item.setFont(font)
-    self.ui.categoriesListWidget.addItem(character_item)
+    other_categories:list[CategoryTreeItem] = []
+    other_categories.append(character_item)
+    other_categories.append(background_item)
 
-    # 添加预设标签：背景
-    background_tag = self.tag_manager.get_tr_background()
-    background_count = 0
-    if background_tag in self.assets_by_tag:
-      _, asset_ids = self.assets_by_tag[background_tag]
-      background_count = len(asset_ids)
-    background_item = TagListItem(f"{background_tag} ({background_count})", semantic_tag="background")
-    font = background_item.font()
-    font.setBold(True)
-    background_item.setFont(font)
-    self.ui.categoriesListWidget.addItem(background_item)
+    all_item = self._build_all_category_tree_item(other_categories=other_categories)
 
-    # 更新assets_by_tag字典中的项目引用
-    if character_tag in self.assets_by_tag:
-      asset_ids = self.assets_by_tag[character_tag][1]
-      self.assets_by_tag[character_tag] = (character_item, asset_ids)
-    if background_tag in self.assets_by_tag:
-      asset_ids = self.assets_by_tag[background_tag][1]
-      self.assets_by_tag[background_tag] = (background_item, asset_ids)
+    self.ui.categoriesTreeWidget.addTopLevelItem(all_item)
 
-    # 添加其他自定义标签
-    asset_by_tag_changes = {}
-    # 获取按显示文本升序排列的自定义标签
-    for semantic_tag, display_text in self.tag_manager.get_sorted_tags():
-      # 检查该标签是否在assets_by_tag中存在对应的资产
-      if display_text in self.assets_by_tag:
-        _, asset_ids = self.assets_by_tag[display_text]
-        count = len(asset_ids)
-        if count > 0:
-          item = TagListItem(f"{display_text} ({count})", semantic_tag=semantic_tag)
-          self.ui.categoriesListWidget.addItem(item)
-          asset_by_tag_changes[display_text] = (item, asset_ids)
+    for category_item in other_categories:
+      self.ui.categoriesTreeWidget.addTopLevelItem(category_item)
 
-    self.assets_by_tag.update(asset_by_tag_changes)
+    self.ui.categoriesTreeWidget.expandAll()
 
-  def on_tag_selected(self, item: TagListItem):
-    display_text = item.text()
+  def _get_tag_path_display_text(self, semantic_tag_path: list[str]) -> str:
+    return "/".join([self.tag_manager.get_tag_display_text(tag) for tag in semantic_tag_path])
+
+  def on_tag_selected(self, item: TagTreeItem):
+    display_text = item.text(0)
     self.current_tag = display_text
-    self.ui.categoryTitleLabel.setText(self.current_tag)
-    tag_semantic = item.semantic_tag
+    semantic_tag_path = item.semantic_tag_path
+    self.ui.categoryTitleLabel.setText(self._get_tag_path_display_text(semantic_tag_path))
     settings = SettingsDict.instance()
-    settings[SETTINGS_KEY_CURRENT_TAG] = tag_semantic
-    self.load_asset_cards_for_tag(tag_semantic)
+    settings[SETTINGS_KEY_CURRENT_TAG] = semantic_tag_path
+    self.load_asset_cards_for_tag(item.asset_ids)
 
-  def load_asset_cards_for_tag(self, tag: str):
+  def load_asset_cards_for_tag(self, asset_ids: list[str]):
     self.clear_asset_cards()
-
-    if tag == AssetTagManager.get_semantic_tag(AssetTagType.ALL):
-      # 显示所有资产
-      current_asset_ids = self.all_asset_ids
-    else:
-      # 处理预设标签：立绘和背景
-      if tag == "character":
-        display_tag = self.tag_manager.get_tr_character()
-      elif tag == "background":
-        display_tag = self.tag_manager.get_tr_background()
-      else:
-        # 其他常规标签
-        display_tag = tag
-      current_asset_ids = self.assets_by_tag[display_tag][1]
-
-    for asset_id in current_asset_ids:
+    for asset_id in asset_ids:
       self.add_asset_card_to_flow(asset_id)
 
   def _create_asset_card(self, asset_id: str, card_width: int, card_height: int) -> QWidget:
@@ -321,42 +346,52 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     self.asset_cards[asset_id].update_tags()
 
   def _refresh_tags_and_restore_selection(self, update_asset_cards=True, update_card_texts=False):
-    """刷新标签列表并恢复当前选择
-
-    Args:
-      update_asset_cards: 是否重新加载资产卡片
-      update_card_texts: 是否更新现有资产卡片的文本（用于翻译更新）
-    """
-    current_semantic = None
-    current_item = self.ui.categoriesListWidget.currentItem()
-    if current_item:
-      current_semantic = current_item.semantic_tag
+    current_semantic_tag_path = None
+    current_item = self.ui.categoriesTreeWidget.currentItem()
+    if current_item and isinstance(current_item, TagTreeItem):
+      current_semantic_tag_path = current_item.semantic_tag_path
 
     self.load_tags()
 
-    # 保持当前选中的标签
-    if current_semantic:
-      for i in range(self.ui.categoriesListWidget.count()):
-        item = self.ui.categoriesListWidget.item(i)
-        if item.semantic_tag == current_semantic:
-          self.ui.categoriesListWidget.setCurrentItem(item)
-          self.current_tag = item.text()
-          self.ui.categoryTitleLabel.setText(self.current_tag)
+    def find_item_by_path(tree_item: QTreeWidgetItem, path: list[str]) -> TagTreeItem | None:
+      if not path:
+        return None
+      if not isinstance(tree_item, TagTreeItem):
+        return None
+      if tree_item.semantic_tag_path == path:
+        return tree_item
+      for i in range(tree_item.childCount()):
+        child = tree_item.child(i)
+        if isinstance(child, TagTreeItem):
+          result = find_item_by_path(child, path)
+          if result:
+            return result
+      return None
 
-          if update_asset_cards:
-            self.load_asset_cards_for_tag(current_semantic)
-          elif update_card_texts:
-            for asset_id, asset_card in self.asset_cards.items():
-              asset_card.update_text()
-          break
+    if current_semantic_tag_path:
+      for i in range(self.ui.categoriesTreeWidget.topLevelItemCount()):
+        top_item = self.ui.categoriesTreeWidget.topLevelItem(i)
+        if isinstance(top_item, TagTreeItem):
+          found = find_item_by_path(top_item, current_semantic_tag_path)
+          if found:
+            self.ui.categoriesTreeWidget.setCurrentItem(found)
+            self.current_tag = found.text(0)
+            self.ui.categoryTitleLabel.setText(self._get_tag_path_display_text(current_semantic_tag_path))
+            settings = SettingsDict.instance()
+            settings[SETTINGS_KEY_CURRENT_TAG] = current_semantic_tag_path
+
+            if update_asset_cards:
+              self.load_asset_cards_for_tag(current_semantic_tag_path)
+            elif update_card_texts:
+              for asset_id, asset_card in self.asset_cards.items():
+                asset_card.update_text()
+            break
     elif not current_item and update_card_texts:
-      # 当没有选中项且需要更新文本时，选择第一个标签
-      self.ui.categoriesListWidget.setCurrentRow(0)
-      first_item = self.ui.categoriesListWidget.item(0)
-      if first_item:
-        display_text = first_item.text()
-        self.current_tag = display_text
-        self.ui.categoryTitleLabel.setText(self.current_tag)
+      self.ui.categoriesTreeWidget.setCurrentRow(0)
+      first_item = self.ui.categoriesTreeWidget.topLevelItem(0)
+      if first_item and isinstance(first_item, TagTreeItem):
+        self.current_tag = first_item.text(0)
+        self.ui.categoryTitleLabel.setText(self._get_tag_path_display_text(first_item.semantic_tag_path))
 
         for asset_id, asset_card in self.asset_cards.items():
           asset_card.update_text()
