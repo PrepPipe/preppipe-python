@@ -2157,6 +2157,8 @@ class VNCodeGen:
         if not isinstance(scene, VNASTSceneSymbol):
           raise PPAssertionError
         symb = VNSceneSymbol.create(context=self.context, name=scene.name, loc=scene.location)
+        if scene.get_attr(VNASTSceneSymbol.ATTR_CG):
+          symb.set_attr(VNSceneSymbol.ATTR_CG, True)
         self._setup_export_dest_attrs(symb, export_file, sceneindex)
         matcher = PartialStateMatcher()
         self._scene_parent_map[symb] = scene

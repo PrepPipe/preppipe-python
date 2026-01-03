@@ -786,6 +786,9 @@ class VNASTSceneSymbol(Symbol):
   aliases : OpOperand[StringLiteral]
   backgrounds : SymbolTableRegion[VNASTNamespaceSwitchableValueSymbol] # 名称是所有状态字符串用逗号','串起来的结果
 
+  # 该场景是否是 CG, 是的话后续会将其输出到 CG 列表中
+  ATTR_CG : typing.ClassVar[str] = 'CG'
+
   @staticmethod
   def create(context : Context, name : str, loc : Location | None = None):
     return VNASTSceneSymbol(init_mode=IRObjectInitMode.CONSTRUCT, context=context, name=name, loc=loc)
