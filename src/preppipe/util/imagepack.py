@@ -2120,6 +2120,10 @@ class ImagePack(NamedAssetClassBase):
     target_layers = ImagePack._convert_psd_layername_expr(target_layers_str)
     base_image = ImagePack._get_psd_composite_image_from_layers(psd, base_layers)
     target_image = ImagePack._get_psd_composite_image_from_layers(psd, target_layers)
+    return ImagePack._get_diff_image_patch(base_image, target_image)
+
+  @staticmethod
+  def _get_diff_image_patch(base_image: PIL.Image.Image, target_image : PIL.Image.Image) -> PIL.Image.Image:
     if base_image.size != target_image.size:
       raise PPInternalError("Base and target images have different sizes in diff export")
 
@@ -2133,7 +2137,7 @@ class ImagePack(NamedAssetClassBase):
       max(base_bbox[2], target_bbox[2]),
       max(base_bbox[3], target_bbox[3]),
     )
-    all_bbox = (0, 0, psd.width, psd.height)
+    all_bbox = (0, 0, base_image.width, base_image.height)
     # 将两张图裁剪至公共区域再计算差分以节省时间
     if common_bbox != all_bbox:
       base_image = base_image.crop(common_bbox)
@@ -2144,7 +2148,7 @@ class ImagePack(NamedAssetClassBase):
       raise PPInternalError("Computed patch image is empty in diff export (something went wrong?)")
     if common_bbox != all_bbox:
       # 将差分图扩展回原始大小
-      full_diff_image = PIL.Image.new("RGBA", (psd.width, psd.height), (0, 0, 0, 0))
+      full_diff_image = PIL.Image.new("RGBA", (all_bbox[2], all_bbox[3]), (0, 0, 0, 0))
       full_diff_image.paste(diff_image, (common_bbox[0], common_bbox[1]))
       diff_image = full_diff_image
     return diff_image
@@ -2296,6 +2300,14 @@ class ImagePack(NamedAssetClassBase):
     return result
 
   @staticmethod
+  def _util_command_create_diff_image(base : str, target : str, output : str) -> int:
+    base_image = PIL.Image.open(base)
+    target_image = PIL.Image.open(target)
+    diff_image = ImagePack._get_diff_image_patch(base_image, target_image)
+    diff_image.save(output)
+    return 0
+
+  @staticmethod
   def tool_main(args : list[str] | None = None):
     # 创建一个有以下参数的 argument parser: [--debug] [--create <yml> | --load <zip> | --asset <name>] [--save <zip>] [--fork [args]] [--export <dir>]
     parser = argparse.ArgumentParser(description="ImagePack tool")
@@ -2309,12 +2321,24 @@ class ImagePack(NamedAssetClassBase):
     parser.add_argument("--export", metavar="<dir>", help="Export the image pack to a directory")
     parser.add_argument("--export-overview", metavar="<path>", help="Export a single overview image to the specified path")
     parser.add_argument("--export-overview-html", metavar="<path>", help="Export an interactive HTML to the specified path; require --asset and --export-overview")
+    subparsers = parser.add_subparsers(dest="subparser")
+    util_subparser = subparsers.add_parser("util", help="Util commands that does not use image pack")
+    util_subparser.add_argument("--create-diff-image", nargs=2, metavar="<path>", help="Create a diff image from two image files")
+    util_subparser.add_argument("--output", metavar="<path>", help="Output path for util commands")
     if args is None:
       args = sys.argv[1:]
     parsed_args = parser.parse_args(args)
 
     if parsed_args.debug:
       ImagePack._debug = True
+
+    match parsed_args.subparser:
+      case "util":
+        if parsed_args.create_diff_image is not None:
+          return ImagePack._util_command_create_diff_image(parsed_args.create_diff_image[0], parsed_args.create_diff_image[1], parsed_args.output)
+        parser.error("Unknown util command")
+      case _:
+        pass
 
     num_input_spec = 0
     if parsed_args.create is not None:
