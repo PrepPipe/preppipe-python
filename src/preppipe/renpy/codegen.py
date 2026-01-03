@@ -98,11 +98,21 @@ class _RenPyCharacterInfo:
   sayerstyle : TextStyleLiteral | None = None
   textstyle : TextStyleLiteral | None = None
 
+@dataclasses.dataclass
+class _RenPyUIHelperInfo:
+  # CG 列表，单张 CG 则为单个 CG 名称的字符串，多个组合则为列表
+  gallery_image_list : list[list[str] | str] = dataclasses.field(default_factory=list)
+
+  # 背景音乐列表： 音乐名 -> 音乐文件名，例如 "爱之梦" -> "audio/bgm/ost12.mp3"
+  # 用 dict 是因为写该段代码时音乐没有声明语句，只能在剧本中收集，所以用 dict 去重
+  gallery_music_list : dict[str, str] = dataclasses.field(default_factory=dict)
+
 class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
   cur_namespace : VNNamespace
   result : RenPyModel
   export_files_dict : dict[str, _RenPyScriptFileWrapper]
   root_script : _RenPyScriptFileWrapper | None
+  ui_helper : _RenPyUIHelperInfo
 
   # 所有的全局状态（不论命名空间）
   char_dict : collections.OrderedDict[VNCharacterSymbol, collections.OrderedDict[_RenPyCharacterInfo, RenPyDefineNode]]
@@ -119,6 +129,7 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
     self.result = None # type: ignore
     self.export_files_dict = {}
     self.root_script = None
+    self.ui_helper = _RenPyUIHelperInfo()
     self.char_dict = collections.OrderedDict()
     self.func_dict = collections.OrderedDict()
     self.canonical_char_dict = collections.OrderedDict()
@@ -185,6 +196,34 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
   def handle_all_values(self):
     # 目前什么都不干
     pass
+
+  def write_ui_helper_info(self):
+    # 把 self.ui_helper 中的信息写入到单独的脚本文件中
+    ui_helper = self.get_script("01_ui_helper")
+    gallery_image_list_rows = []
+    gallery_image_list_rows.append(StringLiteral.get('[', self.context))
+    for row in self.ui_helper.gallery_image_list:
+      if isinstance(row, list):
+        cur_row = '["' + '", "'.join(row) + '"]'
+      else:
+        cur_row = '"' + row + '"'
+      gallery_image_list_rows.append(StringLiteral.get("    " + cur_row + ',', self.context))
+    gallery_image_list_rows.append(StringLiteral.get(']', self.context))
+    gallery_image_list_l = StringListLiteral.get(self.context, gallery_image_list_rows)
+    gallery_image_list_value = RenPyASMNode.create(self.context, asm=gallery_image_list_l)
+    dest_gallery_image_list = RenPyDefineNode.create(self.context, varname="gallery_image_list", expr=gallery_image_list_value)
+    ui_helper.insert_at_top(dest_gallery_image_list)
+
+    gallery_music_list_rows = []
+    gallery_music_list_rows.append(StringLiteral.get('[', self.context))
+    for name, audiospec in self.ui_helper.gallery_music_list.items():
+      # 虽然逻辑上是二元元祖，但是读的时候期待的是 list，所以这里要转换
+      gallery_music_list_rows.append(StringLiteral.get('    ["' + name + '", "' + audiospec + '"],', self.context))
+    gallery_music_list_rows.append(StringLiteral.get(']', self.context))
+    gallery_music_list_l = StringListLiteral.get(self.context, gallery_music_list_rows)
+    gallery_music_list_value = RenPyASMNode.create(self.context, asm=gallery_music_list_l)
+    dest_gallery_music_list = RenPyDefineNode.create(self.context, varname="gallery_music_list", expr=gallery_music_list_value)
+    ui_helper.insert_at_top(dest_gallery_music_list)
 
   def label_all_functions(self):
     # 确定每个函数的入口标签，便于在其他函数体中生成对该函数的调用
@@ -283,8 +322,33 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
     scenename = nameconvert.str2identifier(scene.name)
     for bg in scene.backgrounds:
       self.try_set_imspec_for_asset(bg, self._populate_imspec_from_assetdecl(scenename, bg.name, 'bg'), scene)
-    # 目前不需要其他操作
-    return
+
+    # 如果该场景是 CG 的话，把所有项加到鉴赏界面列表中
+    if scene.get_attr(VNSceneSymbol.ATTR_CG):
+      results = []
+      for bg in scene.backgrounds:
+        imspec = self.get_impsec(bg)
+        results.append(' '.join([v.get_string() for v in imspec]))
+      if len(results) > 0:
+        if len(results) == 1:
+          self.ui_helper.gallery_image_list.append(results[0])
+        else:
+          self.ui_helper.gallery_image_list.append(results)
+
+  def _ui_helper_handle_play_bgm(self, bgm : Value, audiospec : StringLiteral):
+    # 我们需要将所有背景音乐加到鉴赏列表中
+    # 由于在写该段代码时，我们没有声明音乐的命令，所有的音乐都需要播放才有，
+    # 所以我们在生成输出剧本时在生成播放音乐命令时都会调用该函数，以记录该音乐
+    # 目前 audiospec 应该是一个相对路径，我们用文件名来作为音乐的名字
+    relpath = audiospec.get_string()
+    name = os.path.splitext(os.path.basename(relpath))[0]
+    if name not in self.ui_helper.gallery_music_list:
+      # 我们需要在这把 relpath 的引号去掉
+      if relpath[0] == relpath[-1] and relpath[0] in ('"', "'"):
+        audiospec_str = relpath[1:-1]
+      else:
+        audiospec_str = relpath
+      self.ui_helper.gallery_music_list[name] = audiospec_str
 
   def get_terminator(self, block : Block) -> VNTerminatorInstBase:
     terminator = block.body.back
@@ -711,6 +775,7 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
         if transition := instr.transition.try_get_value():
           self._add_audio_transition(transition, play)
         play.insert_before(insert_before)
+        self._ui_helper_handle_play_bgm(content, audiospec)
         return play
       case VNStandardDeviceKind.O_SAY_NAME_TEXT | VNStandardDeviceKind.O_SAY_TEXT_TEXT | VNStandardDeviceKind.O_BACKGROUND_DISPLAY | VNStandardDeviceKind.O_VOICE_AUDIO:
         # 这些都应该在特定的指令组中特殊处理，不应该在这里处理
@@ -1112,6 +1177,7 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
     imagepacks = self.imagepack_handler.finalize(self.result._cacheable_export_region) # pylint: disable=protected-access
     if len(imagepacks) > 0:
       self.write_imagepack_instances(imagepacks)
+    self.write_ui_helper_info()
 
     for w in self.export_files_dict.values():
       w.finalize()
