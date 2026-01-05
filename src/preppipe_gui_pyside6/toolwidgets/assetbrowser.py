@@ -151,6 +151,23 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
       if isinstance(asset, ImagePack):
         self.all_asset_ids.append(asset_id)
 
+  def _sort_tags(self, tag_semantics) -> list[str]:
+    """对标签进行排序：预设标签按 enum.auto() 值排序，自定义标签按显示文本排序"""
+    preset_tags = []
+    custom_tags = []
+
+    for tag_semantic in tag_semantics:
+      preset_info = self.tag_manager.get_asset_preset_tag_from_semantic(tag_semantic)
+      if preset_info:
+        preset_tags.append((tag_semantic, preset_info[1].value))
+      else:
+        custom_tags.append(tag_semantic)
+
+    preset_tags.sort(key=lambda x: x[1])
+    custom_tags.sort(key=lambda x: self.tag_manager.get_tag_display_text(x))
+
+    return [tag[0] for tag in preset_tags] + custom_tags
+
   def _build_category_tree_item(self, category_type: AssetTagType) -> CategoryTreeItem:
     category_semantic = self.tag_manager.get_semantic_tag(category_type)
     category_display_text = self.tag_manager.get_tag_display_text(category_semantic)
@@ -181,7 +198,9 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
           tag_to_assets[tag_semantic] = set()
         tag_to_assets[tag_semantic].add(asset_id)
 
-    for tag_semantic, asset_ids in tag_to_assets.items():
+    sorted_tags = self._sort_tags(tag_to_assets.keys())
+    for tag_semantic in sorted_tags:
+      asset_ids = tag_to_assets[tag_semantic]
       tag_display_text = self.tag_manager.get_tag_display_text(tag_semantic)
       tag_item = TagTreeItem(
         tag_display_text,
@@ -214,7 +233,9 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
           common_tags[tag_semantic] = 0
         common_tags[tag_semantic] += 1
 
-    for tag_semantic, count in common_tags.items():
+    sorted_common_tags = self._sort_tags(common_tags.keys())
+    for tag_semantic in sorted_common_tags:
+      count = common_tags[tag_semantic]
       if count == len(other_categories):
         common_asset_ids = set.union(*[category_item.item_by_tags[tag_semantic].asset_ids for category_item in other_categories])
         if common_asset_ids:
