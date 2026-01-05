@@ -159,7 +159,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     for tag_semantic in tag_semantics:
       preset_info = self.tag_manager.get_asset_preset_tag_from_semantic(tag_semantic)
       if preset_info:
-        preset_tags.append((tag_semantic, preset_info[1].value))
+        preset_tags.append((tag_semantic, preset_info.value))
       else:
         custom_tags.append(tag_semantic)
 
