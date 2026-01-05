@@ -3069,57 +3069,57 @@ class ImagePackDescriptor:
     COLOR = enum.auto() # 颜色选区
 
   class ImagePackPresetTag(enum.Enum):
-    BACKGROUND_TEMPLATE = enum.auto(), ImagePack.TR_imagepack.tr("presettag_background_template",
+    BACKGROUND_TEMPLATE = 0, ImagePack.TR_imagepack.tr("presettag_background_template",
       en="Background Template",
       zh_cn="背景模板",
       zh_hk="背景模板"
     )
-    BACKGROUND_SPECIAL = enum.auto(), ImagePack.TR_imagepack.tr("presettag_background_special",
+    BACKGROUND_SPECIAL = 1, ImagePack.TR_imagepack.tr("presettag_background_special",
       en="Special Background",
       zh_cn="特殊背景",
       zh_hk="特殊背景"
     )
-    BACKGROUND_INDOOR = enum.auto(), ImagePack.TR_imagepack.tr("presettag_background_indoor",
+    BACKGROUND_INDOOR = 2, ImagePack.TR_imagepack.tr("presettag_background_indoor",
       en="Indoor",
       zh_cn="室内",
       zh_hk="室內"
     )
-    BACKGROUND_OUTDOOR = enum.auto(), ImagePack.TR_imagepack.tr("presettag_background_outdoor",
+    BACKGROUND_OUTDOOR = 3, ImagePack.TR_imagepack.tr("presettag_background_outdoor",
       en="Outdoor",
       zh_cn="室外",
       zh_hk="室外"
     )
-    BACKGROUND_NATURAL = enum.auto(), ImagePack.TR_imagepack.tr("presettag_background_natural",
+    BACKGROUND_NATURAL = 4, ImagePack.TR_imagepack.tr("presettag_background_natural",
       en="Natural",
       zh_cn="自然",
       zh_hk="自然"
     )
-    BACKGROUND_URBAN = enum.auto(), ImagePack.TR_imagepack.tr("presettag_background_manmade",
+    BACKGROUND_URBAN = 5, ImagePack.TR_imagepack.tr("presettag_background_manmade",
       en="Urban",
       zh_cn="城市",
       zh_hk="城市",
     )
-    BACKGROUND_HOME = enum.auto(), ImagePack.TR_imagepack.tr("presettag_background_home",
+    BACKGROUND_HOME = 6, ImagePack.TR_imagepack.tr("presettag_background_home",
       en="Home",
       zh_cn="家",
       zh_hk="家",
     )
-    BACKGROUND_SCHOOL = enum.auto(), ImagePack.TR_imagepack.tr("presettag_background_school",
+    BACKGROUND_SCHOOL = 7, ImagePack.TR_imagepack.tr("presettag_background_school",
       en="School",
       zh_cn="学校",
       zh_hk="學校",
     )
-    BACKGROUND_PUBLIC_INTERIOR = enum.auto(), ImagePack.TR_imagepack.tr("presettag_background_public_interior",
+    BACKGROUND_PUBLIC_INTERIOR = 8, ImagePack.TR_imagepack.tr("presettag_background_public_interior",
       en="Public Interior",
       zh_cn="公共室内场所",
       zh_hk="公共室內場所",
     )
-    CHARACTERSPRITE_MALE = enum.auto(), ImagePack.TR_imagepack.tr("presettag_character_male",
+    CHARACTERSPRITE_MALE = 9, ImagePack.TR_imagepack.tr("presettag_character_male",
       en="Male Sprite",
       zh_cn="男性立绘",
       zh_hk="男性立绘"
     )
-    CHARACTERSPRITE_FEMALE = enum.auto(), ImagePack.TR_imagepack.tr("presettag_character_female",
+    CHARACTERSPRITE_FEMALE = 10, ImagePack.TR_imagepack.tr("presettag_character_female",
       en="Female Sprite",
       zh_cn="女性立绘",
       zh_hk="女性立绘"

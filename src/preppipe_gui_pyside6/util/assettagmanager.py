@@ -54,13 +54,6 @@ class AssetTagManager(QObject):
 
   """
 
-  # 每个分类标签下有哪些预设标签
-  # 枚举类型有可能在多种分类标签下共用，即从分类标签到预设标签的映射是多对一的关系
-  ASSET_PRESET_TAG_MAP : dict[AssetTagType, enum.Enum] = {
-    AssetTagType.BACKGROUND: ImagePackDescriptor.ImagePackPresetTag,
-    AssetTagType.CHARACTER_SPRITE: ImagePackDescriptor.ImagePackPresetTag,
-  }
-
   _instance: Optional['AssetTagManager'] = None
   tags_updated = Signal()
 
@@ -106,10 +99,8 @@ class AssetTagManager(QObject):
 
     for tag_type in AssetTagType:
       self._add_tag_mapping(tag_type.translatable, self.get_semantic_tag(tag_type))
-      if tag_type in self.ASSET_PRESET_TAG_MAP:
-        dest_preset_type = self.ASSET_PRESET_TAG_MAP[tag_type]
-        for preset_tag in dest_preset_type:
-          self._add_tag_mapping(preset_tag.translatable, self.get_semantic_tag(preset_tag))
+    for preset_tag in ImagePackDescriptor.ImagePackPresetTag:
+      self._add_tag_mapping(preset_tag.translatable, self.get_semantic_tag(preset_tag))
 
   def get_tag_semantic(self, tag_text: str) -> str:
     return self.tag_text_to_semantic.get(tag_text, tag_text)
@@ -268,13 +259,10 @@ class AssetTagManager(QObject):
         return tag_type
     return None
 
-  def get_asset_preset_tag_from_semantic(self, semantic: str) -> tuple[AssetTagType, enum.Enum] | None:
-    for tag_type in AssetTagType:
-      if tag_type in self.ASSET_PRESET_TAG_MAP:
-        dest_enum_type = self.ASSET_PRESET_TAG_MAP[tag_type]
-        for preset_tag in dest_enum_type:
-          if self.get_semantic_tag(preset_tag) == semantic:
-            return tag_type, preset_tag
+  def get_asset_preset_tag_from_semantic(self, semantic: str) -> enum.Enum | None:
+    for preset_tag in ImagePackDescriptor.ImagePackPresetTag:
+      if self.get_semantic_tag(preset_tag) == semantic:
+        return preset_tag
     return None
   def is_preset_tag(self, semantic: str) -> bool:
     if self.get_asset_tag_type_from_semantic(semantic) is not None:

@@ -44,7 +44,8 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
 
   asset_cards: dict[str, AssetCardWidget]
   '''当前标签下素材id对应的卡片，用于选中状态和tageditdialog等状态更新'''
-  all_asset_ids: list[str]
+  all_asset_ids: dict[str, int]
+  '''素材ID到注册索引的映射，记录素材在AssetManager中的注册顺序'''
 
   _tr_toolname_assetbrowser = TR_gui_tool_assetbrowser.tr("toolname_assetbrowser",
     en="Asset Browser",
@@ -68,7 +69,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     self.ui.setupUi(self)
     self.current_tag = ""
     self.asset_cards = {}
-    self.all_asset_ids = []
+    self.all_asset_ids = {}
     self.last_opened_asset_id = None
     self.tag_manager = AssetTagManager.get_instance()
     self.tag_manager.tags_updated.connect(self._on_tags_updated)
@@ -145,18 +146,68 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
 
   def load_all_assets(self):
     asset_manager = AssetManager.get_instance()
-    self.all_asset_ids = []
+    self.all_asset_ids = {}
+    index = 0
     for asset_id, asset_info in asset_manager._assets.items():
       asset = asset_manager.get_asset(asset_id)
       if isinstance(asset, ImagePack):
-        self.all_asset_ids.append(asset_id)
+        self.all_asset_ids[asset_id] = index
+        index += 1
+
+  def _sort_tags(self, tag_semantics) -> list[str]:
+    """对标签进行排序：预设标签按 enum.auto() 值排序，自定义标签按显示文本排序"""
+    preset_tags = []
+    custom_tags = []
+
+    for tag_semantic in tag_semantics:
+      preset_info = self.tag_manager.get_asset_preset_tag_from_semantic(tag_semantic)
+      if preset_info:
+        preset_tags.append((tag_semantic, preset_info.value))
+      else:
+        custom_tags.append(tag_semantic)
+
+    preset_tags.sort(key=lambda x: x[1])
+    custom_tags.sort(key=lambda x: self.tag_manager.get_tag_display_text(x))
+
+    return [tag[0] for tag in preset_tags] + custom_tags
+
+  def _get_asset_category_priority(self, asset_id: str) -> int:
+    asset_type = self.tag_manager.get_asset_type_tag(asset_id)
+    if asset_type == AssetTagType.BACKGROUND:
+      return 0
+    elif asset_type == AssetTagType.CHARACTER_SPRITE:
+      return 1
+    else:
+      return 2
+
+  def _get_asset_preset_tags_enum_sorted(self, asset_id: str) -> list[int]:
+    preset_tags = []
+    all_tags = self.tag_manager.get_asset_tags(asset_id)
+
+    for tag_semantic in all_tags:
+      preset_info = self.tag_manager.get_asset_preset_tag_from_semantic(tag_semantic)
+      if preset_info:
+        preset_tags.append(preset_info.value)
+    return sorted(preset_tags)
+
+  def _sort_asset_ids(self, asset_ids: list[str]) -> list[str]:
+    """根据以下规则对素材ID进行排序：
+    1. 分类标签不一样：背景素材在前
+    2. 预设标签不一样：按照预设标签enum.auto()值的字典序排列
+    3. 分类标签与预设标签都一致：按照素材在AssetManager里注册的顺序排列
+    """
+    return sorted(asset_ids, key=lambda asset_id: (
+      self._get_asset_category_priority(asset_id),
+      self._get_asset_preset_tags_enum_sorted(asset_id),
+      self.all_asset_ids[asset_id]
+    ))
 
   def _build_category_tree_item(self, category_type: AssetTagType) -> CategoryTreeItem:
     category_semantic = self.tag_manager.get_semantic_tag(category_type)
     category_display_text = self.tag_manager.get_tag_display_text(category_semantic)
 
     category_asset_ids = set()
-    for asset_id in self.all_asset_ids:
+    for asset_id in self.all_asset_ids.keys():
       asset_type_tag = self.tag_manager.get_asset_type_tag(asset_id)
       if asset_type_tag == category_type:
         category_asset_ids.add(asset_id)
@@ -181,7 +232,9 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
           tag_to_assets[tag_semantic] = set()
         tag_to_assets[tag_semantic].add(asset_id)
 
-    for tag_semantic, asset_ids in tag_to_assets.items():
+    sorted_tags = self._sort_tags(tag_to_assets.keys())
+    for tag_semantic in sorted_tags:
+      asset_ids = tag_to_assets[tag_semantic]
       tag_display_text = self.tag_manager.get_tag_display_text(tag_semantic)
       tag_item = TagTreeItem(
         tag_display_text,
@@ -197,7 +250,7 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
     all_semantic = self.tag_manager.get_semantic_tag(AssetTagType.ALL)
     all_display_text = self.tag_manager.get_tag_display_text(all_semantic)
 
-    all_asset_ids = set(self.all_asset_ids)
+    all_asset_ids = set(self.all_asset_ids.keys())
     all_item = CategoryTreeItem(
       all_display_text,
       [all_semantic],
@@ -214,7 +267,9 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
           common_tags[tag_semantic] = 0
         common_tags[tag_semantic] += 1
 
-    for tag_semantic, count in common_tags.items():
+    sorted_common_tags = self._sort_tags(common_tags.keys())
+    for tag_semantic in sorted_common_tags:
+      count = common_tags[tag_semantic]
       if count == len(other_categories):
         common_asset_ids = set.union(*[category_item.item_by_tags[tag_semantic].asset_ids for category_item in other_categories])
         if common_asset_ids:
@@ -266,7 +321,9 @@ class AssetBrowserWidget(QWidget, ToolWidgetInterface):
 
   def load_asset_cards_for_tag(self, asset_ids: list[str]):
     self.clear_asset_cards()
-    for asset_id in asset_ids:
+    # 应用排序规则
+    sorted_asset_ids = self._sort_asset_ids(asset_ids)
+    for asset_id in sorted_asset_ids:
       self.add_asset_card_to_flow(asset_id)
 
   def _create_asset_card(self, asset_id: str, card_width: int, card_height: int) -> QWidget:
