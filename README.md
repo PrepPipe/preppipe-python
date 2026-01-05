@@ -20,9 +20,9 @@ What you can get from the tool:
 * Game engine project files (scripts and converted/generated assets)
 * Statistics & Reports (WIP)
 
-我们正在尝试将本程序上架至 [Steam](https://store.steampowered.com/app/2961200/)，敬请期待。
+本程序已以抢先体验模式上架至 [Steam](https://store.steampowered.com/app/2961200/)。
 
-We are working towards releasing the program on [Steam](https://store.steampowered.com/app/2961200/).
+We have released the program as Early Access on [Steam](https://store.steampowered.com/app/2961200/).
 
 ### 文档 Documentation
 
@@ -56,7 +56,7 @@ English users please use the [Github Discussions page](https://github.com/PrepPi
 
 ## 开发环境设置
 
-目前本程序需要至少 Python 3.10 版本。正确 `git clone` 本仓库需要安装 Git LFS 支持。
+目前运行本程序需要至少 Python 3.10 版本。需要开发的话请使用最低版本(3.10.x)，以免在其他使用最低版本的环境出错。
 
 如果您想构建一个开发环境，您需要安装以下 Python 依赖项。推荐在一个 `venv` 中操作。
   * 构建需要 `build twine`
