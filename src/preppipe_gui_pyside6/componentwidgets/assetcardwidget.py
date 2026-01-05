@@ -417,15 +417,18 @@ class AssetCardWidget(QPushButton):
       display_text = tag_manager.get_tag_display_text(tag_semantic)
       if tag_manager.is_preset_tag(tag_semantic):
         if tag_manager.get_asset_tag_type_from_semantic(tag_semantic) is None:
-          preset_tags.append(display_text)
+          preset_info = tag_manager.get_asset_preset_tag_from_semantic(tag_semantic)
+          if preset_info:
+            preset_tags.append((display_text, preset_info.value))
       else:
         custom_tags.append(display_text)
 
+    preset_tags.sort(key=lambda x: x[1])
+    self._preset_tags_full_text = ", ".join([tag[0] for tag in preset_tags]) if preset_tags else self._tr_no_preset_tags.get()
+    self.preset_tags_button.resizeEvent(None)
+
     self._custom_tags_full_text = ", ".join(custom_tags) if custom_tags else self._tr_no_custom_tags.get()
     self.custom_tags_button.resizeEvent(None)
-
-    self._preset_tags_full_text = ", ".join(preset_tags) if preset_tags else self._tr_no_preset_tags.get()
-    self.preset_tags_button.resizeEvent(None)
 
     is_custom_tag_empty = len(custom_tags) == 0
     AssetCardStyleManager.apply_tags_button_style(self.custom_tags_button, self.custom_tags_button.height(), is_preset=False, is_tag_empty=is_custom_tag_empty)

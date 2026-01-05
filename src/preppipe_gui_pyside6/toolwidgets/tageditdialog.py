@@ -349,14 +349,18 @@ class TagEditDialog(QDialog):
       display_tag = self.tag_manager.get_tag_display_text(semantic_tag)
       is_preset = self.tag_manager.is_preset_tag(semantic_tag)
       if is_preset:
-        preset_tags.append((display_tag, semantic_tag))
+        preset_info = self.tag_manager.get_asset_preset_tag_from_semantic(semantic_tag)
+        if preset_info:
+          preset_tags.append((display_tag, semantic_tag, preset_info.value))
       else:
         custom_tags.append((display_tag, semantic_tag))
 
-    for display_tag, _ in sorted(preset_tags):
+    preset_tags.sort(key=lambda x: x[2])
+    for display_tag, _, _ in preset_tags:
       self.add_tag_block(display_tag, True)
 
-    for display_tag, _ in sorted(custom_tags):
+    custom_tags.sort(key=lambda x: x[0])
+    for display_tag, _ in custom_tags:
       self.add_tag_block(display_tag, False)
 
   def load_recent_tags(self):
