@@ -154,7 +154,7 @@ class AssetManager:
             res = self._handle_manifest(manifest, install_dir, isbuiltin=False)
             if res:
               return
-    # 读取 preppipe_asset_manifest.yml 并构建素材包
+    # 如果版本不匹配或文件不存在，读取 preppipe_asset_manifest.yml 并构建素材包
     self.build_assets_extra(path)
 
   @staticmethod
@@ -234,6 +234,37 @@ class AssetManager:
     if info := self._assets.get(name, None):
       return info.handle
     return None
+
+  def reload_extra_assets(self):
+    """Reload extra assets (non-builtin) from environment variables.
+    This clears currently loaded extra assets and reloads them.
+    Builtin assets are not affected."""
+    embedded_path = AssetManager.get_embedded_asset_install_path()
+    # Remove all non-builtin assets
+    to_remove = []
+    for name, info in self._assets.items():
+      if not info.installpath.startswith(embedded_path):
+        to_remove.append(name)
+    for name in to_remove:
+      del self._assets[name]
+    # Reload extra assets from environment variables
+    extra_assets_dirs_dict = collections.OrderedDict()
+    if envval := os.getenv(AssetManager.EXTRA_ASSETS_PARENT_DIRS_ENV, None):
+      for p in envval.split(os.pathsep):
+        if os.path.isdir(p):
+          for sub in os.listdir(p):
+            subpath = os.path.realpath(os.path.join(p, sub))
+            if os.path.isdir(subpath):
+              manifestpath = os.path.join(subpath, AssetManager.MANIFEST_SRC_NAME)
+              if os.path.exists(manifestpath):
+                extra_assets_dirs_dict[subpath] = True
+    if envval := os.getenv(AssetManager.EXTRA_ASSETS_ENV, None):
+      for s in envval.split(os.pathsep):
+        realpath = os.path.realpath(s)
+        if os.path.isdir(realpath):
+          extra_assets_dirs_dict[realpath] = True
+    for d in extra_assets_dirs_dict.keys():
+      self.try_load_extra_assets(d)
 
   @staticmethod
   def _get_font_index_for_current_lang() -> int:

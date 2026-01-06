@@ -4,6 +4,7 @@ from PySide6.QtWidgets import QApplication
 import preppipe
 import preppipe.pipeline
 import preppipe.pipeline_cmd
+from preppipe.assets.assetmanager import AssetManager
 from .mainwindow import MainWindow
 from .settingsdict import SettingsDict
 
@@ -28,6 +29,16 @@ def gui_main(settings_path : str | None = None):
 
   if settings_path is not None:
     SettingsDict.try_set_settings_dir(settings_path)
+
+  # Set up user asset directories from settings before AssetManager initializes
+  if user_dirs := SettingsDict.get_user_asset_directories():
+    existing = os.getenv(AssetManager.EXTRA_ASSETS_ENV, "")
+    if existing:
+      # Merge with existing environment variable
+      combined = os.pathsep.join(user_dirs + [existing])
+    else:
+      combined = os.pathsep.join(user_dirs)
+    os.environ[AssetManager.EXTRA_ASSETS_ENV] = combined
 
   app = QApplication(sys.argv)
   QApplication.setOrganizationDomain("preppipe.org")

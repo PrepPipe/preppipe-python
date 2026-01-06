@@ -1,10 +1,14 @@
+import os
+import tempfile
 from PySide6.QtCore import *
 
 from preppipe.language import *
+from preppipe.assets.assetmanager import AssetManager
 from ..forms.generated.ui_settingwidget import Ui_SettingWidget
 from ..toolwidgetinterface import *
 from ..mainwindowinterface import *
 from ..settingsdict import *
+from ..componentwidgets.filelistinputwidget import FileListInputWidget
 
 TR_gui_setting = TranslationDomain("gui_setting")
 
@@ -35,6 +39,16 @@ class SettingWidget(QWidget, ToolWidgetInterface):
     en="Enable debug mode to dump internal information (IRs, etc) to files. This makes execution slower.",
     zh_cn="启用调试模式以将内部信息（IR等）保存到文件中。执行过程会变慢。",
     zh_hk="啟用調試模式以將內部信息（IR等）保存到文件中。執行過程會變慢。",
+  )
+  _tr_tab_assets = TR_gui_setting.tr("tab_assets",
+    en="Assets",
+    zh_cn="素材",
+    zh_hk="素材",
+  )
+  _tr_assets_directories = TR_gui_setting.tr("assets_directories",
+    en="Extra Asset Directories",
+    zh_cn="额外素材目录",
+    zh_hk="額外素材目錄",
   )
   _langs_dict = {
     "en": "English",
@@ -70,6 +84,17 @@ class SettingWidget(QWidget, ToolWidgetInterface):
     self.ui.temporaryPathWidget.filePathUpdated.connect(self.on_temporaryPathWidget_changed)
     self.add_translatable_widget_child(self.ui.temporaryPathWidget)
 
+    # Set up assets tab
+    self.bind_text(lambda s : self.ui.tabWidget.setTabText(1, s), self._tr_tab_assets)
+    self.ui.assetDirectoriesWidget.setDirectoryMode(True)
+    self.ui.assetDirectoriesWidget.setFieldName(self._tr_assets_directories)
+    # Load current directories from settings
+    current_dirs = SettingsDict.get_user_asset_directories()
+    for dir_path in current_dirs:
+      self.ui.assetDirectoriesWidget.addPath(dir_path)
+    self.ui.assetDirectoriesWidget.listChanged.connect(self.on_assetDirectoriesWidget_changed)
+    self.add_translatable_widget_child(self.ui.assetDirectoriesWidget)
+
   def on_languageComboBox_currentIndexChanged(self, index):
     lang_code = self.ui.languageComboBox.currentData()
     self.language_updated(lang_code)
@@ -79,6 +104,35 @@ class SettingWidget(QWidget, ToolWidgetInterface):
 
   def on_temporaryPathWidget_changed(self, path):
     SettingsDict.instance()["mainpipeline/temporarypath"] = path if path != tempfile.gettempdir() else None
+
+  def on_assetDirectoriesWidget_changed(self):
+    # Get current list from widget
+    current_list = self.ui.assetDirectoriesWidget.getCurrentList()
+    # Save to settings
+    SettingsDict.set_user_asset_directories(current_list)
+    # Update environment variable immediately
+    existing = os.getenv(AssetManager.EXTRA_ASSETS_ENV, "")
+    if current_list:
+      if existing:
+        combined = os.pathsep.join(current_list + [existing])
+      else:
+        combined = os.pathsep.join(current_list)
+      os.environ[AssetManager.EXTRA_ASSETS_ENV] = combined
+    else:
+      # If no user directories, keep only existing env var
+      if existing:
+        os.environ[AssetManager.EXTRA_ASSETS_ENV] = existing
+      else:
+        # Remove the env var if it exists but is empty
+        if AssetManager.EXTRA_ASSETS_ENV in os.environ:
+          del os.environ[AssetManager.EXTRA_ASSETS_ENV]
+    # Reload assets if AssetManager instance exists
+    try:
+      asset_manager = AssetManager.get_instance()
+      asset_manager.reload_extra_assets()
+    except (AttributeError, RuntimeError):
+      # AssetManager may not be initialized yet, which is fine
+      pass
 
   @classmethod
   def getToolInfo(cls, **kwargs) -> ToolWidgetInfo:
