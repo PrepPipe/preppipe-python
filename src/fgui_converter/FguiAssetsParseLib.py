@@ -293,6 +293,7 @@ class FguiComponent:
             elif (self.component_etree[i].tag == "displayList"):
                 self.display_list = FguiDisplayList(self.component_etree[i], self.package_desc_id)
                 for displayable in self.display_list.displayable_list:
+                    # 包围框尺寸。FGUI不考虑子组件坐标xy小于0的情况，仅扩展组件的右侧和下方。
                     self.bbox_width = max(self.bbox_width, displayable.xypos[0] + displayable.size[0])
                     self.bbox_height = max(self.bbox_height, displayable.xypos[1] + displayable.size[1])
 
