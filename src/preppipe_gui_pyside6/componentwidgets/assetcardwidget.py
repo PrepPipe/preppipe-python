@@ -396,7 +396,7 @@ class AssetCardWidget(QPushButton):
   def _get_asset_name(self):
     asset = AssetManager.get_instance().get_asset(self.asset_id)
     if isinstance(asset, ImagePack) and (descriptor := ImagePack.get_descriptor_by_id(self.asset_id)) and (name_obj := descriptor.get_name()):
-      return name_obj.get()
+      return str(name_obj)
     return self.asset_id
 
   def update_text(self):

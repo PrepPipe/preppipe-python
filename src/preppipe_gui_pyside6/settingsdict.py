@@ -148,3 +148,30 @@ class SettingsDict(collections.abc.MutableMapping):
       if tempdir := inst.get("mainpipeline/temporarypath"):
         return tempdir
     return tempfile.gettempdir()
+
+  @staticmethod
+  def get_user_asset_directories() -> list[str]:
+    """Get the list of user-specified asset directories from settings.
+    Returns a list of absolute paths, or empty list if not set."""
+    if inst := SettingsDict.instance():
+      if dirs := inst.get("assets/user_directories"):
+        if isinstance(dirs, list):
+          # Ensure all paths are absolute and valid directories
+          result = []
+          for d in dirs:
+            if isinstance(d, str) and os.path.isdir(d):
+              result.append(os.path.abspath(d))
+          return result
+    return []
+
+  @staticmethod
+  def set_user_asset_directories(directories: list[str]) -> None:
+    """Set the list of user-specified asset directories in settings.
+    Paths are normalized to absolute paths and validated."""
+    if inst := SettingsDict.instance():
+      # Normalize to absolute paths and validate
+      normalized = []
+      for d in directories:
+        if isinstance(d, str) and os.path.isdir(d):
+          normalized.append(os.path.abspath(d))
+      inst["assets/user_directories"] = normalized

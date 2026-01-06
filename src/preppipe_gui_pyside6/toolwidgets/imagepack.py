@@ -412,7 +412,7 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
       line_name_fields.append(index_field)
     if self.isCurrentPackModified():
       line_name_fields.append(f"{P_S}{self._tr_modified}{P_E}")
-    base_name = self.descriptor.topref.get()
+    base_name = str(self.descriptor.topref)
     line_name = base_name + ' '.join(line_name_fields)
     desc = self.descriptor.description
     line_desc = desc.get() if desc else self._tr_no_description.get()
