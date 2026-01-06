@@ -45,7 +45,7 @@ class FguiToRenpyConverter:
     default_background = '#fff'
 
     # 菜单类界面名称，需要添加 tag menu。
-    menu_screen_name_list = ['main_menu', 'game_menu', 'save', 'load', 'preferences', 'history', 'help', 'about', 'gallery']
+    menu_screen_name_list = ['main_menu', 'game_menu', 'save', 'load', 'preferences', 'history', 'help', 'about']
 
     # 模态类界面名称，需要添加 Modal True。
     modal_screen_name_list = ['confirm']
@@ -63,6 +63,12 @@ class FguiToRenpyConverter:
     history_screen_name_list = ['history']
     history_item_screen_name_list = ['history_item']
     
+    # 图鉴类界面
+    gallery_screen_name_list = ['gallery', 'music_room']
+
+    # 所以特殊界面名
+    special_screen_name_list = []
+
     def __init__(self, fgui_assets):
         self.fgui_assets = fgui_assets
         self.renpy_code = []
@@ -75,6 +81,11 @@ class FguiToRenpyConverter:
         self.image_definition_code = []
         self.graph_definition_code = []
         self.game_global_variables_code = []
+        self.gallery_screen_code = []
+        self.music_room_screen_code = []
+
+        # 所有特殊界面名
+        self.special_screen_name_list = self.menu_screen_name_list + self.modal_screen_name_list + self.choice_screen_name_list + self.say_screen_name_list + self.save_load_screen_name_list + self.history_screen_name_list + self.gallery_screen_name_list
         
         # dismiss用于取消一些组件的focus状态，例如input。
         self.screen_has_dismiss = False
@@ -94,9 +105,15 @@ class FguiToRenpyConverter:
                              os.path.join(os.path.dirname(os.path.abspath(__file__)), "renpy_templates"))
         self.font_map_template = 'renpy_font_map_definition.txt'
         self.graph_template_dict = {}
-        self.graph_template_dict['null'] = self.get_graph_template('renpy_null_template.txt')
-        self.graph_template_dict['rectangle'] = self.get_graph_template('renpy_rectangle_template.txt')
-        self.graph_template_dict['ellipse'] = self.get_graph_template('renpy_ellipse_template.txt')
+        self.graph_template_dict['null'] = self.get_template_content('renpy_null_template.txt')
+        self.graph_template_dict['rectangle'] = self.get_template_content('renpy_rectangle_template.txt')
+        self.graph_template_dict['ellipse'] = self.get_template_content('renpy_ellipse_template.txt')
+        self.gallery_template_dict = {}
+        self.gallery_template_dict['gallery'] = self.get_template_content('renpy_gallery_template.txt')
+        self.gallery_template_dict['music_room'] = self.get_template_content('renpy_music_room_template.txt')
+
+        # 输出游戏目录
+        self.game_dir = None
 
     def set_game_global_variables(self, variable_name, variable_value):
         variable_str = f"define {variable_name} = {variable_value}"
@@ -416,6 +433,14 @@ class FguiToRenpyConverter:
     def is_history_item(screen_name : str):
         return screen_name in FguiToRenpyConverter.history_item_screen_name_list
 
+    @staticmethod
+    def is_gallery_screen(screen_name : str):
+        return screen_name == 'gallery'
+
+    @staticmethod
+    def is_music_room_screen(screen_name : str):
+        return screen_name == 'music_room'
+
     def convert_component_display_list(self, component: FguiComponent, list_begin_index=0, list_end_index=-1):
         screen_ui_code = []
         # print(f"list_begin_index: {list_begin_index}, list_end_index: {list_end_index}")
@@ -543,6 +568,7 @@ class FguiToRenpyConverter:
 
         # 界面入参列表
         screen_params = ''
+
         # choice界面的特殊处理
         if self.is_choice_screen(screen_name):
             self.generate_choice_screen(component)
@@ -564,6 +590,14 @@ class FguiToRenpyConverter:
             return
         if self.is_history_screen(screen_name):
             self.generate_history_screen(component)
+            return
+
+        # gallery和music_room界面的特殊处理
+        if self.is_gallery_screen(screen_name):
+            self.generate_gallery_screen(component)
+            return
+        if self.is_music_room_screen(screen_name):
+            self.generate_music_room_screen(component)
             return
 
         # confirm 界面固定入参
@@ -965,6 +999,137 @@ class FguiToRenpyConverter:
         self.screen_code.extend(self.screen_definition_head)
         self.screen_code.extend(self.screen_ui_code)
 
+    def generate_gallery_screen(self, component : FguiComponent):
+        print("This is gallery screen.")
+        self.screen_definition_head.clear()
+        self.screen_variable_code.clear()
+        self.screen_function_code.clear()
+        self.screen_ui_code.clear()
+        self.screen_has_dismiss = False
+        self.dismiss_action_list.clear()
+        self.gallery_screen_code.clear()
+
+        if not self.gallery_template_dict['gallery']:
+            print("Gallery template is empty.")
+            return
+        
+        gallery_button_list = None
+        gallery_button_list_item = None
+        gallery_button_list_index = -1
+        displayable_list_len = len(component.display_list.displayable_list)
+        gallery_button_list_len = 1
+        gallery_button_list_column =  1
+        gallery_button_list_row = 1
+        ui_helper_exists = False
+        # 从game目录中 01_ui_helper.rpy 文件中获取实际的 gallery_image_list。
+        # 此处只检查文件是否存在，不检查文件内容。
+        gallery_image_list_file = os.path.join(self.game_dir, '01_ui_helper.rpy')
+        if not os.path.exists(gallery_image_list_file):
+            print(f"Gallery image list file {gallery_image_list_file} does not exist.")
+        else:
+            ui_helper_exists = True
+
+        for i in range(displayable_list_len):
+            displayable = component.display_list.displayable_list[i]
+            # 搜索名为 gallery_button_list 的列表组件
+            if displayable.name == 'gallery_button_list' and isinstance(displayable, FguiList):
+                gallery_button_list = displayable
+                # 确认默认引用组件类型。
+                gallery_button_list_item = self.fgui_assets.get_component_by_id(gallery_button_list.default_item_id)
+                gallery_button_list_index = i
+                break
+        if not gallery_button_list:
+            print(f"{component.name} contains no gallery button list.")
+            return
+        # 检查gallery_button_list_item是否为按钮
+        if not isinstance(gallery_button_list_item, FguiButton):
+            print(f"{component.name} gallery button list item is not Button.")
+            return
+
+        # 计算列表每行显示的按钮数量
+        gallery_button_list_len = max(len(displayable.item_list), 1)
+        gallery_button_list_column = math.floor(gallery_button_list.size[0] / gallery_button_list_item.size[0])
+        gallery_button_list_row = math.ceil(gallery_button_list_len / gallery_button_list_column)
+
+        self.reset_indent_level()
+        self.screen_definition_head.append("# CG图鉴界面")
+        self.screen_definition_head.append(f"screen {component.name}():")
+        self.indent_level_up()
+        self.screen_definition_head.append(f"{self.indent_str}tag menu")
+        self.screen_definition_head.append(f"{self.indent_str}")
+
+        # gallery_button_list 之前的组件
+        self.screen_ui_code.extend(self.convert_component_display_list(component, list_begin_index=0, list_end_index=gallery_button_list_index))
+
+        # gallery_button_list 的处理
+        gallery_button_list_code = []
+        gallery_button_list_code.append(f"{self.indent_str}viewport:")
+        self.indent_level_up()
+        gallery_button_list_code.append(f"{self.indent_str}pos {gallery_button_list.xypos}")
+        gallery_button_list_code.append(f"{self.indent_str}xysize {gallery_button_list.size}")
+        # 固定可拖拽
+        gallery_button_list_code.append(f"{self.indent_str}draggable True")
+        gallery_button_list_code.append(f"{self.indent_str}mousewheel True")
+        gallery_button_list_code.append(f"{self.indent_str}grid gallery_view_column gallery_view_row:")
+        self.indent_level_up()
+        gallery_button_list_code.append(f"{self.indent_str}yspacing {gallery_button_list.line_gap}")
+        gallery_button_list_code.append(f"{self.indent_str}xspacing {gallery_button_list.col_gap}")
+        # 若ui_helper.rpy不存在，则根据列表长度添加对应数量的默认按钮
+        if not ui_helper_exists:
+            for i in range(len(gallery_button_list.item_list)):
+                gallery_button_list_code.append(f"{self.indent_str}use {gallery_button_list_item.name}()")
+        # 若ui_helper.rpy存在，则使用固定脚本定义的按钮
+        else:
+            gallery_button_list_code.append(f"{self.indent_str}for i in range(gallery_button_num):")
+            self.indent_level_up()
+            gallery_button_list_code.append(f"{self.indent_str}python:")
+            self.indent_level_up()
+            gallery_button_list_code.append(f"{self.indent_str}gallery_image = gallery_image_list[i]")
+            gallery_button_list_code.append(f"{self.indent_str}if isinstance(gallery_image, list):")            
+            self.indent_level_up()
+            gallery_button_list_code.append(f"{self.indent_str}gallery_image = gallery_image[0]")
+            self.indent_level_down(2)
+            # 暂时用按钮的第一个display作为locked状态的显示内容。
+            locked_image = self.fgui_assets.get_componentname_by_id(gallery_button_list_item.display_list.displayable_list[0].src)
+            gallery_button_list_code.append(f"{self.indent_str}add g.make_button(gallery_image, gallery_image, locked='{locked_image}') xysize {gallery_button_list_item.size}")
+            self.indent_level_down()
+        self.screen_ui_code.extend(gallery_button_list_code)
+
+        self.indent_level_down(2)
+        # gallery_button_list 之后的组件
+        self.screen_ui_code.extend(self.convert_component_display_list(component, list_begin_index=gallery_button_list_index+1))
+        self.screen_ui_code.append("")
+        self.reset_indent_level()
+
+        self.gallery_screen_code.extend(self.screen_definition_head)
+        self.gallery_screen_code.extend(self.screen_ui_code)
+        # 读取 templates/renpy_gallery_template.txt 模板内容，并替换 {gallery_screen_code} 为 self.gallery_screen_code
+        gallery_template_content = self.get_template_content('renpy_gallery_template.txt')
+        gallery_template_content = gallery_template_content.replace('{gallery_screen_code}', '\n'.join(self.gallery_screen_code))
+        gallery_template_content = gallery_template_content.replace('{gallery_button_list_len}', str(gallery_button_list_len))
+        gallery_template_content = gallery_template_content.replace('{gallery_button_list_column}', str(gallery_button_list_column))
+        gallery_template_content = gallery_template_content.replace('{gallery_button_list_row}', str(gallery_button_list_row))
+        self.gallery_screen_code = gallery_template_content.split('\n')
+
+
+        # 将内容保存在 game/scripts/gallery_screen.rpy 文件中
+        gallery_screen_file = os.path.join(self.game_dir, 'scripts', 'gallery_screen.rpy')
+        self.save_code_to_file(gallery_screen_file, self.gallery_screen_code)
+        print(f"Gallery screen code has been saved to {gallery_screen_file}.")
+        return
+
+    def generate_music_room_screen(self, component : FguiComponent):
+        print("This is music room screen.")
+        self.screen_definition_head.clear()
+        self.screen_variable_code.clear()
+        self.screen_function_code.clear()
+        self.screen_ui_code.clear()
+        self.screen_has_dismiss = False
+        self.dismiss_action_list.clear()
+
+        if not self.gallery_template_dict['music_room']:
+            print("Music room template is empty.")
+            return
 
     def generate_say_screen(self, component : FguiComponent):
         print("This is say screen.")
@@ -2037,6 +2202,16 @@ class FguiToRenpyConverter:
 
         print(f"Ren'Py代码已保存到: {filename}")
 
+    def save_code_to_file(self, filename : str, code : list[str]) -> None:
+        """
+        保存Ren'Py代码
+        """
+        with open(filename, 'w', encoding='utf-8') as f:
+            for line in code:
+                f.write(line + '\n')
+
+        print(f"Ren'Py代码已保存到: {filename}")
+
     def from_templates_to_renpy(self, filename):
         """
         读取模板替换字符串并保存至Ren'Py目录
@@ -2050,11 +2225,13 @@ class FguiToRenpyConverter:
         with open(filename, 'w', encoding='utf-8') as f:
             f.write(content)
 
-    def get_graph_template(self, filename):
+    def get_template_content(self, filename : str, path : str = None) -> str:
         """
-        获取graph对应的image对象定义模板
+        获取模板内容
         """
-        with open(os.path.join(self.renpy_template_dir, filename), 'r', encoding='utf-8') as file:
+        template_path = self.renpy_template_dir if path is None else path
+
+        with open(os.path.join(template_path, filename), 'r', encoding='utf-8') as file:
             content = file.read()
         return content
 
@@ -2200,6 +2377,7 @@ def convert(argv):
         # 创建转换器
         print("正在创建转换器...")
         converter = FguiToRenpyConverter(fgui_assets)
+        converter.game_dir = game_dir
         print("转换器创建完成")
 
         # 生成Ren'Py代码
@@ -2208,8 +2386,20 @@ def convert(argv):
         print("Ren'Py代码生成完成")
 
         # 保存.rpy文件到game目录
-        output_file = os.path.join(scripts_dir, "fgui_to_renpy.rpy")
-        converter.save_to_file(output_file)
+        # output_file = os.path.join(scripts_dir, "fgui_to_renpy.rpy")
+        global_variables_output_file = os.path.join(scripts_dir, "preppipe_global_variables.rpy")
+        image_definition_output_file = os.path.join(scripts_dir, "preppipe_image_definition.rpy")
+        style_output_file = os.path.join(scripts_dir, "preppipe_styles.rpy")
+        screen_output_file = os.path.join(scripts_dir, "preppipe_screens.rpy")
+        # converter.save_to_file(output_file)
+        # self.renpy_code.extend(self.game_global_variables_code)
+        # self.renpy_code.extend(self.image_definition_code)
+        # self.renpy_code.extend(self.graph_definition_code)
+        # self.renpy_code.extend(self.style_code)
+        converter.save_code_to_file(global_variables_output_file, converter.game_global_variables_code)
+        converter.save_code_to_file(image_definition_output_file, converter.image_definition_code)
+        converter.save_code_to_file(style_output_file, converter.style_code)
+        converter.save_code_to_file(screen_output_file, converter.screen_code)
 
         # 部分预定义模板文件修改参数并保存
         font_map_definition_file = os.path.join(scripts_dir, "font_map.rpy")
