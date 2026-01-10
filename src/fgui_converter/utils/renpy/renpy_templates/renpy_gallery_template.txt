@@ -21,7 +21,6 @@ init python:
             g.image(e)
             g.unlock(e)
             g.transform(gallery_full_screen)
-    # gallery_button_num = len(gallery_image_list)
     gallery_button_num = {gallery_button_list_len}
     g.transition = None
     gallery_view_column = {gallery_button_list_column}
