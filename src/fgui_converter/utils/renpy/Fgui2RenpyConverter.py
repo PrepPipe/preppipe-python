@@ -8,6 +8,7 @@ import re
 import argparse
 import math
 import shutil
+import ast
 from enum import IntEnum
 
 # 复合型组件的子组件枚举类型
@@ -69,6 +70,9 @@ class FguiToRenpyConverter:
     # 所以特殊界面名
     special_screen_name_list = []
 
+    # 主管线提供的gallery数据文件
+    ui_helper_file_name = '01_ui_helper.rpy'
+
     def __init__(self, fgui_assets):
         self.fgui_assets = fgui_assets
         self.renpy_code = []
@@ -114,6 +118,9 @@ class FguiToRenpyConverter:
 
         # 输出游戏目录
         self.game_dir = None
+
+        # gallery相关数据
+        self.gallery_data = {}
 
     def set_game_global_variables(self, variable_name, variable_value):
         variable_str = f"define {variable_name} = {variable_value}"
@@ -441,7 +448,7 @@ class FguiToRenpyConverter:
     def is_music_room_screen(screen_name : str):
         return screen_name == 'music_room'
 
-    def convert_component_display_list(self, component: FguiComponent, list_begin_index=0, list_end_index=-1):
+    def convert_component_display_list(self, component: FguiComponent, list_begin_index=0, list_end_index=-1) -> list:
         screen_ui_code = []
         # print(f"list_begin_index: {list_begin_index}, list_end_index: {list_end_index}")
         end_index = len(component.display_list.displayable_list) if (list_end_index == -1) else list_end_index
@@ -1021,13 +1028,11 @@ class FguiToRenpyConverter:
         gallery_button_list_column =  1
         gallery_button_list_row = 1
         ui_helper_exists = False
-        # 从game目录中 01_ui_helper.rpy 文件中获取实际的 gallery_image_list。
-        # 此处只检查文件是否存在，不检查文件内容。
-        gallery_image_list_file = os.path.join(self.game_dir, '01_ui_helper.rpy')
-        if not os.path.exists(gallery_image_list_file):
-            print(f"Gallery image list file {gallery_image_list_file} does not exist.")
-        else:
+        # 检查 gallery_data 是否存在gallery_image_list
+        if 'gallery_image_list' in self.gallery_data:
             ui_helper_exists = True
+        else:
+            print(f"Gallery image list is not defined in {self.ui_helper_file_name}.")
 
         for i in range(displayable_list_len):
             displayable = component.display_list.displayable_list[i]
@@ -1046,10 +1051,24 @@ class FguiToRenpyConverter:
             print(f"{component.name} gallery button list item is not Button.")
             return
 
-        # 计算列表每行显示的按钮数量
-        gallery_button_list_len = max(len(displayable.item_list), 1)
-        gallery_button_list_column = math.floor(gallery_button_list.size[0] / gallery_button_list_item.size[0])
-        gallery_button_list_row = math.ceil(gallery_button_list_len / gallery_button_list_column)
+        # 计算列表的行数与列数
+        if ui_helper_exists:
+            gallery_button_list_len = len(self.gallery_data['gallery_image_list'])
+        else:
+            gallery_button_list_len = max(len(displayable.item_list), 1)
+        # FguiList中的line_item_count和line_item_count2可能为0，需要根据列表尺寸与元素尺寸计算实际的行数与列数。
+        if not (gallery_button_list.line_item_count and gallery_button_list.line_item_count2):
+            # 横向流动，填充行，之后换行
+            if gallery_button_list.layout == 'flow_hz' :
+                gallery_button_list_column = math.floor(gallery_button_list.size[0] / gallery_button_list_item.size[0])
+                gallery_button_list_row = math.ceil(gallery_button_list_len / gallery_button_list_column)
+            # 纵向流动，先填充列，之后换列
+            elif gallery_button_list.layout == 'flow_vt' :
+                gallery_button_list_row = math.floor(gallery_button_list.size[1] / gallery_button_list_item.size[1])
+                gallery_button_list_column = math.ceil(gallery_button_list_len / gallery_button_list_row)
+        else:
+            gallery_button_list_column = gallery_button_list.line_item_count
+            gallery_button_list_row = gallery_button_list.line_item_count2
 
         self.reset_indent_level()
         self.screen_definition_head.append("# CG图鉴界面")
@@ -1070,10 +1089,14 @@ class FguiToRenpyConverter:
         # 固定可拖拽
         gallery_button_list_code.append(f"{self.indent_str}draggable True")
         gallery_button_list_code.append(f"{self.indent_str}mousewheel True")
+        # 鼠标放在viewport边缘自动滚动
+        gallery_button_list_code.append(f"{self.indent_str}edgescroll (100, 200)")
         gallery_button_list_code.append(f"{self.indent_str}grid gallery_view_column gallery_view_row:")
         self.indent_level_up()
         gallery_button_list_code.append(f"{self.indent_str}yspacing {gallery_button_list.line_gap}")
         gallery_button_list_code.append(f"{self.indent_str}xspacing {gallery_button_list.col_gap}")
+        if gallery_button_list.layout == 'flow_vt' :
+            gallery_button_list_code.append(f"{self.indent_str}transpose True")
         # 若ui_helper.rpy不存在，则根据列表长度添加对应数量的默认按钮
         if not ui_helper_exists:
             for i in range(len(gallery_button_list.item_list)):
@@ -1126,10 +1149,119 @@ class FguiToRenpyConverter:
         self.screen_ui_code.clear()
         self.screen_has_dismiss = False
         self.dismiss_action_list.clear()
+        self.music_room_screen_code.clear()
 
-        if not self.gallery_template_dict['music_room']:
-            print("Music room template is empty.")
+        musicroom_button_list = None
+        musicroom_button_list_item = None
+        musicroom_button_list_index = -1
+        displayable_list_len = len(component.display_list.displayable_list)
+        musicroom_button_list_len = 1
+        musicroom_button_list_column =  1
+        musicroom_button_list_row = 1
+        ui_helper_exists = False
+        # 检查 gallery_data 是否存在gallery_image_list
+        if 'gallery_music_list' in self.gallery_data:
+            ui_helper_exists = True
+        else:
+            print(f"Gallery music list is not defined in {self.ui_helper_file_name}.")
+
+        for i in range(displayable_list_len):
+            displayable = component.display_list.displayable_list[i]
+            # 搜索名为 musicroom_button_list 的列表组件
+            if displayable.name == 'musicroom_button_list' and isinstance(displayable, FguiList):
+                musicroom_button_list = displayable
+                # 确认默认引用组件类型。
+                musicroom_button_list_item = self.fgui_assets.get_component_by_id(musicroom_button_list.default_item_id)
+                musicroom_button_list_index = i
+                break
+        if not musicroom_button_list:
+            print(f"{component.name} contains no musicroom button list.")
             return
+        # 检查musicroom_button_list_item是否为按钮
+        if not isinstance(musicroom_button_list_item, FguiButton):
+            print(f"{component.name} musicroom button list item is not Button.")
+            return
+
+        # 计算列表的行数与列数
+        if ui_helper_exists:
+            musicroom_button_list_len = len(self.gallery_data['gallery_music_list'])
+        else:
+            musicroom_button_list_len = max(len(displayable.item_list), 1)
+        # FguiList中的line_item_count和line_item_count2可能为0，需要根据列表尺寸与元素尺寸计算实际的行数与列数。
+        if not (musicroom_button_list.line_item_count and musicroom_button_list.line_item_count2):
+            # 横向流动，填充行，之后换行
+            if musicroom_button_list.layout == 'flow_hz' :
+                musicroom_button_list_column = math.floor(musicroom_button_list.size[0] / musicroom_button_list_item.size[0])
+                musicroom_button_list_row = math.ceil(musicroom_button_list_len / musicroom_button_list_column)
+            # 纵向流动，先填充列，之后换列
+            elif musicroom_button_list.layout == 'flow_vt' :
+                musicroom_button_list_row = math.floor(musicroom_button_list.size[1] / musicroom_button_list_item.size[1])
+                musicroom_button_list_column = math.ceil(musicroom_button_list_len / musicroom_button_list_row)
+        else:
+            musicroom_button_list_column = musicroom_button_list.line_item_count
+            musicroom_button_list_row = musicroom_button_list.line_item_count2
+
+        self.reset_indent_level()
+        self.screen_definition_head.append("# 音乐室界面")
+        self.screen_definition_head.append(f"screen {component.name}():")
+        self.indent_level_up()
+        self.screen_definition_head.append(f"{self.indent_str}tag menu")
+        self.screen_definition_head.append(f"{self.indent_str}")
+
+        # musicroom_button_list 之前的组件
+        self.screen_ui_code.extend(self.convert_component_display_list(component, list_begin_index=0, list_end_index=musicroom_button_list_index))
+
+        # musicroom_button_list 的处理
+        musicroom_button_list_code = []
+        musicroom_button_list_code.append(f"{self.indent_str}viewport:")
+        self.indent_level_up()
+        musicroom_button_list_code.append(f"{self.indent_str}pos {musicroom_button_list.xypos}")
+        musicroom_button_list_code.append(f"{self.indent_str}xysize {musicroom_button_list.size}")
+        # 固定可拖拽
+        musicroom_button_list_code.append(f"{self.indent_str}draggable True")
+        musicroom_button_list_code.append(f"{self.indent_str}mousewheel True")
+        # 鼠标放在viewport边缘自动滚动
+        musicroom_button_list_code.append(f"{self.indent_str}edgescroll (100, 200)")
+        musicroom_button_list_code.append(f"{self.indent_str}grid musicroom_view_column musicroom_view_row:")
+        self.indent_level_up()
+        musicroom_button_list_code.append(f"{self.indent_str}yspacing {musicroom_button_list.line_gap}")
+        musicroom_button_list_code.append(f"{self.indent_str}xspacing {musicroom_button_list.col_gap}")
+        if musicroom_button_list.layout == 'flow_vt' :
+            musicroom_button_list_code.append(f"{self.indent_str}transpose True")
+        # 若ui_helper.rpy不存在，则根据列表长度添加对应数量的默认按钮
+        if not ui_helper_exists:
+            for i in range(len(musicroom_button_list.item_list)):
+                musicroom_button_list_code.append(f"{self.indent_str}use {musicroom_button_list_item.name}()")
+        # 若ui_helper.rpy存在，则使用固定脚本定义的按钮
+        else:
+            musicroom_button_list_code.append(f"{self.indent_str}for i in range(musicroom_button_num):")
+            self.indent_level_up()
+            musicroom_button_list_code.append(f"{self.indent_str}$ name, file = gallery_music_list[i]")
+            musicroom_button_list_code.append(f"{self.indent_str}use {musicroom_button_list_item.name}(title=name, actions=SwitchMusicRoomPlay(file)))")
+            self.indent_level_down()
+        self.screen_ui_code.extend(musicroom_button_list_code)
+        self.indent_level_down(2)
+        # musicroom_button_list 之后的组件
+        self.screen_ui_code.extend(self.convert_component_display_list(component, list_begin_index=musicroom_button_list_index+1))
+        self.screen_ui_code.append("")
+        self.reset_indent_level()
+
+        self.music_room_screen_code.extend(self.screen_definition_head)
+        self.music_room_screen_code.extend(self.screen_ui_code)
+        # 读取 templates/renpy_music_room_template.txt 模板内容，并替换 {music_room_screen_code} 为 self.music_room_screen_code
+        music_room_template_content = self.get_template_content('renpy_music_room_template.txt')
+        music_room_template_content = music_room_template_content.replace('{music_room_screen_code}', '\n'.join(self.music_room_screen_code))
+        music_room_template_content = music_room_template_content.replace('{musicroom_button_list_len}', str(musicroom_button_list_len))
+        music_room_template_content = music_room_template_content.replace('{musicroom_button_list_column}', str(musicroom_button_list_column))
+        music_room_template_content = music_room_template_content.replace('{musicroom_button_list_row}', str(musicroom_button_list_row))
+        self.music_room_screen_code = music_room_template_content.split('\n')
+
+        # 将内容保存在 game/scripts/music_room_screen.rpy 文件中
+        music_room_screen_file = os.path.join(self.game_dir, 'scripts', 'music_room_screen.rpy')
+        self.save_code_to_file(music_room_screen_file, self.music_room_screen_code)
+        print(f"Music room screen code has been saved to {music_room_screen_file}.")
+        return
+
 
     def generate_say_screen(self, component : FguiComponent):
         print("This is say screen.")
@@ -1707,7 +1839,7 @@ class FguiToRenpyConverter:
         text_displayable_string = f"Text(text='{fgui_text.text}',{text_anchor_param},{text_transformanchor},{text_pos_param},{text_size_param},{text_font_param},{text_font_size_param},{text_font_color_param},{text_min_width_param},{text_textalign_param},{text_bold_param},{text_italic_param},{text_underline_param},{text_strike_param},{text_outlines_parame})"
         return text_displayable_string
 
-    def generate_image_displayable(self, fgui_image : FguiImage):
+    def generate_image_displayable(self, fgui_image : FguiImage) -> list:
         """
         生成图片组件。
         前提为image对象的定义已经在generate_image_definitions中生成。
@@ -1738,7 +1870,7 @@ class FguiToRenpyConverter:
                 # Ren'Py中旋转轴心固定为图片中心(0.5,0.5)或与锚点一致，锚点可指定为任意值。
                 # 若要与FairyGUI资源保持一致，需设置offset。
                 # size可能为None，需要获取
-                if not fgui_image.size:
+                if (not fgui_image.size) or (fgui_image.size == (0, 0)):
                     size = self.fgui_assets.get_image_size_by_id(fgui_image.src)
                 else:
                     size = fgui_image.size
@@ -2157,6 +2289,11 @@ class FguiToRenpyConverter:
 
     def generate_renpy_code(self):
         """生成完整的Ren'Py代码"""
+
+
+        # 读取01_ui_helper.rpy文件
+        self.gallery_data = self.get_gallery_data_from_ui_helper(os.path.join(self.game_dir, self.ui_helper_file_name))
+        print(f"gallery_data: {self.gallery_data}")
         self.renpy_code = []
 
         # 添加文件头注释
@@ -2234,6 +2371,67 @@ class FguiToRenpyConverter:
         with open(os.path.join(template_path, filename), 'r', encoding='utf-8') as file:
             content = file.read()
         return content
+
+    def get_gallery_data_from_ui_helper(self, file_path: str) -> dict:
+        """
+        从01_ui_helper.rpy文件中读取以"define"开头的列表
+        """
+        result = {}
+        
+        if not os.path.exists(file_path):
+            print(f"文件不存在: {file_path}")
+            return result
+        
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # 使用正则表达式匹配 define 语句
+            # 匹配格式: define variable_name = [...]
+            # 需要处理多行列表，通过匹配括号来找到完整的列表
+            pattern = r'define\s+(\w+)\s*=\s*(\[)'
+            
+            matches = list(re.finditer(pattern, content))
+            
+            for match in matches:
+                var_name = match.group(1)
+                list_start_pos = match.end() - 1  # '[' 的位置
+                
+                # 从 '[' 开始，找到匹配的 ']'
+                bracket_count = 0
+                i = list_start_pos
+                list_end_pos = -1
+                
+                while i < len(content):
+                    if content[i] == '[':
+                        bracket_count += 1
+                    elif content[i] == ']':
+                        bracket_count -= 1
+                        if bracket_count == 0:
+                            list_end_pos = i
+                            break
+                    i += 1
+                
+                if list_end_pos == -1:
+                    print(f"无法找到 {var_name} 列表的结束位置")
+                    continue
+                
+                # 提取列表字符串
+                list_str = content[list_start_pos:list_end_pos + 1]
+                
+                try:
+                    # 使用ast.literal_eval安全地解析列表
+                    list_value = ast.literal_eval(list_str)
+                    result[var_name] = list_value
+                    print(f"成功读取 define {var_name}: {len(list_value)} 个元素")
+                except (ValueError, SyntaxError) as e:
+                    print(f"解析 {var_name} 时出错: {e}")
+                    continue
+                    
+        except Exception as e:
+            print(f"读取文件时出错: {e}")
+        
+        return result
 
     def cleanup(self):
         """
@@ -2397,12 +2595,13 @@ def convert(argv):
         # self.renpy_code.extend(self.graph_definition_code)
         # self.renpy_code.extend(self.style_code)
         converter.save_code_to_file(global_variables_output_file, converter.game_global_variables_code)
+        converter.image_definition_code.extend(converter.graph_definition_code)
         converter.save_code_to_file(image_definition_output_file, converter.image_definition_code)
         converter.save_code_to_file(style_output_file, converter.style_code)
         converter.save_code_to_file(screen_output_file, converter.screen_code)
 
         # 部分预定义模板文件修改参数并保存
-        font_map_definition_file = os.path.join(scripts_dir, "font_map.rpy")
+        font_map_definition_file = os.path.join(scripts_dir, "01_font_map.rpy")
         converter.from_templates_to_renpy(font_map_definition_file)
 
         # 复制预定义cdd和cds文件
