@@ -634,6 +634,9 @@ class VNSceneSymbol(VNSymbol):
   # 后端可能可以根据以下内容更好地给导出的资源起名
   backgrounds : SymbolTableRegion[VNAssetValueSymbol]
 
+  # 该场景是否为 CG
+  ATTR_CG : typing.ClassVar[str] = 'CG'
+
   @staticmethod
   def create(context : Context, name : str, codename : StringLiteral | str | None = None, loc : Location | None = None):
     return VNSceneSymbol(init_mode=IRObjectInitMode.CONSTRUCT, context=context, codename=codename, name=name, loc=loc)

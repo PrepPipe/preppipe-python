@@ -94,6 +94,20 @@ class ImageWrapper:
       return ImageWrapper(image=image, path=path)
     return ImageWrapper(image=image)
 
+@dataclasses.dataclass
+class ImageCompositionCache:
+  # 在 UI 预览中，我们可能会频繁切换组合中的某几层（比如面部表情相关图层）
+  # 如果每次 get_composed_image 都重新合成的话会非常慢
+  # 因此我们用这个类来缓存部分图层的组合结果
+  # 下标递增是从底层到顶层的部分组合结果（即 0 只是最底层， 1是最底层+次底层，以此类推）
+  layers : list[tuple[int, PIL.Image.Image | None]] = dataclasses.field(default_factory=list) # (layer index, composed image)
+  # 当用于角色立绘时，我们一般不会动基底的图层，所以基底图层的中间状态不用保留，到其他可变部分时再开始缓存
+  min_cached_layer : int = 0
+
+  def clear(self):
+    self.layers.clear()
+    self.min_cached_layer = 0
+
 @AssetClassDecl("imagepack")
 @ToolClassDecl("imagepack")
 class ImagePack(NamedAssetClassBase):
@@ -436,14 +450,14 @@ class ImagePack(NamedAssetClassBase):
     if "metadata" in manifest:
       self.opaque_metadata = ImagePack.recover_metadata_from_dict_serialized(manifest["metadata"])
 
-  def get_composed_image(self, index : int) -> ImageWrapper:
+  def get_composed_image(self, index : int, composition_cache: ImageCompositionCache | None = None) -> ImageWrapper:
     # 仅使用单个组合标号来获取
     if not self.is_imagedata_loaded():
       raise PPInternalError("Cannot compose images without loading the data")
     layer_indices = self.composites[index].layers
-    return self.get_composed_image_lower(layer_indices)
+    return self.get_composed_image_lower(layer_indices, composition_cache=composition_cache)
 
-  def get_composed_image_lower(self, layer_indices : list[int]) -> ImageWrapper:
+  def get_composed_image_lower(self, layer_indices : list[int], composition_cache: ImageCompositionCache | None = None) -> ImageWrapper:
     # 指定图层组合，可以是原来没有的图层
     if not self.is_imagedata_loaded():
       raise PPInternalError("Cannot compose images without loading the data")
@@ -455,13 +469,48 @@ class ImagePack(NamedAssetClassBase):
       if curlayer.offset_x == 0 and curlayer.offset_y == 0 and curlayer.width == self.width and curlayer.height == self.height:
         return curlayer.patch
 
-    result = PIL.Image.new("RGBA", (self.width, self.height))
+    # start = time.time()
+    result = None
+    if composition_cache is not None and len(composition_cache.layers) > 0:
+      layer_indices = layer_indices.copy()
+      isAllMatch = True
+      for i in range(min(len(composition_cache.layers), len(layer_indices))):
+        if layer_indices[i] != composition_cache.layers[i][0]:
+          isAllMatch = False
+          composition_cache.layers = composition_cache.layers[:i]
+          layer_indices = layer_indices[i:]
+          result = composition_cache.layers[-1][1]
+          if result is None:
+            raise PPInternalError("Cached composed image is None (min cached layer index too large?)")
+          break
+      if isAllMatch:
+        if len(layer_indices) <= len(composition_cache.layers):
+          # 完全命中缓存
+          result = composition_cache.layers[len(layer_indices)-1][1]
+          if result is None:
+            raise PPInternalError("Cached composed image is None (min cached layer index too large?)")
+          return ImageWrapper(image=result)
+        else:
+          # 已绘制的部分层数不够
+          layer_indices = layer_indices[len(composition_cache.layers):]
+          result = composition_cache.layers[-1][1]
+          if result is None:
+            raise PPInternalError("Cached composed image is None (min cached layer index too large?)")
+
+    if result is None:
+      result = PIL.Image.new("RGBA", (self.width, self.height))
 
     for li in layer_indices:
       layer = self.layers[li]
-      extended_patch = PIL.Image.new("RGBA", (self.width, self.height))
-      extended_patch.paste(layer.patch.get(), (layer.offset_x, layer.offset_y))
-      result = PIL.Image.alpha_composite(result, extended_patch)
+      cur = result.crop((layer.offset_x, layer.offset_y, layer.offset_x + layer.width, layer.offset_y + layer.height))
+      cur = PIL.Image.alpha_composite(cur, layer.patch.get())
+      if composition_cache is not None and li >= composition_cache.min_cached_layer:
+        result = result.copy()
+      result.paste(cur, (layer.offset_x, layer.offset_y))
+      if composition_cache is not None:
+        composition_cache.layers.append((li, result if li >= composition_cache.min_cached_layer else None))
+    # end = time.time()
+    # print(f"get_composed_image_lower: {end-start} s")
     return ImageWrapper(image=result)
 
   @staticmethod
@@ -1948,6 +1997,7 @@ class ImagePack(NamedAssetClassBase):
   def _get_psd_composite_image_from_layers(psd : psd_tools.PSDImage, converted_layers : list[list[str]]) -> PIL.Image.Image:
     converted_layers_used : list[bool] = [False] * len(converted_layers)
     actual_layers : list[tuple[str, typing.Any]] = [] # <名字，图层对象>
+    debug_layerlog : list[str] = []
     def layer_filter(layer):
       nonlocal actual_layers
       nonlocal converted_layers_used
@@ -1964,7 +2014,9 @@ class ImagePack(NamedAssetClassBase):
         for candidate_target in converted_layers:
           minlen = min(len(cur_layer), len(candidate_target))
           if cur_layer[:minlen] == candidate_target[:minlen]:
+            debug_layerlog.append(f"{cur_layer}: matched prefix with group layer {'/'.join(candidate_target)}")
             return True
+        debug_layerlog.append(f"{cur_layer}: no match")
         return False
       else:
         # 如果是具体图层，判断 cur_layer 是否与 converted_layers 中的某一项匹配，或是某一项的子节点
@@ -1974,16 +2026,24 @@ class ImagePack(NamedAssetClassBase):
           if cur_layer[:len(candidate_target)] == candidate_target:
             actual_layers.append(('/'.join(cur_layer), layer))
             converted_layers_used[index] = True
+            debug_layerlog.append(f"{cur_layer}: matched: {'/'.join(candidate_target)}")
             return True
+        debug_layerlog.append(f"{cur_layer}: no match")
         return False
     composite = psd.composite(ignore_preview=True, force=True, layer_filter=layer_filter)
     if len(actual_layers) == 0:
-      raise PPInternalError("No layers matched in export")
+      print("\n".join(debug_layerlog))
+      # raise PPInternalError("No layers matched in export")
+      print("No layers matched in export")
     if not all(converted_layers_used):
       unused_layers = [converted_layers[i] for i in range(len(converted_layers)) if not converted_layers_used[i]]
-      raise PPInternalError("Some layers were not found: " + str(unused_layers))
+      print("\n".join(debug_layerlog))
+      #raise PPInternalError("Some layers were not found: " + str(unused_layers))
+      print("Some layers were not found: " + str(unused_layers))
     if composite is None or composite.getbbox() is None:
-      raise PPInternalError("Empty image in export (something went wrong?)")
+      #raise PPInternalError("Empty image in export (something went wrong?)")
+      print("Empty image in export (something went wrong?)")
+      composite = PIL.Image.new("RGBA", (psd.width, psd.height), (0,0,0,0))
     return composite
 
   @staticmethod
@@ -2060,6 +2120,10 @@ class ImagePack(NamedAssetClassBase):
     target_layers = ImagePack._convert_psd_layername_expr(target_layers_str)
     base_image = ImagePack._get_psd_composite_image_from_layers(psd, base_layers)
     target_image = ImagePack._get_psd_composite_image_from_layers(psd, target_layers)
+    return ImagePack._get_diff_image_patch(base_image, target_image)
+
+  @staticmethod
+  def _get_diff_image_patch(base_image: PIL.Image.Image, target_image : PIL.Image.Image) -> PIL.Image.Image:
     if base_image.size != target_image.size:
       raise PPInternalError("Base and target images have different sizes in diff export")
 
@@ -2073,7 +2137,7 @@ class ImagePack(NamedAssetClassBase):
       max(base_bbox[2], target_bbox[2]),
       max(base_bbox[3], target_bbox[3]),
     )
-    all_bbox = (0, 0, psd.width, psd.height)
+    all_bbox = (0, 0, base_image.width, base_image.height)
     # 将两张图裁剪至公共区域再计算差分以节省时间
     if common_bbox != all_bbox:
       base_image = base_image.crop(common_bbox)
@@ -2084,7 +2148,7 @@ class ImagePack(NamedAssetClassBase):
       raise PPInternalError("Computed patch image is empty in diff export (something went wrong?)")
     if common_bbox != all_bbox:
       # 将差分图扩展回原始大小
-      full_diff_image = PIL.Image.new("RGBA", (psd.width, psd.height), (0, 0, 0, 0))
+      full_diff_image = PIL.Image.new("RGBA", (all_bbox[2], all_bbox[3]), (0, 0, 0, 0))
       full_diff_image.paste(diff_image, (common_bbox[0], common_bbox[1]))
       diff_image = full_diff_image
     return diff_image
@@ -2093,6 +2157,7 @@ class ImagePack(NamedAssetClassBase):
   def _unpack_psd_to_directory(psdpath : str, destdir : str, exports : dict) -> None:
     psd = psd_tools.PSDImage.open(psdpath)
     for filename, info in exports.items():
+      print(f"Extracting: {filename}")
       if isinstance(info, dict):
         if len(info) != 1:
           raise PPInternalError("Invalid export info in PSD exports: expecting a dict with exactly one key but got " + str(info))
@@ -2235,6 +2300,14 @@ class ImagePack(NamedAssetClassBase):
     return result
 
   @staticmethod
+  def _util_command_create_diff_image(base : str, target : str, output : str) -> int:
+    base_image = PIL.Image.open(base)
+    target_image = PIL.Image.open(target)
+    diff_image = ImagePack._get_diff_image_patch(base_image, target_image)
+    diff_image.save(output)
+    return 0
+
+  @staticmethod
   def tool_main(args : list[str] | None = None):
     # 创建一个有以下参数的 argument parser: [--debug] [--create <yml> | --load <zip> | --asset <name>] [--save <zip>] [--fork [args]] [--export <dir>]
     parser = argparse.ArgumentParser(description="ImagePack tool")
@@ -2248,12 +2321,24 @@ class ImagePack(NamedAssetClassBase):
     parser.add_argument("--export", metavar="<dir>", help="Export the image pack to a directory")
     parser.add_argument("--export-overview", metavar="<path>", help="Export a single overview image to the specified path")
     parser.add_argument("--export-overview-html", metavar="<path>", help="Export an interactive HTML to the specified path; require --asset and --export-overview")
+    subparsers = parser.add_subparsers(dest="subparser")
+    util_subparser = subparsers.add_parser("util", help="Util commands that does not use image pack")
+    util_subparser.add_argument("--create-diff-image", nargs=2, metavar="<path>", help="Create a diff image from two image files")
+    util_subparser.add_argument("--output", metavar="<path>", help="Output path for util commands")
     if args is None:
       args = sys.argv[1:]
     parsed_args = parser.parse_args(args)
 
     if parsed_args.debug:
       ImagePack._debug = True
+
+    match parsed_args.subparser:
+      case "util":
+        if parsed_args.create_diff_image is not None:
+          return ImagePack._util_command_create_diff_image(parsed_args.create_diff_image[0], parsed_args.create_diff_image[1], parsed_args.output)
+        parser.error("Unknown util command")
+      case _:
+        pass
 
     num_input_spec = 0
     if parsed_args.create is not None:
@@ -2983,6 +3068,66 @@ class ImagePackDescriptor:
     IMAGE = enum.auto() # 图片选区
     COLOR = enum.auto() # 颜色选区
 
+  class ImagePackPresetTag(enum.Enum):
+    BACKGROUND_TEMPLATE = 0, ImagePack.TR_imagepack.tr("presettag_background_template",
+      en="Background Template",
+      zh_cn="背景模板",
+      zh_hk="背景模板"
+    )
+    BACKGROUND_SPECIAL = 1, ImagePack.TR_imagepack.tr("presettag_background_special",
+      en="Special Background",
+      zh_cn="特殊背景",
+      zh_hk="特殊背景"
+    )
+    BACKGROUND_INDOOR = 2, ImagePack.TR_imagepack.tr("presettag_background_indoor",
+      en="Indoor",
+      zh_cn="室内",
+      zh_hk="室內"
+    )
+    BACKGROUND_OUTDOOR = 3, ImagePack.TR_imagepack.tr("presettag_background_outdoor",
+      en="Outdoor",
+      zh_cn="室外",
+      zh_hk="室外"
+    )
+    BACKGROUND_NATURAL = 4, ImagePack.TR_imagepack.tr("presettag_background_natural",
+      en="Natural",
+      zh_cn="自然",
+      zh_hk="自然"
+    )
+    BACKGROUND_URBAN = 5, ImagePack.TR_imagepack.tr("presettag_background_manmade",
+      en="Urban",
+      zh_cn="城市",
+      zh_hk="城市",
+    )
+    BACKGROUND_HOME = 6, ImagePack.TR_imagepack.tr("presettag_background_home",
+      en="Home",
+      zh_cn="家",
+      zh_hk="家",
+    )
+    BACKGROUND_SCHOOL = 7, ImagePack.TR_imagepack.tr("presettag_background_school",
+      en="School",
+      zh_cn="学校",
+      zh_hk="學校",
+    )
+    BACKGROUND_PUBLIC_INTERIOR = 8, ImagePack.TR_imagepack.tr("presettag_background_public_interior",
+      en="Public Interior",
+      zh_cn="公共室内场所",
+      zh_hk="公共室內場所",
+    )
+    CHARACTERSPRITE_MALE = 9, ImagePack.TR_imagepack.tr("presettag_character_male",
+      en="Male Sprite",
+      zh_cn="男性立绘",
+      zh_hk="男性立绘"
+    )
+    CHARACTERSPRITE_FEMALE = 10, ImagePack.TR_imagepack.tr("presettag_character_female",
+      en="Female Sprite",
+      zh_cn="女性立绘",
+      zh_hk="女性立绘"
+    )
+    @property
+    def translatable(self) -> Translatable:
+      return self.value[1]
+
   class MaskType(enum.Enum):
     # 背景的选区类型
     BACKGROUND_SCREEN = enum.auto(), ImagePack.TR_imagepack.tr("maskparam_screen",
@@ -3076,6 +3221,7 @@ class ImagePackDescriptor:
   packtype : ImagePackType # 图片组的类型
   masktypes : tuple[MaskType, ...] # 有几个选区、各自的类型
   custom_masktype_names : list[Translatable] # 如果图片包有自定义的选区类型，那么它们的名称存在这里
+  preset_tags : tuple[ImagePackPresetTag, ...] # UI 中素材浏览器下所用的默认预设标签
   composites_code : list[str] # 各个差分组合的编号（字母数字组合）
   composites_layers : list[list[int]] # 各个差分组合所用的图层
   composites_references : dict[str, Translatable] # 如果某些差分组合有（非编号的）名称，那么它们的名称存在这里
@@ -3092,6 +3238,7 @@ class ImagePackDescriptor:
       'packtype': self.packtype.name,
       'masktypes': [m.name for m in self.masktypes],
       'custom_masktype_names': self.custom_masktype_names,
+      'preset_tags': [tag.name for tag in self.preset_tags],
       'composites_code': self.composites_code,
       'composites_layers': self.composites_layers,
       'composites_references': self.composites_references,
@@ -3108,6 +3255,7 @@ class ImagePackDescriptor:
     self.packtype = ImagePackDescriptor.ImagePackType[state['packtype']]
     self.masktypes = tuple([ImagePackDescriptor.MaskType[s] for s in state['masktypes']])
     self.custom_masktype_names = state['custom_masktype_names']
+    self.preset_tags = tuple([ImagePackDescriptor.ImagePackPresetTag[tag] for tag in state['preset_tags']])
     self.composites_code = state['composites_code']
     self.composites_layers = state['composites_layers']
     self.composites_references = state['composites_references']
@@ -3143,6 +3291,10 @@ class ImagePackDescriptor:
         num_custom += 1
       else:
         yield mask, mask.trname
+
+  def get_preset_tags(self) -> typing.Iterable[ImagePackPresetTag]:
+    # 获取该图片组所有的预设标签
+    return self.preset_tags
 
   def get_all_composites(self) -> typing.Iterable[str]:
     # 获取该图片组所有的组合
@@ -3243,6 +3395,7 @@ class ImagePackDescriptor:
           case _:
             masktypelist.append(ImagePackDescriptor.MaskType.CHARACTER_COLOR_DECORATE)
     self.masktypes = tuple(masktypelist)
+    self.preset_tags = ()
     self.custom_masktype_names = []
     # 从图片包组合的名称中提取编号
     regex_pattern = re.compile(r'^(?P<code>[A-Z0-9]+)(?:-.+)?$')
@@ -3344,6 +3497,17 @@ class ImagePackDescriptor:
       else:
         raise PPInternalError("Invalid mask type: " + str(masks))
       self.masktypes = tuple(masktypelist)
+    if "preset_tags" in references:
+      used_keys.add("preset_tags")
+      preset_tags = references["preset_tags"]
+      if not isinstance(preset_tags, list):
+        raise PPInternalError("Invalid preset tags: " + str(preset_tags))
+      tags = []
+      for t in preset_tags:
+        if not isinstance(t, str):
+          raise PPInternalError("Invalid preset tag: " + str(t))
+        tags.append(ImagePackDescriptor.ImagePackPresetTag[t])
+      self.preset_tags = tuple(tags)
     if "composites" in references:
       used_keys.add("composites")
       valid_composites = set(self.composites_code)
@@ -3389,7 +3553,8 @@ class ImagePackDescriptor:
     if isinstance(self.description, Translatable):
       result["description"] = self.description.dump_candidates_json()
     result["packtype"] = self.packtype.name
-    result["composites_code"] = self.composites_code
+    result["preset_tags"] = [tag.name for tag in self.preset_tags]
+    result["composites_code_size"] = len(self.composites_code)
     if len(self.composites_references) > 0:
       reference_dict = {}
       for k, v in self.composites_references.items():

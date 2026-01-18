@@ -110,6 +110,16 @@
        </item>
       </layout>
      </widget>
+     <widget class="QWidget" name="assetsTab">
+      <attribute name="title">
+       <string>Assets</string>
+      </attribute>
+      <layout class="QVBoxLayout" name="assetsLayout">
+       <item>
+        <widget class="FileListInputWidget" name="assetDirectoriesWidget"/>
+       </item>
+      </layout>
+     </widget>
     </widget>
    </item>
   </layout>
@@ -119,6 +129,12 @@
    <class>FileSelectionWidget</class>
    <extends>QWidget</extends>
    <header>preppipe_gui_pyside6.componentwidgets.fileselectionwidget</header>
+   <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>FileListInputWidget</class>
+   <extends>QWidget</extends>
+   <header>preppipe_gui_pyside6.componentwidgets.filelistinputwidget</header>
    <container>1</container>
   </customwidget>
  </customwidgets>

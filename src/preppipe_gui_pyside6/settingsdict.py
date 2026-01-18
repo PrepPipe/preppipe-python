@@ -11,13 +11,13 @@ import collections.abc
 import tempfile
 from preppipe.language import *
 
-def get_executable_base_dir() -> str:
+def _get_executable_base_dir() -> str:
   if getattr(sys, 'frozen', False):
     return os.path.dirname(sys.executable)
   return os.path.dirname(os.path.abspath(__file__))
 
 class SettingsDict(collections.abc.MutableMapping):
-  _executable_base_dir : typing.ClassVar[str] = get_executable_base_dir()
+  _executable_base_dir : typing.ClassVar[str] = _get_executable_base_dir()
   _settings_instance : typing.ClassVar['SettingsDict | None'] = None
 
   lock : threading.Lock
@@ -46,6 +46,13 @@ class SettingsDict(collections.abc.MutableMapping):
     SettingsDict._executable_base_dir = os.path.abspath(path)
     if not os.path.isdir(SettingsDict._executable_base_dir):
       raise FileNotFoundError(f"Path '{SettingsDict._executable_base_dir}' does not exist")
+
+  @staticmethod
+  def get_executable_base_dir():
+    # 提供给其他模块使用
+    # 没打包成可执行文件时，只用 _get_executable_base_dir() 取路径的话，
+    # __file__ 取得的路径可能会不一致，因此将结果保存下来反复使用
+    return SettingsDict._executable_base_dir
 
   def __init__(self, filename='settings.db'):
     self.filename = filename
@@ -141,3 +148,30 @@ class SettingsDict(collections.abc.MutableMapping):
       if tempdir := inst.get("mainpipeline/temporarypath"):
         return tempdir
     return tempfile.gettempdir()
+
+  @staticmethod
+  def get_user_asset_directories() -> list[str]:
+    """Get the list of user-specified asset directories from settings.
+    Returns a list of absolute paths, or empty list if not set."""
+    if inst := SettingsDict.instance():
+      if dirs := inst.get("assets/user_directories"):
+        if isinstance(dirs, list):
+          # Ensure all paths are absolute and valid directories
+          result = []
+          for d in dirs:
+            if isinstance(d, str) and os.path.isdir(d):
+              result.append(os.path.abspath(d))
+          return result
+    return []
+
+  @staticmethod
+  def set_user_asset_directories(directories: list[str]) -> None:
+    """Set the list of user-specified asset directories in settings.
+    Paths are normalized to absolute paths and validated."""
+    if inst := SettingsDict.instance():
+      # Normalize to absolute paths and validate
+      normalized = []
+      for d in directories:
+        if isinstance(d, str) and os.path.isdir(d):
+          normalized.append(os.path.abspath(d))
+      inst["assets/user_directories"] = normalized

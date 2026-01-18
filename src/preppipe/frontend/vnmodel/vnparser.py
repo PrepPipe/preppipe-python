@@ -797,6 +797,22 @@ _tr_scenedecl_background = TR_vnparse.tr("scenedecl_background",
   zh_hk="背景",
 )
 
+@FrontendParamEnum(TR_vnparse, "SceneSpecialKind", {
+  "NORMAL": {
+    "en": "normal",
+    "zh_cn": "正常",
+    "zh_hk": "正常",
+  },
+  "CG": {
+    "en": "cg",
+    "zh_cn": "CG",
+    "zh_hk": "CG",
+  },
+})
+class _SceneSpecialKindEnum(enum.Enum):
+  NORMAL = 0 # 正常场景
+  CG = 1 # 该场景是 CG
+
 @CmdCategory(_tr_category_scene)
 @CmdAliasDecl(TR_vnparse, {
   "zh_cn": "声明场景",
@@ -806,16 +822,25 @@ _tr_scenedecl_background = TR_vnparse.tr("scenedecl_background",
     "zh_cn": "名称",
     "zh_hk": "名稱",
   },
+  "kind": {
+    "zh_cn": "类型",
+    "zh_hk": "類型",
+  },
 }, lambda: [
   (_tr_scenedecl_background, [tr_vnutil_vtype_imageexprtree])
 ])
 @CommandDecl(vn_command_ns, _imports, 'DeclScene')
-def cmd_scene_decl(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str, ext : ListExprOperand | None = None):
+def cmd_scene_decl(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str, kind: _SceneSpecialKindEnum = _SceneSpecialKindEnum.NORMAL, ext : ListExprOperand | None = None):
   if existing := state.output_current_file.scenes.get(name):
     state.emit_error('vnparse-nameclash-scenedecl', 'Scene "' + name + '" already exist', loc=commandop.location)
     return
   scene = VNASTSceneSymbol.create(context=state.context, name=name, loc=commandop.location)
   state.output_current_file.scenes.add(scene)
+  match kind:
+    case _SceneSpecialKindEnum.NORMAL:
+      pass
+    case _SceneSpecialKindEnum.CG:
+      scene.set_attr(VNASTSceneSymbol.ATTR_CG, True)
   if ext is not None:
     for childnode in ext.data.children:
       if childnode.key in _tr_scenedecl_background.get_all_candidates():

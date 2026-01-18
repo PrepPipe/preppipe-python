@@ -95,6 +95,14 @@ class Color:
   def __str__(self) -> str:
     return self.get_string()
 
+  def __eq__(self, value: Color) -> bool:
+    if not isinstance(value, Color):
+      return False
+    return self.r == value.r and self.g == value.g and self.b == value.b and self.a == value.a
+
+  def __hash__(self) -> int:
+    return hash((self.r, self.g, self.b, self.a))
+
   @staticmethod
   def get(src: typing.Any):
     """!

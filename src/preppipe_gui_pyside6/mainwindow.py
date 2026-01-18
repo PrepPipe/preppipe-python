@@ -130,7 +130,7 @@ class MainWindow(QMainWindow, MainWindowInterface):
     if docs := os.environ.get("PREPPIPE_DOCS"):
       docs_root = os.path.abspath(docs)
     if len(docs_root) == 0:
-      docs_root = os.path.join(get_executable_base_dir(), 'docs')
+      docs_root = os.path.join(SettingsDict.get_executable_base_dir(), 'docs')
     if not os.path.isdir(docs_root):
       QMessageBox.critical(self, self._tr_documentation_not_found_title.get(), self._tr_documentation_not_found_details_dir.format(dir=docs_root))
       return
