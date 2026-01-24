@@ -742,6 +742,7 @@ class FguiList(FguiDisplayable):
     overflow-溢出处理：(visible)默认-可见，hidden-隐藏，scroll-滚动
     scroll-滚动条方向：(vertical)默认-垂直滚动，horizontal-水平滚动，both-自由滚动(同时允许垂直滚动和水平滚动)
     scrollBar-显示滚动条：visible-可见，hidden-隐藏，auto-滚动时显示
+    scrollBarRes-滚动条资源url，格式为“ui://”+“packageDescription id” + “component id”。
     scrollBarFlags：一系列滚动条标识位，可能是一个12bit整数。从低位到高位分别为：
         0-bit：垂直滚动条显示在左边
         1-bit：滚动位置自动贴近元件
@@ -769,9 +770,11 @@ class FguiList(FguiDisplayable):
         self.layout = self.display_item_tree.get("layout", "column")
         self.overflow = self.display_item_tree.get("overflow", "visible")
         self.scroll = self.display_item_tree.get("scroll", "vertical")
+        scrollbar_res = self.display_item_tree.get("scrollBarRes")
+        self.scrollbar_res = self.get_scrollbar_res(scrollbar_res, package_description_id)
         self.scroll_bar_flags = int(self.display_item_tree.get("scrollBarFlags", "256"))
         margin = self.display_item_tree.get("margin")
-        self.margin = tuple(map(int, margin.split(","))) if margin else None
+        self.margin = tuple(map(int, margin.split(","))) if margin else (0,0,0,0)
         self.clip_softness = self.display_item_tree.get("clipSoftness", "0,0")
         self.line_item_count = int(self.display_item_tree.get("lineItemCount", "0"))
         self.line_item_count2 = int(self.display_item_tree.get("lineItemCount2", "0"))
@@ -786,9 +789,29 @@ class FguiList(FguiDisplayable):
         for item_tree in display_item_tree:
             item = FguiListItem(item_tree, self.package_description_id)
             self.item_list.append(item)
+        self.item_list_length = 0
 
     def get_default_item(self, packageDescription_id):
         self.default_item_id = self.default_item_url[self.default_item_url.find(packageDescription_id)+len(packageDescription_id):]
+
+    def set_item_list_length(self, item_list_length):
+        self.item_list_length = item_list_length
+
+    def get_item_list_length(self):
+        return self.item_list_length if self.item_list_length > 0 else len(self.item_list)
+
+    def get_scrollbar_res(self, scrollbar_res, packageDescription_id):
+        if scrollbar_res:
+            # 原始scrollBarRes为一个使用逗号分隔的 fgui 资源url列表，总共有2项。
+            # 第1项是垂直滚动条，第2项是水平滚动条。url格式为“ui://”+“packageDescription id” + “component id”。
+            scrollbar_urls = scrollbar_res.split(",")
+            vertical_scrollbar_url = scrollbar_urls[0]
+            horizontal_scrollbar_url = scrollbar_urls[1]
+            vertical_scrollbar_id = vertical_scrollbar_url[vertical_scrollbar_url.find(packageDescription_id)+len(packageDescription_id):] if vertical_scrollbar_url else None
+            horizontal_scrollbar_id = horizontal_scrollbar_url[horizontal_scrollbar_url.find(packageDescription_id)+len(packageDescription_id):] if horizontal_scrollbar_url else None
+            return (vertical_scrollbar_id, horizontal_scrollbar_id)
+        else:
+            return None
 
 
 class FguiLoader(FguiDisplayable):
