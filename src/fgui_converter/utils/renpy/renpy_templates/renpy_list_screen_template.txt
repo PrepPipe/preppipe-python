@@ -1,0 +1,75 @@
+# {component_name} 内部列表 {list_name}
+screen {list_screen_name}(overflow=None, layout='row', row_num=1, column_num=1, transpose=False, xspacing=0, yspacing=0, xysize=(0,0), pos=(0,0), margin=(0,0,0,0)):
+    if overflow == 'visible':
+        frame:
+            margin margin
+            xysize xysize
+            pos pos
+            if layout == 'row':
+                hbox:
+                    spacing xspacing
+                    transclude
+            elif layout == 'column':
+                vbox:
+                    spacing yspacing
+                    transclude
+            else:
+                grid column_num row_num:
+                    transpose transpose
+                    xspacing xspacing
+                    yspacing yspacing
+                    transclude
+    elif overflow == 'hidden':
+        frame:
+            margin margin
+            has viewport
+            xysize xysize
+            pos pos
+            draggable False
+            mousewheel False
+            if layout == 'row':
+                hbox:
+                    spacing xspacing
+                    transclude
+            elif layout == 'column':
+                vbox:
+                    spacing yspacing
+                    transclude
+            else:
+                grid column_num row_num:
+                    transpose transpose
+                    xspacing xspacing
+                    yspacing yspacing
+                    transclude
+    else:
+        frame:
+            has side 'c r b'
+            viewport id '{list_screen_name}_vp':
+                draggable True
+                mousewheel True
+                pos pos
+                xysize xysize
+                if layout == 'row':
+                    hbox:
+                        spacing xspacing
+                        transclude
+                elif layout == 'column':
+                    vbox:
+                        spacing yspacing
+                        transclude
+                else:
+                    grid column_num row_num:
+                        transpose transpose
+                        xspacing xspacing
+                        yspacing yspacing
+                        transclude
+            vbar:
+                value YScrollValue('{list_screen_name}_vp')
+                style {vscrollbar_style}
+                ysize xysize[1]
+                pos pos
+            bar:
+                value XScrollValue('{list_screen_name}_vp')
+                style {hscrollbar_style}
+                xsize xysize[0]
+                pos pos
