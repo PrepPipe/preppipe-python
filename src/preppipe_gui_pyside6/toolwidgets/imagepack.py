@@ -827,9 +827,9 @@ class ImagePackWidget(QWidget, ToolWidgetInterface):
     code = self.charactersprite_layer_preset_combobox.currentData()
     if code is not None:
       new_index = self.composite_code_to_index.get(code, 0)
-      self.updateCharacterCompositionPanelFromCurrentIndex()
       if self.current_index != new_index:
         self.current_index = new_index
+        self.updateCharacterCompositionPanelFromCurrentIndex()
         self._update_description()
         QMetaObject.invokeMethod(self, "updateCurrentImage", Qt.QueuedConnection)
 
