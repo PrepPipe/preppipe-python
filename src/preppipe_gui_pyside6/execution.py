@@ -108,6 +108,7 @@ class ExecutionInfo:
     result.add_debug_dump()
     result.args.extend([
       "--vncodegen",
+      "--vn-prune-unused-decls",
       "--vn-blocksorting",
       "--vn-entryinference",
     ])
