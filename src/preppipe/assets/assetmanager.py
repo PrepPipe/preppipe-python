@@ -133,28 +133,38 @@ class AssetManager:
         realpath = os.path.realpath(s)
         if os.path.isdir(realpath):
           extra_assets_dirs_dict[realpath] = True
+    # 按 realpath 去重，同一目录只加载一次，避免 Duplicate descriptor ID
+    seen_realpath = set()
     for d in extra_assets_dirs_dict.keys():
+      d_canonical = os.path.realpath(d)
+      if d_canonical in seen_realpath:
+        continue
+      seen_realpath.add(d_canonical)
       self.try_load_extra_assets(d)
 
-  def try_load_extra_assets(self, path : str):
+  def try_load_extra_assets(self, path : str, force_rebuild : bool = False):
     if not os.path.isdir(path):
       return
     manifest_yml_path = os.path.join(path, AssetManager.MANIFEST_SRC_NAME)
     if not os.path.exists(manifest_yml_path):
       return
-    manifest_mtime = os.path.getmtime(manifest_yml_path)
-    # 尝试读取现有的 manifest.pickle，一切顺利的话直接返回
     install_dir = AssetManager.get_extra_asset_install_path(path)
-    if os.path.isdir(install_dir):
-      manifest_pickle_path = os.path.join(install_dir, AssetManager.MANIFEST_NAME)
-      if os.path.exists(manifest_pickle_path):
-        if os.path.getmtime(manifest_pickle_path) >= manifest_mtime:
-          with open(manifest_pickle_path, "rb") as f:
-            manifest = pickle.load(f)
-            res = self._handle_manifest(manifest, install_dir, isbuiltin=False)
-            if res:
-              return
-    # 如果版本不匹配或文件不存在，读取 preppipe_asset_manifest.yml 并构建素材包
+    if not force_rebuild:
+      manifest_mtime = os.path.getmtime(manifest_yml_path)
+      # 尝试读取现有的 manifest.pickle，一切顺利的话直接返回
+      if os.path.isdir(install_dir):
+        manifest_pickle_path = os.path.join(install_dir, AssetManager.MANIFEST_NAME)
+        if os.path.exists(manifest_pickle_path):
+          if os.path.getmtime(manifest_pickle_path) >= manifest_mtime:
+            with open(manifest_pickle_path, "rb") as f:
+              manifest = pickle.load(f)
+              res = self._handle_manifest(manifest, install_dir, isbuiltin=False)
+              if res:
+                return
+    # 如果版本不匹配或文件不存在或强制重建，先卸载该路径下已加载的 assets/descriptors/翻译，再构建
+    # （构建时 build_asset_archive 会再次 add_descriptor 并注册翻译，必须先清掉旧翻译）
+    if force_rebuild:
+      self.unload_extra_assets_from_path(path)
     self.build_assets_extra(path)
 
   @staticmethod
@@ -176,6 +186,11 @@ class AssetManager:
     if name in self._assets:
       raise PPInternalError(f"Asset {name} already exists (first path: {self._assets[name].installpath}, second path: {installpath})")
     self._assets[name] = AssetManager.AssetPackInfo(installpath=installpath, handle_class=handle_class, handle=handle)
+
+  def _load_descriptors_from_manifest(self, manifest : AssetManifestObject) -> None:
+    for classid, descriptor_list in manifest.descriptors.items():
+      handle_class = AssetManager.lookup_asset_class(classid)
+      handle_class.load_descriptors(descriptor_list)
 
   def _handle_manifest(self, manifest : AssetManifestObject, install_base : str, isbuiltin : bool = False) -> bool:
     if not isinstance(manifest, AssetManifestObject):
@@ -235,17 +250,44 @@ class AssetManager:
       return info.handle
     return None
 
+  def unload_extra_assets_from_path(self, path : str) -> None:
+    """Remove all assets loaded from this extra asset source path so they can be re-loaded (e.g. on re-import)."""
+    if not os.path.isdir(path):
+      return
+    install_base = os.path.normpath(AssetManager.get_extra_asset_install_path(path))
+    embedded_norm = os.path.normpath(AssetManager.get_embedded_asset_install_path())
+    # normpath 统一正反斜杠，避免 path 与 installpath 格式不同导致匹配不到
+    to_remove = []
+    for name, info in self._assets.items():
+      info_norm = os.path.normpath(info.installpath)
+      if (info_norm == install_base or info_norm.startswith(install_base + os.sep)) and not info_norm.startswith(embedded_norm):
+        to_remove.append((name, info.handle_class))
+    # Remove descriptors from asset classes so load_descriptors won't raise "Duplicate descriptor ID"
+    class_to_names = collections.defaultdict(list)
+    for name, handle_class in to_remove:
+      class_to_names[handle_class].append(name)
+    for handle_class, names in class_to_names.items():
+      handle_class.remove_descriptors_by_identifiers(names)
+    for name, _ in to_remove:
+      del self._assets[name]
+
   def reload_extra_assets(self):
     """Reload extra assets (non-builtin) from environment variables.
     This clears currently loaded extra assets and reloads them.
     Builtin assets are not affected."""
     embedded_path = AssetManager.get_embedded_asset_install_path()
-    # Remove all non-builtin assets
-    to_remove = []
-    for name, info in self._assets.items():
-      if not info.installpath.startswith(embedded_path):
-        to_remove.append(name)
-    for name in to_remove:
+    # Remove all non-builtin assets and their descriptors so reload won't raise "Duplicate descriptor ID"
+    to_remove = [
+      (name, info.handle_class)
+      for name, info in self._assets.items()
+      if not info.installpath.startswith(embedded_path)
+    ]
+    class_to_names = collections.defaultdict(list)
+    for name, handle_class in to_remove:
+      class_to_names[handle_class].append(name)
+    for handle_class, names in class_to_names.items():
+      handle_class.remove_descriptors_by_identifiers(names)
+    for name, _ in to_remove:
       del self._assets[name]
     # Reload extra assets from environment variables
     extra_assets_dirs_dict = collections.OrderedDict()
@@ -263,7 +305,13 @@ class AssetManager:
         realpath = os.path.realpath(s)
         if os.path.isdir(realpath):
           extra_assets_dirs_dict[realpath] = True
+    # 按 realpath 去重，同一目录只加载一次
+    seen_realpath = set()
     for d in extra_assets_dirs_dict.keys():
+      d_canonical = os.path.realpath(d)
+      if d_canonical in seen_realpath:
+        continue
+      seen_realpath.add(d_canonical)
       self.try_load_extra_assets(d)
 
   @staticmethod

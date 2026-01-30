@@ -113,6 +113,28 @@ class NamedAssetClassBase:
       cls.add_descriptor(descriptor)
 
   @classmethod
+  def remove_descriptors_by_identifiers(cls, identifiers: typing.Collection[str]) -> None:
+    """Remove descriptors whose get_candidate_id is in identifiers (e.g. when unloading extra assets from a path)."""
+    for identifier in identifiers:
+      if identifier not in cls.MANIFEST:
+        continue
+      descriptor = cls.MANIFEST.pop(identifier)
+      descriptor.unregister_translations()
+      name = cls.get_candidate_name(descriptor)
+      if isinstance(name, Translatable):
+        if name in cls.DESCRIPTOR_DICT:
+          lst = cls.DESCRIPTOR_DICT[name]
+          lst.remove(descriptor)
+          if not lst:
+            del cls.DESCRIPTOR_DICT[name]
+      elif isinstance(name, str):
+        if name in cls.DESCRIPTOR_DICT_STRONLY:
+          lst = cls.DESCRIPTOR_DICT_STRONLY[name]
+          lst.remove(descriptor)
+          if not lst:
+            del cls.DESCRIPTOR_DICT_STRONLY[name]
+
+  @classmethod
   def _descriptor(cls, descriptor_type : type):
     # 大部分时候，我们想把描述对象的代码放在注册类的定义后面，但是这样会导致描述对象的类型无法在注册类定义时确定
     # 为了解决这个问题，我们提供了这个函数，可以用作加到描述对象类型上面的修饰符
