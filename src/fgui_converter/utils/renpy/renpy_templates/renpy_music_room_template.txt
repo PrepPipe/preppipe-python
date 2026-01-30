@@ -1,0 +1,29 @@
+init python:
+
+    fadeout_time = 1.0
+    class SwitchMusicRoomPlay(Action):
+        def __init__(self, file, **kwargs):
+            global fadeout_time
+            super(Action, self).__init__(**kwargs)
+            self.file = file
+            self.selected = self.get_selected()
+            self.fadeout_time = fadeout_time
+        def __call__(self):
+            if self.selected:
+                renpy.music.stop("music", fadeout=self.fadeout_time)
+                self.selected = not self.selected
+            else:
+                renpy.music.play(self.file, fadeout=self.fadeout_time)
+        def get_selected(self):
+            return renpy.music.get_playing("music") == self.file
+        def periodic(self, st):
+            if self.selected != self.get_selected():
+                self.selected = self.get_selected()
+                renpy.restart_interaction()
+            return .1
+
+    musicroom_button_num = {musicroom_button_list_len}
+    musicroom_view_column = {musicroom_button_list_column}
+    musicroom_view_row = {musicroom_button_list_row}
+
+{music_room_screen_code}

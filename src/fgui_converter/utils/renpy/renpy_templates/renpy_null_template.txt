@@ -1,0 +1,2 @@
+image {image_name}:
+    Null(width={width}, height={height})
