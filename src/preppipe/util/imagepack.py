@@ -3613,6 +3613,10 @@ class ImagePackDescriptor:
         raise PPInternalError("Unknown key in references: " + keys)
     # 完成
 
+  def unregister_translations(self) -> None:
+    """Remove this descriptor's translations from TR_ref so re-import can re-register. Uses code prefix pack_id + '-'."""
+    ImagePackDescriptor.TR_ref.remove_by_code_prefix(self.pack_id + "-")
+
   @staticmethod
   def lookup(name : str, requested_type : ImagePackType | None = None) -> "ImagePackDescriptor":
     if candidate := ImagePack.get_descriptor_by_id(name):

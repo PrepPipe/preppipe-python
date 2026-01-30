@@ -7,6 +7,7 @@ import preppipe.pipeline_cmd
 from preppipe.assets.assetmanager import AssetManager
 from .mainwindow import MainWindow
 from .settingsdict import SettingsDict
+from .toolwidgets.errordialog import ErrorDialog
 
 def gui_main(settings_path : str | None = None):
   # 判断是使用 GUI 还是其他工具、管线
@@ -44,12 +45,16 @@ def gui_main(settings_path : str | None = None):
   QApplication.setOrganizationDomain("preppipe.org")
   QApplication.setOrganizationName("PrepPipe")
   QApplication.setApplicationName("PrepPipe GUI")
-  MainWindow.initialize()
-  window = MainWindow()
-  window.show()
-  app.exec()
-
-  SettingsDict.finalize()
+  try:
+    MainWindow.initialize()
+    window = MainWindow()
+    window.show()
+    app.exec()
+  except Exception as e:  # pylint: disable=broad-except
+    ErrorDialog.show_exception(None, e)
+    sys.exit(1)
+  finally:
+    SettingsDict.finalize()
 
 if __name__ == "__main__":
   gui_main()

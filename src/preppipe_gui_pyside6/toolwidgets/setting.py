@@ -1,6 +1,8 @@
 import os
 import tempfile
+import traceback
 from PySide6.QtCore import *
+from PySide6.QtWidgets import QWidget
 
 from preppipe.language import *
 from preppipe.assets.assetmanager import AssetManager
@@ -9,6 +11,7 @@ from ..toolwidgetinterface import *
 from ..mainwindowinterface import *
 from ..settingsdict import *
 from ..componentwidgets.filelistinputwidget import FileListInputWidget
+from .errordialog import ErrorDialog
 
 TR_gui_setting = TranslationDomain("gui_setting")
 
@@ -60,6 +63,21 @@ class SettingWidget(QWidget, ToolWidgetInterface):
     zh_cn="在这里编辑设置。目前仅支持语言与调试设置。",
     zh_hk="在這裡編輯設置。目前僅支持語言與調試設置。",
   )
+  _tr_asset_import_error_title = TR_gui_setting.tr("asset_import_error_title",
+    en="Extra Asset Import Failed",
+    zh_cn="外部素材导入失败",
+    zh_hk="外部素材導入失敗",
+  )
+  _tr_asset_import_error_summary = TR_gui_setting.tr("asset_import_error_summary",
+    en="An error occurred while loading or building extra assets. If you need to contact the developer, please send the error message and asset configuration together.",
+    zh_cn="加载或构建外部素材时发生错误。如需联系开发者，请将报错信息和素材配置一起发送。",
+    zh_hk="加載或構建外部素材時發生錯誤。如需聯繫開發者，請將報錯信息和素材配置一起發送。",
+  )
+  _tr_reimport = TR_gui_setting.tr("reimport",
+    en="Re-import",
+    zh_cn="重新导入",
+    zh_hk="重新導入",
+  )
 
   def __init__(self, parent : QWidget):
     super(SettingWidget, self).__init__(parent)
@@ -93,7 +111,22 @@ class SettingWidget(QWidget, ToolWidgetInterface):
     for dir_path in current_dirs:
       self.ui.assetDirectoriesWidget.addPath(dir_path)
     self.ui.assetDirectoriesWidget.listChanged.connect(self.on_assetDirectoriesWidget_changed)
+    self.ui.assetDirectoriesWidget.addCustomContextMenuAction(
+      self._tr_reimport,
+      self._on_asset_reimport,
+      enabled_if=lambda: len(self.ui.assetDirectoriesWidget.getCurrentList()) > 0,
+    )
     self.add_translatable_widget_child(self.ui.assetDirectoriesWidget)
+
+  def _on_asset_reimport(self, path: str) -> None:
+    asset_manager = AssetManager.get_instance()
+    try:
+      if path:
+        asset_manager.try_load_extra_assets(path, force_rebuild=True)
+      else:
+        asset_manager.reload_extra_assets()
+    except Exception as e:  # pylint: disable=broad-except
+      SettingWidget._show_asset_import_error(self, e)
 
   def on_languageComboBox_currentIndexChanged(self, index):
     lang_code = self.ui.languageComboBox.currentData()
@@ -130,9 +163,16 @@ class SettingWidget(QWidget, ToolWidgetInterface):
     try:
       asset_manager = AssetManager.get_instance()
       asset_manager.reload_extra_assets()
-    except (AttributeError, RuntimeError):
-      # AssetManager may not be initialized yet, which is fine
-      pass
+    except Exception as e:  # pylint: disable=broad-except
+      SettingWidget._show_asset_import_error(self, e)
+
+  @staticmethod
+  def _show_asset_import_error(parent: QWidget, exc: Exception) -> None:
+    tb_str = traceback.format_exc()
+    title = SettingWidget._tr_asset_import_error_title.get()
+    summary = SettingWidget._tr_asset_import_error_summary.get()
+    dlg = ErrorDialog(parent, title, summary, tb_str)
+    dlg.exec()
 
   @classmethod
   def getToolInfo(cls, **kwargs) -> ToolWidgetInfo:
