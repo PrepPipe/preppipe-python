@@ -1,0 +1,40 @@
+name: "Test CI Setup"
+on:
+  workflow_dispatch:
+
+# make sure:
+# 1. required git tags are pushed
+# 2. github actions are enabled and can update releases
+# use this so that we don't waste time on actually building the package
+
+env:
+  BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+  RELEASE_TAG: ${{ inputs.release_tag || 'latest' }}
+
+jobs:
+  test_ci_setup:
+    name: "Test CI Setup"
+    runs-on: "ubuntu-latest"
+    steps:
+      - uses: actions/checkout@v4
+      - name: fetch tags
+        run: git fetch --prune --unshallow --tags
+        shell: bash
+      - name: environment dump
+        run: |
+          git --version
+          git describe --tags
+        shell: bash
+      - name: Create dummy file
+        shell: bash
+        run: |
+          echo "test" > test.txt
+      - name: Test release
+        uses: "marvinpinto/action-automatic-releases@latest"
+        with:
+          repo_token: "${{ secrets.GITHUB_TOKEN }}"
+          automatic_release_tag: "${{ env.RELEASE_TAG }}"
+          prerelease: true
+          title: "Test release"
+          files: |
+            test.txt

@@ -15,5 +15,5 @@ This project is open-sourced with Apache-2.0 License. For more details about the
 内嵌素材以 CC0 许可发布。您可以不受限制地在任何（包括商用）作品中使用这些素材。 CC0 许可的详情请见 https://creativecommons.org/publicdomain/zero/1.0/legalcode
 All embedded assets are released with CC0 license. You can use these assets in any project (including commercial ones) without restrictions. For more details about CC0 license, see https://creativecommons.org/publicdomain/zero/1.0/legalcode
 
-该项目的发行包内包含了由 LGPL 许可发布的 FFmpeg 可执行文件，以及许多第三方 Python 包。您可在 licenses 目录下找到所有项目的许可文件。
-This release bundles FFmpeg executables licensed in LGPL and numerous third-party Python packages. You can find all license files under the "licenses" directory.
+该项目的发行包内包含了由 LGPL 许可发布的 FFmpeg 可执行文件以及 MIT 许可发布的 Ren'Py SDK，以及许多第三方 Python 包。您可在 licenses 目录下找到所有项目的许可文件。
+This release bundles FFmpeg executables (LGPL), Ren'Py SDK (MIT), and numerous third-party Python packages. You can find all license files under the "licenses" directory.
