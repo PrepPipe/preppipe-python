@@ -179,3 +179,6 @@ versionfile_*.txt
 
 run_cli.py
 run_gui.py
+
+# ScriptFlowEditor generated files
+src/ScriptFlowEditor/generated

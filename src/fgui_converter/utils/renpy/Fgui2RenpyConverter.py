@@ -217,13 +217,13 @@ class FguiToRenpyConverter:
 
     def generate_graph_definitions(self, fgui_graph : FguiGraph, component_name : str) -> list:
         """
-        生成图形组件定义。返回字符串用于非screen定义。
-        图形组件有多种类别：
+        由FairyGUI的图形控件生成图形组件定义。返回字符串用于非screen定义。
+        FairyGUI的图形控件有多种类别：
         None: 空白
         rect: 矩形(可带圆角)
         eclipse: 椭圆(包括圆形)
-        regular_polygon: 正多边形
-        polygon: 多边形
+        regular_polygon: 正多边形，暂不支持
+        polygon: 多边形，暂不支持
         """
         graph_code = []
         graph_img_def = ''
@@ -557,10 +557,10 @@ class FguiToRenpyConverter:
             # 图片组件
             if isinstance(displayable, FguiImage):
                 screen_ui_code.extend(self.generate_image_displayable(displayable))
-            # 图形组件
+            # 图形控件
             elif isinstance(displayable, FguiGraph):
                 screen_ui_code.extend(self.generate_graph_displayable(displayable))
-            # 文本组件
+            # 文本控件
             elif isinstance(displayable, FguiText):
                 screen_ui_code.extend(self.generate_text_displayable(displayable))
             # 列表
@@ -2071,8 +2071,8 @@ class FguiToRenpyConverter:
 
     def generate_graph_displayable(self, fgui_graph : FguiGraph) -> list:
         """
-        生成图形组件。用于screen中。
-        图形组件有多种类别：
+        由FairyGUI的图形控件生成图形组件。用于screen中。
+        FairyGUI的图形控件有多种类别：
         None: 空白
         rect: 矩形(可带圆角)
         eclipse: 椭圆(包括圆形)
