@@ -67,6 +67,8 @@ English users please use the [Github Discussions page](https://github.com/PrepPi
 
 语涵编译器在运行时需要使用 `ffmpeg` 进行音视频的格式转换。请确保程序能在运行时找到它，比如把路径加到 `PATH` 中。
 
+调试 Ren'Py 引擎整合相关的功能时，请将 [Ren'Py SDK](https://renpy.org/latest.html) 下载并解压到仓库根目录下 `renpy-sdk` 目录中。`renpy-sdk` 已在 `.gitignore` 中。注意，解压 Ren'Py 提供下载的压缩包时，解压的路径会带上 Ren'Py 的版本号 （比如 `renpy-8.5.2-sdk`）,请将该版本号从目录名称中删除。语涵编译器的发布包也会将 Ren'Py SDK 解压后置于 `renpy-sdk` 目录下。
+
 开发时请确保本仓库里的 `src` 目录在 `PYTHONPATH` 中，比如：(假设这个 `preppipe` 仓库在 `/path/to/preppipe`)
 ```
 export PYTHONPATH=/path/to/preppipe/src

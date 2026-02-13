@@ -108,6 +108,26 @@ class ImageCompositionCache:
     self.layers.clear()
     self.min_cached_layer = 0
 
+
+class LayerBlendMode(enum.Enum):
+  """图层混合模式。NORMAL 为默认 alpha 合成，MULTIPLY 为正片叠底。
+  序列化时使用 name.lower()（如 "normal", "multiply"），反序列化用 LayerBlendMode.from_serialized(str)。"""
+  NORMAL = enum.auto()
+  MULTIPLY = enum.auto()
+
+  def to_serialized(self) -> str:
+    return self.name.lower()
+
+  @classmethod
+  def from_serialized(cls, s : str | None) -> "LayerBlendMode":
+    if s is None or s.strip() == "":
+      return cls.NORMAL
+    try:
+      return cls[s.upper()]
+    except KeyError:
+      raise ValueError("Unsupported layer mode: " + s + " (only normal and multiply are supported)")
+
+
 @AssetClassDecl("imagepack")
 @ToolClassDecl("imagepack")
 class ImagePack(NamedAssetClassBase):
@@ -175,11 +195,13 @@ class ImagePack(NamedAssetClassBase):
     base : bool
     # 如果是 True 的话，该层可以不受限制地单独被选取
     toggle : bool
+    # 图层混合模式
+    mode : LayerBlendMode
 
     def __init__(self, patch : ImageWrapper,
                  offset_x : int = 0, offset_y : int = 0,
                  width : int = 0, height : int = 0,
-                 base : bool = False, toggle : bool = False, basename : str = '') -> None:
+                 base : bool = False, toggle : bool = False, basename : str = '', mode : LayerBlendMode | None = None) -> None:
       self.patch = patch
       self.basename = basename
       self.offset_x = offset_x
@@ -188,6 +210,7 @@ class ImagePack(NamedAssetClassBase):
       self.height = height
       self.base = base
       self.toggle = toggle
+      self.mode = mode if mode is not None else LayerBlendMode.NORMAL
       if width == 0 or height == 0:
         raise RuntimeError("Zero-sized layer?")
 
@@ -199,7 +222,7 @@ class ImagePack(NamedAssetClassBase):
                                 offset_x=int(self.offset_x * ratio),
                                 offset_y=int(self.offset_y * ratio),
                                 width=newwidth, height=newheight,
-                                base=self.base, toggle=self.toggle, basename=self.basename)
+                                base=self.base, toggle=self.toggle, basename=self.basename, mode=self.mode)
 
   class CompositeInfo:
     # 保存时每个差分的信息
@@ -328,6 +351,8 @@ class ImagePack(NamedAssetClassBase):
           flags.append("toggle")
         if len(flags) > 0:
           jsonobj["flags"] = flags
+        if l.mode != LayerBlendMode.NORMAL:
+          jsonobj["mode"] = l.mode.to_serialized()
         result.append(jsonobj)
         self._write_image_to_path(l.patch, filename, path)
       return result
@@ -430,11 +455,16 @@ class ImagePack(NamedAssetClassBase):
           height = layer_info["h"]
           base = "base" in layer_info.get("flags", [])
           toggle = "toggle" in layer_info.get("flags", [])
+          mode_str = layer_info.get("mode", None)
+          try:
+            mode = LayerBlendMode.from_serialized(mode_str)
+          except ValueError as e:
+            raise PPInternalError(str(e))
           layer_img = ImageWrapper(path=os.path.join(path, layer_filename))
           layers.append(ImagePack.LayerInfo(patch=layer_img,
                                             offset_x=offset_x, offset_y=offset_y,
                                             width=width, height=height,
-                                            base=base, toggle=toggle, basename=layer_info["p"]))
+                                            base=base, toggle=toggle, basename=layer_info["p"], mode=mode))
       return layers
 
     self.layers = read_layer_group("l", "layers")
@@ -503,7 +533,11 @@ class ImagePack(NamedAssetClassBase):
     for li in layer_indices:
       layer = self.layers[li]
       cur = result.crop((layer.offset_x, layer.offset_y, layer.offset_x + layer.width, layer.offset_y + layer.height))
-      cur = PIL.Image.alpha_composite(cur, layer.patch.get())
+      layer_patch = layer.patch.get()
+      if layer.mode == LayerBlendMode.MULTIPLY:
+        cur = ImagePack.apply_multiply_blend_mode(cur, layer_patch)
+      else:
+        cur = PIL.Image.alpha_composite(cur, layer_patch)
       if composition_cache is not None and li >= composition_cache.min_cached_layer:
         result = result.copy()
       result.paste(cur, (layer.offset_x, layer.offset_y))
@@ -512,6 +546,21 @@ class ImagePack(NamedAssetClassBase):
     # end = time.time()
     # print(f"get_composed_image_lower: {end-start} s")
     return ImageWrapper(image=result)
+
+  @staticmethod
+  def apply_multiply_blend_mode(base : PIL.Image.Image, overlay : PIL.Image.Image) -> PIL.Image.Image:
+    base_array = np.array(base, dtype=np.float32)
+    overlay_array = np.array(overlay, dtype=np.float32)
+    overlay_alpha = overlay_array[:, :, 3:4] / 255.0
+    base_alpha = base_array[:, :, 3:4] / 255.0
+    result_rgb = base_array[:, :, :3] * overlay_array[:, :, :3] / 255.0
+    result_alpha = overlay_alpha + base_alpha * (1.0 - overlay_alpha)
+    base_contribution = 1.0 - overlay_alpha
+    final_rgb = result_rgb * overlay_alpha + base_array[:, :, :3] * base_contribution
+    final_rgb = np.clip(final_rgb, 0, 255).astype(np.uint8)
+    final_alpha = np.clip(result_alpha * 255, 0, 255).astype(np.uint8)
+    result_array = np.dstack((final_rgb, final_alpha))
+    return PIL.Image.fromarray(result_array, mode='RGBA')
 
   @staticmethod
   def ndarray_hsv_to_rgb(hsv : np.ndarray) -> np.ndarray:
@@ -726,7 +775,7 @@ class ImagePack(NamedAssetClassBase):
     return ImagePack.LayerInfo(ImageWrapper(image=newbase.crop(bbox)),
                                     offset_x=offset_x, offset_y=offset_y,
                                     width=xmax-offset_x, height=ymax-offset_y,
-                                    base=True, toggle=l.toggle, basename=l.basename)
+                                    base=True, toggle=l.toggle, basename=l.basename, mode=l.mode)
 
   def fork_applying_mask(self, args : list[Color | PIL.Image.Image | str | tuple[str, Color] | None], enable_parallelization : bool = False):
     # 创建一个新的 imagepack, 将 mask 所影响的部分替换掉
@@ -1336,6 +1385,7 @@ class ImagePack(NamedAssetClassBase):
       layer_dict[imgpathbase] = layerindex
       flag_base = False
       flag_toggle = False
+      flag_mode : LayerBlendMode = LayerBlendMode.NORMAL
       def add_flag(flag : str):
         nonlocal flag_base
         nonlocal flag_toggle
@@ -1357,6 +1407,13 @@ class ImagePack(NamedAssetClassBase):
             elif isinstance(value, list):
               for flag in value:
                 add_flag(flag)
+          elif key in ImagePack.TR_imagepack_yamlparse_mode.get_all_candidates():
+            if not isinstance(value, str):
+              raise PPInternalError("Invalid mode in " + yamlpath + ": expecting a str but got " + str(value))
+            if value in ImagePack.TR_imagepack_yamlparse_multiply.get_all_candidates():
+              flag_mode = LayerBlendMode.MULTIPLY
+            else:
+              raise PPInternalError("Unsupported layer mode: " + value + " (only normal and multiply are supported)")
       imgpath = lookup_file(imgpathbase + ".png")
       if not os.path.exists(os.path.join(basepath, imgpath)):
         raise PPInternalError("Image file not found: " + imgpath)
@@ -1379,7 +1436,7 @@ class ImagePack(NamedAssetClassBase):
       newlayer = ImagePack.LayerInfo(patch,
                                       offset_x=offset_x, offset_y=offset_y,
                                       width=img.width, height=img.height,
-                                      base=flag_base, toggle=flag_toggle, basename=imgpathbase)
+                                      base=flag_base, toggle=flag_toggle, basename=imgpathbase, mode=flag_mode)
       result.layers.append(newlayer)
     if composites is None:
       for i, layer in enumerate(result.layers):
@@ -1639,6 +1696,21 @@ class ImagePack(NamedAssetClassBase):
     zh_cn="基底简写",
     zh_hk="基底簡寫",
   )
+  TR_imagepack_yamlgen_layer_modes = TR_imagepack.tr("layer_modes",
+    en="layer_modes",
+    zh_cn="图层模式",
+    zh_hk="圖層模式",
+  )
+  TR_imagepack_yamlparse_mode = TR_imagepack.tr("mode",
+    en="mode",
+    zh_cn="模式",
+    zh_hk="模式",
+  )
+  TR_imagepack_yamlparse_multiply = TR_imagepack.tr("multiply",
+    en="multiply",
+    zh_cn="正片叠底",
+    zh_hk="正片疊底",
+  )
 
   @dataclasses.dataclass
   class CharacterSpritePartsBased_PartsDecl:
@@ -1660,6 +1732,9 @@ class ImagePack(NamedAssetClassBase):
 
     # 为了避免基底所用的名称太长（比如每个选区都有独立的图层、立绘有部分需要拆成独立的置顶的图层），我们支持定义基底组合的简称，如果有简称的话所有基底组合都必须有简称
     base_abbreviation : dict[str, tuple[str,...]] | None = None
+
+    # 存储图层模式映射：图层名 -> 模式
+    layer_modes : dict[str, LayerBlendMode] = {}
 
     kinds_enum_map : dict[str, ImagePack.CharacterSpritePartsBased_PartKind] = {}
 
@@ -1785,11 +1860,22 @@ class ImagePack(NamedAssetClassBase):
           if not isinstance(abbr_list, str):
             raise PPInternalError("Invalid abbreviation list in generation: expecting a str but got " + str(abbr_list) + " (type: " + str(type(abbr_list)) + ")")
           base_abbreviation[abbr_name] = parse_dep_liststr(abbr_list)
+      elif k in ImagePack.TR_imagepack_yamlgen_layer_modes.get_all_candidates():
+        if not isinstance(v, dict):
+          raise PPInternalError("Invalid layer_modes in generation: expecting a dict but got " + str(v) + " (type: " + str(type(v)) + ")")
+        for layer_name, mode in v.items():
+          if not isinstance(mode, str):
+            raise PPInternalError("Invalid layer mode for " + layer_name + ": expecting a str but got " + str(mode) + " (type: " + str(type(mode)) + ")")
+          if mode in ImagePack.TR_imagepack_yamlparse_multiply.get_all_candidates():
+            layer_modes[layer_name] = LayerBlendMode.MULTIPLY
+          else:
+            raise PPInternalError("Unsupported layer mode for " + layer_name + ": " + mode + " (only normal and multiply are supported)")
       else:
         raise PPInternalError("Unknown key in generation: " + k + "(supported keys: "
                               + str(ImagePack.TR_imagepack_yamlgen_parts.get_all_candidates()) + ", "
                               + str(ImagePack.TR_imagepack_yamlgen_parts_kind.get_all_candidates()) + ", "
-                              + str(ImagePack.TR_imagepack_yamlgen_tags.get_all_candidates()) + ")")
+                              + str(ImagePack.TR_imagepack_yamlgen_tags.get_all_candidates()) + ", "
+                              + str(ImagePack.TR_imagepack_yamlgen_layer_modes.get_all_candidates()) + ")")
     # 初步解析完毕，我们将解析结果写入 metadata
     add_parsed_info_to_metadata()
     # 检查一下输入有没有问题，所有标签是否都有定义，所有部件是否都有定义
@@ -1937,6 +2023,8 @@ class ImagePack(NamedAssetClassBase):
       part_dict = {}
       if kinds_enum_map[part.kind] == ImagePack.CharacterSpritePartsBased_PartKind.BASE:
         part_dict[ImagePack.TR_imagepack_yamlparse_flags.get()] = ImagePack.TR_imagepack_yamlparse_base.get()
+      if part.name in layer_modes and layer_modes[part.name] == LayerBlendMode.MULTIPLY:
+        part_dict[ImagePack.TR_imagepack_yamlparse_mode.get()] = ImagePack.TR_imagepack_yamlparse_multiply.get()
       layer_orders[part.name] = len(result_layers)
       result_layers[part.name] = part_dict
     result_composites : dict[str, list[str]] = {}
@@ -3524,6 +3612,10 @@ class ImagePackDescriptor:
       if keys not in used_keys:
         raise PPInternalError("Unknown key in references: " + keys)
     # 完成
+
+  def unregister_translations(self) -> None:
+    """Remove this descriptor's translations from TR_ref so re-import can re-register. Uses code prefix pack_id + '-'."""
+    ImagePackDescriptor.TR_ref.remove_by_code_prefix(self.pack_id + "-")
 
   @staticmethod
   def lookup(name : str, requested_type : ImagePackType | None = None) -> "ImagePackDescriptor":

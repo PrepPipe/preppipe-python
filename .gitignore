@@ -158,14 +158,18 @@ _antlr_generated
 # source assets repo
 assets/
 
-# end-to-end test repo
-preppipe-tests/
+# other child repos
+/preppipe-*/
+/preppipe_*/
 
 # generated asset packs
 src/preppipe/assets/_install
 
 # generated ui forms
 src/preppipe_gui_pyside6/forms/generated
+
+# third-party programs we need to pin relative paths
+/renpy-sdk
 
 # gui settings
 *.settings.db

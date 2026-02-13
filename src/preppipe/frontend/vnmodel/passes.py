@@ -8,6 +8,7 @@ from ...pipeline import *
 from ...irbase import *
 from .vncodegen import VNCodeGen
 from .vnparser import VNParser
+from .vnprune import prune_unused_asset_declarations
 from ...vnmodel import VNModel
 
 @TransformArgumentGroup('vnparse', 'Options for VNModel source parsing')
@@ -54,4 +55,14 @@ class VNCodeGenTransform(TransformBase):
     assert len(self.inputs) == 1
     ast = self.inputs[0]
     model = VNCodeGen.run(ast)
+    return model
+
+
+@MiddleEndDecl('vn-prune-unused-decls', input_decl=VNModel, output_decl=VNModel)
+class VNPruneUnusedAssetsTransform(TransformBase):
+  def run(self) -> Operation | list[Operation] | None:
+    assert len(self.inputs) == 1
+    model = self.inputs[0]
+    if isinstance(model, VNModel):
+      prune_unused_asset_declarations(model)
     return model

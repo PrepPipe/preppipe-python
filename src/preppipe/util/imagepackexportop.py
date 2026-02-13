@@ -241,7 +241,9 @@ class ImagePackExportDataBuilder:
 
   def place_imagepack_composite(self, instance_id : str, pack_id : str, composite_code : str) -> str:
     # 组合的图片应该放在哪
-    return os.path.join("images", pack_id, 'E' + instance_id + '_' + composite_code + ".png")
+    # 使用正斜杠以确保跨平台兼容性（RenPy 等引擎需要正斜杠）
+    path = os.path.join("images", pack_id, 'E' + instance_id + '_' + composite_code + ".png")
+    return path.replace("\\", "/")
 
   # 以下是提供给子类使用者的接口
   # ---------------------------------------------------------------------
@@ -334,7 +336,21 @@ class ImagePackExportDataBuilder:
     target_size_tuple = (value.size.value[0], value.size.value[1])
     composite_code = value.composite_name.value
     composite_index = instance_info.descriptor.get_composite_index_from_code(composite_code)
-    if is_require_merged_image or target_size_tuple != instance_info.descriptor.size:
+    # 检查该组合中是否有图层使用了非默认的混合模式
+    # 如果有，我们需要使用预合成图片，因为 RenPy 的 layeredimage 不支持自定义混合模式
+    has_non_default_blend_mode = False
+    try:
+      imagepack = AssetManager.get_instance().get_asset(pack_id)
+      if isinstance(imagepack, ImagePack) and imagepack.is_imagedata_loaded():
+        for layer_index in instance_info.descriptor.get_layers_from_composite_index(composite_index):
+          layer = imagepack.layers[layer_index]
+          if layer.mode != LayerBlendMode.NORMAL:
+            has_non_default_blend_mode = True
+            break
+    except:
+      # 如果无法访问 ImagePack 或图层信息不可用，保守地假设没有混合模式
+      pass
+    if is_require_merged_image or target_size_tuple != instance_info.descriptor.size or has_non_default_blend_mode:
       # 我们需要生成一个单独的图片
       key_tuple = (composite_index, target_size_tuple)
       if key_tuple in instance_info.composite_export_dict:

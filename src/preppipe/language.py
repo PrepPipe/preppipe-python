@@ -74,6 +74,12 @@ class TranslationDomain:
   def get(self, code : str) -> Translatable:
     return self.elements[code]
 
+  def remove_by_code_prefix(self, prefix : str) -> None:
+    """Remove all Translatables whose code starts with prefix (e.g. for deregistering one asset's translations)."""
+    to_remove = [code for code in self.elements if code.startswith(prefix)]
+    for code in to_remove:
+      del self.elements[code]
+
   @staticmethod
   def create_if_not_registered(domain : str, code : str, candidates : dict[str, list[str]]) -> Translatable:
     # pickle 时用到
@@ -418,4 +424,18 @@ class TranslatableDict(typing.Generic[ValueType]):
       raise RuntimeError("TranslatableDict: Duplicate registration")
     self._data[idx] = value
     self._trlist.append(key)
+
+  def __delitem__(self, key : Translatable | str):
+    if isinstance(key, Translatable):
+      idx = id(key)
+      if idx in self._data:
+        del self._data[idx]
+        self._trlist = [t for t in self._trlist if id(t) != idx]
+      return
+    for tr in list(self._trlist):
+      if key in tr.get_all_candidates():
+        del self._data[id(tr)]
+        self._trlist = [t for t in self._trlist if id(t) != id(tr)]
+        return
+    raise KeyError("TranslatableDict: Key not found")
 

@@ -95,6 +95,25 @@ jobs:
           rm -rf windows-x64/ffmpeg-master-latest-win64-lgpl-shared
           rm -f ffmpeg-master-latest-win64-lgpl-shared.zip
 
+      - name: "Download Ren'Py SDK"
+        uses: robinraju/release-downloader@v1.10
+        with:
+          repository: "PrepPipe/preppipe-thirdparty-bins"
+          tag: "latest"
+          fileName: "renpy-sdk.tar.bz2"
+          tarBall: false
+          zipBall: false
+          out-file-path: "."
+      - name: "Extract Ren'Py SDK"
+        shell: bash
+        run: |
+          tar -xf renpy-sdk.tar.bz2
+          mv renpy-*-sdk renpy-sdk
+          mkdir -p windows-x64/licenses
+          cp renpy-sdk/LICENSE.txt windows-x64/licenses/renpy_LICENSE.txt
+          mv renpy-sdk windows-x64
+          rm -f renpy-sdk.tar.bz2
+
       - name: "Combine all files and upload"
         shell: bash
         env:

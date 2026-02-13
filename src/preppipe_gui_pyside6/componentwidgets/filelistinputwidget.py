@@ -18,6 +18,7 @@ class FileListInputWidget(QWidget, TranslatableWidgetInterface):
   fieldName : Translatable | str
   filter : Translatable | str
   lastAddedPath : str
+  _custom_context_actions : list[tuple[Translatable | str, typing.Callable[[str], None], typing.Callable[[], bool] | None]]
 
   TR_gui_filelistinputwidget = TranslationDomain("gui_filelistinputwidget")
   _tr_add = TR_gui_filelistinputwidget.tr("add",
@@ -56,6 +57,7 @@ class FileListInputWidget(QWidget, TranslatableWidgetInterface):
     self.fieldName = ""
     self.filter = ""
     self.lastAddedPath = ""
+    self._custom_context_actions = []
 
     # 设置右键菜单策略
     self.ui.listWidget.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -96,6 +98,15 @@ class FileListInputWidget(QWidget, TranslatableWidgetInterface):
 
   def setFilter(self, filter_str: Translatable | str):
     self.filter = filter_str
+
+  def addCustomContextMenuAction(
+    self,
+    name: Translatable | str,
+    callback: typing.Callable[[str], None],
+    enabled_if: typing.Callable[[], bool] | None = None,
+  ) -> None:
+    """Add a custom context menu action. If enabled_if is provided, the action is only shown when it returns True."""
+    self._custom_context_actions.append((name, callback, enabled_if))
 
   def getCurrentList(self):
     results = []
@@ -230,5 +241,18 @@ class FileListInputWidget(QWidget, TranslatableWidgetInterface):
       addAction = QAction(self._tr_add.get(), self)
       addAction.triggered.connect(self.openSelectionDialog)
       menu.addAction(addAction)
+
+    if self._custom_context_actions:
+      menu.addSeparator()
+      current_path = ""
+      if self.ui.listWidget.currentRow() >= 0:
+        current_path = self.ui.listWidget.item(self.ui.listWidget.currentRow()).text()
+      for text_or_translatable, callback, enabled_if in self._custom_context_actions:
+        if enabled_if is not None and not enabled_if():
+          continue
+        label = text_or_translatable.get() if isinstance(text_or_translatable, Translatable) else str(text_or_translatable)
+        act = QAction(label, self)
+        act.triggered.connect(lambda checked=False, p=current_path, cb=callback: cb(p))
+        menu.addAction(act)
 
     menu.exec(self.ui.listWidget.mapToGlobal(pos))
