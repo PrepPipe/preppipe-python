@@ -33,6 +33,7 @@ class ExecutionInfo:
   unspecified_paths: dict[int, UnspecifiedPathInfo] = dataclasses.field(default_factory=dict)
   specified_outputs: list[SpecifiedOutputInfo] = dataclasses.field(default_factory=list)
   enable_debug_dump: bool = False
+  is_renpy_export: bool = False  # 为 True 时，主输出为 Ren'Py 工程 game 目录，执行界面显示「运行项目」
 
   def add_output_specified(self, field_name : Translatable | str, path : str, auxiliary : bool = False):
     argindex = len(self.args)
@@ -165,6 +166,9 @@ class ExecutionObject(QObject):
     # 准备执行环境
     self.composed_envs = os.environ.copy()
     self.composed_envs.update(self.info.envs)
+    # 设置中配置的默认 Ren'Py SDK 路径优先传入管线进程
+    if sdk_path := SettingsDict.get_renpy_sdk_path():
+      self.composed_envs['PREPPIPE_RENPY_SDK'] = sdk_path
     # 总是使用 UTF-8 编码
     self.composed_envs.update({
       'PYTHONIOENCODING': 'utf-8',

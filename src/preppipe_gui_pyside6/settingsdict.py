@@ -150,6 +150,15 @@ class SettingsDict(collections.abc.MutableMapping):
     return tempfile.gettempdir()
 
   @staticmethod
+  def get_renpy_sdk_path() -> str | None:
+    """返回设置中配置的默认 Ren'Py SDK 路径；未配置或无效时返回 None。优先于默认目录查找。"""
+    if inst := SettingsDict.instance():
+      if path := inst.get("renpy/sdk_path"):
+        if isinstance(path, str) and path.strip():
+          return path.strip()
+    return None
+
+  @staticmethod
   def get_user_asset_directories() -> list[str]:
     """Get the list of user-specified asset directories from settings.
     Returns a list of absolute paths, or empty list if not set."""
