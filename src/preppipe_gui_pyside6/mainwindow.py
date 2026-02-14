@@ -8,6 +8,7 @@ from .navigatorwidget import *
 from .toolwidgets.home import *
 from .toolwidgets.setting import *
 from .toolwidgets.execute import *
+from .toolwidgets.scriptfloweditor import ScriptFlowEditorWidget
 from .mainwindowinterface import *
 from .guiassets import *
 
@@ -16,6 +17,8 @@ class MainWindow(QMainWindow, MainWindowInterface):
     super(MainWindow, self).__init__()
     self.ui = Ui_MainWindow()
     self.ui.setupUi(self)
+    self.ui.actionScriptFlowEditor = QAction(self)
+    self.ui.menuFunctionality.addAction(self.ui.actionScriptFlowEditor)
     if ico_path := GUIAssetLoader.try_get_asset_path("preppipe.ico"):
       self.setWindowIcon(QIcon(ico_path))
     self.updateTextForLanguage()
@@ -26,6 +29,7 @@ class MainWindow(QMainWindow, MainWindowInterface):
     self.ui.actionSettings.triggered.connect(lambda: self.requestOpenWithType(SettingWidget))
     self.ui.actionMainPipeline.triggered.connect(lambda: self.requestOpenWithType(MainInputWidget))
     self.ui.actionNavigator.triggered.connect(lambda: self.requestOpenWithType(NavigatorWidget))
+    self.ui.actionScriptFlowEditor.triggered.connect(lambda: self.requestOpenWithType(ScriptFlowEditorWidget))
     self.ui.tabWidget.tabCloseRequested.connect(self.handleTabCloseRequest)
 
   _tr_functionality = TR_gui_mainwindow.tr("functionality",
@@ -49,6 +53,7 @@ class MainWindow(QMainWindow, MainWindowInterface):
     self.ui.actionSettings.setText(self.tr_toolname_settings.get())
     self.ui.actionMainPipeline.setText(self.tr_toolname_maininput.get())
     self.ui.actionNavigator.setText(self.tr_toolname_navigator.get())
+    self.ui.actionScriptFlowEditor.setText(self.tr_toolname_scriptflow_editor.get())
     self.ui.menuHelp.setTitle(self._tr_help.get())
     self.ui.actionOpenDocumentation.setText(self._tr_open_documentation.get())
 

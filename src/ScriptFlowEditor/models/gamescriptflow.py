@@ -115,6 +115,16 @@ class GameScriptFlow:
         """
         path = Path(path)
         data = json.loads(path.read_text(encoding="utf-8"))
+        return cls.load_from_dict(data)
+
+    @classmethod
+    def load_from_dict(cls, data: dict) -> GameScriptFlow:
+        """
+        从字典反序列化为 GameScriptFlow 对象（可含额外键如 node_positions，会被忽略）。
+
+        :param data: 含 segments、paths、flags 等键的字典
+        :return: 反序列化得到的 GameScriptFlow 实例
+        """
         segments = [cls._segment_from_dict(d) for d in data.get("segments", [])]
         paths = [cls._path_from_dict(d) for d in data.get("paths", [])]
         flags = [cls._flag_from_dict(d) for d in data.get("flags", [])]
