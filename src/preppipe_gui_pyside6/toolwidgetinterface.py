@@ -22,6 +22,7 @@ class ToolWidgetInfo:
   icon_path : str | None = None
   tooltip : Translatable | None = None
   uniquelevel : ToolWidgetUniqueLevel = ToolWidgetUniqueLevel.SINGLE_INSTANCE_WITH_DIFFERENT_DATA
+  is_wip_feature : bool = False # 是否是尚未开发完成的功能，是的话首次点开时会告警
 
 class ToolWidgetInterface(TranslatableWidgetInterface):
   # 在主界面的树状结构中展示的工具的基类

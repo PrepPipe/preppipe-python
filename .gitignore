@@ -180,6 +180,3 @@ thumbnails
 
 # version files for pyinstaller build
 versionfile_*.txt
-
-run_cli.py
-run_gui.py
