@@ -4,7 +4,9 @@
 import os
 import subprocess
 import sys
+import shutil
 from preppipe.irbase import Operation, typing
+from preppipe.appdir import get_executable_base_dir
 from .ast import *
 from ..pipeline import *
 from ..irbase import *
@@ -12,7 +14,6 @@ from ..exceptions import PPInternalError
 from .export import export_renpy
 from .codegen import codegen_renpy
 from ..vnmodel import VNModel
-import shutil
 
 
 def _find_renpy_sdk() -> str | None:
@@ -20,16 +21,13 @@ def _find_renpy_sdk() -> str | None:
   env_path = os.environ.get('PREPPIPE_RENPY_SDK')
   if env_path and os.path.isdir(env_path) and os.path.isfile(os.path.join(env_path, 'renpy.py')):
     return os.path.abspath(env_path)
-  try:
-    import preppipe
-    preppipe_dir = os.path.dirname(os.path.abspath(preppipe.__file__))
-    for base in (preppipe_dir, os.path.dirname(preppipe_dir), os.path.dirname(os.path.dirname(preppipe_dir)), '.'):
-      candidate = os.path.join(base, 'renpy-sdk') if base != '.' else 'renpy-sdk'
+  base = get_executable_base_dir()
+  for dir_ in (base, os.path.dirname(base), os.path.dirname(os.path.dirname(base)), '.'):
+    candidate = os.path.join(dir_, 'renpy-sdk') if dir_ != '.' else os.path.abspath('renpy-sdk')
+    if dir_ != '.':
       candidate = os.path.abspath(candidate)
-      if os.path.isdir(candidate) and os.path.isfile(os.path.join(candidate, 'renpy.py')):
-        return candidate
-  except Exception:
-    pass
+    if os.path.isdir(candidate) and os.path.isfile(os.path.join(candidate, 'renpy.py')):
+      return candidate
   return None
 
 
@@ -49,18 +47,21 @@ def _get_renpy_python_exe(sdk_dir: str) -> str:
   return lib_python
 
 
-def _renpy_launcher_language_from_env() -> str:
-  """根据 PREPPIPE_LANGUAGE 返回 Ren'Py launcher 的 --language 值（如 schinese / tchinese）。"""
+def _renpy_launcher_language_from_env() -> str | None:
+  """根据 PREPPIPE_LANGUAGE 返回 Ren'Py launcher 的 --language 值。仅处理简中/繁中，其他不传（默认英语）。"""
   lang = (os.environ.get('PREPPIPE_LANGUAGE') or '').strip().lower()
+  if lang in ('zh_cn', 'schinese'):
+    return 'schinese'
   if lang in ('zh_hk', 'tchinese', 'zh-tw'):
     return 'tchinese'
-  return 'schinese'
+  return None
 
 
-def _ensure_renpy_project_generated(game_dir: str, language: str = 'schinese') -> None:
+def _ensure_renpy_project_generated(game_dir: str, language: str | None = None) -> None:
   """
   若 game_dir 下尚无完整 Ren'Py 工程（无 gui.rpy），则使用内嵌 SDK 生成空工程并生成 GUI 图片。
   game_dir 为工程下的 game 目录（即输出目录）；其父目录为工程根。
+  language 为 None 时不传 --language，由 Ren'Py 使用默认（英语）。
   """
   gui_rpy = os.path.join(game_dir, 'gui.rpy')
   if os.path.isfile(gui_rpy):
@@ -77,8 +78,10 @@ def _ensure_renpy_project_generated(game_dir: str, language: str = 'schinese') -
   renpy_py = os.path.join(sdk_dir, 'renpy.py')
   cmd_generate = [
     python_exe, renpy_py, 'launcher', 'generate_gui',
-    os.path.abspath(project_root), '--start', '--language', language,
+    os.path.abspath(project_root), '--start',
   ]
+  if language is not None:
+    cmd_generate.extend(('--language', language))
   subprocess.run(cmd_generate, cwd=sdk_dir, check=True)
   cmd_gui_images = [python_exe, renpy_py, os.path.abspath(project_root), 'gui_images']
   subprocess.run(cmd_gui_images, cwd=sdk_dir, check=True)
