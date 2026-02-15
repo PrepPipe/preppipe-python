@@ -541,10 +541,11 @@ class FguiDisplayable:
         self.package_description_id = package_desc.id if package_desc else None
         # BlendMode
         self.blend_mode = self.display_item_tree.get("blend", "normal")
-        # 滤镜
-        self.color_filter = self.display_item_tree.get("filter")
-        # 滤镜颜色变换
-        self.color_filter_values = ColorFilterData(self.display_item_tree.get("filterData", "1,1,1,1"))
+        # 滤镜类型，一般是color，表示颜色滤镜
+        self.filter_type = self.display_item_tree.get("filter")
+        # 滤镜的值
+        if self.filter_type == "color":
+            self.color_filter_values = ColorFilterData(self.display_item_tree.get("filterData", "0,0,0,0"))
         # Tooltips，一般指指针悬垂在组件上时显示的说明文本。
         self.tooltips = self.display_item_tree.get("tooltips")
         # 自定义数据
