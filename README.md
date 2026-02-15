@@ -56,7 +56,7 @@ English users please use the [Github Discussions page](https://github.com/PrepPi
 
 ## 开发环境设置
 
-目前运行本程序需要至少 Python 3.10 版本。需要开发的话请使用最低版本(3.10.x)，以免在其他使用最低版本的环境出错。
+目前运行本程序需要至少 Python 3.14 版本。需要开发的话请使用最低版本(3.14.x)，以免在其他使用最低版本的环境出错。
 
 如果您想构建一个开发环境，您需要安装以下 Python 依赖项。推荐在一个 `venv` 中操作。
   * 构建需要 `build twine`
