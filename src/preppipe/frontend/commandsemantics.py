@@ -691,7 +691,7 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
     # （如果该命令可以接受多种延伸参数类型，我们想把所有可接受的延伸参数类型找到）
     if isinstance(annotation, types.UnionType):
       # 这是 T1 | T2 | ...
-      return [ty for ty in annotation.__args__ if issubclass(ty, ExtendDataExprBase)]
+      return [ty for ty in annotation.__args__ if isinstance(ty, type) and issubclass(ty, ExtendDataExprBase)]
     if isinstance(annotation, type):
       if issubclass(annotation, ExtendDataExprBase):
         return [annotation]
