@@ -66,3 +66,8 @@ class MainWindowInterface:
     zh_cn="GUI 转换",
     zh_hk="GUI 轉換",
   )
+  tr_toolname_scriptflow_editor = TR_gui_mainwindow.tr("toolname_scriptflow_editor",
+    en="Script Flow Editor",
+    zh_cn="脚本流程编辑器",
+    zh_hk="腳本流程編輯器",
+  )

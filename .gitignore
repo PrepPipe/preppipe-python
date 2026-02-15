@@ -168,6 +168,9 @@ src/preppipe/assets/_install
 # generated ui forms
 src/preppipe_gui_pyside6/forms/generated
 
+# ScriptFlowEditor generated files
+src/ScriptFlowEditor/generated
+
 # third-party programs we need to pin relative paths
 /renpy-sdk
 
