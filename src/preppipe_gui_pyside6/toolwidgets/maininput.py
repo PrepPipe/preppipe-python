@@ -1,4 +1,5 @@
 import dataclasses
+import os
 from PySide6.QtWidgets import *
 from ..toolwidgetinterface import *
 from ..mainwindowinterface import *
@@ -118,7 +119,7 @@ class MainInputWidget(QWidget, ToolWidgetInterface):
   def request_analysis(self):
     self.showNotImplementedMessageBox()
 
-  def request_export_common(self,target:str):
+  def request_export_common(self, target: str):
     filelist = self.filelist.getCurrentList()
     if not filelist:
       QMessageBox.critical(self, self._tr_unable_to_execute.get(), self._tr_input_required.get())
@@ -130,7 +131,15 @@ class MainInputWidget(QWidget, ToolWidgetInterface):
     if exportPath := self.ui.exportPathWidget.getCurrentPath():
       info.add_output_specified(self._tr_export_path, exportPath)
     else:
-      info.add_output_unspecified(self._tr_export_path, "game", is_dir=True)
+      # 未指定输出时：Ren'Py 使用「第一个剧本文件名/game」作为输出，便于作为工程名
+      if target == 'renpy':
+        first_name = os.path.splitext(os.path.basename(filelist[0]))[0]
+        default_output = f"{first_name}/game" if first_name else "game"
+      else:
+        default_output = "game"
+      info.add_output_unspecified(self._tr_export_path, default_output, is_dir=True)
+    if target == 'renpy':
+      info.is_renpy_export = True
     MainWindowInterface.getHandle(self).requestExecution(info)
 
   @Slot()

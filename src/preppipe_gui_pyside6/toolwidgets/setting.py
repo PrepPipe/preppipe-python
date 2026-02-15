@@ -33,6 +33,11 @@ class SettingWidget(QWidget, ToolWidgetInterface):
     zh_cn="临时目录",
     zh_hk="臨時目錄",
   )
+  _tr_general_renpy_sdk_path = TR_gui_setting.tr("general_renpy_sdk_path",
+    en="Default Ren'Py SDK Path",
+    zh_cn="默认 Ren'Py SDK 路径",
+    zh_hk="預設 Ren'Py SDK 路徑",
+  )
   _tr_general_debug = TR_gui_setting.tr("general_debug",
     en="Generate Debug Outputs",
     zh_cn="生成调试输出",
@@ -102,6 +107,14 @@ class SettingWidget(QWidget, ToolWidgetInterface):
     self.ui.temporaryPathWidget.filePathUpdated.connect(self.on_temporaryPathWidget_changed)
     self.add_translatable_widget_child(self.ui.temporaryPathWidget)
 
+    self.bind_text(self.ui.renpySdkPathLabel.setText, self._tr_general_renpy_sdk_path)
+    self.ui.renpySdkPathWidget.setDirectoryMode(True)
+    self.ui.renpySdkPathWidget.setFieldName(self._tr_general_renpy_sdk_path)
+    if p := SettingsDict.get_renpy_sdk_path():
+      self.ui.renpySdkPathWidget.setCurrentPath(p)
+    self.ui.renpySdkPathWidget.filePathUpdated.connect(self.on_renpySdkPathWidget_changed)
+    self.add_translatable_widget_child(self.ui.renpySdkPathWidget)
+
     # Set up assets tab
     self.bind_text(lambda s : self.ui.tabWidget.setTabText(1, s), self._tr_tab_assets)
     self.ui.assetDirectoriesWidget.setDirectoryMode(True)
@@ -137,6 +150,9 @@ class SettingWidget(QWidget, ToolWidgetInterface):
 
   def on_temporaryPathWidget_changed(self, path):
     SettingsDict.instance()["mainpipeline/temporarypath"] = path if path != tempfile.gettempdir() else None
+
+  def on_renpySdkPathWidget_changed(self, path):
+    SettingsDict.instance()["renpy/sdk_path"] = path if path and path.strip() else None
 
   def on_assetDirectoriesWidget_changed(self):
     # Get current list from widget
