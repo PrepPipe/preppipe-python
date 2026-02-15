@@ -103,6 +103,7 @@ class FguiConverterWidget(QWidget, ToolWidgetInterface):
       idstr="fguiconverter",
       name="UI资源转换",
       widget=cls,
+      is_wip_feature=True,
     )
 
 
@@ -273,7 +274,7 @@ class FguiConverterWidget(QWidget, ToolWidgetInterface):
       print("Ren'Py Project base dictionary does not exsit.")
       QMessageBox.critical(self, self._tr_unable_to_transform.get(), self._tr_output_required.get())
       return
-    
+
     curRow = self.ui.listWidget.currentRow()
     if curRow >= 0:
       #item = self.ui.listWidget.takeItem(curRow)
