@@ -10,14 +10,9 @@ import collections
 import collections.abc
 import tempfile
 from preppipe.language import *
-
-def _get_executable_base_dir() -> str:
-  if getattr(sys, 'frozen', False):
-    return os.path.dirname(sys.executable)
-  return os.path.dirname(os.path.abspath(__file__))
+from preppipe.appdir import get_executable_base_dir, set_executable_base_dir
 
 class SettingsDict(collections.abc.MutableMapping):
-  _executable_base_dir : typing.ClassVar[str] = _get_executable_base_dir()
   _settings_instance : typing.ClassVar['SettingsDict | None'] = None
 
   lock : threading.Lock
@@ -26,7 +21,7 @@ class SettingsDict(collections.abc.MutableMapping):
   @staticmethod
   def instance() -> 'SettingsDict':
     if SettingsDict._settings_instance is None:
-      SettingsDict._settings_instance = SettingsDict(os.path.join(SettingsDict._executable_base_dir, "preppipe_gui.settings.db"))
+      SettingsDict._settings_instance = SettingsDict(os.path.join(get_executable_base_dir(), "preppipe_gui.settings.db"))
       if SettingsDict._settings_instance is None:
         raise RuntimeError("SettingsDict instance failed to initialize")
     return SettingsDict._settings_instance
@@ -41,18 +36,12 @@ class SettingsDict(collections.abc.MutableMapping):
   def try_set_settings_dir(path : str) -> None:
     if SettingsDict._settings_instance is not None:
       raise RuntimeError("SettingsDict instance already exists. Cannot change settings directory after initialization")
-    if getattr(sys, 'frozen', False):
-      return
-    SettingsDict._executable_base_dir = os.path.abspath(path)
-    if not os.path.isdir(SettingsDict._executable_base_dir):
-      raise FileNotFoundError(f"Path '{SettingsDict._executable_base_dir}' does not exist")
+    set_executable_base_dir(path)
 
   @staticmethod
   def get_executable_base_dir():
-    # 提供给其他模块使用
-    # 没打包成可执行文件时，只用 _get_executable_base_dir() 取路径的话，
-    # __file__ 取得的路径可能会不一致，因此将结果保存下来反复使用
-    return SettingsDict._executable_base_dir
+    """提供给其他模块使用，与 preppipe.appdir.get_executable_base_dir() 一致。"""
+    return get_executable_base_dir()
 
   def __init__(self, filename='settings.db'):
     self.filename = filename
@@ -148,6 +137,15 @@ class SettingsDict(collections.abc.MutableMapping):
       if tempdir := inst.get("mainpipeline/temporarypath"):
         return tempdir
     return tempfile.gettempdir()
+
+  @staticmethod
+  def get_renpy_sdk_path() -> str | None:
+    """返回设置中配置的默认 Ren'Py SDK 路径；未配置或无效时返回 None。优先于默认目录查找。"""
+    if inst := SettingsDict.instance():
+      if path := inst.get("renpy/sdk_path"):
+        if isinstance(path, str) and path.strip():
+          return path.strip()
+    return None
 
   @staticmethod
   def get_user_asset_directories() -> list[str]:

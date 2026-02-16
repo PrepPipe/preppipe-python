@@ -8,17 +8,16 @@ from .navigatorwidget import *
 from .toolwidgets.home import *
 from .toolwidgets.setting import *
 from .toolwidgets.execute import *
-from .toolwidgets.scriptfloweditor import ScriptFlowEditorWidget
 from .mainwindowinterface import *
 from .guiassets import *
 
 class MainWindow(QMainWindow, MainWindowInterface):
+  wip_feature_warned : set[type[QWidget]]
   def __init__(self):
     super(MainWindow, self).__init__()
     self.ui = Ui_MainWindow()
     self.ui.setupUi(self)
-    self.ui.actionScriptFlowEditor = QAction(self)
-    self.ui.menuFunctionality.addAction(self.ui.actionScriptFlowEditor)
+    self.wip_feature_warned = set()
     if ico_path := GUIAssetLoader.try_get_asset_path("preppipe.ico"):
       self.setWindowIcon(QIcon(ico_path))
     self.updateTextForLanguage()
@@ -29,7 +28,6 @@ class MainWindow(QMainWindow, MainWindowInterface):
     self.ui.actionSettings.triggered.connect(lambda: self.requestOpenWithType(SettingWidget))
     self.ui.actionMainPipeline.triggered.connect(lambda: self.requestOpenWithType(MainInputWidget))
     self.ui.actionNavigator.triggered.connect(lambda: self.requestOpenWithType(NavigatorWidget))
-    self.ui.actionScriptFlowEditor.triggered.connect(lambda: self.requestOpenWithType(ScriptFlowEditorWidget))
     self.ui.tabWidget.tabCloseRequested.connect(self.handleTabCloseRequest)
 
   _tr_functionality = TR_gui_mainwindow.tr("functionality",
@@ -47,13 +45,22 @@ class MainWindow(QMainWindow, MainWindowInterface):
     zh_cn="打开文档",
     zh_hk="打開文檔",
   )
+  _tr_wip_feature_title = TR_gui_mainwindow.tr("wip_feature_title",
+    en="WIP Feature",
+    zh_cn="特性未完成",
+    zh_hk="特性未完成",
+  )
+  _tr_wip_feature_details = TR_gui_mainwindow.tr("wip_feature_details",
+    en="This feature is still under development. The current appearance and functionality is subject to change.",
+    zh_cn="此功能仍在开发中。目前的外观和功能随时可能被修改。",
+    zh_hk="此功能仍在開發中。目前的外觀和功能隨時可能被修改。",
+  )
   def updateTextForLanguage(self):
     self.setWindowTitle(Translatable.tr_program_name.get())
     self.ui.menuFunctionality.setTitle(self._tr_functionality.get())
     self.ui.actionSettings.setText(self.tr_toolname_settings.get())
     self.ui.actionMainPipeline.setText(self.tr_toolname_maininput.get())
     self.ui.actionNavigator.setText(self.tr_toolname_navigator.get())
-    self.ui.actionScriptFlowEditor.setText(self.tr_toolname_scriptflow_editor.get())
     self.ui.menuHelp.setTitle(self._tr_help.get())
     self.ui.actionOpenDocumentation.setText(self._tr_open_documentation.get())
 
@@ -89,6 +96,9 @@ class MainWindow(QMainWindow, MainWindowInterface):
       widget.setData()
     self.ui.tabWidget.addTab(widget, info.name.get() if isinstance(info.name, Translatable) else info.name)
     self.ui.tabWidget.setCurrentWidget(widget)
+    if info.is_wip_feature and info.widget not in self.wip_feature_warned:
+      self.wip_feature_warned.add(info.widget)
+      QMessageBox.warning(self, self._tr_wip_feature_title.get(), self._tr_wip_feature_details.get())
     return
 
   def handleLanguageChange(self) -> None:

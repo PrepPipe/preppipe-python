@@ -17,6 +17,8 @@ import preppipe
 from preppipe.language import *
 from ..toolwidgetinterface import *
 from ..componentwidgets.outputentrywidget import OutputEntryWidget
+from ..settingsdict import SettingsDict
+from preppipe.renpy.passes import run_renpy_project
 
 TR_gui_executewidget = TranslationDomain("gui_executewidget")
 
@@ -71,6 +73,16 @@ class ExecuteWidget(QWidget, ToolWidgetInterface):
     zh_cn="临时目录（及其下所有文件）会在本页关闭时删除： {path}",
     zh_hk="臨時目錄（及其下所有文件）會在本頁關閉時刪除： {path}",
   )
+  _tr_run_renpy_project = TR_gui_executewidget.tr("run_renpy_project",
+    en="Run project",
+    zh_cn="运行项目",
+    zh_hk="運行項目",
+  )
+  _tr_run_renpy_project_failed = TR_gui_executewidget.tr("run_renpy_project_failed",
+    en="Failed to run Ren'Py project: {error}",
+    zh_cn="无法运行 Ren'Py 项目：{error}",
+    zh_hk="無法運行 Ren'Py 項目：{error}",
+  )
 
   @classmethod
   def getToolInfo(cls) -> ToolWidgetInfo:
@@ -83,6 +95,7 @@ class ExecuteWidget(QWidget, ToolWidgetInterface):
 
   ui : Ui_ExecuteWidget
   exec : ExecutionObject | None
+  _renpy_project_root : str | None  # 若为 Ren'Py 导出，则为工程根目录，用于「运行项目」
 
   def __init__(self, parent: QWidget):
     super(ExecuteWidget, self).__init__(parent)
@@ -93,6 +106,7 @@ class ExecuteWidget(QWidget, ToolWidgetInterface):
     self.bind_text(self.ui.outputGroupBox.setTitle, self._tr_outputs)
     self.ui.killButton.clicked.connect(self.kill_process)
     self.exec = None
+    self._renpy_project_root = None
 
   def setData(self, execinfo : ExecutionInfo):
     self.exec = ExecutionObject(self, execinfo)
@@ -110,6 +124,13 @@ class ExecuteWidget(QWidget, ToolWidgetInterface):
       w = OutputEntryWidget(self)#, out.field_name, value)
       w.setData(out.field_name, value)
       self.ui.outputGroupBox.layout().addWidget(w)
+
+    if execinfo.is_renpy_export and main_outputs:
+      self._renpy_project_root = os.path.dirname(self.exec.composed_args[main_outputs[0].argindex])
+      run_renpy_btn = QPushButton()
+      self.bind_text(run_renpy_btn.setText, self._tr_run_renpy_project)
+      run_renpy_btn.clicked.connect(self.run_renpy_project_clicked)
+      self.ui.outputGroupBox.layout().addWidget(run_renpy_btn)
 
     self.exec.executionFinished.connect(self.handle_process_finished)
     self.exec.launch()
@@ -162,3 +183,17 @@ class ExecuteWidget(QWidget, ToolWidgetInterface):
     if self.exec:
       self.exec.kill()
       self.appendPlainText(self._tr_process_killed.get())
+
+  @Slot()
+  def run_renpy_project_clicked(self):
+    if not self._renpy_project_root:
+      return
+    try:
+      sdk_dir = SettingsDict.get_renpy_sdk_path() or None
+      run_renpy_project(self._renpy_project_root, sdk_dir=sdk_dir)
+    except Exception as e:
+      QMessageBox.critical(
+        self,
+        self._tr_run_renpy_project.get(),
+        self._tr_run_renpy_project_failed.format(error=str(e)),
+      )

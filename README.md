@@ -56,7 +56,7 @@ English users please use the [Github Discussions page](https://github.com/PrepPi
 
 ## 开发环境设置
 
-目前运行本程序需要至少 Python 3.10 版本。需要开发的话请使用最低版本(3.10.x)，以免在其他使用最低版本的环境出错。
+目前运行本程序需要至少 Python 3.14 版本。需要开发的话请使用最低版本(3.14.x)，以免在其他使用最低版本的环境出错。
 
 如果您想构建一个开发环境，您需要安装以下 Python 依赖项。推荐在一个 `venv` 中操作。
   * 构建需要 `build twine`
@@ -95,7 +95,7 @@ git config --local include.path $PWD/gitconfig
 
 需要手动执行的有：（请在上述开发环境配置完毕后执行）
 * 资源文件处理。请在获取[资源仓](#素材资源-assets)后，在仓库根目录下运行 `python3 ./build_assets.py` 以生成 `src/preppipe/assets/_install` 下的内容。该操作需要在资源列表更新时或任意资源类型保存的的内部数据结构改变时重新进行。
-* GUI 中 PySide6 `.ui` 文件编译。请在 `src/preppipe_gui_pyside6/forms` 目录下将所有诸如 `xxx.ui` 的文件使用命令 `pyside6-uic xxx.ui generated/ui_xxx.py` 编译成 `.py`。如果您使用 Linux，您可以直接用该目录下的 `Makefile`。其他环境下可使用同目录下的 `makeall.py`。该操作需要在任意 .ui 文件更改后重新执行。
+* GUI 中 PySide6 `.ui` 文件编译。请在 `src/preppipe_gui_pyside6/forms` 目录下将所有诸如 `xxx.ui` 的文件使用命令 `pyside6-uic xxx.ui -o generated/ui_xxx.py` 编译成 `.py`。如果您使用 Linux，您可以直接用该目录下的 `Makefile`。该操作需要在任意 .ui 文件更改后重新执行。
 
 ## GUI启动
 

@@ -13,6 +13,7 @@ from .toolwidgets.imagepack import *
 from .toolwidgets.setting import *
 from .toolwidgets.maininput import *
 from .toolwidgets.assetbrowser import *
+from .toolwidgets.fguiconverter import *
 
 class ToolNode:
   info : ToolWidgetInfo | None
@@ -26,6 +27,7 @@ class ToolNode:
     SettingWidget,
     MainInputWidget,
     AssetBrowserWidget,
+    FguiConverterWidget,
     (ImagePackWidget, {"category_kind": ImagePackDescriptor.ImagePackType.BACKGROUND}),
     (ImagePackWidget, {"category_kind": ImagePackDescriptor.ImagePackType.CHARACTER}),
   ]
