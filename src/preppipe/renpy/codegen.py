@@ -10,6 +10,7 @@ from ..vnmodel import *
 from ..imageexpr import *
 from ..util.imagepackexportop import *
 from ..util import nameconvert
+from ..util.gameinfoforguigen import *
 from ..enginecommon.codegen import BackendCodeGenHelperBase
 
 @dataclasses.dataclass
@@ -98,6 +99,28 @@ class _RenPyCharacterInfo:
   sayerstyle : TextStyleLiteral | None = None
   textstyle : TextStyleLiteral | None = None
 
+def _ui_helper_to_game_info_for_gui(ui : '_RenPyUIHelperInfo') -> GameInfoForGUIGen:
+  """Convert _RenPyUIHelperInfo to GameInfoForGUIGen for JSON export."""
+  gallery_image_list = []
+  for row in ui.gallery_image_list:
+    ref = [row] if isinstance(row, str) else list(row)
+    gallery_image_list.append(
+      GalleryImageEntryInfo(ref=ref, kind=GalleryImageEntryType.CG)
+    )
+  gallery_music_list = [
+    GalleryMusicEntryInfo(
+      ref=audiospec,
+      name=GameInfoTranslatableString(data=name),
+    )
+    for name, audiospec in ui.gallery_music_list.items()
+  ]
+  return GameInfoForGUIGen(
+    gametitle=GameInfoTranslatableString(data=''),
+    gallery_image_list=gallery_image_list,
+    gallery_music_list=gallery_music_list,
+  )
+
+
 @dataclasses.dataclass
 class _RenPyUIHelperInfo:
   # CG 列表，单张 CG 则为单个 CG 名称的字符串，多个组合则为列表
@@ -106,6 +129,9 @@ class _RenPyUIHelperInfo:
   # 背景音乐列表： 音乐名 -> 音乐文件名，例如 "爱之梦" -> "audio/bgm/ost12.mp3"
   # 用 dict 是因为写该段代码时音乐没有声明语句，只能在剧本中收集，所以用 dict 去重
   gallery_music_list : dict[str, str] = dataclasses.field(default_factory=dict)
+
+  # 导出给 GUI 生成用的结构化信息，在写入阶段由 gallery_* 填充
+  game_info_for_gui_gen : GameInfoForGUIGen | None = None
 
 class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
   cur_namespace : VNNamespace
@@ -1145,7 +1171,7 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
       asmnode = RenPyASMNode.create(self.context, asm=asm, name=pack_id)
       self.get_script_for_symbol(info.first_referenced_by).insert_at_top(asmnode)
 
-  def run(self) -> RenPyModel:
+  def run(self, export_info_for_gui_path : str | None = None) -> RenPyModel:
     # 所有在 / 命名空间下的资源都会组织在根目录下，其他命名空间的资源会在 dlc/<命名空间路径> 下
     # 我们需要按排好序的名称进行生成，这样可以保证子命名空间在父命名空间之后生成
     assert self.result is None
@@ -1179,10 +1205,15 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
       self.write_imagepack_instances(imagepacks)
     self.write_ui_helper_info()
 
+    if export_info_for_gui_path:
+      self.ui_helper.game_info_for_gui_gen = _ui_helper_to_game_info_for_gui(self.ui_helper)
+      self.ui_helper.game_info_for_gui_gen.save_json(export_info_for_gui_path)
+
     for w in self.export_files_dict.values():
       w.finalize()
     return self.result
 
-def codegen_renpy(m : VNModel) -> RenPyModel:
+
+def codegen_renpy(m : VNModel, export_info_for_gui_path : str | None = None) -> RenPyModel:
   helper = _RenPyCodeGenHelper(m)
-  return helper.run()
+  return helper.run(export_info_for_gui_path=export_info_for_gui_path)

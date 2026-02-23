@@ -193,12 +193,32 @@ class _RenPyExport(TransformBase):
     _ensure_renpy_project_generated(out_path, _renpy_launcher_language_from_env())
     return export_renpy(self.inputs[0], out_path, _RenPyExport._template_dir)
 
+@TransformArgumentGroup('renpy-codegen', "Options for RenPy Codegen")
 @MiddleEndDecl('renpy-codegen', input_decl=VNModel, output_decl=RenPyModel)
 class _RenPyCodeGen(TransformBase):
+  _export_info_for_gui_path : typing.ClassVar[str] = ""
+
+  @staticmethod
+  def install_arguments(argument_group : argparse._ArgumentGroup):
+    argument_group.add_argument(
+      "--renpy-codegen-export-info-for-gui",
+      nargs=1,
+      type=str,
+      default=["preppipe_game_info_for_gui_gen.json"],
+    )
+
+  @staticmethod
+  def handle_arguments(args : argparse.Namespace):
+    _RenPyCodeGen._export_info_for_gui_path = args.renpy_codegen_export_info_for_gui
+    if isinstance(_RenPyCodeGen._export_info_for_gui_path, list):
+      assert len(_RenPyCodeGen._export_info_for_gui_path) == 1
+      _RenPyCodeGen._export_info_for_gui_path = _RenPyCodeGen._export_info_for_gui_path[0]
+    assert isinstance(_RenPyCodeGen._export_info_for_gui_path, str)
+
   def run(self) -> RenPyModel | None:
     if len(self._inputs) == 0:
       return None
     if len(self._inputs) > 1:
       raise PPInternalError("renpy-codegen: exporting multiple input IR is not supported")
-    return codegen_renpy(self._inputs[0])
-  pass
+    path = _RenPyCodeGen._export_info_for_gui_path if _RenPyCodeGen._export_info_for_gui_path else None
+    return codegen_renpy(self._inputs[0], export_info_for_gui_path=path)

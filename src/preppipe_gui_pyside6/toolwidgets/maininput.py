@@ -67,6 +67,11 @@ class MainInputWidget(QWidget, ToolWidgetInterface):
     zh_cn="导出路径",
     zh_hk="導出路徑",
   )
+  _tr_game_info_for_gui_gen = TR_gui_execution.tr("output_game_info_for_gui_gen",
+    en="Game info for GUI generation",
+    zh_cn="GUI 生成所需的游戏信息",
+    zh_hk="GUI 生成所需的遊戲資訊",
+  )
 
   def __init__(self, parent: QWidget):
     super(MainInputWidget, self).__init__(parent)
@@ -126,6 +131,9 @@ class MainInputWidget(QWidget, ToolWidgetInterface):
       return
     info = ExecutionInfo.init_main_pipeline(filelist)
     info.args.append(f"--{target}-codegen")
+    if target == 'renpy':
+      info.args.append("--renpy-codegen-export-info-for-gui")
+      info.add_output_unspecified(self._tr_game_info_for_gui_gen, "preppipe_game_info_for_gui_gen.json")
     info.add_debug_dump()
     info.args.append(f"--{target}-export")
     if exportPath := self.ui.exportPathWidget.getCurrentPath():

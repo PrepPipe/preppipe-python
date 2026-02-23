@@ -10,6 +10,7 @@ import math
 import shutil
 import ast
 from enum import IntEnum
+from preppipe.util.gameinfoforguigen import *
 
 # 复合型组件的子组件枚举类型
 class DisplayableChildType(IntEnum):
@@ -66,7 +67,7 @@ class FguiToRenpyConverter:
     # 历史界面
     history_screen_name_list = ['history']
     history_item_screen_name_list = ['history_item']
-    
+
     # 图鉴类界面
     gallery_screen_name_list = ['gallery', 'music_room']
 
@@ -93,7 +94,7 @@ class FguiToRenpyConverter:
 
         # 所有特殊界面名
         self.special_screen_name_list = self.menu_screen_name_list + self.modal_screen_name_list + self.choice_screen_name_list + self.say_screen_name_list + self.save_load_screen_name_list + self.history_screen_name_list + self.gallery_screen_name_list
-        
+
         # dismiss用于取消一些组件的focus状态，例如input。
         self.screen_has_dismiss = False
         self.dismiss_action_list = []
@@ -109,7 +110,7 @@ class FguiToRenpyConverter:
 
         # 部分模板与预设目录
         # self.renpy_template_dir = 'renpy_templates'
-        self.renpy_template_dir = os.environ.get('RENPY_TEMPLATES_DIR', 
+        self.renpy_template_dir = os.environ.get('RENPY_TEMPLATES_DIR',
                              os.path.join(os.path.dirname(os.path.abspath(__file__)), "renpy_templates"))
         self.font_map_template = 'renpy_font_map_definition.txt'
         self.graph_template_dict = {}
@@ -128,6 +129,9 @@ class FguiToRenpyConverter:
         self.game_dir = None
         self.scripts_dir = None
         self.images_dir = None
+
+        # 若指定则从该 JSON 文件读取 gallery 等数据，否则从 01_ui_helper.rpy 读取
+        self.game_info_path = None
 
         # gallery相关数据
         self.gallery_data = {}
@@ -495,7 +499,7 @@ class FguiToRenpyConverter:
         else:
             print("Scrollbar grip is not button.")
             return
-            
+
         # 生成scrollbar样式
         scrollbar_style_code.append(f"style {fgui_scrollbar.name}:")
         scrollbar_style_code.append(f"{self.indent_unit}bar_vertical {is_vertical}")
@@ -515,7 +519,7 @@ class FguiToRenpyConverter:
     @staticmethod
     def is_menu_screen(screen_name : str):
         return screen_name in FguiToRenpyConverter.menu_screen_name_list
-    
+
     @staticmethod
     def is_modal_screen(screen_name : str):
         return screen_name in FguiToRenpyConverter.modal_screen_name_list
@@ -579,7 +583,7 @@ class FguiToRenpyConverter:
                     screen_ui_code.append(f"{self.indent_str}{condition_str}")
                     self.indent_level_up()
                     end_indent_level = 2
-                
+
                 # 根据引用源id查找组件
                 ref_com = self.fgui_assets.get_component_by_id(displayable.src)
                 # 按钮。可设置标题，并根据自定义数据字段设置action。
@@ -727,12 +731,12 @@ class FguiToRenpyConverter:
 
         # 根据控制器列表定义界面内变量
         if component.controller_list:
-            self.screen_variable_code.append(f"{self.indent_str}# 由组件控制器生成的界面内控制变量：") 
+            self.screen_variable_code.append(f"{self.indent_str}# 由组件控制器生成的界面内控制变量：")
         for controller in component.controller_list:
             if not isinstance(controller, FguiController):
                 print("Component controller object type is wrong.")
                 break
-            self.screen_variable_code.append(f"{self.indent_str}default {controller.name} = {controller.selected}")            
+            self.screen_variable_code.append(f"{self.indent_str}default {controller.name} = {controller.selected}")
 
         # 根据组件的可见区域性质，决定是否加一层viewport。
         if component.overflow == "hidden":
@@ -743,7 +747,7 @@ class FguiToRenpyConverter:
             self.screen_ui_code.append(f"{self.indent_str}viewport:")
             self.indent_level_up()
             self.screen_ui_code.append(f"{self.indent_str}xysize {component.size}")
-            self.screen_ui_code.append(f"{self.indent_str}draggable True") 
+            self.screen_ui_code.append(f"{self.indent_str}draggable True")
             # 在Ren'Py中实际可能无法滚动。
             # 需要添加一个fixed组件，并设置一个合适的xysize。该xysize应为容纳所有子组件的包围框。
             self.screen_ui_code.append(f"{self.indent_str}fixed:")
@@ -867,7 +871,7 @@ class FguiToRenpyConverter:
         if not isinstance(default_slot_button, FguiButton):
             print(f"{component.name} slot list item is not Button.")
             return
-        
+
         comment_screen_name = "存档" if component.name == "save" else "读档"
         self.screen_definition_head.append(f"# {comment_screen_name} 界面")
         self.screen_definition_head.append(f"screen {component.name}():")
@@ -937,7 +941,7 @@ class FguiToRenpyConverter:
             else:
                 print("Ref com not found.")
                 return ''
-        
+
 
         overflow = None
         layout = fgui_list.layout
@@ -1063,7 +1067,7 @@ class FguiToRenpyConverter:
         self.indent_level_up()
         self.screen_definition_head.append(f"{self.indent_str}tag menu")
         self.screen_definition_head.append(f"{self.indent_str}predict False")
-        
+
         # history_list 之前的组件
         self.screen_ui_code.extend(self.convert_component_display_list(component, list_begin_index=0, list_end_index=history_list_index))
 
@@ -1113,7 +1117,7 @@ class FguiToRenpyConverter:
         # textbox_pos = (0, 0)
         who_index = 0
         what_index = 0
-        
+
         display_list_len = len(component.display_list.displayable_list)
         for i in range(display_list_len):
             displayable = component.display_list.displayable_list[i]
@@ -1181,7 +1185,7 @@ class FguiToRenpyConverter:
         if not self.gallery_template_dict['gallery']:
             print("Gallery template is empty.")
             return
-        
+
         gallery_button_list = None
         gallery_button_list_item = None
         gallery_button_list_index = -1
@@ -1249,7 +1253,7 @@ class FguiToRenpyConverter:
             gallery_button_list_code.append(f"{self.indent_str}python:")
             self.indent_level_up()
             gallery_button_list_code.append(f"{self.indent_str}gallery_image = gallery_image_list[i]")
-            gallery_button_list_code.append(f"{self.indent_str}if isinstance(gallery_image, list):")            
+            gallery_button_list_code.append(f"{self.indent_str}if isinstance(gallery_image, list):")
             self.indent_level_up()
             gallery_button_list_code.append(f"{self.indent_str}gallery_image = gallery_image[0]")
             self.indent_level_down(2)
@@ -1723,7 +1727,7 @@ class FguiToRenpyConverter:
             4: 'insensitive',
             None: 'always_show'
         }
-        
+
         # 图片id与name映射关系
         image_id_name_mapping = {}
 
@@ -2228,7 +2232,7 @@ class FguiToRenpyConverter:
         text_code.append(f"{self.indent_str}textalign {xalign}")
         # 不自动换行
         text_code.append(f"{self.indent_str}layout 'nobreak'")
-            
+
 
         # 粗体、斜体、下划线、删除线
         if fgui_text.bold:
@@ -2291,7 +2295,7 @@ class FguiToRenpyConverter:
         if not list_result:
             print(f"Failed to generate {component_name}_{fgui_list.name} list screen.")
             return list_code
-        
+
         # 计算screen入参。
         overflow = None
         layout = 'row'
@@ -2380,12 +2384,38 @@ class FguiToRenpyConverter:
 
         return True
 
+    def get_gallery_data_from_game_info_json(self, file_path: str) -> dict:
+        """
+        从 GameInfoForGUIGen JSON 文件加载并转换为 generate_renpy_code 使用的 gallery_data 格式。
+        """
+
+        info = GameInfoForGUIGen.load_json(file_path)
+        gallery_image_list = []
+        for entry in info.gallery_image_list:
+            if len(entry.ref) == 1:
+                gallery_image_list.append(entry.ref[0])
+            else:
+                gallery_image_list.append(entry.ref)
+        gallery_music_list = []
+        for entry in info.gallery_music_list:
+            name_data = entry.name.data
+            name_str = str(name_data)
+            gallery_music_list.append([name_str, entry.ref])
+        return {
+            'gallery_image_list': gallery_image_list,
+            'gallery_music_list': gallery_music_list,
+        }
+
     def generate_renpy_code(self):
         """生成完整的Ren'Py代码"""
 
-
-        # 读取01_ui_helper.rpy文件
-        self.gallery_data = self.get_gallery_data_from_ui_helper(os.path.join(self.game_dir, self.ui_helper_file_name))
+        if self.game_info_path and os.path.exists(self.game_info_path):
+            self.gallery_data = self.get_gallery_data_from_game_info_json(self.game_info_path)
+        else:
+            if self.game_info_path:
+                print(f"未找到 --game-info 文件: {self.game_info_path}，改为从 {self.ui_helper_file_name} 读取")
+            # 读取01_ui_helper.rpy文件
+            self.gallery_data = self.get_gallery_data_from_ui_helper(os.path.join(self.game_dir, self.ui_helper_file_name))
         # print(f"gallery_data: {self.gallery_data}")
         self.renpy_code = []
 
@@ -2415,7 +2445,7 @@ class FguiToRenpyConverter:
                 pass
             else:
                 self.generate_screen(component)
-        
+
         self.renpy_code.extend(self.game_global_variables_code)
         self.renpy_code.extend(self.image_definition_code)
         self.renpy_code.extend(self.graph_definition_code)
@@ -2470,31 +2500,31 @@ class FguiToRenpyConverter:
         从01_ui_helper.rpy文件中读取以"define"开头的列表
         """
         result = {}
-        
+
         if not os.path.exists(file_path):
             print(f"文件不存在: {file_path}")
             return result
-        
+
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
-            
+
             # 使用正则表达式匹配 define 语句
             # 匹配格式: define variable_name = [...]
             # 需要处理多行列表，通过匹配括号来找到完整的列表
             pattern = r'define\s+(\w+)\s*=\s*(\[)'
-            
+
             matches = list(re.finditer(pattern, content))
-            
+
             for match in matches:
                 var_name = match.group(1)
                 list_start_pos = match.end() - 1  # '[' 的位置
-                
+
                 # 从 '[' 开始，找到匹配的 ']'
                 bracket_count = 0
                 i = list_start_pos
                 list_end_pos = -1
-                
+
                 while i < len(content):
                     if content[i] == '[':
                         bracket_count += 1
@@ -2504,14 +2534,14 @@ class FguiToRenpyConverter:
                             list_end_pos = i
                             break
                     i += 1
-                
+
                 if list_end_pos == -1:
                     print(f"无法找到 {var_name} 列表的结束位置")
                     continue
-                
+
                 # 提取列表字符串
                 list_str = content[list_start_pos:list_end_pos + 1]
-                
+
                 try:
                     # 使用ast.literal_eval安全地解析列表
                     list_value = ast.literal_eval(list_str)
@@ -2520,10 +2550,10 @@ class FguiToRenpyConverter:
                 except (ValueError, SyntaxError) as e:
                     print(f"解析 {var_name} 时出错: {e}")
                     continue
-                    
+
         except Exception as e:
             print(f"读取文件时出错: {e}")
-        
+
         return result
 
     def cleanup(self):
@@ -2545,12 +2575,12 @@ class FguiToRenpyConverter:
             self.graph_definition_code.clear()
             self.image_definition_code.clear()
             self.game_global_variables_code.clear()
-            
+
             # 重置缩进相关状态
             self.root_indent_level = 0
             self.indent_str = ''
             self.screen_has_dismiss = False
-            
+
         except Exception as e:
             print(f"清理资源时出现错误: {e}")
 
@@ -2601,32 +2631,34 @@ def convert(argv):
                                           '  python Fgui2RenpyConverter.py -i "F:\\FguiDemoPackage" -o "F:\\RenpyProjects\\MyGame"\n'
                                           '  python Fgui2RenpyConverter.py --input "MyFGUIAssetPackage" --output "/path/renpy/project"',
                                    formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('-i', '--input', type=str, 
+    parser.add_argument('-i', '--input', type=str,
                         help='输入FairyGUI资源文件所在目录名 (目录中需存在同名 .bytes 文件)')
-    parser.add_argument('-o', '--output', type=str, 
+    parser.add_argument('-o', '--output', type=str,
                         help='输出Ren\'Py项目基目录路径 (即Ren\'Py项目根目录)')
-    
+    parser.add_argument('--game-info', type=str, default=None,
+                        help='主管线导出的 game info JSON 路径 (默认不指定则从 01_ui_helper.rpy 读取)')
+
     # 解析命令行参数
     args = parser.parse_args(argv[1:] if argv and len(argv) > 1 else [])
-    
+
     # 检查必需的参数
     if not args.input:
         print("错误: 必须指定输入目录 (-i 或 --input)")
         parser.print_help()
         return
-    
+
     if not args.output:
         print("错误: 必须指定输出目录 (-o 或 --output)")
         parser.print_help()
         return
-    
+
     fgui_project_path = args.input
     if os.path.exists(fgui_project_path) and os.path.isdir(fgui_project_path):
         fgui_project_name = os.path.basename(fgui_project_path)
     else:
         print(f"错误: 目录 {fgui_project_path} 不存在或不是有效目录")
         return
-    
+
     renpy_base_dir = args.output
 
     print("开始将FairyGUI资源文件转换为Ren'Py脚本...")
@@ -2671,6 +2703,7 @@ def convert(argv):
         converter.game_dir = game_dir
         converter.scripts_dir = scripts_dir
         converter.images_dir = images_dir
+        converter.game_info_path = args.game_info
         print("转换器创建完成")
 
         # 生成Ren'Py代码
