@@ -25,6 +25,81 @@ class BarOrientationType(IntEnum):
     HORIZONTAL = 0
     VERTICAL = 1
 
+
+class MainMenuTitle:
+    """主菜单标题：由 --main-menu-title 的键值对解析得到。"""
+    __slots__ = ('text_str', 'text_color')
+
+    def __init__(self, text_str: str | None = None, text_color: str | None = None):
+        self.text_str = text_str
+        self.text_color = text_color
+
+
+# 颜色名称到十六进制值的映射，用于 --main-menu-title text_color=名称
+COLOR_NAME_TO_HEX = {
+    'red': '#ff0000',
+    'green': '#00ff00',
+    'blue': '#0000ff',
+    'white': '#ffffff',
+    'black': '#000000',
+    'yellow': '#ffff00',
+    'cyan': '#00ffff',
+    'magenta': '#ff00ff',
+    'orange': '#ffa500',
+    'gray': '#808080',
+    'grey': '#808080',
+    'silver': '#c0c0c0',
+    'maroon': '#800000',
+    'lime': '#00ff00',
+    'olive': '#808000',
+    'navy': '#000080',
+    'purple': '#800080',
+    'teal': '#008080',
+}
+
+
+def is_valid_hex_color(color: str | None) -> bool:
+    """
+    校验颜色值是否合法：支持以下两种形式
+    1) 以 # 开头，后跟 3 位或 6 位十六进制数字，如 #f00、#ff0000；
+    2) 预定义颜色名称，如 red、green、blue（见 COLOR_NAME_TO_HEX）。
+    空字符串或 None 视为不合法。
+    """
+    if not color or not isinstance(color, str):
+        return False
+    color = color.strip()
+    if re.fullmatch(r'#[0-9A-Fa-f]{3}(?:[0-9A-Fa-f]{3})?', color):
+        return True
+    return color.lower() in COLOR_NAME_TO_HEX
+
+
+def _parse_main_menu_title_kv(pairs):
+    """
+    将 --main-menu-title key1=val1 key2=val2 解析为 MainMenuTitle。
+    pairs: 由 argparse 解析得到的字符串列表，如 ['text_str=标题', 'text_color=#ff0000']。
+    返回 MainMenuTitle 或 None（当 pairs 为空或 None 时）。
+    """
+    if not pairs:
+        return None
+    d = {}
+    for s in pairs:
+        if '=' in s:
+            k, _, v = s.partition('=')
+            d[k.strip()] = v.strip()
+    if not d:
+        return None
+    # 未提供的键为 None，赋值时保持 displayable 原值不变
+    text_str = d.get('text_str') if 'text_str' in d else d.get('text')
+    text_color = d.get('text_color') if 'text_color' in d else d.get('color')
+    if text_color is not None and not is_valid_hex_color(text_color):
+        print(f"警告: text_color 格式无效（需 # 加 3/6 位十六进制或预定义颜色名），已忽略: {text_color!r}")
+        text_color = None
+    elif text_color is not None:
+        # 颜色名解析为十六进制，便于后续使用
+        text_color = COLOR_NAME_TO_HEX.get(text_color.strip().lower(), text_color)
+    return MainMenuTitle(text_str=text_str, text_color=text_color)
+
+
 # 添加当前目录到Python路径，以便导入FguiAssetsParseLib
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -75,6 +150,10 @@ class FguiToRenpyConverter:
 
     # 主管线提供的gallery数据文件
     ui_helper_file_name = '01_ui_helper.rpy'
+
+    # 自定义参数，用于替换Fgui发布资源中的值。
+    main_menu_title = None
+    main_menu_logo = None
 
     def __init__(self, fgui_assets):
         self.fgui_assets = fgui_assets
@@ -135,8 +214,47 @@ class FguiToRenpyConverter:
         # 一些样式预设，用于覆盖Ren'Py默认样式。
         self.style_code.append(self.style_preset)
 
-    def set_game_global_variables(self, variable_name, variable_value):
+    def set_game_global_variables(self, variable_name : str, variable_value : str | int | float | bool | None):
+        """
+        设置游戏全局变量。
+        variable_name: 变量名。
+        variable_value: 变量值。
+        """
+        if variable_value is None:
+            variable_value = 'None'
+        elif isinstance(variable_value, bool):
+            variable_value = 'True' if variable_value else 'False'
+        elif isinstance(variable_value, int):
+            variable_value = str(variable_value)
+        elif isinstance(variable_value, float):
+            variable_value = str(variable_value)
+        elif isinstance(variable_value, str):
+            variable_value = f"'{variable_value}'"
+        else:
+            variable_value = str(variable_value)
         variable_str = f"define {variable_name} = {variable_value}"
+        self.game_global_variables_code.append(variable_str)
+        self.game_global_variables_code.append('')
+
+    def add_game_global_variables(self, variable_name : str, variable_value : str | int | float | bool | None):
+        """
+        添加游戏全局变量。
+        variable_name: 变量名。
+        variable_value: 变量值。
+        """
+        if variable_value is None:
+            variable_value = 'None'
+        elif isinstance(variable_value, bool):
+            variable_value = 'True' if variable_value else 'False'
+        elif isinstance(variable_value, int):
+            variable_value = str(variable_value)
+        elif isinstance(variable_value, float):
+            variable_value = str(variable_value)
+        elif isinstance(variable_value, str):
+            variable_value = f"'{variable_value}'"
+        else:
+            variable_value = str(variable_value)
+        variable_str = f"default {variable_name} = {variable_value}"
         self.game_global_variables_code.append(variable_str)
         self.game_global_variables_code.append('')
 
@@ -513,6 +631,10 @@ class FguiToRenpyConverter:
         self.style_code.extend(scrollbar_style_code)
 
     @staticmethod
+    def is_main_menu_screen(screen_name : str):
+        return screen_name == 'main_menu'
+
+    @staticmethod
     def is_menu_screen(screen_name : str):
         return screen_name in FguiToRenpyConverter.menu_screen_name_list
     
@@ -666,7 +788,6 @@ class FguiToRenpyConverter:
         self.screen_ui_code.clear()
         self.screen_has_dismiss = False
         self.dismiss_action_list.clear()
-        choice_screen_code = []
 
         self.screen_definition_head.append("# 界面定义")
         self.screen_definition_head.append(f"# 从FairyGUI组件{component.name}转换而来")
@@ -677,6 +798,11 @@ class FguiToRenpyConverter:
 
         # 界面入参列表
         screen_params = ''
+
+        # main_menu界面的特殊处理
+        if self.is_main_menu_screen(screen_name):
+            self.generate_main_menu_screen(component)
+            return
 
         # choice界面的特殊处理
         if self.is_choice_screen(screen_name):
@@ -769,6 +895,82 @@ class FguiToRenpyConverter:
 
         self.screen_ui_code.append("")
         self.screen_code.extend(self.screen_ui_code)
+
+    def generate_main_menu_screen(self, component : FguiComponent):
+        print("This is main menu screen.")
+        self.screen_definition_head.clear()
+        self.screen_variable_code.clear()
+        self.screen_function_code.clear()
+        self.screen_ui_code.clear()
+        self.screen_has_dismiss = False
+        self.dismiss_action_list.clear()
+
+        self.reset_indent_level()
+        self.screen_definition_head.append(f"screen main_menu():")
+        self.indent_level_up()
+        self.screen_ui_code.append(f"{self.indent_str}tag menu\n")
+
+        # 自定义的组件
+        # 标题文本。若main_menu_title不为空，则先遍历一遍所有组件并修改标题文本内容。
+        if self.main_menu_title:
+            for displayable in component.display_list.displayable_list:
+                if isinstance(displayable, FguiText) and displayable.name == 'title':
+                    if self.main_menu_title.text_str:
+                        displayable.text = self.main_menu_title.text_str
+                    if self.main_menu_title.text_color:
+                        displayable.text_color = self.main_menu_title.text_color
+
+        # 游戏logo图片。若main_menu_logo不为空，则先遍历一遍所有组件并修改logo图片内容。
+        # if self.main_menu_logo:
+        #     for displayable in component.display_list.displayable_list:
+        #         if isinstance(displayable, FguiImage) and displayable.name == 'logo':
+        #             displayable.image = self.main_menu_logo
+
+        # 根据控制器列表定义界面内变量
+        if component.controller_list:
+            self.screen_variable_code.append(f"{self.indent_str}# 由组件控制器生成的界面内控制变量：") 
+        for controller in component.controller_list:
+            if not isinstance(controller, FguiController):
+                print("Component controller object type is wrong.")
+                break
+            self.screen_variable_code.append(f"{self.indent_str}default {controller.name} = {controller.selected}")            
+
+        # 根据组件的可见区域性质，决定是否加一层viewport。
+        if component.overflow == "hidden":
+            self.screen_ui_code.append(f"{self.indent_str}viewport:")
+            self.indent_level_up()
+            self.screen_ui_code.append(f"{self.indent_str}xysize {component.size}")
+        elif component.overflow == "scroll":
+            self.screen_ui_code.append(f"{self.indent_str}viewport:")
+            self.indent_level_up()
+            self.screen_ui_code.append(f"{self.indent_str}xysize {component.size}")
+            self.screen_ui_code.append(f"{self.indent_str}draggable True") 
+            # 在Ren'Py中实际可能无法滚动。
+            # 需要添加一个fixed组件，并设置一个合适的xysize。该xysize应为容纳所有子组件的包围框。
+            self.screen_ui_code.append(f"{self.indent_str}fixed:")
+            self.indent_level_up()
+            self.screen_ui_code.append(f"{self.indent_str}xysize ({component.bbox_width}, {component.bbox_height})")
+
+        self.screen_ui_code.extend(self.convert_component_display_list(component))
+
+        self.screen_code.extend(self.screen_definition_head)
+        if self.screen_variable_code:
+            self.screen_code.extend(self.screen_variable_code)
+            self.screen_code.append("")
+        if self.screen_function_code:
+            self.screen_code.extend(self.screen_function_code)
+            self.screen_code.append("")
+        # 添加只有1个生效的dismiss
+        if self.screen_has_dismiss:
+            self.screen_ui_code.append(f"{self.indent_str}dismiss:")
+            self.indent_level_up()
+            self.screen_ui_code.append(f"{self.indent_str}modal False")
+            dismiss_action_list = ', '.join(self.dismiss_action_list)
+            self.screen_ui_code.append(f"{self.indent_str}action [{dismiss_action_list}]")
+
+        self.screen_ui_code.append("")
+        self.screen_code.extend(self.screen_ui_code)
+
 
     def generate_choice_screen(self, component : FguiComponent):
         print("This is choice screen.")
@@ -2102,7 +2304,6 @@ class FguiToRenpyConverter:
             print("It is not a text displayable.")
             return text_code
 
-
         end_indent_level = 1
 
         # 根据显示控制器gearDisplay设置显示条件
@@ -2114,15 +2315,24 @@ class FguiToRenpyConverter:
 
         # 直接定义text组件。
         # 处理换行符
-        text_str = fgui_text.text.replace("\n", "\\n").replace("\r", "\\n")
+        if fgui_text.single_line:
+            # 设置为单行，删除所有换行符
+            text_str = fgui_text.text.replace("\n", "").replace("\r", "")
+        else:
+            # 默认转义换行符
+            text_str = fgui_text.text.replace("\n", "\\n").replace("\r", "\\n")
         # 需要根据is_input区分文本组件与输入框
         if fgui_text.is_input:
             # Ren'Py中的直接使用input组件无法在多个输入框的情况下切换焦点，也无法点击空白区域让所有输入框失去焦点。
             # 需要使用button作为父组件，与InputValue关联。整个界面添加一个dismiss，空白区域点击事件让输入框失去焦点。
-            # pass
+
             # 添加InputValue变量。
-            self.screen_variable_code.append(f"{self.indent_str}default {fgui_text.name} = '{fgui_text.text}'")
-            self.screen_variable_code.append(f"{self.indent_str}default {fgui_text.name}_input_value = ScreenVariableInputValue('{fgui_text.name}', default=False)")
+            if fgui_text.custom_data:
+                self.add_game_global_variables(fgui_text.custom_data, fgui_text.text)
+                self.screen_variable_code.append(f"{self.indent_str}default {fgui_text.name}_input_value = VariableInputValue('{fgui_text.custom_data}', default=False)")
+            else:
+                self.screen_variable_code.append(f"{self.indent_str}default {fgui_text.name} = '{fgui_text.text}'")
+                self.screen_variable_code.append(f"{self.indent_str}default {fgui_text.name}_input_value = ScreenVariableInputValue('{fgui_text.name}', default=False)")
             if self.screen_has_dismiss == False:
                 self.screen_has_dismiss = True
                 # 若prompt不为空，需要在screen中添加一个输入检测函数
@@ -2227,8 +2437,8 @@ class FguiToRenpyConverter:
         xalign, yalign = self.trans_text_align(fgui_text.align, fgui_text.v_align)
         text_code.append(f"{self.indent_str}textalign {xalign}")
         # 不自动换行
-        text_code.append(f"{self.indent_str}layout 'nobreak'")
-            
+        if fgui_text.single_line:
+            text_code.append(f"{self.indent_str}layout 'nobreak'")
 
         # 粗体、斜体、下划线、删除线
         if fgui_text.bold:
@@ -2249,7 +2459,11 @@ class FguiToRenpyConverter:
             if fgui_text.is_password:
                 text_code.append(f"{self.indent_str}mask '*'")
             # FGUI的输入限制使用正则表达式。在Ren'Py中使用字符串。此处仅为占位，无效果。
-            text_code.append(f"{self.indent_str}allow {{}}")
+            # text_code.append(f"{self.indent_str}allow {{}}")
+            if fgui_text.restrict:
+                text_code.append(f"{self.indent_str}allow '{fgui_text.restrict}'")
+            else:
+                text_code.append(f"{self.indent_str}allow {{}}")
             text_code.append(f"{self.indent_str}exclude {{}}")
         if fgui_text.is_input:
             self.indent_level_down()
@@ -2605,9 +2819,17 @@ def convert(argv):
                         help='输入FairyGUI资源文件所在目录名 (目录中需存在同名 .bytes 文件)')
     parser.add_argument('-o', '--output', type=str, 
                         help='输出Ren\'Py项目基目录路径 (即Ren\'Py项目根目录)')
-    
+    parser.add_argument('--main-menu-title', type=str, metavar='KEY=VALUE',
+                        help='主菜单标题，键值对用空格分隔写在一个字符串里，如: "text_str=标题 text_color=#ff0000"')
+    parser.add_argument('--main-menu-logo', type=str,
+                        help='主菜单logo（可选）')
     # 解析命令行参数
     args = parser.parse_args(argv[1:] if argv and len(argv) > 1 else [])
+    
+    # 将 --main-menu-title 的单个字符串按空格拆成键值对列表后解析为 MainMenuTitle
+    raw = getattr(args, 'main_menu_title', None)
+    pairs = raw.strip().split() if raw else None
+    main_menu_title = _parse_main_menu_title_kv(pairs)
     
     # 检查必需的参数
     if not args.input:
@@ -2671,6 +2893,9 @@ def convert(argv):
         converter.game_dir = game_dir
         converter.scripts_dir = scripts_dir
         converter.images_dir = images_dir
+        # 设置自定义参数，用于替换Fgui发布资源中的值。
+        converter.main_menu_title = main_menu_title
+        converter.main_menu_logo = args.main_menu_logo
         print("转换器创建完成")
 
         # 生成Ren'Py代码

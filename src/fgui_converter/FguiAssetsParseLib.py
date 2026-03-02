@@ -522,7 +522,7 @@ class FguiDisplayable:
         # 轴心。默认值为(0.0, 0.0)。
         pivot = self.display_item_tree.get("pivot", "0.0,0.0")
         self.pivot = tuple(map(float, pivot.split(",")))
-        # 是否将轴心作为锚点。否认为False。
+        # 是否将轴心作为锚点。默认为False。
         self.pivot_is_anchor = (self.display_item_tree.get("anchor") == "true")
         # 不透明度。默认为1.0。
         alpha = self.display_item_tree.get("alpha", "1.0")
