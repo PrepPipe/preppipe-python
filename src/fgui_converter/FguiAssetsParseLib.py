@@ -646,8 +646,18 @@ class FguiGraph(FguiDisplayable):
         self.stroke_color  = hex_aarrggbb_to_rgba(stroke_color)
         fill_color = self.display_item_tree.get("fillColor", "#ffffffff") # 描边默认为白色
         self.fill_color = hex_aarrggbb_to_rgba(fill_color)
-        # 矩形可能存在圆角
-        self.corner_radius = int(self.display_item_tree.get("corner", "0"))
+        # 矩形可能存在圆角。corner 可能为逗号分隔的多个整数，转为 4 元组（不足补 0，多于 4 个舍弃）。
+        corner_raw = self.display_item_tree.get("corner")
+        if corner_raw is None:
+            self.corner_radius = (0, 0, 0, 0)
+        else:
+            segments = corner_raw.split(",")
+            # 仅当逗号分隔后真的只有一段（如 "25"）才复制为四元组；若有多段（如 "25," 得 ["25",""]）则按多段用 0 填充
+            if len(segments) == 1 and segments[0].strip():
+                self.corner_radius = (int(segments[0].strip()),) * 4
+            else:
+                parts = [int(x.strip()) if x.strip() else 0 for x in segments]
+                self.corner_radius = tuple((parts + [0] * 4)[:4])
         # 正多边形需要记录边数和顶点位置。
         # 顶点位置使用一个数组表示，数组长度等于顶点数(边数)。
         # 顶点只能存在于标准正多边形顶点到图形中心的连线上。

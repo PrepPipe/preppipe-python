@@ -4,16 +4,19 @@ init python:
         uniform vec4 u_rectangle_color;
         uniform vec4 u_stroke_color;
         uniform vec2 u_model_size;
-        uniform float u_radius;
+        uniform vec4 u_radius;
         uniform float u_thickness;
         attribute vec2 a_tex_coord;
         varying vec2 v_tex_coord;
     """, vertex_300="""
         v_tex_coord = a_tex_coord;
     """,fragment_functions="""
-    float roundedBoxSDF(vec2 pos, vec2 border, float radius){
-        vec2 dis = abs(pos) - border + vec2(radius,radius);
-        return length(max(dis, 0.0)) + min(max(dis.x, dis.y), 0.0) - radius;
+    float roundedBoxSDF(vec2 pos, vec2 border, vec4 radius){
+        vec4 r = radius;
+        r.xy = (pos.x<0.0) ? radius.xz : radius.yw;
+        r.x = (pos.y<0.0) ? r.x : r.y;
+        vec2 dis = abs(pos) - border + vec2(r.x,r.x);
+        return length(max(dis, 0.0)) + min(max(dis.x, dis.y), 0.0) - r.x;
     }
     """,fragment_300="""
         vec2 uv = v_tex_coord - vec2(0.5, 0.5);
@@ -31,7 +34,7 @@ init python:
         uniform vec4 u_rectangle_color;
         uniform vec4 u_stroke_color;
         uniform vec2 u_model_size;
-        uniform float u_radius;
+        uniform vec4 u_radius;
         uniform float u_thickness;
         uniform float u_edge_softness;
         attribute vec2 a_tex_coord;
@@ -39,9 +42,12 @@ init python:
     """, vertex_300="""
         v_tex_coord = a_tex_coord;
     """,fragment_functions="""
-    float roundedBoxSDF(vec2 pos, vec2 border, float radius){
-        vec2 dis = abs(pos) - border + vec2(radius,radius);
-        return length(max(dis, 0.0)) + min(max(dis.x, dis.y), 0.0) - radius;
+    float roundedBoxSDF(vec2 pos, vec2 border, vec4 radius){
+        vec4 r = radius;
+        r.xy = (pos.x<0.0) ? radius.xz : radius.yw;
+        r.x = (pos.y<0.0) ? r.x : r.y;
+        vec2 dis = abs(pos) - border + vec2(r.x,r.x);
+        return length(max(dis, 0.0)) + min(max(dis.x, dis.y), 0.0) - r.x;
     }
     """,fragment_300="""
         vec2 uv = v_tex_coord - vec2(0.5, 0.5);
