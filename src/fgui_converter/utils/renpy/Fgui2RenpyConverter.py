@@ -2481,8 +2481,11 @@ class FguiToRenpyConverter:
             return list_code
         component_name = self.current_component_name
 
-        # 默认引用组件可能是图片或其他组件，后续处理方式不同。
-        default_item = self.fgui_assets.get_component_by_id(fgui_list.default_item_id)
+        # 默认引用组件可能是None、图片或其他组件，后续处理方式不同。
+        if fgui_list.default_item_id:
+            default_item = self.fgui_assets.get_component_by_id(fgui_list.default_item_id)
+        else:
+            default_item = None
         default_item_type = None
         default_item_name = None
         # 若为组件
@@ -2496,7 +2499,8 @@ class FguiToRenpyConverter:
                 default_item_type = 'image'
             else:
                 print("Ref com not found.")
-                return list_code
+                print("List default item is None.")
+                # return list_code
 
         list_length = fgui_list.get_item_list_length()
 
@@ -2508,7 +2512,8 @@ class FguiToRenpyConverter:
         
         # 计算screen入参。
         overflow = None
-        layout = 'row'
+        # layout = 'row'
+        layout = fgui_list.layout
         row_num = 1
         column_num = 1
         transpose = False
@@ -2535,8 +2540,8 @@ class FguiToRenpyConverter:
             row_num = fgui_list.line_item_count
             column_num = math.ceil(list_length / row_num)
         else:
-            row_num = fgui_list.line_item_count
-            column_num = fgui_list.line_item_count2
+            column_num = fgui_list.line_item_count
+            row_num = fgui_list.line_item_count2
 
         xspacing = fgui_list.col_gap
         yspacing = fgui_list.line_gap
@@ -2553,7 +2558,21 @@ class FguiToRenpyConverter:
             # 非默认元素
             if item.item_url:
                 # TODO 非默认元素待处理
-                pass
+                # 若为组件
+                item_component = self.fgui_assets.get_component_by_id(item.item_id)
+                if item_component:# 非按钮组件可能包含多个子组件，直接引用会出现vpgrid overfull错误
+                    list_code.append(f"{self.indent_str}fixed:")
+                    self.indent_level_up()
+                    list_code.append(f"{self.indent_str}xysize {item_component.size}")
+                    list_code.append(f"{self.indent_str}use {item_component.name}()")
+                    self.indent_level_down()
+                else:
+                    image_item_name = self.fgui_assets.get_componentname_by_id(item.item_id)
+                    if image_item_name:
+                        list_code.append(f"{self.indent_str}add '{image_item_name}'")
+                    else:
+                        print(f"Image item not found: {item.item_id}")
+                # pass
             # 默认元素
             else:
                 if default_item_type == "image":

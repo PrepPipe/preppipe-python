@@ -766,6 +766,14 @@ class FguiListItem():
         self.item_title = self.list_item_tree.get("title")
         self.item_icon = self.list_item_tree.get("icon")
         self.item_name = self.list_item_tree.get("name")
+        self.item_id = None
+        self.get_item_id_by_url()
+
+    def get_item_id_by_url(self):
+        if self.item_url and self.package_description_id:
+            self.item_id = self.item_url[self.item_url.find(self.package_description_id)+len(self.package_description_id):]
+        return
+
     def __repr__(self):
         return f"FguiListItem({self.item_url}, {self.item_title}, {self.item_icon}, {self.item_name})"
 
@@ -829,7 +837,9 @@ class FguiList(FguiDisplayable):
         self.item_list_length = 0
 
     def get_default_item(self, packageDescription_id):
-        self.default_item_id = self.default_item_url[self.default_item_url.find(packageDescription_id)+len(packageDescription_id):]
+        if self.default_item_url:
+            self.default_item_id = self.default_item_url[self.default_item_url.find(packageDescription_id)+len(packageDescription_id):]
+        return
 
     def set_item_list_length(self, item_list_length):
         self.item_list_length = item_list_length
@@ -882,7 +892,6 @@ class FguiRelation:
         key = self.relation_item_tree.get("target")
         value = self.relation_item_tree.get("sidePair")
         self.relation_dict[key] = value
-        # print(self.relation_dict)
 
 class FguiSliderProperty:
     """
@@ -1150,7 +1159,10 @@ class FguiAssets():
         self.fgui_atlas_dicts.clear()
 
     def get_componentname_by_id(self, id : str) -> str:
-        return self.package_desc.id_name_mapping[id]
+        if id in self.package_desc.id_name_mapping:
+            return self.package_desc.id_name_mapping[id]
+        else:
+            return None
 
     def get_component_by_id(self, id : str) -> FguiComponent:
         for component in self.fgui_component_set:
