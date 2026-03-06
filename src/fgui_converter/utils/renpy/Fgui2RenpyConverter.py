@@ -202,6 +202,7 @@ class FguiToRenpyConverter:
         self.style_preset_template = 'renpy_style_preset_template.txt'
         self.style_preset = self.get_template_content(self.style_preset_template)
         self.list_screen_template = self.get_template_content('renpy_list_screen_template.txt')
+        self.loader_screen_template = self.get_template_content('renpy_loader_screen_template.txt')
 
         # 输出游戏目录
         self.game_dir = None
@@ -214,46 +215,26 @@ class FguiToRenpyConverter:
         # 一些样式预设，用于覆盖Ren'Py默认样式。
         self.style_code.append(self.style_preset)
 
-    def set_game_global_variables(self, variable_name : str, variable_value : str | int | float | bool | None):
+    def set_game_global_variables(self, variable_name : str, variable_value : any):
         """
         设置游戏全局变量。
+        使用define语句修改内置变量。
         variable_name: 变量名。
         variable_value: 变量值。
         """
-        if variable_value is None:
-            variable_value = 'None'
-        elif isinstance(variable_value, bool):
-            variable_value = 'True' if variable_value else 'False'
-        elif isinstance(variable_value, int):
-            variable_value = str(variable_value)
-        elif isinstance(variable_value, float):
-            variable_value = str(variable_value)
-        elif isinstance(variable_value, str):
-            variable_value = f"'{variable_value}'"
-        else:
-            variable_value = str(variable_value)
+        variable_value = str(variable_value)
         variable_str = f"define {variable_name} = {variable_value}"
         self.game_global_variables_code.append(variable_str)
         self.game_global_variables_code.append('')
 
-    def add_game_global_variables(self, variable_name : str, variable_value : str | int | float | bool | None):
+    def add_game_global_variables(self, variable_name : str, variable_value : any):
         """
         添加游戏全局变量。
+        使用default语句添加自定义变量。
         variable_name: 变量名。
         variable_value: 变量值。
         """
-        if variable_value is None:
-            variable_value = 'None'
-        elif isinstance(variable_value, bool):
-            variable_value = 'True' if variable_value else 'False'
-        elif isinstance(variable_value, int):
-            variable_value = str(variable_value)
-        elif isinstance(variable_value, float):
-            variable_value = str(variable_value)
-        elif isinstance(variable_value, str):
-            variable_value = f"'{variable_value}'"
-        else:
-            variable_value = str(variable_value)
+        variable_value = str(variable_value)
         variable_str = f"default {variable_name} = {variable_value}"
         self.game_global_variables_code.append(variable_str)
         self.game_global_variables_code.append('')
@@ -690,6 +671,7 @@ class FguiToRenpyConverter:
                 screen_ui_code.extend(self.generate_list_displayable(displayable))
             # 装载器
             elif isinstance(displayable, FguiLoader):
+                screen_ui_code.extend(self.generate_loader_displayable(displayable))
                 pass
             # 其他组件
             else:
@@ -846,7 +828,7 @@ class FguiToRenpyConverter:
             self.screen_ui_code.append(f"{self.indent_str}tag menu\n")
             # 若自定义了game_menu，则修改默认游戏内菜单显示的控制变量。
             if screen_name == "game_menu":
-                self.set_game_global_variables('_game_menu_screen', str("\"game_menu\""))
+                self.set_game_global_variables('_game_menu_screen', "'game_menu'")
         if self.is_modal_screen(screen_name):
             self.screen_ui_code.append(f"{self.indent_str}modal True")
             self.screen_ui_code.append(f"{self.indent_str}zorder 200\n")
@@ -865,6 +847,10 @@ class FguiToRenpyConverter:
             self.screen_ui_code.append(f"{self.indent_str}viewport:")
             self.indent_level_up()
             self.screen_ui_code.append(f"{self.indent_str}xysize {component.size}")
+            self.screen_ui_code.append(f"{self.indent_str}draggable False")
+            self.screen_ui_code.append(f"{self.indent_str}mousewheel False")
+            self.screen_ui_code.append(f"{self.indent_str}fixed:")
+            self.indent_level_up()
         elif component.overflow == "scroll":
             self.screen_ui_code.append(f"{self.indent_str}viewport:")
             self.indent_level_up()
@@ -2612,6 +2598,104 @@ class FguiToRenpyConverter:
         self.screen_code.append(list_screen_template_content)
 
         return True
+
+    def generate_loader_displayable(self, fgui_loader : FguiLoader) -> list[str]:
+        """
+        生成装载器对应的Ren'Py代码。
+        """
+        loader_code = []
+        if not isinstance(fgui_loader, FguiLoader):
+            print("It is not a loader displayable.")
+            return loader_code
+        
+        component_name = self.current_component_name
+        loader_screen_result = self.generate_loader_screen(fgui_loader, component_name)
+        if not loader_screen_result:
+            print(f"Failed to generate {component_name}_{fgui_loader.name} loader screen.")
+            return loader_code
+        
+        params_str = self.generate_loader_screen_params(fgui_loader)
+
+        loader_code.append(f"{self.indent_str}use {component_name}_{fgui_loader.name}({params_str})")
+        return loader_code
+
+    def generate_loader_screen(self, fgui_loader : FguiLoader, component_name : str) -> bool:
+        """
+        生成装载器组件的screen。于其他screen中使用use语句引用。
+        """
+        if not isinstance(fgui_loader, FguiLoader):
+            print("It is not a loader displayable.")
+            return False
+
+        # 根据模板内容替换部分字符串
+        loader_screen_template_content = self.loader_screen_template
+        loader_screen_template_content = loader_screen_template_content.replace('{component_name}', f"{component_name}")
+        loader_screen_template_content = loader_screen_template_content.replace('{loader_name}', f"{fgui_loader.name}")
+        loader_screen_template_content = loader_screen_template_content.replace('{loader_screen_name}', f"{component_name}_{fgui_loader.name}")
+        self.screen_code.append(loader_screen_template_content)
+        return True
+
+    def generate_loader_screen_params(self, fgui_loader : FguiLoader) -> str:
+        """
+        生成装载器组件screen的参数字符串。
+        """
+        if not isinstance(fgui_loader, FguiLoader):
+            print("It is not a loader displayable.")
+            return ''
+
+        child = None
+        child_name = 'Null()'
+        child_type = None
+        xysize = fgui_loader.size
+        pos = fgui_loader.xypos
+        if fgui_loader.item_url:
+            child = self.fgui_assets.package_desc.get_image_by_id(fgui_loader.item_url)
+            if child:
+                child_type = "'image'"
+                child_name = f"'{child.name}'"
+            else:
+                child = self.fgui_assets.get_component_by_id(fgui_loader.item_url)
+                if child:
+                    child_type = "'component'"
+                    child_name = child.name
+                else:
+                    child_name = 'Null()'
+        else:
+            child_name = 'Null()'
+        fit_xysize = (None, None)
+        fit_type = None
+        print(f"fgui_loader.fill_type: {fgui_loader.fill_type}")
+        if fgui_loader.fill_type:
+            if fgui_loader.fill_type == "scale":
+                fit_type = "'contain'"
+            elif fgui_loader.fill_type == "scaleNoBorder":
+                fit_type = "'cover'"
+            elif fgui_loader.fill_type == "scaleMatchHeight":
+                fit_type = "'cover'"
+                fit_xysize = (None, 1.0)
+            elif fgui_loader.fill_type == "scaleMatchWidth":
+                fit_type = "'cover'"
+                fit_xysize = (1.0, None)
+            elif fgui_loader.fill_type == "scaleFree":
+                fit_type = "'fit'"
+                fit_xysize = (1.0, 1.0)
+        if fgui_loader.shrink_only:
+            fit_type = "'scale-down'"
+            print(f"child.size: {child.size}, xysize: {xysize}")
+            if child.size[0] < xysize[0]:
+                fit_xsize = 1.0
+            else:
+                fit_xsize = None
+            if child.size[1] < xysize[1]:
+                fit_ysize = 1.0
+            else:
+                fit_ysize = None
+                fit_ysize = 1.0
+            fit_xysize = (fit_xsize, fit_ysize)
+        xalign = self.align_dict.get(fgui_loader.align, 0.0)
+        yalign = self.align_dict.get(fgui_loader.v_align, 0.0)
+
+        return f"xysize={xysize}, pos={pos}, child={child_name}, child_type={child_type}, fit_xysize={fit_xysize}, fit_type={fit_type}, child_align=({xalign},{yalign})"
 
     def generate_renpy_code(self):
         """生成完整的Ren'Py代码"""

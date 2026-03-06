@@ -865,6 +865,16 @@ class FguiLoader(FguiDisplayable):
     """
     FairyGUI中的装载器。
     包含属性url：表示引用的组件url，通常是一个资源url，格式为“ui://”+“packageDescription id” + “component id”。
+    autoSize：是否自动调整尺寸。
+    Fill：填充方式。None-(无)，"scale"-等比缩放(显示全部)，"scaleNoBorder"-等比缩放(无边框)，"scaleMatchHeight"-等比缩放(适应高度)，"scaleMatchWidth"-等比缩放(适应宽度)， "scaleFree"-自由缩放。
+    shrinkOnly：是否仅允许缩小。
+    align：水平对齐方式。"left"-左对齐，"center"-居中对齐，"right"-右对齐。
+    vAlign：垂直对齐方式。"top"-上对齐，"middle"-居中对齐，"bottom"-下对齐。
+    frame：动画当前帧。若使用图片则无用处。
+    color-颜色：一个6位Hex字符串，表示显示时所有像素的RGA都要乘以该值。
+    fillMethod-填充方式："hz"-水平、"vt"-垂直、"radial90"-90度、"radial180"-180度、"radial360"-360度。
+    fillOrigin-填充原点：0(默认值)、1、2、3。该值根据不同的填充方式有不同的含义。
+    fillAmount-填充比例：100(默认值)，一个介于0到100之间的整数。
     """
     def __init__(self, display_item_tree, package_desc=None):
         if display_item_tree.tag != "loader" :
@@ -875,6 +885,16 @@ class FguiLoader(FguiDisplayable):
         if package_desc and self.url:
             self.package_description_id = package_desc.id
             self.get_item_id(package_desc.id)
+        self.auto_size = self.display_item_tree.get("autoSize", False)
+        self.fill_type = self.display_item_tree.get("fill")
+        self.shrink_only = self.display_item_tree.get("shrinkOnly", False)
+        self.align = self.display_item_tree.get("align", "left")
+        self.v_align = self.display_item_tree.get("vAlign", "top")
+        self.frame = int(self.display_item_tree.get("frame", "0"))
+        self.color = self.display_item_tree.get("color")
+        self.fill_method = self.display_item_tree.get("fillMethod")
+        self.fill_origin = self.display_item_tree.get("fillOrigin")
+        self.fill_amount = self.display_item_tree.get("fillAmount")
 
     def get_item_id(self, packageDescription_id):
         self.item_url = self.url[self.url.find(packageDescription_id)+len(packageDescription_id):]
@@ -1171,9 +1191,6 @@ class FguiAssets():
         return None
 
     def get_image_size_by_id(self, id : str):
-        # for image in self.fgui_image_set:
-        #     if image.image_id == id:
-        #         return (image.width, image.height)
         return self.package_desc.id_size_mapping[id]
 
     def __del__(self):
