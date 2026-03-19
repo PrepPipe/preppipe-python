@@ -277,6 +277,9 @@ class FguiComponent:
         self.package_desc = package_desc
         size = component_etree.get("size")
         self.size = tuple(map(int, size.split(","))) if size else (0,0)
+        # 限制尺寸，4元组，分别为最小宽度、最大宽度、最小高度、最大高度。默认值为0，表示与当前实际尺寸一致。
+        restrict_size = component_etree.get("restrictSize", "0,0,0,0")
+        self.min_width, self.max_width, self.min_height, self.max_height = tuple(map(int, restrict_size.split(",")))
         self.overflow = component_etree.get("overflow", "visible")
         self.scroll = component_etree.get("scroll", "vertical")
         self.extention = component_etree.get("extention")

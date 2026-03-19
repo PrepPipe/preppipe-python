@@ -738,30 +738,7 @@ class FguiToRenpyConverter:
 
     def generate_screen(self, component : FguiComponent):
         """
-        生成screen定义。目标样例：
-
-        screen test_main_menu():
-            add 'menu_bg':
-                pos (0, 0)
-
-            fixed:
-                pos (1007, 178)
-                use main_menu_button(title='开坑', actions=ShowMenu("save"))
-            fixed:
-                pos (1007, 239)
-                use main_menu_button(title='填坑', actions=ShowMenu("load"))
-            fixed:
-                pos (1007, 300)
-                use main_menu_button(title='设置', actions=ShowMenu("preferences"))
-            fixed:
-                pos (1007, 361)
-                use main_menu_button(title='关于', actions=ShowMenu("about"))
-            fixed:
-                pos (1007, 422)
-                use main_menu_button(title='帮助', actions=ShowMenu("help"))
-            fixed:
-                pos (1007, 483)
-                use main_menu_button(title='放弃', actions=Quit())
+        生成screen定义。
         """
         # self.screen_code.clear()
         self.screen_definition_head.clear()
@@ -842,6 +819,11 @@ class FguiToRenpyConverter:
                 break
             self.screen_variable_code.append(f"{self.indent_str}default {controller.name} = {controller.selected}")            
 
+        # 显式添加一个fixed，设置界面尺寸。
+        self.screen_ui_code.append(f"{self.indent_str}fixed:")
+        self.indent_level_up()
+        self.screen_ui_code.append(f"{self.indent_str}{self.generate_screen_fixed_size_str(component)}")
+
         # 根据组件的可见区域性质，决定是否加一层viewport。
         if component.overflow == "hidden":
             self.screen_ui_code.append(f"{self.indent_str}viewport:")
@@ -905,6 +887,7 @@ class FguiToRenpyConverter:
                         displayable.text = self.main_menu_title.text_str
                     if self.main_menu_title.text_color:
                         displayable.text_color = self.main_menu_title.text_color
+                    break
 
         # 游戏logo图片。若main_menu_logo不为空，则先遍历一遍所有组件并修改logo图片内容。
         # if self.main_menu_logo:
@@ -920,6 +903,11 @@ class FguiToRenpyConverter:
                 print("Component controller object type is wrong.")
                 break
             self.screen_variable_code.append(f"{self.indent_str}default {controller.name} = {controller.selected}")            
+
+        # 显式添加一个fixed，设置界面尺寸。
+        self.screen_ui_code.append(f"{self.indent_str}fixed:")
+        self.indent_level_up()
+        self.screen_ui_code.append(f"{self.indent_str}{self.generate_screen_fixed_size_str(component)}")
 
         # 根据组件的可见区域性质，决定是否加一层viewport。
         if component.overflow == "hidden":
@@ -993,6 +981,11 @@ class FguiToRenpyConverter:
         choice_screen_code.append(f"# 选项界面")
         choice_screen_code.append(f"screen {component.name}({screen_params}):")
 
+        # 显式添加一个fixed，设置界面尺寸。
+        self.screen_ui_code.append(f"{self.indent_str}fixed:")
+        self.indent_level_up()
+        self.screen_ui_code.append(f"{self.indent_str}{self.generate_screen_fixed_size_str(component)}")
+
         # vbox的行距
         vbox_spacing = choice_list.line_gap if choice_list else 0
         self.reset_indent_level()
@@ -1062,6 +1055,11 @@ class FguiToRenpyConverter:
 
         # 菜单标签
         self.screen_definition_head.append(f"{self.indent_str}tag menu")
+        # 显式添加一个fixed，设置界面尺寸。
+        self.screen_ui_code.append(f"{self.indent_str}fixed:")
+        self.indent_level_up()
+        self.screen_ui_code.append(f"{self.indent_str}{self.generate_screen_fixed_size_str(component)}")
+
         # save_slot_list 之前的组件
         self.screen_ui_code.extend(self.convert_component_display_list(component, list_begin_index=0, list_end_index=slot_list_index))
 
@@ -1251,6 +1249,10 @@ class FguiToRenpyConverter:
         self.indent_level_up()
         self.screen_definition_head.append(f"{self.indent_str}tag menu")
         self.screen_definition_head.append(f"{self.indent_str}predict False")
+        # 显式添加一个fixed，设置界面尺寸。
+        self.screen_ui_code.append(f"{self.indent_str}fixed:")
+        self.indent_level_up()
+        self.screen_ui_code.append(f"{self.indent_str}{self.generate_screen_fixed_size_str(component)}")
         
         # history_list 之前的组件
         self.screen_ui_code.extend(self.convert_component_display_list(component, list_begin_index=0, list_end_index=history_list_index))
@@ -1335,6 +1337,11 @@ class FguiToRenpyConverter:
         self.screen_definition_head.append(f"screen {component.name}({screen_params}):")
         self.indent_level_up()
 
+        # 显式添加一个fixed，设置界面尺寸。
+        self.screen_ui_code.append(f"{self.indent_str}fixed:")
+        self.indent_level_up()
+        self.screen_ui_code.append(f"{self.indent_str}{self.generate_screen_fixed_size_str(component)}")
+
         # 不包含who和what的displayList部分按顺序放在前面
         index_min = min(what_index, who_index)
         index_max = max(what_index, who_index)
@@ -1406,7 +1413,10 @@ class FguiToRenpyConverter:
         self.screen_definition_head.append(f"screen {component.name}():")
         self.indent_level_up()
         self.screen_definition_head.append(f"{self.indent_str}tag menu")
-        self.screen_definition_head.append(f"{self.indent_str}")
+        # 显式添加一个fixed，设置界面尺寸。
+        self.screen_ui_code.append(f"{self.indent_str}fixed:")
+        self.indent_level_up()
+        self.screen_ui_code.append(f"{self.indent_str}{self.generate_screen_fixed_size_str(component)}")
 
         # gallery_button_list 之前的组件
         self.screen_ui_code.extend(self.convert_component_display_list(component, list_begin_index=0, list_end_index=gallery_button_list_index))
@@ -1516,7 +1526,10 @@ class FguiToRenpyConverter:
         self.screen_definition_head.append(f"screen {component.name}():")
         self.indent_level_up()
         self.screen_definition_head.append(f"{self.indent_str}tag menu")
-        self.screen_definition_head.append(f"{self.indent_str}")
+        # 显式添加一个fixed，设置界面尺寸。
+        self.screen_ui_code.append(f"{self.indent_str}fixed:")
+        self.indent_level_up()
+        self.screen_ui_code.append(f"{self.indent_str}{self.generate_screen_fixed_size_str(component)}")
 
         # musicroom_button_list 之前的组件
         self.screen_ui_code.extend(self.convert_component_display_list(component, list_begin_index=0, list_end_index=musicroom_button_list_index))
@@ -1629,6 +1642,11 @@ class FguiToRenpyConverter:
         self.screen_definition_head.append("style say_dialogue is say_what_text_style")
         self.screen_definition_head.append(f"screen {component.name}({screen_params}):")
         self.indent_level_up()
+        # 显式添加一个fixed，设置界面尺寸。
+        self.screen_ui_code.append(f"{self.indent_str}fixed:")
+        self.indent_level_up()
+        self.screen_ui_code.append(f"{self.indent_str}{self.generate_screen_fixed_size_str(component)}")
+
         self.screen_ui_code.append(f"{self.indent_str}if who is not None:")
         self.indent_level_up()
         self.screen_ui_code.append(f"{self.indent_str}add {namebox_image}:")
@@ -1706,6 +1724,16 @@ class FguiToRenpyConverter:
 
         parameter_str = f"{title_str}, {actions_str}, {icon_str}"
         return parameter_str
+
+    @staticmethod
+    def generate_screen_fixed_size_str(component : FguiComponent):
+        size_str = ""
+        max_width = component.max_width if component.max_width > 0 else component.size[0]
+        min_width = component.min_width if component.min_width > 0 else component.size[0]
+        max_height = component.max_height if component.max_height > 0 else component.size[1]
+        min_height = component.min_height if component.min_height > 0 else component.size[1]
+        size_str = f"maximum ({max_width}, {max_height}) minimum ({min_width}, {min_height})"
+        return size_str
 
     def generate_text_style(self, fgui_text : FguiText, style_name : str):
         """
