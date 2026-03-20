@@ -682,15 +682,28 @@ class FguiToRenpyConverter:
                     condition_str = f"showif {displayable.gear_display.controller_name} in {displayable.gear_display.controller_index}:"
                     screen_ui_code.append(f"{self.indent_str}{condition_str}")
                     self.indent_level_up()
-                    end_indent_level = 2
-                
+                    end_indent_level = end_indent_level + 1
+
+                screen_ui_code.append(f"{self.indent_str}fixed:")
+                self.indent_level_up()
+                screen_ui_code.append(f"{self.indent_str}pos {displayable.xypos}")
+                screen_ui_code.append(f"{self.indent_str}xysize {displayable.size}")
+                # 非默认锚点或轴心，以及有旋转的情况添加一个transform。
+                if displayable.pivot_is_anchor or displayable.rotation or displayable.pivot != (0.0, 0.0):
+                    screen_ui_code.append(f"{self.indent_str}at transform:")
+                    self.indent_level_up()
+                    screen_ui_code.append(f"{self.indent_str}anchor {displayable.pivot}")
+                    screen_ui_code.append(f"{self.indent_str}transform_anchor True")
+                    if displayable.rotation:
+                        screen_ui_code.append(f"{self.indent_str}rotate {displayable.rotation}")
+                    self.indent_level_down()
                 # 根据引用源id查找组件
                 ref_com = self.fgui_assets.get_component_by_id(displayable.src)
                 # 按钮。可设置标题，并根据自定义数据字段设置action。
                 if ref_com.extention == "Button" and ref_com.name != None:
-                    screen_ui_code.append(f"{self.indent_str}fixed:")
-                    self.indent_level_up()
-                    screen_ui_code.append(f"{self.indent_str}pos {displayable.xypos}")
+                    # screen_ui_code.append(f"{self.indent_str}fixed:")
+                    # self.indent_level_up()
+                    # screen_ui_code.append(f"{self.indent_str}pos {displayable.xypos}")
                     # 取FguiComponent和FguiDisplayable对象的自定义数据作为action。FguiDisplayable对象中的自定义数据优先。
                     actions = displayable.custom_data if displayable.custom_data else ref_com.custom_data
                     action_list = []
@@ -710,9 +723,9 @@ class FguiToRenpyConverter:
                     continue
                 # 滑动条
                 if ref_com.extention == "Slider" and ref_com.name != None:
-                    screen_ui_code.append(f"{self.indent_str}fixed:")
-                    self.indent_level_up()
-                    screen_ui_code.append(f"{self.indent_str}pos {displayable.xypos}")
+                    # screen_ui_code.append(f"{self.indent_str}fixed:")
+                    # self.indent_level_up()
+                    # screen_ui_code.append(f"{self.indent_str}pos {displayable.xypos}")
                     # 若在自定义数据中指定了关联数据对象，则直接使用。
                     if displayable.custom_data:
                         bar_value = displayable.custom_data
@@ -728,9 +741,9 @@ class FguiToRenpyConverter:
                     self.indent_level_down(end_indent_level)
                     continue
                 # 其他组件
-                screen_ui_code.append(f"{self.indent_str}fixed:")
-                self.indent_level_up()
-                screen_ui_code.append(f"{self.indent_str}pos {displayable.xypos}")
+                # screen_ui_code.append(f"{self.indent_str}fixed:")
+                # self.indent_level_up()
+                # screen_ui_code.append(f"{self.indent_str}pos {displayable.xypos}")
                 screen_ui_code.append(f"{self.indent_str}use {ref_com.name} id '{component.name}_{displayable.id}'")
                 self.indent_level_down(end_indent_level)
 
@@ -1728,6 +1741,11 @@ class FguiToRenpyConverter:
     @staticmethod
     def generate_screen_fixed_size_str(component : FguiComponent):
         size_str = ""
+
+        if component.max_width == 0 and component.min_width == 0 and component.max_height == 0 and component.min_height == 0:
+            size_str = f"xysize {component.size}"
+            return size_str
+
         max_width = component.max_width if component.max_width > 0 else component.size[0]
         min_width = component.min_width if component.min_width > 0 else component.size[0]
         max_height = component.max_height if component.max_height > 0 else component.size[1]
@@ -2370,7 +2388,7 @@ class FguiToRenpyConverter:
         text_code.append(f"{self.indent_str}at transform:")
         self.indent_level_up()
         text_code.append(f"{self.indent_str}anchor {fgui_text.pivot}")
-        if not fgui_text.pivot_is_anchor:
+        if fgui_text.pivot_is_anchor:
             size = fgui_text.size
             xoffset = int(fgui_text.pivot[0] * size[0])
             yoffset = int(fgui_text.pivot[1] * size[1])
