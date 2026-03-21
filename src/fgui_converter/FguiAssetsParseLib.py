@@ -8,19 +8,20 @@ from lxml import etree
 class FguiPackage():
     """
     FairyGUI资源包中的Package描述内容。
-    包含component列表、image列表和atlas列表。
+    包含component列表、image列表、atlas列表和音频文件列表。
     """
     id = ''
     name = ''
     component_list = []
     image_list = []
     atlas_list = []
+    sound_list = []
 
     class brief_component:
         id = ''
         name = ''
         path = ''
-        size = ()
+        size = None # tuple(width, height)
         exported = True
         def __init__(self, id, name, path, size, exported=True):
             self.id = id
@@ -34,7 +35,7 @@ class FguiPackage():
         id = ''
         name = ''
         path = ''
-        size = ()
+        size = None # tuple(width, height)
         scale = ''  # 九宫格：9grid；平铺：tile
         scale9grid = []
         exported = True
@@ -59,6 +60,17 @@ class FguiPackage():
             self.size = (int(size_list[0]), int(size_list[1]))
             self.file = file
 
+    class brief_sound:
+        id = ''
+        name = ''
+        path = ''
+        file = ''
+        def __init__(self, id, name, path, file):
+            self.id = id
+            self.name = name
+            self.path = path
+            self.file = file
+
     def __init__(self, package_etree):
         self.package_etree = package_etree
         self.id = package_etree.get("id")
@@ -79,6 +91,7 @@ class FguiPackage():
                                                             exported=TransStrToBoolean(child.get('exported'))))
                 self.id_name_mapping[child.get('id')] = child.get('name')
                 self.id_size_mapping[child.get('id')] = tuple(map(int, child.get('size').split(",")))
+                continue
             # image类 name, path, size, scale=None, scale9grid=[], exported=True
             if (child.tag == 'image'):
                 self.image_list.append(self.brief_image(
@@ -91,12 +104,22 @@ class FguiPackage():
                                                     exported=TransStrToBoolean(child.get('exported'))))
                 self.id_name_mapping[child.get('id')] = child.get('name')
                 self.id_size_mapping[child.get('id')] = tuple(map(int, child.get('size').split(",")))
+                continue
             # atlas类 id, size, file
             if (child.tag == 'atlas'):
                 self.atlas_list.append(self.brief_atlas(
                                                 child.get('id'),
                                                 child.get('size'),
                                                 child.get('file')))
+                continue
+            # sound类 id, name, path, file
+            if (child.tag == 'sound'):
+                self.sound_list.append(self.brief_sound(
+                                                child.get('id'),
+                                                child.get('name'),
+                                                child.get('path'),
+                                                child.get('file')))
+                continue
 
     def clear(self):
         self.component_list.clear()
@@ -326,12 +349,22 @@ class FguiComponent:
 class FguiButton(FguiComponent):
     """
     FairyGUI中的按钮button。
-    相比其他component，多一个Button标签
+    相比其他component，多一个Button标签。
+    mode：模式。Radio-单选按钮；Check-复选按钮；None-普通按钮。
+    sound：点击音效。格式为“ui://”+“packageDescription id” + “sound id”。
+    downEffect：按下效果。scale-缩放，dark-变暗。
+    downEffectValue：按下效果值。缩放值，变暗值。
     """
     def __init__(self, component_etree, id, name, package_desc=None):
         super().__init__(component_etree, id, name, package_desc=package_desc)
         button = component_etree.find("Button")
         self.button_mode = button.get("mode")
+        sound = button.get("sound")
+        if sound:
+            # 格式为“ui://”+“packageDescription id” + “sound id”。
+            self.button_sound = sound[sound.find(package_desc.id)+len(package_desc.id):]
+        else:
+            self.button_sound = None
         self.button_down_effect = button.get("downEffect")
         self.button_down_effect_value = button.get("downEffectValue")
 
@@ -1137,7 +1170,8 @@ class FguiAssets():
         self.fgui_atlas_dicts = {}
         # 组件信息
         self.fgui_component_set = []
-
+        # 音频文件信息
+        self.fgui_sound_dicts = {}
         # 先找到packageDescription，解析出component、image和atlas列表
         package_key = 'package'
         if (not self.object_dict.__contains__(package_key)):
@@ -1169,6 +1203,10 @@ class FguiAssets():
             self.fgui_atlas_dicts[atlas.id] = atlas_file_name
         # 若不需要从atlas切割出单个图片，可以结合 *@sprites.bytes文件，获取每个image对象
         self.fgui_image_set = ParseFguiSpriteDescFile(self.sprite_desc_file)
+        # 根据sound_list建立sound_id与实际音频文件间的映射关系
+        for sound in self.package_desc.sound_list:
+            sound_file_name = self.fgui_project_name + '@' + sound.file
+            self.fgui_sound_dicts[sound.id] = sound_file_name
 
     def clear(self):
         self.fgui_project_name = ''

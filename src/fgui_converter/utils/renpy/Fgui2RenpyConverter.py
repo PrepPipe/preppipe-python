@@ -166,6 +166,7 @@ class FguiToRenpyConverter:
         self.style_code = []
         self.image_definition_code = []
         self.graph_definition_code = []
+        self.sound_definition_code = []
         self.game_global_variables_code = []
         self.gallery_screen_code = []
         self.music_room_screen_code = []
@@ -208,6 +209,7 @@ class FguiToRenpyConverter:
         self.game_dir = None
         self.scripts_dir = None
         self.images_dir = None
+        self.audio_dir = None
 
         # gallery相关数据
         self.gallery_data = {}
@@ -388,6 +390,16 @@ class FguiToRenpyConverter:
 
         return graph_code
 
+    def generate_sound_definitions(self):
+        """生成音频定义"""
+        sound_definitions = []
+        sound_definitions.append("# 音频定义")
+        sound_definitions.append("# 根据FairyGUI发布资源中音频文件列表定义音频变量")
+        for id, file in self.fgui_assets.fgui_sound_dicts.items():
+            sound_definitions.append(f"define audio.{id} = '{file}'")
+        sound_definitions.append("")
+        self.sound_definition_code.extend(sound_definitions)
+
     def generate_slider_style(self, fgui_slider : FguiSlider) -> None:
         """
         生成滑块样式。
@@ -452,7 +464,7 @@ class FguiToRenpyConverter:
                 else:
                     print("Slider base is neither image nor graph.")
                     return
-            # FGUI中滑动条的可变bar部分
+            # FGUI中水平滑动条的可变bar部分
             if displayable.name == 'bar':
                 if isinstance(displayable, FguiImage):
                     first_bar_name = self.fgui_assets.get_componentname_by_id(displayable.src)
@@ -463,11 +475,26 @@ class FguiToRenpyConverter:
                     print("Slider bar is neither image nor graph.")
                     return
                 bar_id = displayable.id
+                continue
+            # FGUI中垂直滑动条的可变bar部分
+            if displayable.name == 'bar_v':
+                if isinstance(displayable, FguiImage):
+                    first_bar_name = self.fgui_assets.get_componentname_by_id(displayable.src)
+                elif isinstance(displayable, FguiGraph):
+                    bar_image_definition_code.extend(self.generate_graph_definitions(displayable, fgui_slider.name))
+                    first_bar_name = f"{fgui_slider.name}_{displayable.id}"
+                else:
+                    print("Slider bar_v is neither image nor graph.")
+                    return
+                bar_id = displayable.id
+                slider_type = BarOrientationType.VERTICAL
+                continue
             # FGUI中滑动条的标题类型文本
             if displayable.name == 'title':
                 if isinstance(displayable, FguiText):
                     style_name = f"slider_{fgui_slider.id}_title"
                     self.generate_text_style(displayable, style_name)
+                    continue
                 else:
                     print("Slider title is not text.")
                     return
@@ -482,8 +509,8 @@ class FguiToRenpyConverter:
                     # 根据grip中relation的sidePair属性来确定方向
                     side_pair_str = displayable.relations.relation_dict[bar_id]
                     # 只有该值表示垂直滑动条
-                    if side_pair_str == "bottom-bottom":
-                        slider_type = BarOrientationType.VERTICAL
+                    # if side_pair_str == "bottom-bottom":
+                    #     slider_type = BarOrientationType.VERTICAL
                 else:
                     print("Slider grp is not button.")
                     return
@@ -1707,19 +1734,45 @@ class FguiToRenpyConverter:
         return barvalue_str
 
     @staticmethod
-    def generate_button_parameter(button_title=None, original_actions_str=None, icon=None):
+    def generate_button_default_parameter(button_title=None, original_actions_str=None, icon=None, activate_sound=None):
         parameter_str = ""
         title_str = "title=''"
         actions_str = "actions=NullAction()"
         icon_str = "icon=Null()"
+        activate_sound_str = "activate_sound=None"
         if button_title :
             title_str = f"title=\"{button_title}\"".replace("\n", "\\n").replace("\r", "\\n")
         if original_actions_str :
             actions_str = f"actions={original_actions_str}"
         if icon:
             icon_str = f"icon={icon}"
+        if activate_sound:
+            activate_sound_str = f"activate_sound=audio.{activate_sound}"
+        else:
+            activate_sound_str = "activate_sound=None"
+        parameter_str = f"{title_str}, {actions_str}, {icon_str}, {activate_sound_str}"
+        return parameter_str
 
-        parameter_str = f"{title_str}, {actions_str}, {icon_str}"
+    @staticmethod
+    def generate_button_parameter(button_title=None, original_actions_str=None, icon=None, activate_sound=None):
+        parameter_str = ""
+        title_str = None
+        actions_str = None
+        icon_str = None
+        activate_sound_str = None
+        if button_title :
+            title_str = f"title=\"{button_title}\"".replace("\n", "\\n").replace("\r", "\\n")
+        if original_actions_str :
+            actions_str = f"actions={original_actions_str}"
+        if icon:
+            icon_str = f"icon={icon}"
+        if activate_sound:
+            activate_sound_str = f"activate_sound=audio.{activate_sound}"
+
+        # 仅生成非None的参数
+        parameter_str = ",".join([param for param in [title_str, actions_str, icon_str, activate_sound_str] if param is not None])
+        if parameter_str:
+            parameter_str = f"{parameter_str}"
         return parameter_str
 
     @staticmethod
@@ -1996,6 +2049,8 @@ class FguiToRenpyConverter:
         icon_size = (0, 0)
         icon_image = None
 
+        default_activate_sound = None
+
         for displayable in component.display_list.displayable_list:
             # 不带显示控制器表示始终显示
             if displayable.gear_display is None:
@@ -2056,11 +2111,14 @@ class FguiToRenpyConverter:
         # self.generate_image_object(f"{button_name}_insensitive_background", state_children_dict['insensitive'], button_name)
         self.generate_composite_image_object(f"{button_name}_insensitive_background", state_children_dict['insensitive'], button_name, xysize, is_frame=is_bar_grip)
 
+        # 按钮默认点击音效
+        if component.button_sound:
+            default_activate_sound = component.button_sound
 
         # 重置缩进级别
         self.reset_indent_level()
         default_actions = component.custom_data if component.custom_data else 'NullAction()'
-        param_str = self.generate_button_parameter(default_title, default_actions, icon_image)
+        param_str = self.generate_button_default_parameter(default_title, default_actions, icon_image, default_activate_sound)
         self.screen_definition_head.append(f"screen {button_name}({param_str}):")
         # self.screen_definition_head.append(f"screen {button_name}(title='{default_title}', actions={default_actions}, icon=Null()):")
 
@@ -2102,6 +2160,8 @@ class FguiToRenpyConverter:
         self.screen_ui_code.append(f"{self.indent_str}size {icon_size}")
         self.indent_level_down()
         # 一些按钮特性
+        # 点击音效
+        self.screen_ui_code.append(f"{self.indent_str}activate_sound activate_sound")
         # focus_mask，对应FGUI中的点击“测试”。
         if component.hit_test:
             # 根据引用src查找image名
@@ -2763,6 +2823,9 @@ class FguiToRenpyConverter:
         # 生成图像定义
         self.generate_image_definitions()
 
+        # 生成音频定义
+        self.generate_sound_definitions()
+
         for component in self.fgui_assets.fgui_component_set:
             if component.extention == 'Button':
                 self.generate_button_screen(component)
@@ -2954,6 +3017,18 @@ class FguiToRenpyConverter:
 
         return len(atlas_files)
 
+    def copy_sound_files(self, source_dir, target_dir):
+        """复制音频文件到目标目录"""
+        # 所有音频文件
+        sound_files = self.fgui_assets.fgui_sound_dicts.values()
+        for sound_file in sound_files:
+            source_path = os.path.join(source_dir, sound_file)
+            target_path = os.path.join(target_dir, sound_file)
+            shutil.copy2(source_path, target_path)
+            print(f"✓ 复制音频文件: {sound_file} ")
+
+        return len(sound_files)
+
 def convert(argv):
     """
     主函数：解析FguiDemoPackage并转换为Ren'Py代码
@@ -3021,16 +3096,17 @@ def convert(argv):
         game_dir = os.path.join(renpy_base_dir, "game")
         images_dir = os.path.join(game_dir, "images")
         scripts_dir = os.path.join(game_dir, "scripts")
-
+        audio_dir = os.path.join(game_dir, "audio")
         # 创建目录
         os.makedirs(game_dir, exist_ok=True)
         os.makedirs(images_dir, exist_ok=True)
         os.makedirs(scripts_dir, exist_ok=True)
+        os.makedirs(audio_dir, exist_ok=True)
         print(f"创建目录结构: {renpy_base_dir}/")
         print(f"├── game/")
         print(f"└── game/images/")
         print(f"└── game/scripts/")
-
+        print(f"└── game/audio/")
         # 创建FguiAssets对象
         print("\n正在解析FairyGUI资源...")
         fgui_assets = FguiAssets(fgui_project_path)
@@ -3042,6 +3118,7 @@ def convert(argv):
         converter.game_dir = game_dir
         converter.scripts_dir = scripts_dir
         converter.images_dir = images_dir
+        converter.audio_dir = audio_dir
         # 设置自定义参数，用于替换Fgui发布资源中的值。
         converter.main_menu_title = main_menu_title
         converter.main_menu_logo = args.main_menu_logo
@@ -3055,12 +3132,14 @@ def convert(argv):
         # 保存.rpy文件到game目录
         global_variables_output_file = os.path.join(converter.scripts_dir, "preppipe_global_variables.rpy")
         image_definition_output_file = os.path.join(converter.scripts_dir, "preppipe_image_definition.rpy")
+        sound_definition_output_file = os.path.join(converter.scripts_dir, "preppipe_sound_definition.rpy")
         style_output_file = os.path.join(converter.scripts_dir, "preppipe_styles.rpy")
         screen_output_file = os.path.join(converter.scripts_dir, "preppipe_screens.rpy")
 
         converter.save_code_to_file(global_variables_output_file, converter.game_global_variables_code)
         converter.image_definition_code.extend(converter.graph_definition_code)
         converter.save_code_to_file(image_definition_output_file, converter.image_definition_code)
+        converter.save_code_to_file(sound_definition_output_file, converter.sound_definition_code)
         converter.save_code_to_file(style_output_file, converter.style_code)
         converter.save_code_to_file(screen_output_file, converter.screen_code)
 
@@ -3073,9 +3152,14 @@ def convert(argv):
 
         # 复制图集文件到images目录
         print("\n正在复制图集文件...")
-        current_dir = os.getcwd()
+        # current_dir = os.getcwd()
         atlas_count = converter.copy_atlas_files(fgui_project_path, converter.images_dir)
         print(f"复制了 {atlas_count} 个图集文件")
+
+        # 复制音频文件到audio目录
+        print("\n正在复制音频文件...")
+        audio_count = converter.copy_sound_files(fgui_project_path, converter.audio_dir)
+        print(f"复制了 {audio_count} 个音频文件")
 
         # 一些清理
         fgui_assets.clear()
