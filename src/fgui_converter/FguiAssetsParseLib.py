@@ -258,11 +258,15 @@ class FguiController:
     """
      FairyGUI控制器类
      name：控制器名称，字符串，样例"button"
-     page：索引、索引名，字符串，样例"0,up,1,down,2,over,3,selectedOver"
-     selected：初始索引号，字符串 ，样例"0"
+     homepage_type：首页类型，None或字符串。None-根据selected确定首页；"specific"-指定索引；"variable"-根据变量名查找指定索引。
+     homepage：首页索引，None或字符串，可能是数字字符串或文本字符串。
+     page：索引、索引名，字符串，样例"0,up,1,down,2,over,3,selectedOver"。
+     selected：初始索引号，字符串 ，样例"0"。
     """
-    def __init__(self, name, page, selected):
+    def __init__(self, name, homepage_type, homepage, page, selected):
         self.name = name
+        self.homepage_type = homepage_type
+        self.homepage = homepage
         self.page_index_dict = {}
         page_list = page.split(',')
         page_num = len(page_list)
@@ -330,7 +334,7 @@ class FguiComponent:
         for i in range(self.child_num):
             # 控制器
             if (self.component_etree[i].tag == "controller"):
-                self.controller_list.append(FguiController(self.component_etree[i].get("name"), self.component_etree[i].get("pages"), self.component_etree[i].get("selected")))
+                self.controller_list.append(FguiController(self.component_etree[i].get("name"), self.component_etree[i].get("homePageType"), self.component_etree[i].get("homePage"), self.component_etree[i].get("pages"), self.component_etree[i].get("selected")))
             # 显示内容
             elif (self.component_etree[i].tag == "displayList"):
                 self.display_list = FguiDisplayList(self.component_etree[i], self.package_desc)

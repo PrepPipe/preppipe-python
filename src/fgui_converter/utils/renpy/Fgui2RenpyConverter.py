@@ -857,7 +857,11 @@ class FguiToRenpyConverter:
             if not isinstance(controller, FguiController):
                 print("Component controller object type is wrong.")
                 break
-            self.screen_variable_code.append(f"{self.indent_str}default {controller.name} = {controller.selected}")            
+            if controller.homepage_type == "specific":
+                selected_index = int(controller.homepage)
+            else:
+                selected_index = controller.selected
+            self.screen_variable_code.append(f"{self.indent_str}default {controller.name} = {selected_index}")            
 
         # 显式添加一个fixed，设置界面尺寸。
         self.screen_ui_code.append(f"{self.indent_str}fixed:")
@@ -1889,6 +1893,7 @@ class FguiToRenpyConverter:
         selected_hover_child_list = []
         # 非激活状体子组件列表
         insensitive_child_list = []
+        selected_insensitive_child_list = []
         # 始终显示的子组件列表
         always_show_child_list = []
         # 5种类型的子组件字典
@@ -1898,6 +1903,7 @@ class FguiToRenpyConverter:
             'selected': selected_child_list,
             'selected_hover': selected_hover_child_list,
             'insensitive': insensitive_child_list,
+            'selected_insensitive': selected_insensitive_child_list,
             'always_show': always_show_child_list
         }
         state_index_name_dict = {
@@ -1906,6 +1912,7 @@ class FguiToRenpyConverter:
             2: 'selected',
             3: 'selected_hover',
             4: 'insensitive',
+            5: 'selected_insensitive',
             None: 'always_show'
         }
         # 默认按钮控制器为button，并且必定有4种状态，顺序分别为idle、hover、selected、selected_hover。
@@ -1915,7 +1922,7 @@ class FguiToRenpyConverter:
             return state_children_dict
         # 检查按钮控制器的状态列表
         state_list = fgui_button.controller_list[0].page_index_dict.keys()
-        state_number = min(len(state_list), 5) #暂时不处理5种以上的控制器状态
+        state_number = min(len(state_list), 6) #暂时不处理6种以上的控制器状态
         if state_number < 4:
             print("按钮控制器状态总数小于4。")
             return state_children_dict
@@ -1990,15 +1997,17 @@ class FguiToRenpyConverter:
         selected_hover_child_list = []
         # 非激活状体子组件列表
         insensitive_child_list = []
+        selected_insensitive_child_list = []
         # 始终显示的子组件列表
         always_show_child_list = []
-        # 5种类型的子组件字典
+        # 6种类型的子组件字典
         state_children_dict = {
             'idle': idle_child_list,
             'selected': selected_child_list,
             'hover': hover_child_list,
             'selected_hover': selected_hover_child_list,
             'insensitive': insensitive_child_list,
+            'selected_insensitive': selected_insensitive_child_list,
             'always_show': always_show_child_list
         }
 
@@ -2008,6 +2017,7 @@ class FguiToRenpyConverter:
             2: 'hover',
             3: 'selected_hover',
             4: 'insensitive',
+            5: 'selected_insensitive',
             None: 'always_show'
         }
         
@@ -2025,7 +2035,7 @@ class FguiToRenpyConverter:
             return
         # 检查按钮控制器的状态列表
         state_list = component.controller_list[0].page_index_dict.keys()
-        state_number = min(len(state_list), 5) #暂时不处理5种以上的控制器状态
+        state_number = min(len(state_list), 6) #暂时不处理6种以上的控制器状态
         if state_number < 4:
             print("按钮控制器状态总数小于4。")
             return
@@ -2096,21 +2106,17 @@ class FguiToRenpyConverter:
 
         # 根据state_children_dict生成各种对应状态的background
         is_bar_grip = self.is_bar_grip(component)
-        # self.generate_image_object(f"{button_name}_idle_background", state_children_dict['idle'], button_name)
         self.generate_composite_image_object(f"{button_name}_idle_background", state_children_dict['idle'], button_name, xysize, is_frame=is_bar_grip)
         # selected_background
-        # self.generate_image_object(f"{button_name}_selected_background", state_children_dict['selected'], button_name)
         self.generate_composite_image_object(f"{button_name}_selected_background", state_children_dict['selected'], button_name, xysize, is_frame=is_bar_grip)
         # hover_background
-        # self.generate_image_object(f"{button_name}_hover_background", state_children_dict['hover'], button_name)
         self.generate_composite_image_object(f"{button_name}_hover_background", state_children_dict['hover'], button_name, xysize, is_frame=is_bar_grip)
         # selected_hover_background
-        # self.generate_image_object(f"{button_name}_selected_hover_background", state_children_dict['selected_hover'], button_name)
         self.generate_composite_image_object(f"{button_name}_selected_hover_background", state_children_dict['selected_hover'], button_name, xysize, is_frame=is_bar_grip)
         # insensitive_background
-        # self.generate_image_object(f"{button_name}_insensitive_background", state_children_dict['insensitive'], button_name)
         self.generate_composite_image_object(f"{button_name}_insensitive_background", state_children_dict['insensitive'], button_name, xysize, is_frame=is_bar_grip)
-
+        # selected_insensitive_background
+        self.generate_composite_image_object(f"{button_name}_selected_insensitive_background", state_children_dict['selected_insensitive'], button_name, xysize, is_frame=is_bar_grip)
         # 按钮默认点击音效
         if component.button_sound:
             default_activate_sound = component.button_sound
