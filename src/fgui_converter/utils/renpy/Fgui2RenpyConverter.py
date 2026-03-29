@@ -561,7 +561,6 @@ class FguiToRenpyConverter:
             base_bar Frame("vertical_scrollbar_bar")
             thumb Frame("vertical_scrollbar_grip_[prefix_]background")
         """
-        # scrollbar_image_definition_code = []
         style_definition_code = []
         scrollbar_style_code = []
         if not isinstance(fgui_scrollbar, FguiScrollBar):
@@ -728,9 +727,6 @@ class FguiToRenpyConverter:
                 ref_com = self.fgui_assets.get_component_by_id(displayable.src)
                 # 按钮。可设置标题，并根据自定义数据字段设置action。
                 if ref_com.extention == "Button" and ref_com.name != None:
-                    # screen_ui_code.append(f"{self.indent_str}fixed:")
-                    # self.indent_level_up()
-                    # screen_ui_code.append(f"{self.indent_str}pos {displayable.xypos}")
                     # 取FguiComponent和FguiDisplayable对象的自定义数据作为action。FguiDisplayable对象中的自定义数据优先。
                     actions = displayable.custom_data if displayable.custom_data else ref_com.custom_data
                     action_list = []
@@ -750,9 +746,6 @@ class FguiToRenpyConverter:
                     continue
                 # 滑动条
                 if ref_com.extention == "Slider" and ref_com.name != None:
-                    # screen_ui_code.append(f"{self.indent_str}fixed:")
-                    # self.indent_level_up()
-                    # screen_ui_code.append(f"{self.indent_str}pos {displayable.xypos}")
                     # 若在自定义数据中指定了关联数据对象，则直接使用。
                     if displayable.custom_data:
                         bar_value = displayable.custom_data
@@ -768,9 +761,6 @@ class FguiToRenpyConverter:
                     self.indent_level_down(end_indent_level)
                     continue
                 # 其他组件
-                # screen_ui_code.append(f"{self.indent_str}fixed:")
-                # self.indent_level_up()
-                # screen_ui_code.append(f"{self.indent_str}pos {displayable.xypos}")
                 screen_ui_code.append(f"{self.indent_str}use {ref_com.name} id '{component.name}_{displayable.id}'")
                 self.indent_level_down(end_indent_level)
 
@@ -2701,12 +2691,32 @@ class FguiToRenpyConverter:
         list_screen_template_content = list_screen_template_content.replace('{component_name}', f"{component_name}")
         list_screen_template_content = list_screen_template_content.replace('{list_name}', f"{fgui_list.name}")
         list_screen_template_content = list_screen_template_content.replace('{list_screen_name}', f"{component_name}_{fgui_list.name}")
+        side_layout = "'c r b'"
+        unscrollable_type = None
+        if fgui_list.scroll_bar_flags:
+            if fgui_list.scrollbar_flags_dict['display_on_left']:
+                side_layout = "'c l b'"
+            if fgui_list.scrollbar_flags_dict['hide_when_not_overflow']:
+                unscrollable_type = "'hide'"
+        list_screen_template_content = list_screen_template_content.replace('{side_layout}', f"{side_layout}")
         vertical_scrollbar_component, horizontal_scrollbar_component = self.get_scrollbar_style(fgui_list.scrollbar_res)
-        vscrollbar_style = vertical_scrollbar_component.name if vertical_scrollbar_component else self.default_scrollbar_style
-        hscrollbar_style = horizontal_scrollbar_component.name if horizontal_scrollbar_component else self.default_scrollbar_style
+        if vertical_scrollbar_component:
+            vscrollbar_style = vertical_scrollbar_component.name
+            vertical_scrollbar_size = (vertical_scrollbar_component.size[0], fgui_list.size[1])
+        else:
+            vscrollbar_style = self.default_scrollbar_style
+            vertical_scrollbar_size = (0, 0)
+        if horizontal_scrollbar_component:
+            hscrollbar_style = horizontal_scrollbar_component.name
+            horizontal_scrollbar_size = (fgui_list.size[0], horizontal_scrollbar_component.size[1])
+        else:
+            hscrollbar_style = self.default_scrollbar_style
+            horizontal_scrollbar_size = (0, 0)
         list_screen_template_content = list_screen_template_content.replace('{vscrollbar_style}', f"'{vscrollbar_style}'")
         list_screen_template_content = list_screen_template_content.replace('{hscrollbar_style}', f"'{hscrollbar_style}'")
-
+        list_screen_template_content = list_screen_template_content.replace('{vertical_scrollbar_size}', f"{vertical_scrollbar_size}")
+        list_screen_template_content = list_screen_template_content.replace('{horizontal_scrollbar_size}', f"{horizontal_scrollbar_size}")
+        list_screen_template_content = list_screen_template_content.replace('{unscrollable_type}', f"{unscrollable_type}")
         self.screen_code.append(list_screen_template_content)
 
         return True

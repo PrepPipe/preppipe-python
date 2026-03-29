@@ -829,17 +829,17 @@ class FguiList(FguiDisplayable):
     scrollBar-显示滚动条：visible-可见，hidden-隐藏，auto-滚动时显示
     scrollBarRes-滚动条资源url，格式为“ui://”+“packageDescription id” + “component id”。
     scrollBarFlags：一系列滚动条标识位，可能是一个12bit整数。从低位到高位分别为：
-        0-bit：垂直滚动条显示在左边
-        1-bit：滚动位置自动贴近元件
-        2-bit：仅在内容溢出时才显示滚动条
-        3-bit：页面模式
-        4-bit 5-bit：触摸滚动效果，00默认、01启用、10关闭
-        6-bit 7-bit：边缘回弹效果，00默认、01启用、10关闭
-        8-bit：禁用惯性
-        9-bit：禁用剪裁
-        10-bit：浮动显示
-        11-bit：禁用剪裁边缘
-    当列表允许滚动时，有一大堆特性暂不处理，例如“边缘回弹”、指定滚动条组件、自动贴近元件等。
+        0-bit：垂直滚动条显示在左边，1-是，0-否。
+        1-bit：滚动位置自动贴近元件，1-是，0-否。
+        2-bit：仅在内容溢出时才显示滚动条，1-是，0-否。
+        3-bit：页面模式，1-是，0-否。
+        4-bit 5-bit：触摸滚动效果，00-默认、01-启用、10-关闭。
+        6-bit 7-bit：边缘回弹效果，00-默认、01-启用、10-关闭。
+        8-bit：禁用惯性，1-是，0-否。
+        9-bit：禁用剪裁，1-是，0-否。
+        10-bit：浮动显示，1-是，0-否。
+        11-bit：禁用剪裁边缘，1-是，0-否。
+    当列表允许滚动时，有一大堆特性暂不处理，例如“边缘回弹”、自动贴近元件等。
     margin：边缘留空，4个整数，分别对应上下左右。
     clipSoftness：边缘虚化，xy分辨对应水平与垂直方向的虚化程度。
     lineItemCount：列表布局为横向流动或分页时，表示列数。列表布局为竖向流动时，表示行数。其他布局中，该参数无效果。
@@ -857,7 +857,8 @@ class FguiList(FguiDisplayable):
         self.scroll = self.display_item_tree.get("scroll", "vertical")
         scrollbar_res = self.display_item_tree.get("scrollBarRes")
         self.scrollbar_res = self.get_scrollbar_res(scrollbar_res, package_desc.id)
-        self.scroll_bar_flags = int(self.display_item_tree.get("scrollBarFlags", "256"))
+        self.scroll_bar_flags = int(self.display_item_tree.get("scrollBarFlags", "0"))
+        self.scrollbar_flags_dict = self.get_scrollbar_flags_dict()
         margin = self.display_item_tree.get("margin")
         self.margin = tuple(map(int, margin.split(","))) if margin else (0,0,0,0)
         self.clip_softness = self.display_item_tree.get("clipSoftness", "0,0")
@@ -900,6 +901,37 @@ class FguiList(FguiDisplayable):
         else:
             return None
 
+    def get_scrollbar_flags_dict(self):
+        if self.scroll_bar_flags:
+            scrollbar_flags_list = []
+            for i in range(12):
+                scrollbar_flags_list.append((self.scroll_bar_flags & (1 << i)) >> i)
+            """
+            0-bit：垂直滚动条显示在左边，1-是，0-否。
+            1-bit：滚动位置自动贴近元件，1-是，0-否。
+            2-bit：仅在内容溢出时才显示滚动条，1-是，0-否。
+            3-bit：页面模式，1-是，0-否。
+            4-bit 5-bit：触摸滚动效果，00-默认、01-启用、10-关闭。
+            6-bit 7-bit：边缘回弹效果，00-默认、01-启用、10-关闭。
+            8-bit：禁用惯性，1-是，0-否。
+            9-bit：禁用剪裁，1-是，0-否。
+            10-bit：浮动显示，1-是，0-否。
+            11-bit：禁用剪裁边缘，1-是，0-否。
+            """
+            scrollbar_flags_dict = {
+            "display_on_left": scrollbar_flags_list[0],
+            "snapping_to_item": scrollbar_flags_list[1],
+            "hide_when_not_overflow": scrollbar_flags_list[2],
+            "page_mode": scrollbar_flags_list[3],
+            "touch_scroll": (scrollbar_flags_list[4] << 1) | (scrollbar_flags_list[5]),
+            "bounds_back": (scrollbar_flags_list[6] << 1) | (scrollbar_flags_list[7]),
+            "inertia_disabled": scrollbar_flags_list[8],
+            "mask_disabled": scrollbar_flags_list[9],
+            "floating_display": scrollbar_flags_list[10],
+            "dont_clip_margin": scrollbar_flags_list[11],
+        }
+            return scrollbar_flags_dict
+        return None
 
 class FguiLoader(FguiDisplayable):
     """
