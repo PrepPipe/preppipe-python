@@ -375,12 +375,13 @@ class FguiButton(FguiComponent):
 class FguiScrollBar(FguiComponent):
     """
     FairyGUI中的滚动条scrollbar。
-    相比其他component，多一个ScrollBar标签，大部分情况为空。
+    相比其他component，多一个ScrollBar标签，只可能有一个属性fixedGripSize，表示滑块是否固定尺寸。
     通常滚动条都会有以个对应的其他组件，为同名带后缀“_grip”的按钮。
     """
     def __init__(self, component_etree, id, name, package_desc=None):
         super().__init__(component_etree, id, name, package_desc=package_desc)
         scrollbar = component_etree.find("ScrollBar")
+        self.fixed_grip_size = scrollbar.get("fixedGripSize")
 
 class FguiLabel(FguiComponent):
     """

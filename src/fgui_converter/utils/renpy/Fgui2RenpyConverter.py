@@ -550,7 +550,7 @@ class FguiToRenpyConverter:
 
         self.style_code.extend(slider_style_code)
 
-    def generate_scroll_bar_style(self, fgui_scrollbar : FguiScrollBar) -> None:
+    def generate_scrollbar_style(self, fgui_scrollbar : FguiScrollBar) -> None:
         """
         生成滚动条样式。
         目标样例：
@@ -620,14 +620,19 @@ class FguiToRenpyConverter:
         else:
             print("Scrollbar grip is not button.")
             return
-            
+
+        # 滑块尺寸是否固定
+        thumb_size = (None, None)
+        if fgui_scrollbar.fixed_grip_size:
+            thumb_size = grip_com.size
+
         # 生成scrollbar样式
         scrollbar_style_code.append(f"style {fgui_scrollbar.name}:")
         scrollbar_style_code.append(f"{self.indent_unit}bar_vertical {is_vertical}")
         scrollbar_style_code.append(f"{self.indent_unit}bar_invert {is_vertical}")
         scrollbar_style_code.append(f"{self.indent_unit}xysize {fgui_scrollbar.size}")
         scrollbar_style_code.append(f"{self.indent_unit}base_bar Frame('{fgui_scrollbar.name}_[prefix_]bar')")
-        scrollbar_style_code.append(f"{self.indent_unit}thumb Frame('{thumb_image_name}')")
+        scrollbar_style_code.append(f"{self.indent_unit}thumb Frame('{thumb_image_name}', xysize={thumb_size})")
         scrollbar_style_code.append("")
 
         # 添加头部注释
@@ -2846,7 +2851,7 @@ class FguiToRenpyConverter:
             if component.extention == 'Button':
                 self.generate_button_screen(component)
             elif component.extention == 'ScrollBar':
-                self.generate_scroll_bar_style(component)
+                self.generate_scrollbar_style(component)
             elif component.extention == 'Label':
                 pass
             elif component.extention == 'Slider':
