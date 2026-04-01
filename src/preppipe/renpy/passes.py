@@ -11,6 +11,7 @@ from .ast import *
 from ..pipeline import *
 from ..irbase import *
 from ..exceptions import PPInternalError
+from ..util.message import MessageHandler
 from .export import export_renpy
 from .codegen import codegen_renpy
 from ..vnmodel import VNModel
@@ -57,6 +58,11 @@ def _renpy_launcher_language_from_env() -> str | None:
   return None
 
 
+_tr_renpy_sdk_gui_generation_failed = TR_renpy.tr("renpy_sdk_gui_generation_failed",
+  en="The embedded Ren'Py SDK did not generate the default GUI correctly: step {step} failed with exit code {returncode}",
+  zh_cn="内置的 Ren'Py SDK 未能正确生成默认 GUI: 步骤 {step} 失败，返回码 {returncode}",
+  zh_hk="內置的 Ren'Py SDK 未能正確生成默認 GUI: 步驟 {step} 失敗，返回碼 {returncode}",
+)
 def _ensure_renpy_project_generated(game_dir: str, language: str | None = None) -> None:
   """
   若 game_dir 下尚无完整 Ren'Py 工程（无 gui.rpy），则使用内嵌 SDK 生成空工程并生成 GUI 图片。
@@ -71,19 +77,25 @@ def _ensure_renpy_project_generated(game_dir: str, language: str | None = None) 
     # 如果没有找到内置 SDK （比如是在测试环境里）则不补完工程
     return
   project_root = os.path.dirname(game_dir)
+  abs_project_root = os.path.abspath(project_root)
   os.makedirs(game_dir, exist_ok=True)
   python_exe = _get_renpy_python_exe(sdk_dir)
   renpy_py = os.path.join(sdk_dir, 'renpy.py')
   cmd_generate = [
     python_exe, renpy_py, 'launcher', 'generate_gui',
-    os.path.abspath(project_root), '--start',
+    abs_project_root, '--start',
   ]
   if language is not None:
     cmd_generate.extend(('--language', language))
-  subprocess.run(cmd_generate, cwd=sdk_dir, check=True)
-  cmd_gui_images = [python_exe, renpy_py, os.path.abspath(project_root), 'gui_images']
-  subprocess.run(cmd_gui_images, cwd=sdk_dir, check=True)
-
+  r1 = subprocess.run(cmd_generate, cwd=sdk_dir, check=False)
+  if r1.returncode != 0:
+    MessageHandler.error(_tr_renpy_sdk_gui_generation_failed.format(step='generate_gui', returncode=r1.returncode))
+    return
+  cmd_gui_images = [python_exe, renpy_py, abs_project_root, 'gui_images']
+  r2 = subprocess.run(cmd_gui_images, cwd=sdk_dir, check=False)
+  if r2.returncode != 0:
+    MessageHandler.error(_tr_renpy_sdk_gui_generation_failed.format(step='gui_images', returncode=r2.returncode))
+    return
 
 def run_renpy_project(project_root: str, sdk_dir: str | None = None) -> None:
   """
