@@ -270,7 +270,7 @@ def emit_image_expr_from_callexpr(context : Context, call : CallExprOperand, bas
     return ImagePackElementLiteralExpr.get(context=context, pack=descriptor.get_pack_id(), element=descriptor.get_default_composite(), size=converted_size, mask_operands=args)
 
   def handle_imagepreset_background_expr(template : str, *, composite : str = '', screen : ImageAssetData | str | None = None, indicator : Color | None = None, resolution : FrontendParserBase.Resolution | None = None) -> ImagePackElementLiteralExpr:
-    descriptor = _helper_get_descriptor(template, ImagePackDescriptor.ImagePackType.BACKGROUND, "background-A0-T0")
+    descriptor = _helper_get_descriptor(template, ImagePackDescriptor.ImagePackType.BACKGROUND, "imagepack_background_A0T0")
     rawargs = {}
     if screen is not None:
       rawargs[ImagePackDescriptor.MaskType.BACKGROUND_SCREEN] = screen
@@ -282,7 +282,7 @@ def emit_image_expr_from_callexpr(context : Context, call : CallExprOperand, bas
     return _helper_finalize_imagepreset_expr(descriptor, composite, converted_args, resolution_v)
 
   def handle_imagepreset_character_expr(template : str, *, composite : str = '', cloth : Color | None = None, hair : Color | None = None, decorate : Color | None = None, resolution : FrontendParserBase.Resolution | None = None) -> ImagePackElementLiteralExpr:
-    descriptor = _helper_get_descriptor(template, ImagePackDescriptor.ImagePackType.CHARACTER, "character-A0-T0")
+    descriptor = _helper_get_descriptor(template, ImagePackDescriptor.ImagePackType.CHARACTER, "imagepack_character_A0DT1")
     rawargs = {}
     if cloth is not None:
       rawargs[ImagePackDescriptor.MaskType.CHARACTER_COLOR_CLOTH] = cloth
