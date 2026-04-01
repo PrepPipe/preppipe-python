@@ -451,6 +451,20 @@ class VNCodeGen:
     self._setup_export_dest_attrs(scene, export_to_file)
     ns = self.get_or_create_ns(from_namespace)
     ns.add_scene(scene)
+    placeholder = emit_default_placeholder(
+      self.context, ImageExprPlaceholderDest.DEST_SCENE_BACKGROUND, StringLiteral.get(scenename, self.context)
+    )
+    bg_name = ""
+    bg_entry = VNAssetValueSymbol.create(
+      context=self.context, value=placeholder, name=bg_name, loc=scene.location
+    )
+    self._setup_export_dest_attrs(bg_entry, export_to_file)
+    scene.backgrounds.add(bg_entry)
+    matcher = PartialStateMatcher()
+    matcher.add_valid_state((bg_name,))
+    matcher.finish_init()
+    self._scene_state_matcher[scene] = matcher
+    self._scene_background_map[scene] = {bg_name: bg_entry}
     return scene
 
   @dataclasses.dataclass
@@ -1758,16 +1772,14 @@ class VNCodeGen:
         msg = self._tr_sceneswitch_scene_notfound.format(scene=destscene)
         self.codegen.emit_error(code='vncodegen-scene-notfound', msg=msg, loc=node.location, dest=self.destblock)
         scene = self.create_unknown_scene(scenename=destscene, from_namespace=self.namespace_tuple)
-      else:
-        # 尝试匹配场景的状态
-        if scene in self.codegen._scene_state_matcher:
-          matcher = self.codegen._scene_state_matcher[scene]
-          is_full_match, matchresult = matcher.find_match_besteffort(list(matcher.get_default_state()), states)
-          if not is_full_match:
-            msg = self._tr_sceneswitch_scene_state_nomatch.format(scene=destscene, state=str(states))
-            self.codegen.emit_error(code='vncodegen-scene-state-nomatch', msg=msg, loc=node.location, dest=self.destblock)
-          scene_background = self.get_scene_background(scene, matchresult)
-          statetuple = matchresult
+      if scene in self.codegen._scene_state_matcher:
+        matcher = self.codegen._scene_state_matcher[scene]
+        is_full_match, matchresult = matcher.find_match_besteffort(list(matcher.get_default_state()), states)
+        if not is_full_match:
+          msg = self._tr_sceneswitch_scene_state_nomatch.format(scene=destscene, state=str(states))
+          self.codegen.emit_error(code='vncodegen-scene-state-nomatch', msg=msg, loc=node.location, dest=self.destblock)
+        scene_background = self.get_scene_background(scene, matchresult)
+        statetuple = matchresult
 
       switchnode = VNSceneSwitchInstructionGroup.create(context=self.context, start_time=self.starttime, dest_scene=scene, name=node.name, loc=node.location)
       rmtimes = []
