@@ -6,10 +6,10 @@ init python:
         uniform vec2 u_model_size;
         uniform vec4 u_radius;
         uniform float u_thickness;
-        attribute vec2 a_tex_coord;
+        attribute vec4 a_position;
         varying vec2 v_tex_coord;
     """, vertex_300="""
-        v_tex_coord = a_tex_coord;
+        v_tex_coord = a_position.xy / u_model_size;
     """,fragment_functions="""
     float roundedBoxSDF(vec2 pos, vec2 border, vec4 radius){
         vec4 r = radius;
@@ -37,10 +37,10 @@ init python:
         uniform vec4 u_radius;
         uniform float u_thickness;
         uniform float u_edge_softness;
-        attribute vec2 a_tex_coord;
+        attribute vec4 a_position;
         varying vec2 v_tex_coord;
     """, vertex_300="""
-        v_tex_coord = a_tex_coord;
+        v_tex_coord = a_position.xy / u_model_size;
     """,fragment_functions="""
     float roundedBoxSDF(vec2 pos, vec2 border, vec4 radius){
         vec4 r = radius;
@@ -66,10 +66,10 @@ init python:
         uniform vec4 u_stroke_color;
         uniform vec2 u_model_size;
         uniform float u_thickness;
-        attribute vec2 a_tex_coord;
+        attribute vec4 a_position;
         varying vec2 v_tex_coord;
     """, vertex_300="""
-        v_tex_coord = a_tex_coord;
+        v_tex_coord = a_position.xy / u_model_size;
     """,fragment_300="""
         vec2 uv = v_tex_coord - vec2(0.5, 0.5);
         float out_distance = length(uv);
@@ -88,10 +88,10 @@ init python:
         uniform vec2 u_model_size;
         uniform float u_thickness;
         uniform float u_edge_softness;
-        attribute vec2 a_tex_coord;
+        attribute vec4 a_position;
         varying vec2 v_tex_coord;
     """, vertex_300="""
-        v_tex_coord = a_tex_coord;
+        v_tex_coord = a_position.xy / u_model_size;
     """,fragment_300="""
         vec2 uv = v_tex_coord - vec2(0.5, 0.5);
         float out_distance = length(uv);
