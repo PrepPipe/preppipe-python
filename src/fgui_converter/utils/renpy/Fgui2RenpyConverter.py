@@ -413,10 +413,10 @@ class FguiToRenpyConverter:
             "horizontal_thumb_active"
 
         image horizontal_idle_bar_image:
-            "horizontal_bar_base"
+            Frame("horizontal_bar_base")
 
         image horizontal_hover_bar_image:
-            "horizontal_bar_active"
+            Frame("horizontal_bar_active")
 
         style horizontal_slider:
             bar_vertical False
@@ -517,9 +517,9 @@ class FguiToRenpyConverter:
 
         # 生成bar和thumb的image
         bar_image_definition_code.append(f"image {fgui_slider.name}_base_bar_image:")
-        bar_image_definition_code.append(f"{self.indent_unit}'{second_bar_name}'")
+        bar_image_definition_code.append(f"{self.indent_unit}Frame('{second_bar_name}')")
         bar_image_definition_code.append(f"image {fgui_slider.name}_active_bar_image:")
-        bar_image_definition_code.append(f"{self.indent_unit}'{first_bar_name}'")
+        bar_image_definition_code.append(f"{self.indent_unit}Frame('{first_bar_name}')")
         bar_image_definition_code.append(f"image {fgui_slider.name}_idle_thumb_image:")
         bar_image_definition_code.append(f"{self.indent_unit}'{thumb_idle_name}'")
         bar_image_definition_code.append(f"image {fgui_slider.name}_hover_thumb_image:")
@@ -531,14 +531,15 @@ class FguiToRenpyConverter:
         style_definition_code.append(f"style {fgui_slider.name}:")
         style_definition_code.append(f"{self.indent_unit}bar_vertical {is_vertical}")
         style_definition_code.append(f"{self.indent_unit}xysize {fgui_slider.size}")
+        style_definition_code.append(f"{self.indent_unit}bar_resizing True")
         style_definition_code.append(f"{self.indent_unit}thumb_offset {thumb_offset}")
         if is_vertical:
-            style_definition_code.append(f"{self.indent_unit}top_bar '{second_bar_name}'")
-            style_definition_code.append(f"{self.indent_unit}bottom_bar '{first_bar_name}'")
+            style_definition_code.append(f"{self.indent_unit}top_bar '{fgui_slider.name}_base_bar_image'")
+            style_definition_code.append(f"{self.indent_unit}bottom_bar '{fgui_slider.name}_active_bar_image'")
             thumb_ypos = 0
         else:
-            style_definition_code.append(f"{self.indent_unit}left_bar '{first_bar_name}'")
-            style_definition_code.append(f"{self.indent_unit}right_bar '{second_bar_name}'")
+            style_definition_code.append(f"{self.indent_unit}left_bar '{fgui_slider.name}_active_bar_image'")
+            style_definition_code.append(f"{self.indent_unit}right_bar '{fgui_slider.name}_base_bar_image'")
             thumb_xpos = 0
         style_definition_code.append(f"{self.indent_unit}thumb Fixed(Frame('{fgui_slider.name}_[prefix_]thumb_image',xysize={grip_com.size},pos=({thumb_xpos},{thumb_ypos})))")
         style_definition_code.append("")
