@@ -127,6 +127,11 @@ class CallExprOperand:
   args : list[Value | CallExprOperand] = dataclasses.field(default_factory=list) # XXXLiteral, CallExprOperand
   kwargs : typing.OrderedDict[str, Value | CallExprOperand] = dataclasses.field(default_factory=collections.OrderedDict)
 
+# 任意输入均匹配。使用该参数的命令不能有其他参数，应该使用 GeneralCommandOp.try_get_raw_arg 获取参数。（主要用于注释）
+@dataclasses.dataclass
+class UnconstrainedValue:
+  pass
+
 # 所有延伸的数据的基类
 # 这些数据是在命令之外的、根据语法整合进该命令的数据
 # 比如列表项、特殊块
@@ -767,6 +772,7 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
       is_parser_param_found = False
       is_state_param_found = False
       is_context_param_found = False
+      is_unconstrained_param_found = False
       is_op_param_found = False
       is_extenddata_param_found = False
       is_first_param_for_positional_args = True
@@ -815,6 +821,14 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
             raise RuntimeError('More than one GeneralCommandOp parameter found')
           is_op_param_found = True
           cur_match.add_parameter(param, commandop)
+          if name in kwargs:
+            cur_match.add_warning('cmdparser-special-param-name-conflict', self._tr_special_param_name_conflict.format(name=name))
+          continue
+        if param.annotation == UnconstrainedValue:
+          if is_unconstrained_param_found:
+            raise RuntimeError('More than one unconstrained parameter found')
+          is_unconstrained_param_found = True
+          cur_match.add_parameter(param, UnconstrainedValue())
           if name in kwargs:
             cur_match.add_warning('cmdparser-special-param-name-conflict', self._tr_special_param_name_conflict.format(name=name))
           continue
@@ -878,19 +892,20 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
       if first_fatal_error is not None:
         unmatched_results.append((cb, first_fatal_error))
         continue
-      # 检查是否有参数没用上，有的话同样报错
-      if not is_positional_arg_used:
-        unmatched_results.append((cb, ('cmdparser-unused-param', self._tr_unused_param.format(name=self._tr_positional_arg.get()))))
-        continue
+      # 检查是否有参数没用上，有的话同样报错（除非有 UnconstrainedValue）
+      if not is_unconstrained_param_found:
+        if not is_positional_arg_used:
+          unmatched_results.append((cb, ('cmdparser-unused-param', self._tr_unused_param.format(name=self._tr_positional_arg.get()))))
+          continue
+        for name, value in kwargs.items():
+          if name not in used_args:
+            first_fatal_error = ('cmdparser-unused-param', self._tr_unused_param.format(name=name))
+            break
       if not is_extend_data_used:
         # 即使命令直接使用 GeneralCommandOp 来读取延伸参数，只要它没有显式声明对延伸参数的引用，我们都不认为这是成功的匹配
         # （加一个不被使用的参数没有影响，但是其他命令可能只用 GeneralCommandOp 而不使用延伸参数，我们想找到这样的情况）
         unmatched_results.append((cb, ('cmdparser-unused-param', self._tr_unused_param.format(name=self._tr_extend_data.get()))))
         continue
-      for name, value in kwargs.items():
-        if name not in used_args:
-          first_fatal_error = ('cmdparser-unused-param', self._tr_unused_param.format(name=name))
-          break
       if first_fatal_error is not None:
         unmatched_results.append((cb, first_fatal_error))
         continue
@@ -1204,6 +1219,9 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
     # 剩余的情况下， ty 都应该是 type
     # 如果这里报错的话请检查类型标注是否有问题
     assert isinstance(ty, type)
+
+    if ty is UnconstrainedValue:
+      return UnconstrainedValue()
 
     # 参数类型是 list 的情况处理完了，到这应该不会要有复合的输入
     # 如果现在值是 list ，那么我们预计只有一项内容，我们将它展开
