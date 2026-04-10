@@ -233,6 +233,8 @@ class FrontendCommandDumper:
           options.append('"' + '","'.join(enumtr.get_current_candidates()) + '"')
           enumtr_list.append(enumtr)
         return '|'.join(options)
+      if issubclass(a, UnconstrainedValue):
+        return self._tr_any.get()
     raise NotImplementedError(str(a))
 
   def get_default_value_str(self, v) -> str:
