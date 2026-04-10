@@ -2309,7 +2309,7 @@ class ConstExpr(Value, User):
   def _get_impl(cexpr_cls, ty : ValueType, values : typing.Iterable[Value]):
     key_tuple = (cexpr_cls, *values)
     return ty.context.get_constexpr_uniquing_dict(cexpr_cls).get_or_create(key_tuple,
-      lambda: cexpr_cls(init_mode = IRObjectInitMode.CONSTRUCT, context = ty.context, values = values))
+      lambda: cexpr_cls(init_mode = IRObjectInitMode.CONSTRUCT, context = ty.context, ty = ty, values = values))
 
 class LiteralUniquingDict:
   _ty : type
