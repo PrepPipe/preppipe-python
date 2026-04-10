@@ -3,8 +3,11 @@
 
 from __future__ import annotations
 
+import collections
 import copy
+import decimal
 import re
+import typing
 
 import pathvalidate
 
@@ -22,6 +25,7 @@ from .vnstatematching import PartialStateMatcher
 from ...language import TranslationDomain
 
 from ...util.antlr4util import TextStringParsingUtil
+from ...exceptions import PPInvalidOperationError
 
 # ------------------------------------------------------------------------------
 # 内容声明命令
@@ -42,6 +46,13 @@ _tr_category_scene = TR_vnparse.tr("category_scene",
   en="Scene",
   zh_cn="场景",
   zh_hk="場景",
+)
+_tr_end_effect_scene_symbol = TR_vnparse.tr("end_effect_scene_symbol", en="Scene", zh_cn="场景", zh_hk="場景")
+_tr_cmd_instant_effect_duration_on_flash = TR_vnparse.tr(
+  "instant_effect_cmd_duration_on_flash",
+  en="Command parameter \"duration\" does not apply to Flash; use fade_in, hold, and fade_out inside the flash call.",
+  zh_cn="闪烁(Flash) 的时间形态由内层「切入时长」「停留时长」「恢复时长」决定，请勿在「场景特效/角色特效」命令上使用「时长」参数。",
+  zh_hk="閃爍(Flash) 的時間形態由內層「切入時長」「停留時長」「恢復時長」決定，請勿在「場景特效/角色特效」命令上使用「時長」參數。",
 )
 _tr_category_image = TR_vnparse.tr("category_image",
   en="Image",
@@ -149,6 +160,7 @@ class VNParser(FrontendParserBase[VNASTParsingState]):
   def __init__(self, ctx: Context, command_ns: FrontendCommandNamespace, screen_resolution : tuple[int, int], name : str = '') -> None:
     super().__init__(ctx, command_ns)
     self.ast = VNAST.create(name=name, screen_resolution=IntTuple2DLiteral.get(screen_resolution, ctx), context=ctx)
+    ensure_builtin_effect_presets(self.ast)
     self.resolution = screen_resolution
 
   @classmethod
@@ -246,6 +258,22 @@ class VNParser(FrontendParserBase[VNASTParsingState]):
         result.add_kwarg(name, v)
       else:
         state.emit_error('vnparser-unexpected-argument-in-transition', self._tr_unexpected_argument_in_transition.format(arg=str(v)) + " (" + k + " @ " + transition.name + ")", loc=backingop.location)
+    # 与 codegen 使用同一套 parse_transition，在**剧本解析阶段**报错，避免导出后 Ren'Py 才炸
+    tname = (transition.name or "").strip()
+    if tname:
+      w_tr : list[tuple[str, str]] = []
+      args_lit : list[Literal] = [a for a in transition.args if isinstance(a, Literal)]
+      # 与 VNASTTransitionNode.add_kwarg(StringLiteral.get(k,…)) / populate_argdicts 的键一致，避免校验与 codegen 关键字集合不一致
+      kwo : collections.OrderedDict[str, Literal] = collections.OrderedDict()
+      for kk, vv in transition.kwargs.items():
+        if isinstance(vv, Literal):
+          kwo[StringLiteral.get(kk, state.context).get_string()] = vv
+      try:
+        parse_transition(state.context, tname, args_lit, kwo, w_tr, ast=self.ast)
+      except PPInvalidOperationError as e:
+        state.emit_error("vnparse-transition-invalid", str(e), loc=backingop.location)
+      for code, msg in w_tr:
+        state.emit_error(code, msg, loc=backingop.location)
     state.emit_node(result)
     return result
 
@@ -510,7 +538,7 @@ _imports = globals()
 
 @CmdCategory(_tr_category_image)
 @CommandDecl(vn_command_ns, _imports, 'DeclImage')
-def cmd_image_decl_path(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str, path : str):
+def cmd_image_decl_path(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str, *, path : str):
   warnings : list[tuple[str,str]] = []
   img = emit_image_expr_from_path(context=state.context, pathexpr=path, basepath=state.input_file_path, warnings=warnings)
   for code, msg in warnings:
@@ -527,7 +555,7 @@ def cmd_image_decl_path(parser : VNParser, state : VNASTParsingState, commandop 
   return
 
 @CommandDecl(vn_command_ns, _imports, 'DeclImage')
-def cmd_image_decl_src(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str, source : CallExprOperand):
+def cmd_image_decl_src(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str, *, source : CallExprOperand):
   wlist : list[tuple[str, str]] = []
   img = emit_image_expr_from_callexpr(context=state.context, call=source, basepath=state.input_file_path, placeholderdest=ImageExprPlaceholderDest.DEST_UNKNOWN, placeholderdesc=name, warnings=wlist)
   if img is None:
@@ -578,7 +606,7 @@ vn_command_ns.set_command_alias("DeclImage", TR_vnparse, {
 })
 @CommandDecl(vn_command_ns, _imports, 'DeclVariable')
 # pylint: disable=redefined-builtin
-def cmd_variable_decl(parser: VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str, type : str, initializer : str):
+def cmd_variable_decl(parser: VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str, *, type : str, initializer : str):
   if existing := state.output_current_file.variables.get(name):
     state.emit_error('vnparse-nameclash-variabledecl', 'Variable "' + name + '" already exist: type=' + existing.vtype.get().get_string() + ' initializer=' + existing.initializer.get().get_string(), commandop.location)
     return
@@ -830,7 +858,7 @@ class _SceneSpecialKindEnum(enum.Enum):
   (_tr_scenedecl_background, [tr_vnutil_vtype_imageexprtree])
 ])
 @CommandDecl(vn_command_ns, _imports, 'DeclScene')
-def cmd_scene_decl(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str, kind: _SceneSpecialKindEnum = _SceneSpecialKindEnum.NORMAL, ext : ListExprOperand | None = None):
+def cmd_scene_decl(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, name : str, *, kind: _SceneSpecialKindEnum = _SceneSpecialKindEnum.NORMAL, ext : ListExprOperand | None = None):
   if existing := state.output_current_file.scenes.get(name):
     state.emit_error('vnparse-nameclash-scenedecl', 'Scene "' + name + '" already exist', loc=commandop.location)
     return
@@ -977,7 +1005,7 @@ def _helper_parse_image_exprtree(parser : VNParser, state : VNASTParsingState, v
   },
 })
 @CommandDecl(vn_command_ns, _imports, 'DeclAlias')
-def cmd_alias_decl(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, alias_name : str, target : str):
+def cmd_alias_decl(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, alias_name : str, *, target : str):
   # (仅在解析时用到，不会在IR中)
   # 给目标添加别名（比如在剧本中用‘我’指代某个人）
   # 别名都是文件内有效，出文件就失效。（实在需要可以复制黏贴）
@@ -990,7 +1018,7 @@ def cmd_alias_decl(parser : VNParser, state : VNASTParsingState, commandop : Gen
 
 @CmdCategory(_tr_category_special)
 @CommandDecl(vn_command_ns, _imports, 'ASM')
-def cmd_asm_1(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, content : str, backend : str):
+def cmd_asm_1(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, content : str, *, backend : str):
   # 单行内嵌后端命令
   if isinstance(backend, str):
     backend_l = StringLiteral.get(backend, state.context)
@@ -1000,7 +1028,7 @@ def cmd_asm_1(parser : VNParser, state : VNASTParsingState, commandop : GeneralC
   parser.emit_asm_node(state, commandop, code=[StringLiteral.get(content, state.context)], backend=backend_l)
 
 @CommandDecl(vn_command_ns, _imports, 'ASM')
-def cmd_asm_2(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, ext : SpecialBlockOperand, backend : str):
+def cmd_asm_2(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, ext : SpecialBlockOperand, *, backend : str):
   # 使用特殊块的后端命令
   code = []
   block : IMSpecialBlockOp = ext.original_op
@@ -1043,7 +1071,7 @@ vn_command_ns.set_command_alias("ASM", TR_vnparse, {
   },
 })
 @CommandDecl(vn_command_ns, _imports, 'CharacterEnter')
-def cmd_character_entry(parser : VNParser, state: VNASTParsingState, commandop : GeneralCommandOp, characters : list[CallExprOperand], transition : CallExprOperand = None):
+def cmd_character_entry(parser : VNParser, state: VNASTParsingState, commandop : GeneralCommandOp, characters : list[CallExprOperand], *, transition : CallExprOperand = None):
   transition = parser.emit_transition_node(state, commandop, transition)
   for chexpr in characters:
     charname = chexpr.name
@@ -1076,7 +1104,7 @@ def cmd_character_entry(parser : VNParser, state: VNASTParsingState, commandop :
   },
 })
 @CommandDecl(vn_command_ns, _imports, 'CharacterExit')
-def cmd_character_exit(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, characters : list[CallExprOperand], transition : CallExprOperand = None):
+def cmd_character_exit(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, characters : list[CallExprOperand], *, transition : CallExprOperand = None):
   # 如果退场时角色带有状态，我们先把角色的状态切换成目标状态，然后再创建一个 Transition 结点存放真正的退场
   characters_list : list[StringLiteral] = []
   for ch in characters:
@@ -1088,24 +1116,434 @@ def cmd_character_exit(parser : VNParser, state : VNASTParsingState, commandop :
     node = VNASTCharacterExitNode.create(state.context, chname, name='', loc=commandop.location)
     transition.push_back(node)
 
-@CmdHideInDoc
+def _instant_effect_decimal(v: typing.Any) -> decimal.Decimal:
+  """将解析阶段标量转为 ``decimal.Decimal``，供 ``VNASTInstantEffectNode.create``。"""
+  if isinstance(v, decimal.Decimal):
+    return v
+  return decimal.Decimal(str(v))
+
+
+def _helper_make_filter_instant_effect_node(
+  ctx : Context,
+  loc : Location | None,
+  commandop : GeneralCommandOp,
+  *,
+  scene_wide : bool,
+  r : tuple,
+  duration : typing.Any,
+  character_name : str = "",
+  character_states_csv : str = "",
+) -> VNASTInstantEffectNode:
+  fk = r[0]
+  d = parse_instant_effect_command_duration(fk, duration)
+  if fk == "tint":
+    fc, amp = r[1], r[2]
+  else:
+    fc, amp = "#ffffff", r[1]
+  return VNASTInstantEffectNode.create(
+    ctx,
+    scene_wide=scene_wide,
+    character_name=character_name,
+    character_states_csv=character_states_csv,
+    effect_kind=fk,
+    duration=_instant_effect_decimal(d),
+    amplitude=_instant_effect_decimal(amp),
+    decay=decimal.Decimal(0),
+    direction="",
+    flash_color=fc,
+    flash_in=decimal.Decimal("0.06"),
+    flash_hold=decimal.Decimal("0.1"),
+    flash_out=decimal.Decimal("0.18"),
+    name=commandop.name,
+    loc=loc,
+  )
+
+@CmdCategory(_tr_category_scene)
 @CmdAliasDecl(TR_vnparse, {
-  "zh_cn": "特效",
-  "zh_hk": "特效",
-},{
+  "zh_cn": "场景特效",
+  "zh_hk": "場景特效",
+  "en": ["SceneEffect", "SceneFx"],
+}, {
   "effect": {
     "zh_cn": "特效",
     "zh_hk": "特效",
   },
+  "duration": {
+    "zh_cn": "时长",
+    "zh_hk": "時長",
+    "en": "duration",
+  },
 })
-@CommandDecl(vn_command_ns, _imports, 'SpecialEffect')
-def cmd_special_effect(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, effect : CallExprOperand):
-  ref = parser.emit_pending_assetref(state, commandop, effect)
-  result = VNASTAssetReference.create(context=state.context, kind=VNASTAssetKind.KIND_EFFECT, operation=VNASTAssetIntendedOperation.OP_PUT, asset=ref, transition=None, name=commandop.name, loc=commandop.location)
-  state.emit_node(result)
+@CommandDecl(vn_command_ns, _imports, 'SceneInstantEffect')
+def cmd_scene_instant_effect(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, effect : CallExprOperand, *, duration : typing.Any = None):
+  # effect 必选；时长可选，默认可写在特效类型后的下一个按位参数，也可用关键字「时长」/ duration
+  w : list[tuple[str, str]] = []
+  try:
+    r = parse_instant_effect(state.context, effect, parser.ast, w)
+  except PPInvalidOperationError as e:
+    state.emit_error("vnparse-instant-effect-invalid", str(e), loc=commandop.location)
+    return
+  for code, msg in w:
+    state.emit_error(code, msg, loc=commandop.location)
+  if r[0] in ("bounce", "tremble"):
+    state.emit_error(
+      "vnparse-scene-effect-no-char-only-fx",
+      "场景特效不支持 跳动(Bounce)、发抖(Tremble)；请使用 震动、闪烁、滤镜类，或将上述效果写在「角色特效」中。",
+      loc=commandop.location,
+    )
+    return
+  loc = commandop.location
+  ctx = state.context
+  if r[0] == "shake":
+    node = VNASTInstantEffectNode.create(
+      ctx,
+      scene_wide=True,
+      effect_kind="shake",
+      duration=_instant_effect_decimal(parse_instant_effect_command_duration("shake", duration)),
+      amplitude=_instant_effect_decimal(r[1]),
+      decay=_instant_effect_decimal(r[2]),
+      direction=r[3],
+      flash_color="#ffffff",
+      flash_in=decimal.Decimal("0.06"),
+      flash_hold=decimal.Decimal("0.1"),
+      flash_out=decimal.Decimal("0.18"),
+      name=commandop.name,
+      loc=loc,
+    )
+  elif r[0] in ("grayscale", "opacity", "tint", "blur"):
+    node = _helper_make_filter_instant_effect_node(ctx, loc, commandop, scene_wide=True, r=r, duration=duration)
+  elif r[0] == "snow":
+    node = VNASTWeatherEffectNode.create(
+      ctx,
+      weather_kind="snow",
+      intensity=float(r[1]),
+      inner_fade_in=float(r[2]),
+      inner_fade_out=float(r[3]),
+      overlay_fade_in=parse_weather_effect_overlay_fade_in("snow", duration),
+      sustain=-1.0,
+      vx=0.0,
+      vy=0.0,
+      name=commandop.name,
+      loc=loc,
+    )
+  elif r[0] == "rain":
+    node = VNASTWeatherEffectNode.create(
+      ctx,
+      weather_kind="rain",
+      intensity=float(r[1]),
+      inner_fade_in=float(r[2]),
+      inner_fade_out=float(r[3]),
+      overlay_fade_in=parse_weather_effect_overlay_fade_in("rain", duration),
+      sustain=-1.0,
+      vx=float(r[4]),
+      vy=float(r[5]),
+      name=commandop.name,
+      loc=loc,
+    )
+  else:
+    if duration is not None:
+      state.emit_error("vnparse-instant-effect-flash-duration", _tr_cmd_instant_effect_duration_on_flash.get(), loc=commandop.location)
+      return
+    node = VNASTInstantEffectNode.create(
+      ctx,
+      scene_wide=True,
+      effect_kind="flash",
+      duration=decimal.Decimal(0),
+      amplitude=decimal.Decimal(0),
+      decay=decimal.Decimal(0),
+      direction="",
+      flash_color=r[1],
+      flash_in=_instant_effect_decimal(r[2]),
+      flash_hold=_instant_effect_decimal(r[3]),
+      flash_out=_instant_effect_decimal(r[4]),
+      name=commandop.name,
+      loc=loc,
+    )
+  state.emit_node(node)
 
-def _helper_collect_character_expr(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, expr : CallExprOperand) -> list[StringLiteral]:
-  # 将描述角色状态的 CallExprOperand 转化为字符串数组
+@CmdCategory(_tr_category_scene)
+@CmdAliasDecl(TR_vnparse, {
+  "zh_cn": "结束特效",
+  "zh_hk": "結束特效",
+  "en": ["EndEffect", "EndFx"],
+}, {
+  "target": {
+    "zh_cn": "目标",
+    "zh_hk": "目標",
+  },
+})
+@CommandDecl(vn_command_ns, _imports, 'EndEffect')
+def cmd_end_effect(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, target : CallExprOperand):
+  loc = commandop.location
+  ctx = state.context
+  if _helper_subject_display_name(target) in _tr_end_effect_scene_symbol.get_all_candidates():
+    node = VNASTEndEffectNode.create(ctx, scene_wide=True, name=commandop.name, loc=loc)
+    state.emit_node(node)
+    return
+  states = _helper_collect_character_expr(parser, state, commandop, target)
+  csv = ",".join(s.get_string() for s in states)
+  node = VNASTEndEffectNode.create(
+    ctx,
+    scene_wide=False,
+    character_name=_helper_subject_display_name(target),
+    character_states_csv=csv,
+    name=commandop.name,
+    loc=loc,
+  )
+  state.emit_node(node)
+
+@CmdCategory(_tr_category_character)
+@CmdAliasDecl(TR_vnparse, {
+  "zh_cn": "角色特效",
+  "zh_hk": "角色特效",
+  "en": ["CharacterEffect", "CharacterFx"],
+}, {
+  "targets": {
+    "zh_cn": "角色与特效（按位两项：角色表达式、特效调用）",
+    "zh_hk": "角色與特效（按位兩項：角色表達式、特效調用）",
+  },
+  "duration": {
+    "zh_cn": "时长",
+    "zh_hk": "時長",
+    "en": "duration",
+  },
+})
+@CommandDecl(vn_command_ns, _imports, 'CharacterInstantEffect')
+def cmd_character_instant_effect(
+  parser : VNParser,
+  state : VNASTParsingState,
+  commandop : GeneralCommandOp,
+  targets : list[typing.Any],
+  *,
+  duration : typing.Any = None,
+):
+  # character、effect 必选（同一按位 list 中前两项）；时长可选，可用关键字「时长」/ duration，或第三项按位
+  if len(targets) < 2:
+    state.emit_error(
+      "vnparse-character-instant-effect-args",
+      "「角色特效」至少需要两个按位参数：角色表达式与特效调用（例如：角色特效(苏语涵, 闪烁())）。",
+      loc=commandop.location,
+    )
+    return
+  character, effect = targets[0], targets[1]
+  if len(targets) >= 3 and duration is None:
+    duration = targets[2]
+  w : list[tuple[str, str]] = []
+  try:
+    r = parse_instant_effect(state.context, effect, parser.ast, w)
+  except PPInvalidOperationError as e:
+    state.emit_error("vnparse-instant-effect-invalid", str(e), loc=commandop.location)
+    return
+  for code, msg in w:
+    state.emit_error(code, msg, loc=commandop.location)
+  if r[0] in ("snow", "rain"):
+    state.emit_error(
+      "vnparse-char-weather-effect",
+      "雨、雪为全屏场景天气，请使用「场景特效」，不能使用「角色特效」。",
+      loc=commandop.location,
+    )
+    return
+  states = _helper_collect_character_expr(parser, state, commandop, character)
+  csv = ",".join(s.get_string() for s in states)
+  loc = commandop.location
+  ctx = state.context
+  cn = _helper_subject_display_name(character)
+  if r[0] == "shake":
+    node = VNASTInstantEffectNode.create(
+      ctx,
+      scene_wide=False,
+      character_name=cn,
+      character_states_csv=csv,
+      effect_kind="shake",
+      duration=_instant_effect_decimal(parse_instant_effect_command_duration("shake", duration)),
+      amplitude=_instant_effect_decimal(r[1]),
+      decay=_instant_effect_decimal(r[2]),
+      direction=r[3],
+      flash_color="#ffffff",
+      flash_in=decimal.Decimal("0.06"),
+      flash_hold=decimal.Decimal("0.1"),
+      flash_out=decimal.Decimal("0.18"),
+      name=commandop.name,
+      loc=loc,
+    )
+  elif r[0] == "bounce":
+    node = VNASTInstantEffectNode.create(
+      ctx,
+      scene_wide=False,
+      character_name=cn,
+      character_states_csv=csv,
+      effect_kind="bounce",
+      duration=_instant_effect_decimal(parse_instant_effect_command_duration("bounce", duration)),
+      amplitude=_instant_effect_decimal(r[1]),
+      decay=_instant_effect_decimal(r[2]),
+      direction=r[3],
+      flash_color="#ffffff",
+      flash_in=decimal.Decimal("0.06"),
+      flash_hold=decimal.Decimal("0.1"),
+      flash_out=decimal.Decimal("0.18"),
+      name=commandop.name,
+      loc=loc,
+    )
+  elif r[0] == "tremble":
+    node = VNASTInstantEffectNode.create(
+      ctx,
+      scene_wide=False,
+      character_name=cn,
+      character_states_csv=csv,
+      effect_kind="tremble",
+      duration=_instant_effect_decimal(parse_instant_effect_command_duration("tremble", duration)),
+      amplitude=_instant_effect_decimal(r[1]),
+      decay=_instant_effect_decimal(r[2]),
+      direction="",
+      flash_color="#ffffff",
+      flash_in=decimal.Decimal("0.06"),
+      flash_hold=decimal.Decimal("0.1"),
+      flash_out=decimal.Decimal("0.18"),
+      name=commandop.name,
+      loc=loc,
+    )
+  elif r[0] in ("grayscale", "opacity", "tint", "blur"):
+    node = _helper_make_filter_instant_effect_node(
+      ctx,
+      loc,
+      commandop,
+      scene_wide=False,
+      r=r,
+      duration=duration,
+      character_name=cn,
+      character_states_csv=csv,
+    )
+  else:
+    if duration is not None:
+      state.emit_error("vnparse-instant-effect-flash-duration", _tr_cmd_instant_effect_duration_on_flash.get(), loc=commandop.location)
+      return
+    node = VNASTInstantEffectNode.create(
+      ctx,
+      scene_wide=False,
+      character_name=cn,
+      character_states_csv=csv,
+      effect_kind="flash",
+      duration=decimal.Decimal(0),
+      amplitude=decimal.Decimal(0),
+      decay=decimal.Decimal(0),
+      direction="",
+      flash_color=r[1],
+      flash_in=_instant_effect_decimal(r[2]),
+      flash_hold=_instant_effect_decimal(r[3]),
+      flash_out=_instant_effect_decimal(r[4]),
+      name=commandop.name,
+      loc=loc,
+    )
+  state.emit_node(node)
+
+@CmdCategory(_tr_category_character)
+@CmdAliasDecl(TR_vnparse, {
+  "zh_cn": "角色移动",
+  "zh_hk": "角色移動",
+  "en": ["CharacterMove", "SpriteMove"],
+}, {
+  "targets": {
+    "zh_cn": "角色与补间（按位两项：角色表达式、补间调用）",
+    "zh_hk": "角色與補間（按位兩項：角色表達式、補間調用）",
+  },
+})
+@CommandDecl(vn_command_ns, _imports, 'CharacterMove')
+def cmd_character_move(
+  parser : VNParser,
+  state : VNASTParsingState,
+  commandop : GeneralCommandOp,
+  targets : list[CallExprOperand],
+):
+  # 角色与补间调用各一项，合并为唯一按位 list
+  if len(targets) < 2:
+    state.emit_error(
+      "vnparse-character-move-args",
+      "「角色移动」至少需要两个按位参数：角色表达式与补间调用（例如：角色移动(苏语涵, 移动(...))）。",
+      loc=commandop.location,
+    )
+    return
+  character, move = targets[0], targets[1]
+  w : list[tuple[str, str]] = []
+  try:
+    mk, dur, n1, n2, n3, n4, sty = parse_character_sprite_move(state.context, move, parser.ast, w)
+  except PPInvalidOperationError as e:
+    state.emit_error("vnparse-character-move-invalid", str(e), loc=commandop.location)
+    return
+  for code, msg in w:
+    state.emit_error(code, msg, loc=commandop.location)
+  states = _helper_collect_character_expr(parser, state, commandop, character)
+  csv = ",".join(s.get_string() for s in states)
+  loc = commandop.location
+  ctx = state.context
+  cn = _helper_subject_display_name(character)
+  dur_dec = _instant_effect_decimal(dur)
+  if mk == "move":
+    node = VNASTCharacterMoveTweenNode.create(
+      ctx,
+      character_name=cn,
+      character_states_csv=csv,
+      duration=dur_dec,
+      target_screen_x_ratio=_instant_effect_decimal(n1),
+      target_screen_y_ratio=_instant_effect_decimal(n2),
+      style=sty,
+      name=commandop.name,
+      loc=loc,
+    )
+  elif mk == "scale":
+    node = VNASTCharacterScaleTweenNode.create(
+      ctx,
+      character_name=cn,
+      character_states_csv=csv,
+      duration=dur_dec,
+      target_scale=_instant_effect_decimal(n1),
+      style=sty,
+      name=commandop.name,
+      loc=loc,
+    )
+  elif mk == "rotate":
+    node = VNASTCharacterRotateTweenNode.create(
+      ctx,
+      character_name=cn,
+      character_states_csv=csv,
+      duration=dur_dec,
+      angle_degrees=_instant_effect_decimal(n1),
+      style=sty,
+      name=commandop.name,
+      loc=loc,
+    )
+  else:
+    state.emit_error(
+      "vnparse-character-move-invalid",
+      "不支持的立绘补间类型：%s" % mk,
+      loc=commandop.location,
+    )
+    return
+  state.emit_node(node)
+
+def _helper_subject_display_name(expr : CallExprOperand | StringLiteral | TextFragmentLiteral) -> str:
+  """按位参数可能是「调用」角色名(状态…) 或纯文本角色名 / 场景名。"""
+  if isinstance(expr, CallExprOperand):
+    return expr.name
+  if isinstance(expr, (StringLiteral, TextFragmentLiteral)):
+    return expr.get_string()
+  return ""
+
+def _helper_collect_character_expr(
+  parser : VNParser,
+  state : VNASTParsingState,
+  commandop : GeneralCommandOp,
+  expr : CallExprOperand | StringLiteral | TextFragmentLiteral,
+) -> list[StringLiteral]:
+  # 将描述角色状态的 CallExprOperand 转化为字符串数组；纯字面量无括号状态
+  if isinstance(expr, (StringLiteral, TextFragmentLiteral)):
+    return []
+  if not isinstance(expr, CallExprOperand):
+    state.emit_error(
+      'vnparser-unexpected-argument-in-character-expr',
+      '角色表达式应为「角色名」或「角色名(状态…)」调用形式，当前为：' + type(expr).__name__,
+      loc=commandop.location,
+    )
+    return []
   deststate : list[StringLiteral] = []
   for arg in expr.args:
     if isinstance(arg, StringLiteral):
@@ -1117,7 +1555,12 @@ def _helper_collect_character_expr(parser : VNParser, state : VNASTParsingState,
     state.emit_error('vnparser-unexpected-argument-in-character-expr', expr.name + ': "' + k + '"=' + str(v), loc=commandop.location)
   return deststate
 
-def _helper_collect_scene_expr(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, expr : CallExprOperand) -> list[StringLiteral]:
+def _helper_collect_scene_expr(
+  parser : VNParser,
+  state : VNASTParsingState,
+  commandop : GeneralCommandOp,
+  expr : CallExprOperand | StringLiteral | TextFragmentLiteral,
+) -> list[StringLiteral]:
   # 将描述场景状态的 CallExprOperand 转化为字符串数组
   # 这个和角色的一样，所以直接引用了
   return _helper_collect_character_expr(parser, state, commandop, expr)
@@ -1168,10 +1611,10 @@ def cmd_switch_character_state(parser : VNParser, state : VNASTParsingState, com
   },
 })
 @CommandDecl(vn_command_ns, _imports, 'SwitchScene')
-def cmd_switch_scene(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, scene: CallExprOperand, transition : CallExprOperand = None):
+def cmd_switch_scene(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, scene: CallExprOperand, *, transition : CallExprOperand = None):
   transition = parser.emit_transition_node(state, commandop, transition)
   scenestates = _helper_collect_scene_expr(parser, state, commandop, scene)
-  node = VNASTSceneSwitchNode.create(context=state.context, destscene=scene.name, states=scenestates)
+  node = VNASTSceneSwitchNode.create(context=state.context, destscene=_helper_subject_display_name(scene), states=scenestates)
   transition.push_back(node)
 
 @CmdCategory(_tr_category_image)
@@ -1189,7 +1632,7 @@ def cmd_switch_scene(parser : VNParser, state : VNASTParsingState, commandop : G
   },
 })
 @CommandDecl(vn_command_ns, _imports, 'HideImage')
-def cmd_hide_image(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, image_name : str, transition : CallExprOperand = None):
+def cmd_hide_image(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, image_name : str, *, transition : CallExprOperand = None):
   transition = parser.emit_transition_node(state, commandop, transition)
   ref = VNASTPendingAssetReference.get(value=image_name, args=None, kwargs=None, context=state.context)
   node = VNASTAssetReference.create(context=state.context, kind=VNASTAssetKind.KIND_IMAGE, operation=VNASTAssetIntendedOperation.OP_REMOVE, asset=ref, transition=VNDefaultTransitionType.DT_IMAGE_HIDE.get_enum_literal(state.context), name=commandop.name, loc=commandop.location)
@@ -1365,7 +1808,7 @@ class _SelectFinishActionEnum(enum.Enum):
   },
 })
 @CommandDecl(vn_command_ns, _imports, 'Select')
-def cmd_select(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, ext : ListExprOperand, name : str, finish_action : _SelectFinishActionEnum = _SelectFinishActionEnum.CONTINUE):
+def cmd_select(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, ext : ListExprOperand, *, name : str, finish_action : _SelectFinishActionEnum = _SelectFinishActionEnum.CONTINUE):
   # 该命令应该这样使用：
   # 【选项 名称=。。。】
   #     * <选项1文本>
@@ -1629,7 +2072,7 @@ _tr_tableexpand_excessive_args = TR_vnparse.tr("tableexpand_excessive_args",
   }
 })
 @CommandDecl(vn_command_ns, _imports, 'ExpandTable')
-def cmd_expand_table(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, cmdname : str, table : TableExprOperand):
+def cmd_expand_table(parser : VNParser, state : VNASTParsingState, commandop : GeneralCommandOp, cmdname : str, *, table : TableExprOperand):
   # 表格第一行是参数名
   # 如果第一列没有参数名，这列代表按位参数(positional argument)
   # 从第二行起，如果某一格是空白，则代表没有该参数

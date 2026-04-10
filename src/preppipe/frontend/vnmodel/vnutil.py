@@ -4,12 +4,18 @@
 # 该文件存放一些帮助代码生成的函数
 # 有些逻辑在解析与生成时都会用到，比如查找图片表达式等，我们把这些实现放在这
 
+import collections
+import decimal
 import re
 import traceback
+import typing
+import unicodedata
 
 from ...irbase import *
+from ...commontypes import Color
 from ...imageexpr import *
 from ..commandsemantics import *
+from ..commandsemantics import _strip_wrapping_quotes_for_numeric  # import * 不导入以下划线开头的名称
 from ..commandsyntaxparser import *
 from .vnast import *
 from ...util.message import MessageHandler
@@ -393,29 +399,764 @@ _tr_backend = _TR_vn_util.tr("backend",
   zh_hk="後端",
 )
 
-def parse_transition(context : Context, transition_name : str, transition_args : list[Literal], transition_kwargs : dict[str, Literal], warnings : list[tuple[str, str]]) -> Value | tuple[StringLiteral, StringLiteral] | None:
+# 通用场景过渡（与后端无关的固定符号），对应 effect_doc 第一节
+_tr_transition_fade_in = _TR_vn_util.tr("fade_in",
+  en="FadeIn",
+  zh_cn=["淡入", "淡入时长"],
+  zh_hk=["淡入", "淡入時長"],
+)
+_tr_transition_fade_out = _TR_vn_util.tr("fade_out",
+  en="FadeOut",
+  zh_cn=["淡出", "淡出时长"],
+  zh_hk=["淡出", "淡出時長"],
+)
+_tr_transition_dissolve = _TR_vn_util.tr("dissolve",
+  en="Dissolve",
+  zh_cn="溶解",
+  zh_hk="溶解",
+)
+_tr_transition_slide_in = _TR_vn_util.tr("slide_in",
+  en="SlideIn",
+  zh_cn="滑入",
+  zh_hk="滑入",
+)
+_tr_transition_slide_out = _TR_vn_util.tr("slide_out",
+  en="SlideOut",
+  zh_cn="滑出",
+  zh_hk="滑出",
+)
+_tr_transition_push = _TR_vn_util.tr("push",
+  en="Push",
+  zh_cn="推移",
+  zh_hk="推移",
+)
+_tr_transition_fade_to_color = _TR_vn_util.tr("fade_to_color",
+  en="FadeToColor",
+  zh_cn="黑白酒",
+  zh_hk="黑白酒",
+)
+_tr_transition_zoom = _TR_vn_util.tr("zoom",
+  en="Zoom",
+  zh_cn="缩放",
+  zh_hk="縮放",
+)
+_tr_effect_shake = _TR_vn_util.tr("instant_shake", en="Shake", zh_cn="震动", zh_hk="震動")
+_tr_effect_flash = _TR_vn_util.tr("instant_flash", en="Flash", zh_cn="闪烁", zh_hk="閃爍")
+_tr_effect_amplitude = _TR_vn_util.tr("instant_amplitude", en="amplitude", zh_cn="幅度", zh_hk="幅度")
+_tr_effect_decay = _TR_vn_util.tr("instant_decay", en="decay", zh_cn="衰减", zh_hk="衰減")
+_tr_flash_fade_in = _TR_vn_util.tr("flash_fade_in", en="fade_in", zh_cn="切入时长", zh_hk="切入時長")
+_tr_flash_fade_out = _TR_vn_util.tr("flash_fade_out", en="fade_out", zh_cn="恢复时长", zh_hk="恢復時長")
+_tr_duration = _TR_vn_util.tr("duration",
+  en="duration",
+  zh_cn="时长",
+  zh_hk="時長",
+)
+_tr_direction = _TR_vn_util.tr("direction",
+  en="direction",
+  zh_cn="方向",
+  zh_hk="方向",
+)
+_tr_hold = _TR_vn_util.tr("hold",
+  en="hold",
+  zh_cn=["停留时长", "停留"],
+  zh_hk=["停留時長", "停留"],
+)
+_tr_start_point = _TR_vn_util.tr("start_point",
+  en="start_point",
+  zh_cn="起始点",
+  zh_hk="起始點",
+)
+_tr_end_point = _TR_vn_util.tr("end_point",
+  en="end_point",
+  zh_cn="结束点",
+  zh_hk="結束點",
+)
+def _transition_decimal_to_value(context: Context, v: decimal.Decimal | int) -> Value:
+  if isinstance(v, decimal.Decimal):
+    return FloatLiteral.get(v, context)
+  return FloatLiteral.get(decimal.Decimal(int(v)), context)
+
+
+def coerce_instant_effect_float_operand(v : Value) -> float | None:
+  """VN 代码生成阶段：把时长/幅度/衰减等字面值规范为 float（与命令解析 try_convert 一致）。失败返回 None，由调用方 emit_error。"""
+  if isinstance(v, FloatLiteral):
+    return float(v.value)
+  if isinstance(v, IntLiteral):
+    return float(int(v.value))
+  try:
+    conv = FrontendParserBase.try_convert_parameter(decimal.Decimal, v)
+  except NotImplementedError:
+    return None
+  if conv is not None:
+    return float(conv)
+  return None
+
+
+# 预设效果集名称（与后端无关的固定键，用于 AST effect_presets 查找）
+EFFECT_PRESET_SLIDE_DIRECTION = "SlideDirection"
+EFFECT_PRESET_ZOOM_DIRECTION = "ZoomDirection"
+EFFECT_PRESET_ZOOM_POINT = "ZoomPoint"
+EFFECT_PRESET_SHAKE_DIRECTION = "ShakeDirection"
+
+# ---------------------------------------------------------------------------
+# VNGenericSceneTransitionExpr 的 direction / zoom_point 等字符串操作数：
+# 须在构造 IR 时即为规范英文蛇形键；codegen 只做「规范键 → 引擎参数」，不再做自然语言匹配。
+# ---------------------------------------------------------------------------
+
+CANONICAL_SLIDE_DIRECTIONS : typing.Final[frozenset[str]] = frozenset({"left", "right", "up", "down"})
+CANONICAL_ZOOM_DIRECTIONS : typing.Final[frozenset[str]] = frozenset({"in", "out"})
+CANONICAL_ZOOM_POINTS : typing.Final[frozenset[str]] = frozenset({
+  "top_left", "top_center", "top_right",
+  "center_left", "center", "center_right",
+  "bottom_left", "bottom_center", "bottom_right",
+})
+CANONICAL_SHAKE_DIRECTIONS : typing.Final[frozenset[str]] = frozenset({"horizontal", "vertical"})
+
+# 内置各预设效果集可能出现的 canonical_value（规范英文蛇形键）全集；与 ensure_builtin_effect_presets 注入的条目一致。
+# 用户尚可在 EffectDecl 中为同名集追加条目，故运行时可能出现此处未列出的 canonical_value。
+BUILTIN_EFFECT_PRESET_CANONICAL_BY_SET : typing.Final[dict[str, frozenset[str]]] = {
+  EFFECT_PRESET_SLIDE_DIRECTION: CANONICAL_SLIDE_DIRECTIONS,
+  EFFECT_PRESET_ZOOM_DIRECTION: CANONICAL_ZOOM_DIRECTIONS,
+  EFFECT_PRESET_ZOOM_POINT: CANONICAL_ZOOM_POINTS,
+  EFFECT_PRESET_SHAKE_DIRECTION: CANONICAL_SHAKE_DIRECTIONS,
+}
+
+# 未命中 EffectDecl 预设时，允许的英文别名 → 规范九点点键
+_TRANSITION_ZOOM_POINT_ALIASES : typing.Final[dict[str, str]] = {
+  "top": "top_center",
+  "bottom": "bottom_center",
+  "left": "center_left",
+  "right": "center_right",
+  "middle": "center",
+  "centre": "center",
+}
+
+
+def canonicalize_transition_zoom_point(raw : str) -> str:
+  if raw is None or not str(raw).strip():
+    raise PPInvalidOperationError(
+      "转场缩放点不能为空；请使用规范键（如 center、top_center）或在 EffectDecl 的 ZoomPoint 集中声明别名。",
+    )
+  key = str(raw).strip().replace(" ", "_").replace("-", "_").lower()
+  if key in CANONICAL_ZOOM_POINTS:
+    return key
+  if key in _TRANSITION_ZOOM_POINT_ALIASES:
+    return _TRANSITION_ZOOM_POINT_ALIASES[key]
+  allowed = ", ".join(sorted(CANONICAL_ZOOM_POINTS))
+  raise PPInvalidOperationError(
+    f"不支持的转场缩放点 {raw!r}。请使用：{allowed}；或英文别名 top/bottom/left/right/middle；或在 EffectDecl 中为 ZoomPoint 声明别名。",
+  )
+
+
+def canonicalize_transition_slide_direction(raw : str) -> str:
+  if raw is None or not str(raw).strip():
+    raise PPInvalidOperationError(
+      "滑移/推移方向不能为空；请使用 left、right、up、down（或在 EffectDecl 的 SlideDirection 集中声明别名）。",
+    )
+  s = str(raw).strip().lower()
+  if s == "top":
+    s = "up"
+  if s == "bottom":
+    s = "down"
+  if s in CANONICAL_SLIDE_DIRECTIONS:
+    return s
+  raise PPInvalidOperationError(
+    f"不支持的滑移/推移方向 {raw!r}。请使用：left、right、up、down。",
+  )
+
+
+def canonicalize_transition_zoom_direction(raw : str) -> str:
+  if raw is None or not str(raw).strip():
+    raise PPInvalidOperationError(
+      "缩放转场方向不能为空；请使用 in 或 out（或在 EffectDecl 的 ZoomDirection 集中声明别名）。",
+    )
+  s = str(raw).strip().lower()
+  if s in ("入",):
+    s = "in"
+  if s in ("出",):
+    s = "out"
+  if s in CANONICAL_ZOOM_DIRECTIONS:
+    return s
+  raise PPInvalidOperationError(
+    f"不支持的缩放转场方向 {raw!r}。请使用：in、out。",
+  )
+
+
+def resolve_effect_preset_value(ast : VNAST, preset_set_name : str, user_input : str) -> StringLiteral | None:
+  """
+  根据 AST 中的 EffectDecl 预设效果集解析用户输入为规范键（StringLiteral）。
+  若 ast 为 None 或未找到匹配则返回 None。
+  """
+  if ast is None:
+    return None
+  preset_set = ast.effect_presets.get(preset_set_name)
+  if preset_set is None:
+    return None
+  raw = user_input.strip()
+  raw_lower = raw.lower()
+  for entry in preset_set.entries:
+    if not isinstance(entry, VNASTEffectPresetEntrySymbol):
+      continue
+    canonical_str = entry.canonical_value.get().get_string()
+    if raw == canonical_str or raw_lower == canonical_str.lower():
+      return entry.canonical_value.get()
+    for use in entry.aliases.operanduses():
+      a = use.value.get_string()
+      if a and (raw == a or raw_lower == a.lower()):
+        return entry.canonical_value.get()
+  return None
+
+
+def ensure_builtin_effect_presets(ast : VNAST) -> None:
+  """向 AST 注入内置预设效果集（SlideDirection、ZoomDirection），若尚不存在则创建。"""
+  ctx = ast.context
+  if ast.effect_presets.get(EFFECT_PRESET_SLIDE_DIRECTION) is None:
+    slide = VNASTEffectPresetSetSymbol.create(ctx, EFFECT_PRESET_SLIDE_DIRECTION)
+    for canonical, aliases in [
+      ("left", ["左", "Left"]),
+      ("right", ["右", "Right"]),
+      ("up", ["上", "Up"]),
+      ("down", ["下", "Down"]),
+    ]:
+      slide.entries.add(VNASTEffectPresetEntrySymbol.create(ctx, canonical, aliases))
+    ast.effect_presets.add(slide)
+  if ast.effect_presets.get(EFFECT_PRESET_ZOOM_DIRECTION) is None:
+    zoom = VNASTEffectPresetSetSymbol.create(ctx, EFFECT_PRESET_ZOOM_DIRECTION)
+    for canonical, aliases in [
+      ("in", ["入", "In"]),
+      ("out", ["出", "Out"]),
+    ]:
+      zoom.entries.add(VNASTEffectPresetEntrySymbol.create(ctx, canonical, aliases))
+    ast.effect_presets.add(zoom)
+  if ast.effect_presets.get(EFFECT_PRESET_ZOOM_POINT) is None:
+    zoom_pt = VNASTEffectPresetSetSymbol.create(ctx, EFFECT_PRESET_ZOOM_POINT)
+    for canonical, aliases in [
+      ("top_left", ["左上"]),
+      ("top_center", ["中上", "上中", "上"]),
+      ("top_right", ["右上"]),
+      ("center_left", ["左中", "左"]),
+      ("center", ["中心", "中"]),
+      ("center_right", ["右中", "右"]),
+      ("bottom_left", ["左下"]),
+      ("bottom_center", ["中下", "下中", "下"]),
+      ("bottom_right", ["右下"]),
+    ]:
+      zoom_pt.entries.add(VNASTEffectPresetEntrySymbol.create(ctx, canonical, aliases))
+    ast.effect_presets.add(zoom_pt)
+  if ast.effect_presets.get(EFFECT_PRESET_SHAKE_DIRECTION) is None:
+    sd = VNASTEffectPresetSetSymbol.create(ctx, EFFECT_PRESET_SHAKE_DIRECTION)
+    for canonical, aliases in [
+      ("horizontal", ["水平", "H", "X"]),
+      ("vertical", ["垂直", "V", "Y"]),
+    ]:
+      sd.entries.add(VNASTEffectPresetEntrySymbol.create(ctx, canonical, aliases))
+    ast.effect_presets.add(sd)
+
+
+def parse_transition(context : Context, transition_name : str, transition_args : list[Literal], transition_kwargs : dict[str, Literal], warnings : list[tuple[str, str]], ast : VNAST | None = None) -> Value | tuple[StringLiteral, StringLiteral] | None:
   # 如果没有提供转场，就返回 None
   # 如果提供了后端专有的转场，则返回 tuple[StringLiteral, StringLiteral] 表示后端名和表达式
   # 如果提供了通用的转场，则返回对应的值 (Value)
+  # ast 用于从 EffectDecl 预设效果集解析 direction 等多语言参数；为 None 时退化为仅接受英文规范键。
 
+  transition_name = (transition_name or "").strip()
   if len(transition_name) == 0:
     return None
 
-  # 目前我们支持以下转场：
   # 1. 无：立即发生，无转场
-  # 2. 后端转场<表达式，后端>：后端专有的表达式
-  # 等以后做通用的再加
   if transition_name in _tr_transition_none.get_all_candidates():
     return VNDefaultTransitionType.DT_NO_TRANSITION.get_enum_literal(context)
+
+  # 黑白酒：表格常写「时长」，与溶解/淡入等单段转场混淆；须在 resolve_call 前给出明确错误（否则易落到 Ren'Py 运行期）
+  if transition_name in _tr_transition_fade_to_color.get_all_candidates():
+    for _kw in transition_kwargs:
+      if unicodedata.normalize("NFKC", _kw).strip() == "时长":
+        raise PPInvalidOperationError(
+          "转场「黑白酒」不能使用参数「时长」。请使用「淡出」「淡出时长」「停留时长」「淡入」「淡入时长」与「颜色」。",
+        )
 
   def handle_backend_specific_transition(expr : str, *, backend : str) -> tuple[StringLiteral, StringLiteral]:
     return (StringLiteral.get(backend, context), StringLiteral.get(expr, context))
 
+  def _resolve_direction(preset_name: str, direction_str: str) -> StringLiteral:
+    resolved = resolve_effect_preset_value(ast, preset_name, direction_str) if ast else None
+    if resolved is not None:
+      return resolved
+    if preset_name == EFFECT_PRESET_SLIDE_DIRECTION:
+      canon = canonicalize_transition_slide_direction(direction_str)
+    elif preset_name == EFFECT_PRESET_ZOOM_DIRECTION:
+      canon = canonicalize_transition_zoom_direction(direction_str)
+    else:
+      raise PPInternalError("未知的方向预设集: " + preset_name)
+    return StringLiteral.get(canon, context)
+
+  # 2. 通用场景过渡（与后端无关的固定符号）
+  def handle_fade_in(duration: decimal.Decimal = decimal.Decimal("0.5")):
+    return VNGenericSceneTransitionExpr.get_fade_in(context, _transition_decimal_to_value(context, duration))
+
+  def handle_fade_out(duration: decimal.Decimal = decimal.Decimal("0.5")):
+    return VNGenericSceneTransitionExpr.get_fade_out(context, _transition_decimal_to_value(context, duration))
+
+  def handle_dissolve(duration: decimal.Decimal = decimal.Decimal("0.5")):
+    return VNGenericSceneTransitionExpr.get_dissolve(context, _transition_decimal_to_value(context, duration))
+
+  def handle_slide_in(duration: decimal.Decimal = decimal.Decimal("0.5"), *, direction: str):
+    dir_lit = _resolve_direction(EFFECT_PRESET_SLIDE_DIRECTION, direction)
+    return VNGenericSceneTransitionExpr.get_slide_in(context, _transition_decimal_to_value(context, duration), dir_lit)
+
+  def handle_slide_out(duration: decimal.Decimal = decimal.Decimal("0.5"), *, direction: str):
+    dir_lit = _resolve_direction(EFFECT_PRESET_SLIDE_DIRECTION, direction)
+    return VNGenericSceneTransitionExpr.get_slide_out(context, _transition_decimal_to_value(context, duration), dir_lit)
+
+  def handle_push(duration: decimal.Decimal = decimal.Decimal("0.5"), *, direction: str):
+    dir_lit = _resolve_direction(EFFECT_PRESET_SLIDE_DIRECTION, direction)
+    return VNGenericSceneTransitionExpr.get_push(context, _transition_decimal_to_value(context, duration), dir_lit)
+
+  def handle_fade_to_color(
+    *,
+    fade_out: decimal.Decimal = decimal.Decimal("0.5"),
+    hold: decimal.Decimal = decimal.Decimal("0.2"),
+    fade_in: decimal.Decimal = decimal.Decimal("0.5"),
+    color: Color,
+  ):
+    color_lit = ColorLiteral.get(color, context)
+    return VNGenericSceneTransitionExpr.get_fade_to_color(
+      context,
+      _transition_decimal_to_value(context, fade_out),
+      _transition_decimal_to_value(context, hold),
+      _transition_decimal_to_value(context, fade_in),
+      color_lit,
+    )
+
+  def _resolve_zoom_point(preset_name: str, point_str: str) -> StringLiteral:
+    resolved = resolve_effect_preset_value(ast, preset_name, point_str) if ast else None
+    if resolved is not None:
+      return resolved
+    canon = canonicalize_transition_zoom_point(point_str)
+    return StringLiteral.get(canon, context)
+
+  def handle_zoom(
+    duration: decimal.Decimal = decimal.Decimal("0.5"),
+    *,
+    direction: str,
+    start_point: str = "center",
+    end_point: str = "center",
+  ):
+    dir_lit = _resolve_direction(EFFECT_PRESET_ZOOM_DIRECTION, direction)
+    d_val = _transition_decimal_to_value(context, duration)
+    dir_s = dir_lit.get_string().strip().lower()
+    point_str = start_point if dir_s == "in" else end_point
+    point_lit = _resolve_zoom_point(EFFECT_PRESET_ZOOM_POINT, point_str)
+    return VNGenericSceneTransitionExpr.get_zoom(context, dir_lit, d_val, point_lit)
+
   callexpr = CallExprOperand(transition_name, transition_args, collections.OrderedDict(transition_kwargs))
   transition_expr = FrontendParserBase.resolve_call(callexpr, [
     (_tr_transition_backend_transition, handle_backend_specific_transition, {'expr': _tr_expr, 'backend': _tr_backend}),
-  ], warnings)
-  return transition_expr
+    (_tr_transition_fade_in, handle_fade_in, {'duration': _tr_duration}),
+    (_tr_transition_fade_out, handle_fade_out, {'duration': _tr_duration}),
+    (_tr_transition_dissolve, handle_dissolve, {'duration': _tr_duration}),
+    (_tr_transition_slide_in, handle_slide_in, {'duration': _tr_duration, 'direction': _tr_direction}),
+    (_tr_transition_slide_out, handle_slide_out, {'duration': _tr_duration, 'direction': _tr_direction}),
+    (_tr_transition_push, handle_push, {'duration': _tr_duration, 'direction': _tr_direction}),
+    (_tr_transition_fade_to_color, handle_fade_to_color, {'fade_out': _tr_transition_fade_out, 'hold': _tr_hold, 'fade_in': _tr_transition_fade_in, 'color': _tr_color}),
+    (_tr_transition_zoom, handle_zoom, {'duration': _tr_duration, 'direction': _tr_direction, 'start_point': _tr_start_point, 'end_point': _tr_end_point}),
+  ], warnings, strict=True)
+  if transition_expr is not None:
+    return transition_expr
+  msgs = [m for _, m in warnings]
+  raise PPInvalidOperationError(
+    "转场「%s」无法用当前参数解析：%s"
+    % (
+      transition_name,
+      "；".join(msgs)
+      if msgs
+      else "请检查参数名与类型（「黑白酒」须用：淡出/淡出时长、停留时长、淡入/淡入时长、颜色；勿使用单独的「时长」）。",
+    ),
+  )
+
+
+_tr_effect_bounce = _TR_vn_util.tr("instant_bounce", en="Bounce", zh_cn="跳动", zh_hk="跳動")
+_tr_motion_style = _TR_vn_util.tr("motion_style", en="style", zh_cn="方式", zh_hk="方式")
+_tr_bounce_height_ratio = _TR_vn_util.tr("bounce_height_ratio", en="height", zh_cn="高度", zh_hk="高度")
+_tr_bounce_count = _TR_vn_util.tr("instant_bounce_count", en="count", zh_cn="次数", zh_hk="次數")
+_tr_effect_tremble = _TR_vn_util.tr("instant_tremble", en=["Tremble", "Shiver"], zh_cn="发抖", zh_hk="發抖")
+_tr_tremble_period = _TR_vn_util.tr("tremble_period", en="period", zh_cn="周期", zh_hk="週期")
+_tr_effect_grayscale = _TR_vn_util.tr("instant_grayscale", en="Grayscale", zh_cn="灰化", zh_hk="灰化")
+_tr_effect_opacity = _TR_vn_util.tr("instant_opacity", en="Opacity", zh_cn="半透明", zh_hk="半透明")
+_tr_effect_tint = _TR_vn_util.tr("instant_tint", en=["Tint", "ColorOverlay"], zh_cn="色调叠加", zh_hk="色調疊加")
+_tr_effect_blur = _TR_vn_util.tr("instant_blur", en="Blur", zh_cn="模糊", zh_hk="模糊")
+_tr_filter_strength = _TR_vn_util.tr("filter_strength", en="strength", zh_cn="强度", zh_hk="強度")
+_tr_filter_alpha = _TR_vn_util.tr("filter_alpha", en="alpha", zh_cn="透明度", zh_hk="透明度")
+_tr_effect_snow = _TR_vn_util.tr("instant_snow", en="Snow", zh_cn="雪", zh_hk="雪")
+_tr_effect_rain = _TR_vn_util.tr("instant_rain", en="Rain", zh_cn="雨", zh_hk="雨")
+_tr_weather_intensity = _TR_vn_util.tr("weather_intensity", en="intensity", zh_cn="强度", zh_hk="強度")
+_tr_weather_fade_in = _TR_vn_util.tr("weather_fade_in", en="fade_in", zh_cn="淡入时长", zh_hk="淡入時長")
+_tr_weather_fade_out = _TR_vn_util.tr("weather_fade_out", en="fade_out", zh_cn="淡出时长", zh_hk="淡出時長")
+_tr_weather_vx = _TR_vn_util.tr("weather_horizontal_speed", en="horizontal_speed", zh_cn="水平速度", zh_hk="水平速度")
+_tr_weather_vy = _TR_vn_util.tr("weather_vertical_speed", en="vertical_speed", zh_cn="垂直速度", zh_hk="垂直速度")
+
+
+def _parse_effect_duration_sustain(v : typing.Any) -> float:
+  """时长：数值为秒；字符串「持续」等表示无限（IR 用 -1.0），需配合「结束特效」。
+  Word 格子里常为 TextFragmentLiteral 或带引号的 \"0\"，不得对非 float 字面值直接 float(v)。"""
+  if isinstance(v, TextFragmentLiteral):
+    raw = v.get_string()
+  elif isinstance(v, StringLiteral):
+    raw = v.get_string()
+  elif isinstance(v, str):
+    raw = v
+  elif isinstance(v, FloatLiteral):
+    return float(v.value)
+  elif isinstance(v, IntLiteral):
+    return float(int(v.value))
+  else:
+    try:
+      return float(v)
+    except (TypeError, ValueError):
+      return 0.8
+  t = _strip_wrapping_quotes_for_numeric(raw).strip().lower()
+  if t in ("持续", "永续", "无限", "sustain", "infinite", "loop", "forever"):
+    return -1.0
+  try:
+    return float(t)
+  except ValueError:
+    return -1.0 if t else 0.8
+
+
+def _normalize_motion_style(v : typing.Any) -> str:
+  if isinstance(v, StringLiteral):
+    s = v.get_string()
+  else:
+    s = str(v or "")
+  t = s.strip().lower().replace("-", "").replace("_", "")
+  if t in ("", "linear", "线性", "匀速"):
+    return "linear"
+  if t in ("ease", "缓动"):
+    return "ease"
+  if t in ("easein", "缓入"):
+    return "easein"
+  if t in ("easeout", "缓出"):
+    return "easeout"
+  return t
+
+
+def parse_weather_effect_overlay_fade_in(effect_kind : str, cmd_duration : typing.Any) -> float:
+  """天气（雨/雪）命令「时长」：正数为全屏层 alpha 淡入秒数；「持续」或省略时用该效果类型的默认淡入（如雪/雨 0.8）。"""
+  if cmd_duration is None:
+    return parse_instant_effect_command_duration(effect_kind, None)
+  raw = _parse_effect_duration_sustain(cmd_duration)
+  if raw < 0:
+    return parse_instant_effect_command_duration(effect_kind, None)
+  return float(raw)
+
+
+def parse_instant_effect_command_duration(effect_kind : str, cmd_duration : typing.Any) -> float:
+  """场景/角色特效命令上的「时长」：秒；None 时按效果类型给默认；「持续」等同义词见 _parse_effect_duration_sustain。"""
+  if cmd_duration is None:
+    if effect_kind == "shake":
+      return 0.5
+    if effect_kind == "bounce":
+      return 0.4
+    if effect_kind == "tremble":
+      return 0.8
+    if effect_kind in ("grayscale", "opacity", "tint", "blur"):
+      return 0.35
+    if effect_kind in ("snow", "rain"):
+      return 0.8
+    return 0.0
+  return _parse_effect_duration_sustain(cmd_duration)
+
+
+def parse_instant_effect(
+  context : Context,
+  call : CallExprOperand,
+  ast : VNAST | None,
+  warnings : list[tuple[str, str]],
+) -> tuple[str, ...]:
+  """
+  解析场景/角色即时特效（震动、闪烁、跳动、发抖及滤镜类）。**整体过渡/持续时长**由外层命令 **时长** 提供（滤镜为过渡到目标状态的秒数；持续见 _parse_effect_duration_sustain）。返回:
+  ("shake", amplitude, decay, direction_str) 或
+  ("flash", color_hex, fade_in, hold, fade_out) 或
+  ("bounce", height_ratio, count, style_str) 或
+  ("tremble", amplitude, period) 或
+  ("grayscale", strength) 或 ("opacity", alpha) 或 ("tint", color_hex, strength) 或 ("blur", radius) 或
+  ("snow", intensity, inner_fade_in, inner_fade_out) 或
+  ("rain", intensity, inner_fade_in, inner_fade_out, horizontal_speed, vertical_speed)
+  """
+  def _shake_dir(s : str) -> str:
+    s = (s or "").strip()
+    if not s:
+      return ""
+    r = resolve_effect_preset_value(ast, EFFECT_PRESET_SHAKE_DIRECTION, s) if ast else None
+    if r is not None:
+      return r.get_string().lower()
+    low = s.lower()
+    if low in ("horizontal", "h", "x", "水平"):
+      return "horizontal"
+    if low in ("vertical", "v", "y", "垂直"):
+      return "vertical"
+    return low
+
+  def _color_str(v) -> str:
+    if isinstance(v, ColorLiteral):
+      c = v.value
+      return f"#{c.r:02x}{c.g:02x}{c.b:02x}"
+    if isinstance(v, Color):
+      return f"#{v.r:02x}{v.g:02x}{v.b:02x}"
+    if isinstance(v, StringLiteral):
+      t = v.get_string().strip().lower()
+      if t in ("白", "white", "#fff", "#ffffff"):
+        return "#ffffff"
+      if t in ("黑", "black", "#000", "#000000"):
+        return "#000000"
+      if t.startswith("#") and len(t) >= 4:
+        return t
+    return "#ffffff"
+
+  def handle_shake(
+    *,
+    amplitude: decimal.Decimal = decimal.Decimal("12"),
+    decay: decimal.Decimal = decimal.Decimal(0),
+    direction: typing.Any = "",
+  ):
+    dstr = direction.get_string() if isinstance(direction, StringLiteral) else str(direction or "")
+    return ("shake", float(amplitude), float(decay), _shake_dir(dstr))
+
+  def handle_flash(
+    *,
+    color: typing.Any = "#ffffff",
+    fade_in: decimal.Decimal = decimal.Decimal("0.06"),
+    hold: decimal.Decimal = decimal.Decimal("0.1"),
+    fade_out: decimal.Decimal = decimal.Decimal("0.18"),
+  ):
+    if isinstance(color, str):
+      co = _color_str(StringLiteral.get(color, context))
+    else:
+      co = _color_str(color)
+    return ("flash", co, float(fade_in), float(hold), float(fade_out))
+
+  def handle_bounce(
+    *,
+    height: decimal.Decimal = decimal.Decimal("0.04"),
+    count: int = 1,
+    style: typing.Any = "linear",
+  ):
+    c = max(1, int(count))
+    return ("bounce", float(height), float(c), _normalize_motion_style(style))
+
+  def handle_tremble(
+    *,
+    amplitude: decimal.Decimal = decimal.Decimal(6),
+    period: decimal.Decimal = decimal.Decimal("0.14"),
+  ):
+    p = max(0.04, float(period))
+    return ("tremble", float(amplitude), float(p))
+
+  def handle_grayscale(strength: decimal.Decimal = decimal.Decimal(1)):
+    st = max(0.0, min(1.0, float(strength)))
+    return ("grayscale", st)
+
+  def handle_opacity(alpha: decimal.Decimal = decimal.Decimal("0.7")):
+    a = max(0.0, min(1.0, float(alpha)))
+    return ("opacity", a)
+
+  def handle_tint(
+    *,
+    color: typing.Any = "#ffffff",
+    strength: decimal.Decimal = decimal.Decimal("0.6"),
+  ):
+    if isinstance(color, str):
+      co = _color_str(StringLiteral.get(color, context))
+    else:
+      co = _color_str(color)
+    st = max(0.0, min(1.0, float(strength)))
+    return ("tint", co, st)
+
+  def handle_blur(strength: decimal.Decimal = decimal.Decimal(8)):
+    b = max(0.0, min(48.0, float(strength)))
+    return ("blur", b)
+
+  def handle_snow(
+    *,
+    intensity: decimal.Decimal = decimal.Decimal(100),
+    fade_in: decimal.Decimal = decimal.Decimal("0.25"),
+    fade_out: decimal.Decimal = decimal.Decimal("0.45"),
+  ):
+    n = max(10.0, min(400.0, float(intensity)))
+    return ("snow", n, max(0.0, float(fade_in)), max(0.05, float(fade_out)))
+
+  def handle_rain(
+    *,
+    intensity: decimal.Decimal = decimal.Decimal(140),
+    fade_in: decimal.Decimal = decimal.Decimal("0.2"),
+    fade_out: decimal.Decimal = decimal.Decimal("0.4"),
+    horizontal_speed: decimal.Decimal = decimal.Decimal("-40"),
+    vertical_speed: decimal.Decimal = decimal.Decimal(520),
+  ):
+    n = max(20.0, min(500.0, float(intensity)))
+    vx = float(horizontal_speed)
+    vy = max(80.0, min(1200.0, float(vertical_speed)))
+    return ("rain", n, max(0.0, float(fade_in)), max(0.05, float(fade_out)), vx, vy)
+
+  callexpr = CallExprOperand(call.name, call.args, collections.OrderedDict(call.kwargs))
+  out = FrontendParserBase.resolve_call(
+    callexpr,
+    [
+      (_tr_effect_shake, handle_shake, {"amplitude": _tr_effect_amplitude, "decay": _tr_effect_decay, "direction": _tr_direction}),
+      (_tr_effect_flash, handle_flash, {"color": _tr_color, "fade_in": _tr_flash_fade_in, "hold": _tr_hold, "fade_out": _tr_flash_fade_out}),
+      (_tr_effect_bounce, handle_bounce, {"height": _tr_bounce_height_ratio, "count": _tr_bounce_count, "style": _tr_motion_style}),
+      (_tr_effect_tremble, handle_tremble, {"amplitude": _tr_effect_amplitude, "period": _tr_tremble_period}),
+      (_tr_effect_grayscale, handle_grayscale, {"strength": _tr_filter_strength}),
+      (_tr_effect_opacity, handle_opacity, {"alpha": _tr_filter_alpha}),
+      (_tr_effect_tint, handle_tint, {"color": _tr_color, "strength": _tr_filter_strength}),
+      (_tr_effect_blur, handle_blur, {"strength": _tr_filter_strength}),
+      (_tr_effect_snow, handle_snow, {"intensity": _tr_weather_intensity, "fade_in": _tr_weather_fade_in, "fade_out": _tr_weather_fade_out}),
+      (_tr_effect_rain, handle_rain, {"intensity": _tr_weather_intensity, "fade_in": _tr_weather_fade_in, "fade_out": _tr_weather_fade_out, "horizontal_speed": _tr_weather_vx, "vertical_speed": _tr_weather_vy}),
+    ],
+    warnings,
+    strict=True,
+  )
+  if out is None:
+    msgs = [m for _, m in warnings]
+    raise PPInvalidOperationError(
+      "即时特效「%s」无法用当前参数解析：%s" % (call.name, "；".join(msgs) if msgs else "未知特效名或参数不匹配。"),
+    )
+  return out
+
+
+_tr_sprite_move = _TR_vn_util.tr("sprite_anim_move", en="Move", zh_cn="移动", zh_hk="移動")
+_tr_sprite_scale = _TR_vn_util.tr("sprite_anim_scale", en="Scale", zh_cn="缩放", zh_hk="縮放")
+_tr_sprite_rotate = _TR_vn_util.tr("sprite_anim_rotate", en="Rotate", zh_cn="旋转", zh_hk="旋轉")
+_tr_sprite_scale_ratio = _TR_vn_util.tr("sprite_scale_ratio", en="scale", zh_cn="比例", zh_hk="比例")
+_tr_rotate_angle = _TR_vn_util.tr("sprite_rotate_angle", en="angle", zh_cn="角度", zh_hk="角度")
+_tr_ratio_x = _TR_vn_util.tr("sprite_ratio_x", en="x", zh_cn="横向比例", zh_hk="橫向比例")
+_tr_ratio_y = _TR_vn_util.tr("sprite_ratio_y", en="y", zh_cn="纵向比例", zh_hk="縱向比例")
+# spec 形参的 Translatable：首条为报错/文档中的可读说明；末条为内部占位，避免与用户关键字冲突（get_all_candidates 才会收录）
+_tr_sprite_move_spec = _TR_vn_util.tr(
+  "sprite_move_spec",
+  en=["positional: horizontal ratio, vertical ratio [, duration]", "__pp_sprite_move_spec__"],
+  zh_cn=["按位：横向比例、纵向比例（可选第三项时长）", "__pp_sprite_move_spec__"],
+  zh_hk=["按位：橫向比例、縱向比例（可選第三項時長）", "__pp_sprite_move_spec__"],
+)
+_tr_sprite_scale_spec = _TR_vn_util.tr(
+  "sprite_scale_spec",
+  en=["positional: scale [, duration]", "__pp_sprite_scale_spec__"],
+  zh_cn=["按位：比例（可选第二项时长）", "__pp_sprite_scale_spec__"],
+  zh_hk=["按位：比例（可選第二項時長）", "__pp_sprite_scale_spec__"],
+)
+_tr_sprite_rotate_spec = _TR_vn_util.tr(
+  "sprite_rotate_spec",
+  en=["positional: degrees [, duration]", "__pp_sprite_rotate_spec__"],
+  zh_cn=["按位：角度（度）（可选第二项时长）", "__pp_sprite_rotate_spec__"],
+  zh_hk=["按位：角度（度）（可選第二項時長）", "__pp_sprite_rotate_spec__"],
+)
+
+
+def parse_character_sprite_move(
+  context : Context,
+  call : CallExprOperand,
+  ast : VNAST | None,
+  warnings : list[tuple[str, str]],
+) -> tuple[str, float, float, float, float, float, str]:
+  """
+  解析角色立绘补间（移动/缩放/旋转）。返回:
+  (move_kind, duration, n1, n2, n3, n4, style)
+  move: n1=横向位置比例(0~1), n2=纵向位置比例, n3=n4=0
+  scale: n1=目标缩放(相对1.0), n2=n3=n4=0（缩放中心固定为立绘中心）
+  rotate: n1=角度(度), n2=n3=n4=0（绕中心旋转）
+  """
+  def handle_move(
+    spec: list[decimal.Decimal],
+    *,
+    ratio_x: decimal.Decimal | None = None,
+    ratio_y: decimal.Decimal | None = None,
+    duration: decimal.Decimal = decimal.Decimal("0.5"),
+    style: typing.Any = "linear",
+  ):
+    if len(spec) >= 2:
+      x, y = spec[0], spec[1]
+      dur = spec[2] if len(spec) >= 3 else duration
+    elif len(spec) == 0 and ratio_x is not None and ratio_y is not None:
+      x, y = ratio_x, ratio_y
+      dur = duration
+    else:
+      raise PPInvalidOperationError(
+        "立绘移动需要：两个按位参数（横向比例、纵向比例，可选第三项时长），或同时使用关键字「横向比例」「纵向比例」（时长、方式仍可用关键字）。",
+      )
+    return ("move", float(dur), float(x), float(y), 0.0, 0.0, _normalize_motion_style(style))
+
+  def handle_scale(
+    spec: list[decimal.Decimal],
+    *,
+    target_scale: decimal.Decimal | None = None,
+    duration: decimal.Decimal = decimal.Decimal("0.5"),
+    style: typing.Any = "linear",
+  ):
+    if len(spec) >= 1:
+      sc = spec[0]
+      dur = spec[1] if len(spec) >= 2 else duration
+    elif target_scale is not None:
+      sc = target_scale
+      dur = duration
+    else:
+      raise PPInvalidOperationError(
+        "立绘缩放需要：一个按位参数（目标比例，可选第二项时长），或使用关键字「比例」指定比例（时长、方式仍可用关键字）。",
+      )
+    return ("scale", float(dur), float(sc), 0.0, 0.0, 0.0, _normalize_motion_style(style))
+
+  def handle_rotate(
+    spec: list[decimal.Decimal],
+    *,
+    angle: decimal.Decimal | None = None,
+    duration: decimal.Decimal = decimal.Decimal("0.5"),
+    style: typing.Any = "linear",
+  ):
+    if len(spec) >= 1:
+      ang = spec[0]
+      dur = spec[1] if len(spec) >= 2 else duration
+    elif angle is not None:
+      ang = angle
+      dur = duration
+    else:
+      raise PPInvalidOperationError(
+        "立绘旋转需要：一个按位参数（角度，单位度；可选第二项时长），或使用关键字「角度」或 angle（时长、方式仍可用关键字）。",
+      )
+    return ("rotate", float(dur), float(ang), 0.0, 0.0, 0.0, _normalize_motion_style(style))
+
+  callexpr = CallExprOperand(call.name, call.args, collections.OrderedDict(call.kwargs))
+  out = FrontendParserBase.resolve_call(
+    callexpr,
+    [
+      (_tr_sprite_move, handle_move, {
+        "spec": _tr_sprite_move_spec,
+        "ratio_x": _tr_ratio_x,
+        "ratio_y": _tr_ratio_y,
+        "duration": _tr_duration,
+        "style": _tr_motion_style,
+      }),
+      (_tr_sprite_scale, handle_scale, {
+        "spec": _tr_sprite_scale_spec,
+        "target_scale": _tr_sprite_scale_ratio,
+        "duration": _tr_duration,
+        "style": _tr_motion_style,
+      }),
+      (_tr_sprite_rotate, handle_rotate, {
+        "spec": _tr_sprite_rotate_spec,
+        "angle": _tr_rotate_angle,
+        "duration": _tr_duration,
+        "style": _tr_motion_style,
+      }),
+    ],
+    warnings,
+    strict=True,
+  )
+  if out is None:
+    msgs = [m for _, m in warnings]
+    raise PPInvalidOperationError(
+      "立绘补间「%s」无法用当前参数解析：%s" % (call.name, "；".join(msgs) if msgs else "未知补间名或参数不匹配。"),
+    )
+  return out
+
 
 _tr_vnutil_placer_absolute = _TR_vn_util.tr("placer_absolute",
   en="AbsolutePosition",
@@ -480,9 +1221,12 @@ _tr_vnutil_placer_invalid_expr = _TR_vn_util.tr("placer_invalid_expr",
 )
 
 def resolve_placer_callexpr(context : Context, placer : CallExprOperand, defaultconf : VNASTImagePlacerParameterSymbol | None, warnings : list[tuple[str, str]], is_fillall : bool, callback : typing.Callable[[VNASTImagePlacerKind, list[Literal]], typing.Any]) -> typing.Any | None:
-  def handle_placer_absolute(anchor : FrontendParserBase.Coordinate2D | None = None,
-                             scale : decimal.Decimal | None = None,
-                             anchorcoord : FrontendParserBase.Coordinate2D | None = None) -> typing.Any:
+  def handle_placer_absolute(
+    *,
+    anchor : FrontendParserBase.Coordinate2D | None = None,
+    scale : decimal.Decimal | None = None,
+    anchorcoord : FrontendParserBase.Coordinate2D | None = None,
+  ) -> typing.Any:
     if anchor is not None:
       result_anchor = anchor.to_tuple()
     elif defaultconf is not None:
@@ -506,10 +1250,13 @@ def resolve_placer_callexpr(context : Context, placer : CallExprOperand, default
       params.append(IntTuple2DLiteral.get(result_anchorcoord, context))
     return callback(VNASTImagePlacerKind.ABSOLUTE, params)
 
-  def handle_placer_sprite(baseheight : decimal.Decimal | None = None,
-                            topheight : decimal.Decimal | None = None,
-                            xoffset : decimal.Decimal | None = None,
-                            xpos : decimal.Decimal | None = None) -> typing.Any:
+  def handle_placer_sprite(
+    *,
+    baseheight : decimal.Decimal | None = None,
+    topheight : decimal.Decimal | None = None,
+    xoffset : decimal.Decimal | None = None,
+    xpos : decimal.Decimal | None = None,
+  ) -> typing.Any:
     if baseheight is not None:
       result_baseheight = baseheight
     elif defaultconf is not None:
@@ -544,7 +1291,7 @@ def resolve_placer_callexpr(context : Context, placer : CallExprOperand, default
   return FrontendParserBase.resolve_call(placer, [
     (_tr_vnutil_placer_absolute, handle_placer_absolute, {'anchor': _tr_vnutil_placer_absolute_anchor, 'scale': _tr_vnutil_placer_absolute_scale, 'anchorcoord': _tr_vnutil_placer_absolute_anchorcoord}),
     (_tr_vnutil_placer_sprite, handle_placer_sprite, {'baseheight': _tr_vnutil_placer_sprite_baseheight, 'topheight': _tr_vnutil_placer_sprite_topheight, 'xoffset': _tr_vnutil_placer_sprite_xoffset, 'xpos': _tr_vnutil_placer_sprite_xpos}),
-  ], warnings)
+  ], warnings, strict=True)
 
 def resolve_placer_expr(context : Context, expr : ListExprTreeNode, defaultconf : VNASTImagePlacerParameterSymbol | None, presetplace : SymbolTableRegion[VNASTImagePresetPlaceSymbol], warnings : list[tuple[str, str]]) -> tuple[VNASTImagePlacerKind, list[Literal]] | None:
   # 尝试根据当前的配置解析一个完整的位置表达式

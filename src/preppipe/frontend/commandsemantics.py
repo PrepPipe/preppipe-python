@@ -4,12 +4,14 @@
 
 from __future__ import annotations
 
+import decimal
 import inspect
 import types
 import typing
 import collections
 import enum
 import re
+import unicodedata
 
 from ..irbase import *
 from ..inputmodel import *
@@ -289,6 +291,7 @@ class FrontendCommandNamespace(NamespaceNode[FrontendCommandInfo]):
     # 如果在这里报错（无法解析类型名）的话，请确保：
     # 1. 定义命令的源文件可以在没有 from __future__ import annotations 的情况下顺利使用类型标注
     # 2. 所有在回调函数参数类型的标注中的类全都在 imports 中（不过 imports 也可以为空）
+    validate_frontend_command_handler_semantics(func, imports)
     sig = inspect.signature(func, globals=imports, eval_str=True)
     command_info.handler_list.append((func, sig))
 
@@ -406,6 +409,120 @@ class FrontendCommandRegistry(NameResolver[FrontendCommandInfo]):
 _frontend_command_registry = FrontendCommandRegistry()
 
 # ------------------------------------------------------------------------------
+# 前端命令处理函数签名的语言约束（与 handle_command_invocation / resolve_call 一致）
+
+def _flatten_union_parts(ann: typing.Any) -> list[typing.Any]:
+  if ann is None:
+    return []
+  if isinstance(ann, types.UnionType):
+    out: list[typing.Any] = []
+    for a in ann.__args__:
+      out.extend(_flatten_union_parts(a))
+    return out
+  origin = typing.get_origin(ann)
+  if origin is typing.Union:
+    out = []
+    for a in typing.get_args(ann):
+      out.extend(_flatten_union_parts(a))
+    return out
+  return [ann]
+
+
+def _annotation_contains_builtin_float(ann: typing.Any) -> bool:
+  return any(part is float for part in _flatten_union_parts(ann))
+
+
+def _is_parser_injection_annotation(ann: typing.Any) -> bool:
+  return isinstance(ann, type) and issubclass(ann, FrontendParserBase)
+
+
+def _is_state_injection_annotation(ann: typing.Any) -> bool:
+  # 与 handle_command_invocation 中 param.annotation == get_state_type() 的用法一致；注册阶段无解析器实例，按类型名约定识别。
+  return isinstance(ann, type) and ann.__name__.endswith('ParsingState')
+
+
+def _is_extend_data_only_param_annotation(ann: typing.Any) -> bool:
+  parts = [p for p in _flatten_union_parts(ann) if p not in (type(None), types.NoneType)]
+  if not parts:
+    return False
+  return all(isinstance(t, type) and issubclass(t, ExtendDataExprBase) for t in parts)
+
+
+def _is_list_positional_param_annotation(ann: typing.Any) -> bool:
+  return typing.get_origin(ann) is list and len(typing.get_args(ann)) == 1
+
+
+def validate_frontend_command_handler_semantics(func: typing.Callable, globalns: dict[str, typing.Any]) -> None:
+  """约束：禁止内置 float 标注；按位业务参数至多一个（可为 list[…] 一次吸收多项）。"""
+  sig = inspect.signature(func, globals=globalns, eval_str=True)
+  try:
+    hints = typing.get_type_hints(func, globalns=globalns, localns=globalns, include_extras=False)
+  except Exception as ex:
+    raise PPCommandHandlerSignatureError(
+      f"注册命令回调时，无法解析「{func.__name__}」的类型标注（{ex}）。请检查各参数注解是否完整、前向引用是否写成字符串形式。"
+    ) from ex
+  for pname, param in sig.parameters.items():
+    ann = hints.get(pname, param.annotation)
+    if ann is inspect.Parameter.empty:
+      raise PPCommandHandlerSignatureError(
+        f"注册命令回调「{func.__name__}」时：参数「{pname}」缺少类型标注。解析器依赖注解做参数转换，请为每个参数写上类型。"
+      )
+    if _annotation_contains_builtin_float(ann):
+      raise PPCommandHandlerSignatureError(
+        f"注册命令回调「{func.__name__}」时：参数「{pname}」勿使用内置 float，请改为 decimal.Decimal（剧本里的数字仍会按 Decimal 解析）。",
+      )
+
+  slots: list[tuple[str, typing.Any]] = []
+  for pname, param in sig.parameters.items():
+    if param.kind != inspect.Parameter.POSITIONAL_OR_KEYWORD:
+      continue
+    ann = hints.get(pname, param.annotation)
+    if _is_parser_injection_annotation(ann) or ann is Context or ann is GeneralCommandOp or _is_state_injection_annotation(ann):
+      continue
+    if _is_extend_data_only_param_annotation(ann):
+      continue
+    slots.append((pname, ann))
+
+  list_slots = [s for s in slots if _is_list_positional_param_annotation(s[1])]
+  scalar_slots = [s for s in slots if not _is_list_positional_param_annotation(s[1])]
+  _pos_rule_hint = (
+    "说明：文档里括号内不带名字的「按位参数」会按顺序填入回调里「可同时按位置与关键字」的形参，这类形参在整条调用链上至多只能有一个；"
+    "其余参数必须在 Python 里写成仅关键字（单独一行 `*` 再写参数名），由剧本里的参数名（如「时长」「颜色」）传入；"
+    "若确实需要连续多个按位项，请改用一个 `list[元素类型]` 形参一次性接住列表。"
+  )
+  if len(list_slots) > 1:
+    raise PPCommandHandlerSignatureError(
+      f"注册命令回调「{func.__name__}」时：list[…] 形参至多一个，当前有 {len(list_slots)} 个：{', '.join(n for n, _ in list_slots)}。{_pos_rule_hint}",
+    )
+  if len(list_slots) == 1 and len(scalar_slots) > 0:
+    raise PPCommandHandlerSignatureError(
+      f"注册命令回调「{func.__name__}」时：已有按位列表形参 {list_slots[0][0]}，不能再声明其它可按位的业务形参（"
+      + ", ".join(n for n, _ in scalar_slots)
+      + f"）。请把这些参数挪到 `*` 之后改为仅关键字。{_pos_rule_hint}",
+    )
+  if len(scalar_slots) > 1:
+    raise PPCommandHandlerSignatureError(
+      f"注册命令回调「{func.__name__}」时：可按位的业务形参至多一个，当前有 {len(scalar_slots)} 个："
+      + ", ".join(n for n, _ in scalar_slots)
+      + f"。{_pos_rule_hint}",
+    )
+
+
+def _strip_wrapping_quotes_for_numeric(s: str) -> str:
+  """剥掉 Word/表格中数字外层引号（可多层），含 ASCII 与弯引号；先 NFKC 再剥。"""
+  s = unicodedata.normalize("NFKC", s).strip()
+  for _ in range(8):
+    if len(s) < 2:
+      break
+    if s[0] == s[-1] and s[0] in "'\"":
+      s = s[1:-1].strip()
+      continue
+    if s[0] in "\u201c\u2018" and s[-1] in "\u201d\u2019":
+      s = s[1:-1].strip()
+      continue
+    break
+  return s
+
 
 ParserStateType = typing.TypeVar('ParserStateType')
 
@@ -733,6 +850,11 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
     zh_cn="参数未使用：{name}",
     zh_hk="參數未使用：{name}",
   )
+  _tr_cmd_too_many_positionals = TR_parser.tr("cmd_too_many_positionals",
+    en="Too many positional arguments; they do not match the command parameters in order.",
+    zh_cn="按位参数过多，无法与命令参数按顺序一一对应。",
+    zh_hk="按位參數過多，無法與命令參數按順序一一對應。",
+  )
   _tr_positional_arg = TR_parser.tr("positional_arg",
     en="<positional argument>",
     zh_cn="<按位参数>",
@@ -775,10 +897,9 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
       is_unconstrained_param_found = False
       is_op_param_found = False
       is_extenddata_param_found = False
-      is_first_param_for_positional_args = True
+      positional_arg_index = 0
       first_fatal_error : tuple[str, typing.Any] = None
       used_args : set[str] = set()
-      is_positional_arg_used = len(positional_args) == 0
       is_extend_data_used = extend_data_value is None
 
       for name, param in sig.parameters.items():
@@ -858,30 +979,34 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
 
         # 该命令不是一个特殊参数，尝试赋值
         # 如果 kwargs (关键字参数)有现成的值的话用这个，优先级最高
-        # 其次如果这是第一个参数的话，用 positional_args （位置参数）也可以
+        # 其次用按位参数：按声明顺序依次绑定到连续的 POSITIONAL_OR_KEYWORD（类型为 list[…] 的参数一次性吃掉剩余按位项）
         # 如果都没有的话如果有默认值的话用默认值
         # 都没有的话就算错误，不能用这个回调函数
-        # 另外如果提供了 positional_args 但是在 kwargs 里有值的话同样报错，我们只接受对第一个参数使用 positional args
+        # 若尚未消费任何按位参数时第一个业务参数却来自关键字，则不接受同时出现按位参数（与原行为一致）
         if name in kwargs:
-          if is_first_param_for_positional_args and len(positional_args) > 0:
+          if positional_arg_index == 0 and len(positional_args) > 0:
             first_fatal_error = ('cmdparser-unused-positional-args', self._tr_unused_positional_args.format(name=name))
             break
           used_args.add(name)
-          is_first_param_for_positional_args = False
           first_fatal_error = cur_match.try_add_parameter(param, kwargs[name])
           if first_fatal_error is not None:
             break
           continue
-        if is_first_param_for_positional_args and len(positional_args) > 0:
-          # 如果该参数只能以 kwargs 出现的话也报错
+        if positional_arg_index < len(positional_args):
           if param.kind == inspect.Parameter.KEYWORD_ONLY:
             first_fatal_error = ('cmdparser-kwarg-using-positional-value', self._tr_kwarg_using_positional_value.format(name=name))
             break
-          is_positional_arg_used = True
-          is_first_param_for_positional_args = False
-          first_fatal_error = cur_match.try_add_parameter(param, positional_args)
+          if typing.get_origin(param.annotation) is list:
+            rest = positional_args[positional_arg_index:]
+            first_fatal_error = cur_match.try_add_parameter(param, rest)
+            if first_fatal_error is not None:
+              break
+            positional_arg_index = len(positional_args)
+            continue
+          first_fatal_error = cur_match.try_add_parameter(param, positional_args[positional_arg_index])
           if first_fatal_error is not None:
             break
+          positional_arg_index += 1
           continue
         if param.default != inspect.Parameter.empty:
           cur_match.add_parameter(param, param.default)
@@ -1006,6 +1131,11 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
     zh_cn="浮点数",
     zh_hk="浮點數",
   )
+  tr_typename_decimal = TR_parser.tr(code='cmdparser-typename-decimal',
+    en="Decimal",
+    zh_cn="Decimal（decimal.Decimal）",
+    zh_hk="Decimal（decimal.Decimal）",
+  )
   tr_unrecognized_exprname = TR_parser.tr(code='cmdparser-unrecognized-exprname',
     en="Unrecognized expression name: \"{exprname}\", expecting: {exprnamelist}",
     zh_cn="无法识别的表达式名：\"{exprname}\"，支持的表达式如下：{exprnamelist}",
@@ -1021,16 +1151,28 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
 
   # 用于在一系列可选的调用中选择一个回调函数并执行
   @staticmethod
-  def resolve_call(callexpr : CallExprOperand, candidate_list : list[tuple[Translatable | list[Translatable], typing.Callable, dict[str, Translatable]]], warnings : list[tuple[str, str]]) -> typing.Any:
+  def resolve_call(
+    callexpr : CallExprOperand,
+    candidate_list : list[tuple[Translatable | list[Translatable], typing.Callable, dict[str, Translatable]]],
+    warnings : list[tuple[str, str]],
+    *,
+    strict : bool = False,
+  ) -> typing.Any:
     for name, cb, paramdict in candidate_list:
       # name 可以是单个 Translatable 也可以是一个列表，为了方便一个名称有多个别名的情况
       # （比如预设背景和预设角色在没有歧义的情况下都可以使用“预设”作为简称）
       if (callexpr.name in name.get_all_candidates() if isinstance(name, Translatable) else any(callexpr.name in n.get_all_candidates() for n in name)):
+        validate_frontend_command_handler_semantics(cb, getattr(cb, "__globals__", {}))
         sig = inspect.signature(cb)
+        try:
+          cb_hints = typing.get_type_hints(cb, globalns=cb.__globals__, localns=None, include_extras=False)
+        except Exception:
+          cb_hints = {}
         valid_args = None
         # 首先，我们得把按位参数和关键字参数都处理好
         # 关键字参数直接用名字匹配，按位参数按顺序匹配
         parsed_params = {}
+        unknown_kw = False
         for k, v in callexpr.kwargs.items():
           is_current_param_found = False
           for pname, tr in paramdict.items():
@@ -1042,8 +1184,8 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
             if valid_args is None:
               valid_args = FrontendParserBase._populate_validargs_str(paramdict)
             warnings.append(('cmdparser-unexpected-params', FrontendParserBase.tr_unexpected_params.format(exprname=callexpr.name, paramname=k, args=valid_args)))
-        # 接下来处理按位参数
-        # 我们先查看回调函数支持多少个按位参数，然后再根据这个数量处理 callexpr 中的按位参数
+            unknown_kw = True
+        # 接下来处理按位参数（与 handle_command_invocation 一致：至多一个 list[…] 吸收剩余按位项）
         num_consumed_positional_params = 0
         for pname, p in sig.parameters.items():
           if p.kind == inspect.Parameter.POSITIONAL_ONLY:
@@ -1054,20 +1196,26 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
             # 我们忽略 *args 和 **kwargs
             continue
           if p.kind == inspect.Parameter.POSITIONAL_OR_KEYWORD:
-            # 先尝试进行读取
             if len(callexpr.args) == num_consumed_positional_params:
               break
-            cur_index = num_consumed_positional_params
-            num_consumed_positional_params += 1
+            ann = cb_hints.get(p.name, p.annotation)
             if p.name in parsed_params:
-              # 这个参数已经被赋值了，我们不再处理
               warnings.append(('cmdparser-param-override', FrontendParserBase.tr_param_override.format(exprname=callexpr.name, paramname=paramdict[p.name].get())))
+              if strict:
+                return None
               continue
-            parsed_params[p.name] = callexpr.args[cur_index]
+            if typing.get_origin(ann) is list and len(typing.get_args(ann)) == 1:
+              rest = callexpr.args[num_consumed_positional_params:]
+              parsed_params[p.name] = list(rest)
+              num_consumed_positional_params = len(callexpr.args)
+              continue
+            parsed_params[p.name] = callexpr.args[num_consumed_positional_params]
+            num_consumed_positional_params += 1
             continue
           raise PPInternalError('Unexpected parameter kind')
         # 如果还有剩的按位参数，我们也不处理
-        if num_consumed_positional_params < len(callexpr.args):
+        extra_positional = num_consumed_positional_params < len(callexpr.args)
+        if extra_positional:
           # 我们整理一下所有按位参数的名字
           valid_positional_args_list : list[str] = []
           for pname, p in sig.parameters.items():
@@ -1078,6 +1226,8 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
           else:
             valid_positional_args = ''
           warnings.append(('cmdparser-extra-positional-args', FrontendParserBase.tr_extra_positonalargs.format(exprname=callexpr.name, numposarg=str(len(valid_positional_args_list)), posargs=valid_positional_args, numgiven=str(len(callexpr.args)))))
+        if strict and (unknown_kw or extra_positional):
+          return None
         # 解析完成，开始准备转换参数类型
         # 如果有某个参数无法转换的话，我们就把 final_params 设为 None 来表示出错
         final_params = {}
@@ -1085,37 +1235,48 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
           if pname not in parsed_params:
             # 这个参数没有被赋值，我们用默认值
             if p.default == inspect.Parameter.empty:
+              conv_ann = cb_hints.get(pname, p.annotation)
+              ann_origin = typing.get_origin(conv_ann)
+              if ann_origin is list and len(typing.get_args(conv_ann)) > 0:
+                # 允许「仅关键字」补全 list 形参：无按位参数时视为空列表（由回调自行校验是否合法）
+                final_params[pname] = []
+                continue
               warnings.append(('cmdparser-missing-param', FrontendParserBase.tr_missing_param.format(exprname=callexpr.name, paramname=paramdict[pname].get())))
               final_params = None
               break
             final_params[pname] = p.default
             continue
           rawvalue = parsed_params[pname]
-          if converted := FrontendParserBase.try_convert_parameter(p.annotation, rawvalue):
+          conv_ann = cb_hints.get(pname, p.annotation)
+          converted = FrontendParserBase.try_convert_parameter(conv_ann, rawvalue)
+          if converted is not None:
             final_params[pname] = converted
           else:
             # 给一些有特殊报错消息的类型单独处理
-            if p.annotation == Color:
+            if conv_ann == Color:
               warnings.append(('cmdparser-invalid-color-expr', FrontendParserBase._tr_invalid_color_expr.format(paramname=paramdict[pname].get(), exprname=callexpr.name, expr=str(rawvalue))))
-            elif p.annotation == FrontendParserBase.Resolution:
+            elif conv_ann == FrontendParserBase.Resolution:
               warnings.append(('cmdparser-invalid-resolution-expr', FrontendParserBase._tr_invalid_resolution_expr.format(paramname=paramdict[pname].get(), exprname=callexpr.name, expr=str(rawvalue))))
-            elif p.annotation == FrontendParserBase.Coordinate2D:
+            elif conv_ann == FrontendParserBase.Coordinate2D:
               warnings.append(('cmdparser-invalid-coordinate-expr', FrontendParserBase._tr_invalid_coordinate_expr.format(paramname=paramdict[pname].get(), exprname=callexpr.name, expr=str(rawvalue))))
             else:
-              if p.annotation == int:
+              if conv_ann == int:
                 typename = FrontendParserBase.tr_typename_int.get()
-              elif p.annotation == float:
-                typename = FrontendParserBase.tr_typename_float.get()
+              elif conv_ann == decimal.Decimal:
+                typename = FrontendParserBase.tr_typename_decimal.get()
               else:
-                typename = str(p.annotation)
+                typename = str(conv_ann)
               warnings.append(('cmdparser-invalid-expr-general', FrontendParserBase._tr_invalid_expr_general.format(paramname=paramdict[pname].get(), exprname=callexpr.name, expr=str(rawvalue), typename=typename)))
-            # 再尝试使用默认值，如果有的话
+            # 再尝试使用默认值，如果有的话（strict 下禁止静默回退，须在 IR 阶段报错）
             if p.default == inspect.Parameter.empty:
+              final_params = None
+              break
+            if strict:
               final_params = None
               break
             final_params[pname] = p.default
         if final_params is None:
-          continue
+          return None
         return cb(**final_params)
     # 没有找到匹配的回调函数
     expr_name_list = []
@@ -1230,6 +1391,18 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
         return None
       value = value[0]
 
+    # Word/表格常把 0、0.5 落成 IntLiteral/FloatLiteral，须能参与 Decimal/int 形参解析
+    if ty == decimal.Decimal:
+      if isinstance(value, FloatLiteral):
+        return value.value
+      if isinstance(value, IntLiteral):
+        return decimal.Decimal(int(value.value))
+    if ty == int:
+      if isinstance(value, IntLiteral):
+        return int(value.value)
+      if isinstance(value, FloatLiteral):
+        return int(value.value)
+
     if isinstance(value, ty):
       return value
 
@@ -1278,19 +1451,16 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
     if ty == str:
       return value_str
     if ty == int:
+      s = _strip_wrapping_quotes_for_numeric(value_str)
       try:
-        return int(value_str)
+        return int(s)
       except ValueError:
         return None
     if ty == decimal.Decimal:
+      s = _strip_wrapping_quotes_for_numeric(value_str)
       try:
-        return decimal.Decimal(value_str)
+        return decimal.Decimal(s)
       except decimal.InvalidOperation:
-        return None
-    if ty == float:
-      try:
-        return float(value_str)
-      except ValueError:
         return None
     if ty == FrontendParserBase.Resolution:
       if res := FrontendParserBase.parse_pixel_resolution_str(value_str):
