@@ -11,6 +11,7 @@ from ..imageexpr import *
 from ..util.imagepackexportop import *
 from ..util import nameconvert
 from ..enginecommon.codegen import BackendCodeGenHelperBase
+from ..exceptions import PPNotImplementedError
 
 @dataclasses.dataclass
 class _RenPyScriptFileWrapper:
@@ -137,6 +138,8 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
     self.imspec_dict = collections.OrderedDict()
     self.audiospec_dict = collections.OrderedDict()
     self.numeric_image_index = 0
+    # 场景 master 层滤镜：Ren'Py 的 scene 会清掉 show_layer_at，切换场景后在同一条脚本链上补一行以维持到「结束特效:场景」
+    self._pending_scene_master_filter : tuple[str, float, str] | None = None
 
     if not self.is_matchtree_installed():
       _RenPyCodeGenHelper.init_matchtable()
@@ -442,6 +445,13 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
       VNRemoveInst : _RenPyCodeGenHelper.gen_remove,
       VNCallInst : _RenPyCodeGenHelper.gen_call,
       VNBackendInstructionGroup : _RenPyCodeGenHelper.gen_renpy_asm,
+      VNShakeEffectInst : _RenPyCodeGenHelper.gen_shake_effect,
+      VNFlashEffectInst : _RenPyCodeGenHelper.gen_flash_effect,
+      VNCharacterSpriteMoveInst : _RenPyCodeGenHelper.gen_character_sprite_move,
+      VNCharTrembleEffectInst : _RenPyCodeGenHelper.gen_char_tremble,
+      VNFilterEffectInst : _RenPyCodeGenHelper.gen_filter_effect,
+      VNWeatherEffectInst : _RenPyCodeGenHelper.gen_weather_effect,
+      VNEndEffectInst : _RenPyCodeGenHelper.gen_end_effect,
     })
     _RenPyCodeGenHelper.install_asset_basedir_matchtree({
       AudioAssetData : {
@@ -460,6 +470,21 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
 
   def get_result(self) -> RenPyModel:
     return self.result
+
+  @staticmethod
+  def _float_from_transition_duration_operand(v : Value | None, *, default : float) -> float:
+    """转场时长操作数须为数值字面值；若 IR 异常则在**导出 codegen**阶段失败，避免 Ren'Py 运行时才 float 报错。"""
+    if v is None:
+      return default
+    if isinstance(v, FloatLiteral):
+      return float(v.value)
+    if isinstance(v, IntLiteral):
+      return float(int(v.value))
+    raise PPInternalError(
+      "转场时长 IR 应为 FloatLiteral 或 IntLiteral，实际为 "
+      + type(v).__name__
+      + "；请检查剧本转场是否在解析阶段通过 parse_transition 校验。",
+    )
 
   def collect_say_text(self, src : OpOperand) -> list[Value]:
     result = []
@@ -663,9 +688,14 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
         withnode = RenPyWithNode.create(self.context, expr=img_transition)
         result.with_.set_operand(0, withnode)
         result.body.push_back(withnode)
-    if top_insert_place is None:
-      top_insert_place = insert_before
-    result.insert_before(top_insert_place)
+    anchor = top_insert_place if top_insert_place is not None else insert_before
+    if self._pending_scene_master_filter is not None:
+      fk, s, col = self._pending_scene_master_filter
+      rline = f'$ preppipe_scene_filter("{fk}", {s}, 0, "{col}")'
+      reapply = RenPyASMNode.create(self.context, asm=StringLiteral.get(rline, self.context))
+      reapply.insert_before(anchor)
+      result.insert_before(reapply)
+    result.insert_before(anchor)
     return result
 
   def _resolve_transition(self, transition : Value) -> tuple[str|None, tuple[decimal.Decimal, decimal.Decimal] | None]:
@@ -696,12 +726,94 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
           renpy_displayable_transition = transition.expression.get_string()
         else:
           return self._resolve_transition(transition.fallback)
+      elif isinstance(transition, VNGenericSceneTransitionExpr):
+        renpy_displayable_transition = self._generic_scene_transition_to_renpy(transition)
       elif isinstance(transition, VNAudioFadeTransitionExpr):
         renpy_audio_transition = (transition.fadein.value, transition.fadeout.value)
       else:
         # TODO
         pass
     return (renpy_displayable_transition, renpy_audio_transition)
+
+  def _generic_scene_transition_to_renpy(self, t: VNGenericSceneTransitionExpr) -> str:
+    """将通用场景过渡（与后端无关符号）映射为 Ren'Py with 表达式字符串。"""
+    kind = t.get_kind()
+    if kind == VNSceneTransitionKind.FadeIn:
+      d = t.get_duration()
+      sec = _RenPyCodeGenHelper._float_from_transition_duration_operand(d, default=0.5)
+      # 须用脚本命名空间中的 Fade（见 renpy.common）；勿写 renpy.display.transition.Fade，8.5+ 上该名可能已是 MultipleTransition 实例，不可再调用
+      return f"Fade(0, 0, {sec})"  # 新画面淡入
+    if kind == VNSceneTransitionKind.FadeOut:
+      d = t.get_duration()
+      sec = _RenPyCodeGenHelper._float_from_transition_duration_operand(d, default=0.5)
+      return f"Fade({sec}, 0, 0)"  # 旧画面淡出
+    if kind == VNSceneTransitionKind.Dissolve:
+      d = t.get_duration()
+      sec = _RenPyCodeGenHelper._float_from_transition_duration_operand(d, default=0.5)
+      return f"Dissolve({sec})" if sec != 0.5 else "dissolve"
+    if kind == VNSceneTransitionKind.SlideIn:
+      d = t.get_duration()
+      sec = _RenPyCodeGenHelper._float_from_transition_duration_operand(d, default=0.5)
+      if not t.get_direction():
+        raise PPInternalError("IR 缺少 SlideIn 方向（应由 parse_transition 填充）")
+      direction = t.get_direction().get_string().strip().lower()
+      if direction not in ("left", "right", "up", "down"):
+        raise PPInternalError(f"IR 滑移方向非规范键: {direction!r}")
+      mode = "slide" + direction  # slideleft, slideright, slideup, slidedown
+      if sec != 0.5:
+        return f'CropMove({sec}, "{mode}")'
+      return mode
+    if kind == VNSceneTransitionKind.SlideOut:
+      d = t.get_duration()
+      sec = _RenPyCodeGenHelper._float_from_transition_duration_operand(d, default=0.5)
+      if not t.get_direction():
+        raise PPInternalError("IR 缺少 SlideOut 方向（应由 parse_transition 填充）")
+      direction = t.get_direction().get_string().strip().lower()
+      if direction not in ("left", "right", "up", "down"):
+        raise PPInternalError(f"IR 滑移方向非规范键: {direction!r}")
+      mode = "slideaway" + direction  # slideawayleft, slideawayright, ...
+      if sec != 0.5:
+        return f'CropMove({sec}, "{mode}")'
+      return mode
+    if kind == VNSceneTransitionKind.Push:
+      d = t.get_duration()
+      sec = _RenPyCodeGenHelper._float_from_transition_duration_operand(d, default=0.5)
+      if not t.get_direction():
+        raise PPInternalError("IR 缺少 Push 方向（应由 parse_transition 填充）")
+      direction = t.get_direction().get_string().strip().lower()
+      if direction not in ("left", "right", "up", "down"):
+        raise PPInternalError(f"IR 推移方向非规范键: {direction!r}")
+      mode = "push" + direction  # pushright, pushleft, pushup, pushdown
+      if sec != 0.5:
+        return f'PushMove({sec}, "{mode}")'
+      return mode
+    if kind == VNSceneTransitionKind.FadeToColor:
+      fo = t.get_fade_to_color_fade_out()
+      ho = t.get_fade_to_color_hold()
+      fi = t.get_fade_to_color_fade_in()
+      out_s = _RenPyCodeGenHelper._float_from_transition_duration_operand(fo, default=0.5)
+      hold_s = _RenPyCodeGenHelper._float_from_transition_duration_operand(ho, default=0.2)
+      in_s = _RenPyCodeGenHelper._float_from_transition_duration_operand(fi, default=0.5)
+      col = self._fade_to_color_hex(t)
+      return f'Fade({out_s}, {hold_s}, {in_s}, color="{col}")'
+    if kind == VNSceneTransitionKind.Zoom:
+      if not t.get_zoom_direction():
+        raise PPInternalError("IR 缺少 Zoom 方向（应由 parse_transition 填充）")
+      direction = t.get_zoom_direction().get_string().strip().lower()
+      if direction not in ("in", "out"):
+        raise PPInternalError(f"IR 缩放方向非规范键: {direction!r}")
+      d = t.get_duration()
+      sec = _RenPyCodeGenHelper._float_from_transition_duration_operand(d, default=0.5)
+      pt = (t.get_zoom_point() or "").get_string() if t.get_zoom_point() else ""
+      if not pt.strip():
+        raise PPInternalError("IR 缺少 Zoom 缩放点（应由 parse_transition 填充）")
+      pt_key = pt.strip().replace(" ", "_").replace("-", "_").lower()
+      if pt_key not in self._ZOOM_POINT_XY:
+        raise PPInternalError(f"IR 缩放点非规范键: {pt_key!r}")
+      pt_escaped = pt.replace("\\", "\\\\").replace("'", "\\'")
+      name = "preppipe_zoomout" if direction == "out" else "preppipe_zoomin"
+      return f"{name}({sec}, '{pt_escaped}')"
+    raise NotImplementedError(f"Unhandled VNSceneTransitionKind: {kind}")
 
   def resolve_displayable_transition(self, transition : Value) -> str | None:
     renpy_displayable_transition, renpy_audio_transition = self._resolve_transition(transition)
@@ -716,6 +828,235 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
       fadein, fadeout = audio_transition
       play.fadein.set_operand(0, FloatLiteral.get(fadein, self.context))
       play.fadeout.set_operand(0, FloatLiteral.get(fadeout, self.context))
+
+  # 与 vnutil.CANONICAL_ZOOM_POINTS 一致；别名须在 parse_transition 时已规范化为下列键
+  _ZOOM_POINT_XY: typing.ClassVar[dict[str, tuple[float, float]]] = {
+    "top_left": (0.0, 0.0), "top_center": (0.5, 0.0), "top_right": (1.0, 0.0),
+    "center_left": (0.0, 0.5), "center": (0.5, 0.5), "center_right": (1.0, 0.5),
+    "bottom_left": (0.0, 1.0), "bottom_center": (0.5, 1.0), "bottom_right": (1.0, 1.0),
+  }
+
+  _SLIDE_DIST: typing.ClassVar[float] = 2500.0
+
+  def _fade_to_color_hex(self, t: VNGenericSceneTransitionExpr) -> str:
+    col_lit = t.get_fade_to_color_color()
+    if col_lit is None:
+      return "#000000"
+    c = col_lit.value
+    return f"#{c.r:02x}{c.g:02x}{c.b:02x}"
+
+  def _vn_duration_sec(self, d) -> float:
+    sec = _RenPyCodeGenHelper._float_from_transition_duration_operand(d, default=0.5)
+    # 时长为 0 时 Ren'Py 中线性 ATL 与 pause 均为零，退场会「一闪而过」
+    return sec if sec > 1e-6 else 0.5
+
+  def _chain_show_at(self, showat : RenPyASMExpr | None, at_suffix : str) -> RenPyASMExpr:
+    if showat is not None:
+      return RenPyASMExpr.create(self.context, showat.get_string() + ", " + at_suffix)
+    return RenPyASMExpr.create(self.context, StringLiteral.get(at_suffix, self.context))
+
+  def _direction_slide_offset(self, direction : str) -> tuple[float, float]:
+    d = (direction or "").strip().lower()
+    s = self._SLIDE_DIST
+    if d == "left":
+      return (-s, 0.0)
+    if d == "right":
+      return (s, 0.0)
+    if d == "up":
+      return (0.0, -s)
+    if d == "down":
+      return (0.0, s)
+    raise PPInternalError(f"IR 滑移方向非规范键: {direction!r}（应由 parse_transition 规范化）")
+
+  def _sprite_zoom_align(self, t : VNGenericSceneTransitionExpr) -> tuple[float, float, float]:
+    d = t.get_duration()
+    sec = self._vn_duration_sec(d)
+    pt = (t.get_zoom_point() or "").get_string() if t.get_zoom_point() else "center"
+    key = pt.strip().replace(" ", "_").replace("-", "_").lower()
+    if key not in self._ZOOM_POINT_XY:
+      raise PPInternalError(f"IR 缩放点非规范键: {key!r}（应由 parse_transition 规范化）")
+    xa, ya = self._ZOOM_POINT_XY[key]
+    return sec, xa, ya
+
+  def _generic_to_sprite_show_at(self, t : VNGenericSceneTransitionExpr) -> str | None:
+    """仅入场语义：show 上不处理 FadeOut / SlideOut / ZoomOut。"""
+    kind = t.get_kind()
+    sec = self._vn_duration_sec(t.get_duration())
+    if kind == VNSceneTransitionKind.Zoom:
+      dout = t.get_zoom_direction()
+      if (dout.get_string().lower() if dout else "") == "out":
+        return None
+      s, xa, ya = self._sprite_zoom_align(t)
+      return f"preppipe_sprite_zoom_in({s}, {xa}, {ya})"
+    if kind == VNSceneTransitionKind.FadeIn:
+      return f"preppipe_sprite_fade_in({sec})"
+    if kind == VNSceneTransitionKind.Dissolve:
+      return f"preppipe_sprite_dissolve_in({sec})"
+    if kind == VNSceneTransitionKind.SlideIn:
+      if not t.get_direction():
+        raise PPInternalError("IR 缺少 SlideIn 方向（应由 parse_transition 填充）")
+      dr = t.get_direction().get_string().strip().lower()
+      ox, oy = self._direction_slide_offset(dr)
+      return f"preppipe_sprite_slide_in({sec}, {ox}, {oy})"
+    if kind == VNSceneTransitionKind.Push:
+      if not t.get_direction():
+        raise PPInternalError("IR 缺少 Push 方向（应由 parse_transition 填充）")
+      dr = t.get_direction().get_string().strip().lower()
+      ox, oy = self._direction_slide_offset(dr)
+      return f"preppipe_sprite_slide_in({sec}, {ox}, {oy})"
+    if kind == VNSceneTransitionKind.FadeToColor:
+      fo = t.get_fade_to_color_fade_out()
+      ho = t.get_fade_to_color_hold()
+      fi = t.get_fade_to_color_fade_in()
+      total = self._vn_duration_sec(fo) + self._vn_duration_sec(ho) + self._vn_duration_sec(fi)
+      return f"preppipe_sprite_fade_in({total})"
+    return None
+
+  def _generic_is_exit_only_on_show(self, t : VNGenericSceneTransitionExpr) -> bool:
+    k = t.get_kind()
+    if k == VNSceneTransitionKind.FadeOut:
+      return True
+    if k == VNSceneTransitionKind.SlideOut:
+      return True
+    if k == VNSceneTransitionKind.Zoom:
+      return (t.get_zoom_direction().get_string().lower() if t.get_zoom_direction() else "") == "out"
+    return False
+
+  def _transition_has_visual_effect(self, transition : Value | None) -> bool:
+    """转场值是否存在可生成的画面效果（「无转场」枚举在 Python 中仍为真值，须单独排除）。"""
+    if transition is None:
+      return False
+    dt = VNDefaultTransitionType.get_default_transition_type(transition)
+    return dt != VNDefaultTransitionType.DT_NO_TRANSITION
+
+  def _require_foreground_show_at(self, transition : Value) -> str | None:
+    """立绘入场转场：不支持的类型或参数直接报错。"""
+    if isinstance(transition, VNGenericSceneTransitionExpr):
+      if self._generic_is_exit_only_on_show(transition):
+        raise PPNotImplementedError(
+          "立绘入场不支持退场类转场（淡出、滑出、缩小离场等）；请使用淡入、滑入等入场类转场，"
+          "退场类请写在角色退场上。",
+        )
+      at_s = self._generic_to_sprite_show_at(transition)
+      if at_s is None:
+        raise PPNotImplementedError(
+          "立绘入场不支持该转场种类，请改用淡入、滑入、溶解、黑白酒等入场效果。",
+        )
+      return at_s
+    dt = VNDefaultTransitionType.get_default_transition_type(transition)
+    if dt == VNDefaultTransitionType.DT_NO_TRANSITION:
+      return None
+    if dt in (VNDefaultTransitionType.DT_SPRITE_SHOW, VNDefaultTransitionType.DT_IMAGE_SHOW):
+      return "preppipe_sprite_dissolve_in(0.5)"
+    if isinstance(transition, VNBackendDisplayableTransitionExpr):
+      if transition.backend.get_string().lower() != "renpy":
+        raise PPNotImplementedError(
+          "立绘入场不支持该显示层转场写法，请使用剧本中的通用入场转场（淡入、滑入、溶解等）。",
+        )
+      e = transition.expression.get_string().strip().lower()
+      if e == "dissolve" or e.startswith("dissolve(") or e.startswith("dissolve "):
+        return "preppipe_sprite_dissolve_in(0.5)"
+      raise PPNotImplementedError(
+        "立绘入场仅支持「溶解」形式的显示层转场，请改用溶解或通用入场转场。",
+      )
+    if isinstance(transition, VNAudioFadeTransitionExpr):
+      raise PPNotImplementedError("立绘显示不支持音频淡入淡出转场。")
+    if dt is not None:
+      raise PPNotImplementedError(
+        "立绘入场不支持当前默认转场设置，请使用立绘显示默认效果或通用入场转场（淡入、滑入等）。",
+      )
+    raise PPNotImplementedError("立绘入场不支持该转场值，请核对转场类型或改用通用入场转场。")
+
+  def _push_direction_to_sprite_exit_offset(self, direction : str) -> tuple[float, float]:
+    """推移退场：与场景「推移」时旧画面被推开方向一致，映射为单张立绘的滑出 offset。"""
+    d = (direction or "").strip().lower()
+    if d == "left":
+      return self._direction_slide_offset("right")
+    if d == "right":
+      return self._direction_slide_offset("left")
+    if d == "up":
+      return self._direction_slide_offset("down")
+    if d == "down":
+      return self._direction_slide_offset("up")
+    raise PPInternalError(f"IR 推移方向非规范键: {direction!r}")
+
+  def _foreground_hide_sprite_at_pause(
+    self,
+    imspec : tuple,
+    insert_before : RenPyNode,
+    at_expr : str,
+    pause_sec : float,
+    base_showat : RenPyASMExpr | None = None,
+  ) -> RenPyShowNode:
+    """立绘退场：只动该层，不用 hide … with 整屏转场。
+
+    返回 **show**（时间上最先执行的一节）：codegen_block 从块尾向前插桩，
+    若误返回 hide，上一条指令会插在 pause 与 hide 之间，打断 ATL，表现为退场无动画。
+
+    base_showat：与入场一致的 screen2d_abs，须与退场 ATL 链式拼接，否则 offset/缩放锚点会丢。
+    """
+    if base_showat is not None:
+      showat = self._chain_show_at(base_showat, at_expr)
+    else:
+      showat = RenPyASMExpr.create(self.context, StringLiteral.get(at_expr, self.context))
+    show = RenPyShowNode.create(
+      context=self.context,
+      imspec=imspec,
+      showat=showat,
+    )
+    hide = RenPyHideNode.create(context=self.context, imspec=imspec)
+    pause_asm = StringLiteral.get(f"pause {pause_sec}", self.context)
+    pause = RenPyASMNode.create(self.context, asm=pause_asm)
+    hide.insert_before(insert_before)
+    pause.insert_before(hide)
+    show.insert_before(pause)
+    return show
+
+  def _foreground_hide_fade_sequence(
+    self, imspec : tuple, duration : float, insert_before : RenPyNode, base_showat : RenPyASMExpr | None = None
+  ) -> RenPyShowNode:
+    return self._foreground_hide_sprite_at_pause(
+      imspec, insert_before, f"preppipe_sprite_fade_out({duration})", duration, base_showat=base_showat
+    )
+
+  def _emit_foreground_hide(
+    self, imspec : tuple, transition : Value, insert_before : RenPyNode, instr : VNRemoveInst
+  ) -> RenPyShowNode | None:
+    base_showat = None
+    if position := instr.placeat.get(VNPositionSymbol.NAME_SCREEN2D):
+      base_showat = self._get_screen2d_position(position)
+    if isinstance(transition, VNGenericSceneTransitionExpr):
+      k = transition.get_kind()
+      sec = self._vn_duration_sec(transition.get_duration())
+      if k == VNSceneTransitionKind.Zoom:
+        s, _xa, _ya = self._sprite_zoom_align(transition)
+        at_expr = f"preppipe_sprite_zoom_out({s})"
+        return self._foreground_hide_sprite_at_pause(imspec, insert_before, at_expr, s, base_showat=base_showat)
+      if k == VNSceneTransitionKind.SlideOut:
+        if not transition.get_direction():
+          raise PPInternalError("IR 缺少 SlideOut 方向（应由 parse_transition 填充）")
+        dr = transition.get_direction().get_string().strip().lower()
+        ox, oy = self._direction_slide_offset(dr)
+        at_expr = f"preppipe_sprite_slide_out({sec}, {ox}, {oy})"
+        return self._foreground_hide_sprite_at_pause(imspec, insert_before, at_expr, sec, base_showat=base_showat)
+      if k == VNSceneTransitionKind.Push:
+        if not transition.get_direction():
+          raise PPInternalError("IR 缺少 Push 方向（应由 parse_transition 填充）")
+        dr = transition.get_direction().get_string().strip().lower()
+        ox, oy = self._push_direction_to_sprite_exit_offset(dr)
+        at_expr = f"preppipe_sprite_slide_out({sec}, {ox}, {oy})"
+        return self._foreground_hide_sprite_at_pause(imspec, insert_before, at_expr, sec, base_showat=base_showat)
+      if k in (VNSceneTransitionKind.FadeOut, VNSceneTransitionKind.Dissolve):
+        return self._foreground_hide_fade_sequence(imspec, sec, insert_before, base_showat=base_showat)
+    dt = VNDefaultTransitionType.get_default_transition_type(transition)
+    if dt == VNDefaultTransitionType.DT_SPRITE_HIDE:
+      return self._foreground_hide_fade_sequence(imspec, 0.5, insert_before, base_showat=base_showat)
+    if isinstance(transition, VNBackendDisplayableTransitionExpr):
+      if transition.backend.get_string().lower() == "renpy":
+        e = transition.expression.get_string().strip().lower()
+        if e == "dissolve" or e.startswith("dissolve"):
+          return self._foreground_hide_fade_sequence(imspec, 0.5, insert_before, base_showat=base_showat)
+    return None
 
   def _add_image_transition(self, transition : Value, node : RenPyShowNode | RenPyHideNode):
     if img_transition := self.resolve_displayable_transition(transition):
@@ -755,9 +1096,11 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
         showat = None
         if position := instr.placeat.get(VNPositionSymbol.NAME_SCREEN2D):
           showat = self._get_screen2d_position(position)
+        transition = instr.transition.try_get_value()
+        at_sp = self._require_foreground_show_at(transition) if transition else None
+        if at_sp:
+          showat = self._chain_show_at(showat, at_sp)
         show = RenPyShowNode.create(context=self.context, imspec=imspec, showat=showat)
-        if transition := instr.transition.try_get_value():
-          self._add_image_transition(transition, show)
         show.insert_before(insert_before)
         return show
       case VNStandardDeviceKind.O_SE_AUDIO:
@@ -799,9 +1142,17 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
         showat = None
         if position := instr.placeat.get(VNPositionSymbol.NAME_SCREEN2D):
           showat = self._get_screen2d_position(position)
+        transition = instr.transition.try_get_value()
+        at_sp = (
+          self._require_foreground_show_at(transition)
+          if transition and devkind == VNStandardDeviceKind.O_FOREGROUND_DISPLAY
+          else None
+        )
+        if at_sp:
+          showat = self._chain_show_at(showat, at_sp)
         show = RenPyShowNode.create(context=self.context, imspec=new_imspec, showat=showat)
         show.insert_before(insert_before)
-        if transition := instr.transition.try_get_value():
+        if self._transition_has_visual_effect(transition) and devkind == VNStandardDeviceKind.O_BACKGROUND_DISPLAY:
           self._add_image_transition(transition, show)
         new_insert_point = show
         if remove_imspec[0] != new_imspec[0]:
@@ -824,9 +1175,17 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
       match kind:
         case VNStandardDeviceKind.O_BACKGROUND_DISPLAY | VNStandardDeviceKind.O_FOREGROUND_DISPLAY:
           imspec = self.get_impsec(removevalue, kind)
+          transition = instr.transition.try_get_value()
+          if self._transition_has_visual_effect(transition) and kind == VNStandardDeviceKind.O_FOREGROUND_DISPLAY:
+            if hid := self._emit_foreground_hide(imspec, transition, insert_before, instr):
+              return hid
+            raise PPNotImplementedError(
+              "立绘退场不支持该转场。退场请使用：淡出、溶解、滑出、推移、缩放（含缩小离场）；"
+              "入场类（淡入、滑入、黑白酒等）请写在角色入场，不要写在退场。",
+            )
           hide = RenPyHideNode.create(context=self.context, imspec=imspec)
           hide.insert_before(insert_before)
-          if transition := instr.transition.try_get_value():
+          if self._transition_has_visual_effect(transition):
             self._add_image_transition(transition, hide)
           return hide
         case VNStandardDeviceKind.O_BGM_AUDIO:
@@ -848,6 +1207,144 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
     result = RenPyCallNode.create(self.context, label = calleelabel)
     result.insert_before(insert_before)
     return result
+
+  def gen_shake_effect(self, instrs : list[VNInstruction], insert_before : RenPyNode) -> RenPyNode:
+    inst = instrs[0]
+    assert isinstance(inst, VNShakeEffectInst)
+    d = float(inst.duration.get().value)
+    amp = float(inst.amplitude.get().value)
+    dec = float(inst.decay.get().value)
+    dr = inst.direction.get().get_string()
+    if inst.scene_wide.get().value:
+      line = f"$ preppipe_scene_shake({d}, {amp}, {dec}, {repr(dr)})"
+    else:
+      spec = self.get_impsec(inst.sprite.get(), user_hint=VNStandardDeviceKind.O_FOREGROUND_DISPLAY)
+      parts = ", ".join(repr(x.get_string()) for x in spec)
+      x = int(inst.place_x.get().value)
+      y = int(inst.place_y.get().value)
+      w = int(inst.place_w.get().value)
+      h = int(inst.place_h.get().value)
+      line = f"$ preppipe_char_shake(({parts}), {x}, {y}, {w}, {h}, {d}, {amp}, {dec}, {repr(dr)})"
+    node = RenPyASMNode.create(self.context, StringLiteral.get(line, self.context))
+    node.insert_before(insert_before)
+    return node
+
+  def gen_flash_effect(self, instrs : list[VNInstruction], insert_before : RenPyNode) -> RenPyNode:
+    inst = instrs[0]
+    assert isinstance(inst, VNFlashEffectInst)
+    fc = inst.color.get().get_string().replace("\\", "\\\\").replace('"', '\\"')
+    fi = float(inst.fade_in.get().value)
+    fh = float(inst.hold.get().value)
+    fo = float(inst.fade_out.get().value)
+    if inst.scene_wide.get().value:
+      line = f'$ preppipe_scene_flash("{fc}", {fi}, {fh}, {fo})'
+    else:
+      spec = self.get_impsec(inst.sprite.get(), user_hint=VNStandardDeviceKind.O_FOREGROUND_DISPLAY)
+      parts = ", ".join(repr(x.get_string()) for x in spec)
+      x = int(inst.place_x.get().value)
+      y = int(inst.place_y.get().value)
+      w = int(inst.place_w.get().value)
+      h = int(inst.place_h.get().value)
+      line = f'$ preppipe_char_flash(({parts}), {x}, {y}, {w}, {h}, "{fc}", {fi}, {fh}, {fo})'
+    node = RenPyASMNode.create(self.context, StringLiteral.get(line, self.context))
+    node.insert_before(insert_before)
+    return node
+
+  def gen_character_sprite_move(self, instrs : list[VNInstruction], insert_before : RenPyNode) -> RenPyNode:
+    inst = instrs[0]
+    assert isinstance(inst, VNCharacterSpriteMoveInst)
+    spec = self.get_impsec(inst.sprite.get(), user_hint=VNStandardDeviceKind.O_FOREGROUND_DISPLAY)
+    parts = ", ".join(repr(x.get_string()) for x in spec)
+    x = int(inst.place_x.get().value)
+    y = int(inst.place_y.get().value)
+    w = int(inst.place_w.get().value)
+    h = int(inst.place_h.get().value)
+    mk = inst.move_kind.get().get_string().replace("\\", "\\\\").replace('"', '\\"')
+    es = inst.style.get().get_string().replace("\\", "\\\\").replace('"', '\\"')
+    d = float(inst.duration.get().value)
+    f1 = float(inst.n1.get().value)
+    f2 = float(inst.n2.get().value)
+    f3 = float(inst.n3.get().value)
+    f4 = float(inst.n4.get().value)
+    line = (
+      f'$ preppipe_char_sprite_anim(({parts}), {x}, {y}, {w}, {h}, "{mk}", {d}, {f1}, {f2}, {f3}, {f4}, "{es}")'
+    )
+    node = RenPyASMNode.create(self.context, StringLiteral.get(line, self.context))
+    node.insert_before(insert_before)
+    return node
+
+  def gen_char_tremble(self, instrs : list[VNInstruction], insert_before : RenPyNode) -> RenPyNode:
+    inst = instrs[0]
+    assert isinstance(inst, VNCharTrembleEffectInst)
+    spec = self.get_impsec(inst.sprite.get(), user_hint=VNStandardDeviceKind.O_FOREGROUND_DISPLAY)
+    parts = ", ".join(repr(x.get_string()) for x in spec)
+    x = int(inst.place_x.get().value)
+    y = int(inst.place_y.get().value)
+    w = int(inst.place_w.get().value)
+    h = int(inst.place_h.get().value)
+    amp = float(inst.amplitude.get().value)
+    per = float(inst.period.get().value)
+    dur = float(inst.duration.get().value)
+    line = f"$ preppipe_char_tremble(({parts}), {x}, {y}, {w}, {h}, {amp}, {per}, {dur})"
+    node = RenPyASMNode.create(self.context, StringLiteral.get(line, self.context))
+    node.insert_before(insert_before)
+    return node
+
+  def gen_filter_effect(self, instrs : list[VNInstruction], insert_before : RenPyNode) -> RenPyNode:
+    inst = instrs[0]
+    assert isinstance(inst, VNFilterEffectInst)
+    fk = inst.filter_kind.get().get_string().replace("\\", "\\\\").replace('"', '\\"')
+    s = float(inst.strength.get().value)
+    d = float(inst.duration.get().value)
+    col = inst.color.get().get_string().replace("\\", "\\\\").replace('"', '\\"')
+    if inst.scene_wide.get().value:
+      line = f'$ preppipe_scene_filter("{fk}", {s}, {d}, "{col}")'
+      self._pending_scene_master_filter = (fk, float(s), col)
+    else:
+      spec = self.get_impsec(inst.sprite.get(), user_hint=VNStandardDeviceKind.O_FOREGROUND_DISPLAY)
+      parts = ", ".join(repr(x.get_string()) for x in spec)
+      x = int(inst.place_x.get().value)
+      y = int(inst.place_y.get().value)
+      w = int(inst.place_w.get().value)
+      h = int(inst.place_h.get().value)
+      line = f'$ preppipe_char_filter(({parts}), {x}, {y}, {w}, {h}, "{fk}", {s}, {d}, "{col}")'
+    node = RenPyASMNode.create(self.context, StringLiteral.get(line, self.context))
+    node.insert_before(insert_before)
+    return node
+
+  def gen_weather_effect(self, instrs : list[VNInstruction], insert_before : RenPyNode) -> RenPyNode:
+    inst = instrs[0]
+    assert isinstance(inst, VNWeatherEffectInst)
+    k = inst.weather_kind.get().get_string().replace("\\", "\\\\").replace('"', '\\"')
+    intensity = float(inst.intensity.get().value)
+    ifi = float(inst.inner_fade_in.get().value)
+    ifo = float(inst.inner_fade_out.get().value)
+    ov = float(inst.overlay_fade_in.get().value)
+    sus = float(inst.sustain.get().value)
+    vx = float(inst.vx.get().value)
+    vy = float(inst.vy.get().value)
+    line = f'$ preppipe_weather_start("{k}", {intensity}, {ifi}, {ifo}, {ov}, {vx}, {vy}, {sus})'
+    node = RenPyASMNode.create(self.context, StringLiteral.get(line, self.context))
+    node.insert_before(insert_before)
+    return node
+
+  def gen_end_effect(self, instrs : list[VNInstruction], insert_before : RenPyNode) -> RenPyNode:
+    inst = instrs[0]
+    assert isinstance(inst, VNEndEffectInst)
+    if inst.scene_wide.get().value:
+      self._pending_scene_master_filter = None
+      line = "$ preppipe_end_scene_effect()"
+    else:
+      spec = self.get_impsec(inst.sprite.get(), user_hint=VNStandardDeviceKind.O_FOREGROUND_DISPLAY)
+      parts = ", ".join(repr(x.get_string()) for x in spec)
+      x = int(inst.place_x.get().value)
+      y = int(inst.place_y.get().value)
+      w = int(inst.place_w.get().value)
+      h = int(inst.place_h.get().value)
+      line = f"$ preppipe_end_char_effect(({parts}), {x}, {y}, {w}, {h})"
+    node = RenPyASMNode.create(self.context, StringLiteral.get(line, self.context))
+    node.insert_before(insert_before)
+    return node
 
   def gen_renpy_asm(self, instrs : list[VNInstruction], insert_before : RenPyNode) -> RenPyNode:
     group = instrs[0]
