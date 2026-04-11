@@ -295,7 +295,7 @@ def _merge_animation_table(out_path : str, new_names : list[str]) -> None:
   with open(table_path, 'w', encoding='utf-8') as tf:
     json.dump(merged, tf, ensure_ascii=False)
 
-def _copy_prepipe_runtime(out_path : str) -> None:
+def _copy_preppipe_runtime(out_path : str) -> None:
   """TODO(WebGAL): 与 `webgal/codegen.py` 中特效 IR 导出一并恢复；将包内 runtime 递归复制到 `game/prepipe/`。"""
   pkg_rt = os.path.join(os.path.dirname(__file__), 'runtime')
   if not os.path.isdir(pkg_rt):
@@ -322,7 +322,7 @@ def export_webgal(m : WebGalModel, out_path : str, template_dir : str = '') -> N
     shutil.copytree(template_dir, out_path, dirs_exist_ok=True)
 
   # TODO(WebGAL): 特效等价导出启用后取消注释，随导出附带 game/prepipe/ 自定义脚本与说明。
-  # _copy_prepipe_runtime(out_path)
+  # _copy_preppipe_runtime(out_path)
 
   # step 2: data files (animation JSON 等)
   generated_anim_names : list[str] = []

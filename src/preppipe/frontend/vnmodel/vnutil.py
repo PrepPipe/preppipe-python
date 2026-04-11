@@ -21,6 +21,16 @@ from .vnast import *
 from ...util.message import MessageHandler
 from ...exceptions import *
 from ...language import TranslationDomain
+from ...vnmodel import (
+  VNDissolveSceneTransitionLit,
+  VNFadeInSceneTransitionLit,
+  VNFadeOutSceneTransitionLit,
+  VNFadeToColorSceneTransitionLit,
+  VNPushSceneTransitionLit,
+  VNSlideInSceneTransitionLit,
+  VNSlideOutSceneTransitionLit,
+  VNZoomSceneTransitionLit,
+)
 
 _TR_vn_util = TranslationDomain("vn_util")
 
@@ -499,7 +509,7 @@ EFFECT_PRESET_ZOOM_POINT = "ZoomPoint"
 EFFECT_PRESET_SHAKE_DIRECTION = "ShakeDirection"
 
 # ---------------------------------------------------------------------------
-# VNGenericSceneTransitionExpr 的 direction / zoom_point 等字符串操作数：
+# 场景转场 LiteralExpr（如 VNZoomSceneTransitionLit.direction / .point）在 parse 时已规范为英文键：
 # 须在构造 IR 时即为规范英文蛇形键；codegen 只做「规范键 → 引擎参数」，不再做自然语言匹配。
 # ---------------------------------------------------------------------------
 
@@ -692,25 +702,25 @@ def parse_transition(context : Context, transition_name : str, transition_args :
 
   # 2. 通用场景过渡（与后端无关的固定符号）
   def handle_fade_in(duration: decimal.Decimal = decimal.Decimal("0.5")):
-    return VNGenericSceneTransitionExpr.get_fade_in(context, _transition_decimal_to_value(context, duration))
+    return VNFadeInSceneTransitionLit.get(context, _transition_decimal_to_value(context, duration))
 
   def handle_fade_out(duration: decimal.Decimal = decimal.Decimal("0.5")):
-    return VNGenericSceneTransitionExpr.get_fade_out(context, _transition_decimal_to_value(context, duration))
+    return VNFadeOutSceneTransitionLit.get(context, _transition_decimal_to_value(context, duration))
 
   def handle_dissolve(duration: decimal.Decimal = decimal.Decimal("0.5")):
-    return VNGenericSceneTransitionExpr.get_dissolve(context, _transition_decimal_to_value(context, duration))
+    return VNDissolveSceneTransitionLit.get(context, _transition_decimal_to_value(context, duration))
 
   def handle_slide_in(duration: decimal.Decimal = decimal.Decimal("0.5"), *, direction: str):
     dir_lit = _resolve_direction(EFFECT_PRESET_SLIDE_DIRECTION, direction)
-    return VNGenericSceneTransitionExpr.get_slide_in(context, _transition_decimal_to_value(context, duration), dir_lit)
+    return VNSlideInSceneTransitionLit.get(context, _transition_decimal_to_value(context, duration), dir_lit)
 
   def handle_slide_out(duration: decimal.Decimal = decimal.Decimal("0.5"), *, direction: str):
     dir_lit = _resolve_direction(EFFECT_PRESET_SLIDE_DIRECTION, direction)
-    return VNGenericSceneTransitionExpr.get_slide_out(context, _transition_decimal_to_value(context, duration), dir_lit)
+    return VNSlideOutSceneTransitionLit.get(context, _transition_decimal_to_value(context, duration), dir_lit)
 
   def handle_push(duration: decimal.Decimal = decimal.Decimal("0.5"), *, direction: str):
     dir_lit = _resolve_direction(EFFECT_PRESET_SLIDE_DIRECTION, direction)
-    return VNGenericSceneTransitionExpr.get_push(context, _transition_decimal_to_value(context, duration), dir_lit)
+    return VNPushSceneTransitionLit.get(context, _transition_decimal_to_value(context, duration), dir_lit)
 
   def handle_fade_to_color(
     *,
@@ -720,7 +730,7 @@ def parse_transition(context : Context, transition_name : str, transition_args :
     color: Color,
   ):
     color_lit = ColorLiteral.get(color, context)
-    return VNGenericSceneTransitionExpr.get_fade_to_color(
+    return VNFadeToColorSceneTransitionLit.get(
       context,
       _transition_decimal_to_value(context, fade_out),
       _transition_decimal_to_value(context, hold),
@@ -747,7 +757,7 @@ def parse_transition(context : Context, transition_name : str, transition_args :
     dir_s = dir_lit.get_string().strip().lower()
     point_str = start_point if dir_s == "in" else end_point
     point_lit = _resolve_zoom_point(EFFECT_PRESET_ZOOM_POINT, point_str)
-    return VNGenericSceneTransitionExpr.get_zoom(context, dir_lit, d_val, point_lit)
+    return VNZoomSceneTransitionLit.get(context, dir_lit, d_val, point_lit)
 
   callexpr = CallExprOperand(transition_name, transition_args, collections.OrderedDict(transition_kwargs))
   transition_expr = FrontendParserBase.resolve_call(callexpr, [
