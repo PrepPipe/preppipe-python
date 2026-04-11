@@ -1,7 +1,7 @@
 /**
  * PrepPipe WebGAL 自定义 Pixi perform（骨架实现）
  *
- * TODO(WebGAL): 当前 `codegen_webgal` 对特效 IR 一律报错，导出不会自动复制本文件；待后端恢复后再启用 `export_webgal` 的 `_copy_prepipe_runtime`。
+ * TODO(WebGAL): 当前 `codegen_webgal` 对特效 IR 一律报错，导出不会自动复制本文件；待后端恢复后再启用 `export_webgal` 的 `_copy_preppipe_runtime`。
  *
  * - 目标态：`export_webgal` 将本文件复制到输出工程的 `game/prepipe/prepipePerform.ts`。
  * - 官方 WebGAL 不会自动加载此路径；请把本文件合并进 WebGAL 源码
