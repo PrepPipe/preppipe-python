@@ -816,129 +816,261 @@ class VNBackendDisplayableTransitionExpr(LiteralExpr):
 
 
 # ------------------------------------------------------------------------------
-# 通用场景/背景切换过渡（与后端无关的固定符号，仅实现按后端区分）
+# 通用场景/背景切换过渡（LiteralExpr 子类；参数按类型打包，与 imageexpr 中图片 LiteralExpr 一致）
 # 对应 effect_doc 第一节：淡入、淡出、溶解、滑入、滑出、推移、黑/白场、缩放过渡
 # ------------------------------------------------------------------------------
 
-class VNSceneTransitionKind(enum.Enum):
-  """与后端无关的场景过渡符号。"""
-  FadeIn = enum.auto()         # 淡入（Fade In）
-  FadeOut = enum.auto()       # 淡出（Fade Out）
-  Dissolve = enum.auto()       # 溶解（Dissolve）
-  SlideIn = enum.auto()        # 滑入（Slide In）
-  SlideOut = enum.auto()       # 滑出（Slide Out）
-  Push = enum.auto()           # 推移（Push）
-  FadeToColor = enum.auto()    # 黑/白场（Fade to Black/White）
-  Zoom = enum.auto()           # 缩放过渡（Zoom In/Out）
+@IRObjectJsonTypeName("vn_tr_fade_in_le")
+class VNFadeInSceneTransitionLit(LiteralExpr):
+  def construct_init(self, *, context: Context, value_tuple: tuple[FloatLiteral], **kwargs) -> None:  # 绑定唯一操作数为时长字面值并挂到特效函数类型
+    assert len(value_tuple) == 1 and isinstance(value_tuple[0], FloatLiteral)
+    ty = VNEffectFunctionType.get(context)  # 转场在类型系统中与「特效函数值」共用占位类型
+    super().construct_init(ty=ty, value_tuple=value_tuple, **kwargs)
+
+  @staticmethod
+  def get_fixed_value_type():  # LiteralExpr 元数据：该表达式对外值的 IR 类型
+    return VNEffectFunctionType
+
+  @property
+  def value(self) -> tuple[FloatLiteral]:  # 字面值元组视图（与操作数顺序一致）
+    return super().value
+
+  @property
+  def duration(self) -> FloatLiteral:  # 新画面淡入持续时间（秒）
+    return self.get_operand(0)
+
+  @staticmethod
+  def get(context: Context, duration: FloatLiteral) -> VNFadeInSceneTransitionLit:  # 工厂：按 context 去重得到单例 LiteralExpr
+    return VNFadeInSceneTransitionLit._get_literalexpr_impl((duration,), context)
 
 
-@IRObjectJsonTypeName("vn_generic_scene_transition")
-class VNGenericSceneTransitionExpr(ConstExpr):
-  """
-  通用场景过渡表达式。操作数布局按 kind 区分：
-  - FadeIn / FadeOut / Dissolve: [kind, duration]
-  - SlideIn / SlideOut / Push: [kind, duration, direction]  direction: left/right/up/down
-  - Zoom: [kind, direction, duration, point]  direction: in/out；point: 缩放进入为起始点、缩放出为结束点（9 点之一）
-  - FadeToColor: [kind, fade_out, hold, fade_in, color]
-  """
-  def construct_init(self, *, ty: ValueType, values: typing.Iterable[Value], **kwargs) -> None:
-    super().construct_init(ty=ty, values=values, **kwargs)
+@IRObjectJsonTypeName("vn_tr_fade_out_le")
+class VNFadeOutSceneTransitionLit(LiteralExpr):
+  def construct_init(self, *, context: Context, value_tuple: tuple[FloatLiteral], **kwargs) -> None:  # 绑定唯一操作数为时长字面值并挂到特效函数类型
+    assert len(value_tuple) == 1 and isinstance(value_tuple[0], FloatLiteral)
+    ty = VNEffectFunctionType.get(context)  # 转场在类型系统中与「特效函数值」共用占位类型
+    super().construct_init(ty=ty, value_tuple=value_tuple, **kwargs)
 
-  def get_kind(self) -> VNSceneTransitionKind:
-    return self.get_operand(0).value
+  @staticmethod
+  def get_fixed_value_type():  # LiteralExpr 元数据：该表达式对外值的 IR 类型
+    return VNEffectFunctionType
 
-  def get_duration(self) -> Value | None:
-    """时长；Zoom 为 operand 2。"""
-    if self.get_kind() == VNSceneTransitionKind.Zoom:
-      return self.get_operand(2) if self.get_num_operands() >= 3 else None
+  @property
+  def value(self) -> tuple[FloatLiteral]:  # 字面值元组视图（与操作数顺序一致）
+    return super().value
+
+  @property
+  def duration(self) -> FloatLiteral:  # 旧画面淡出持续时间（秒）
+    return self.get_operand(0)
+
+  @staticmethod
+  def get(context: Context, duration: FloatLiteral) -> VNFadeOutSceneTransitionLit:  # 工厂：按 context 去重得到单例 LiteralExpr
+    return VNFadeOutSceneTransitionLit._get_literalexpr_impl((duration,), context)
+
+
+@IRObjectJsonTypeName("vn_tr_dissolve_le")
+class VNDissolveSceneTransitionLit(LiteralExpr):
+  def construct_init(self, *, context: Context, value_tuple: tuple[FloatLiteral], **kwargs) -> None:  # 绑定唯一操作数为时长字面值并挂到特效函数类型
+    assert len(value_tuple) == 1 and isinstance(value_tuple[0], FloatLiteral)
+    ty = VNEffectFunctionType.get(context)  # 转场在类型系统中与「特效函数值」共用占位类型
+    super().construct_init(ty=ty, value_tuple=value_tuple, **kwargs)
+
+  @staticmethod
+  def get_fixed_value_type():  # LiteralExpr 元数据：该表达式对外值的 IR 类型
+    return VNEffectFunctionType
+
+  @property
+  def value(self) -> tuple[FloatLiteral]:  # 字面值元组视图（与操作数顺序一致）
+    return super().value
+
+  @property
+  def duration(self) -> FloatLiteral:  # 溶解交叉淡化持续时间（秒）
+    return self.get_operand(0)
+
+  @staticmethod
+  def get(context: Context, duration: FloatLiteral) -> VNDissolveSceneTransitionLit:  # 工厂：按 context 去重得到单例 LiteralExpr
+    return VNDissolveSceneTransitionLit._get_literalexpr_impl((duration,), context)
+
+
+@IRObjectJsonTypeName("vn_tr_slide_in_le")
+class VNSlideInSceneTransitionLit(LiteralExpr):
+  def construct_init(self, *, context: Context, value_tuple: tuple[FloatLiteral, StringLiteral], **kwargs) -> None:  # 时长 + 方向键字面值，挂到特效函数类型
+    assert len(value_tuple) == 2 and isinstance(value_tuple[0], FloatLiteral) and isinstance(value_tuple[1], StringLiteral)
+    ty = VNEffectFunctionType.get(context)  # 转场与特效函数值共用占位类型
+    super().construct_init(ty=ty, value_tuple=value_tuple, **kwargs)
+
+  @staticmethod
+  def get_fixed_value_type():  # LiteralExpr 对外 IR 类型
+    return VNEffectFunctionType
+
+  @property
+  def value(self) -> tuple[FloatLiteral, StringLiteral]:  # 字面值元组（时长、方向）
+    return super().value
+
+  @property
+  def duration(self) -> FloatLiteral:  # 滑入动画时长（秒）
+    return self.get_operand(0)
+
+  @property
+  def direction(self) -> StringLiteral:  # 规范方向键（如 left/right/up/down）
     return self.get_operand(1)
 
-  def get_direction(self) -> StringLiteral | None:
-    """SlideIn/SlideOut/Push 方向：left, right, up, down。"""
-    if self.get_num_operands() >= 3 and isinstance(self.get_operand(2), StringLiteral):
-      return self.get_operand(2)
-    return None
+  @staticmethod
+  def get(context: Context, duration: FloatLiteral, direction: StringLiteral) -> VNSlideInSceneTransitionLit:  # 工厂：context 下去重
+    return VNSlideInSceneTransitionLit._get_literalexpr_impl((duration, direction), context)
 
-  def get_zoom_direction(self) -> StringLiteral | None:
-    """Zoom 方向：in, out。"""
-    if self.get_kind() == VNSceneTransitionKind.Zoom and self.get_num_operands() >= 2:
-      return self.get_operand(1)
-    return None
 
-  def get_zoom_point(self) -> StringLiteral | None:
-    """Zoom 点：缩放进入为起始点，缩放出为结束点。9 点之一。"""
-    if self.get_kind() == VNSceneTransitionKind.Zoom and self.get_num_operands() >= 4:
-      return self.get_operand(3)
-    return None
+@IRObjectJsonTypeName("vn_tr_slide_out_le")
+class VNSlideOutSceneTransitionLit(LiteralExpr):
+  def construct_init(self, *, context: Context, value_tuple: tuple[FloatLiteral, StringLiteral], **kwargs) -> None:  # 时长 + 方向键字面值，挂到特效函数类型
+    assert len(value_tuple) == 2 and isinstance(value_tuple[0], FloatLiteral) and isinstance(value_tuple[1], StringLiteral)
+    ty = VNEffectFunctionType.get(context)  # 转场与特效函数值共用占位类型
+    super().construct_init(ty=ty, value_tuple=value_tuple, **kwargs)
 
-  def get_fade_to_color_fade_out(self) -> Value | None:
-    """FadeToColor 淡出时长。"""
-    return self.get_operand(1) if self.get_kind() == VNSceneTransitionKind.FadeToColor else None
+  @staticmethod
+  def get_fixed_value_type():  # LiteralExpr 对外 IR 类型
+    return VNEffectFunctionType
 
-  def get_fade_to_color_hold(self) -> Value | None:
-    """FadeToColor 停留时长。"""
-    return self.get_operand(2) if self.get_kind() == VNSceneTransitionKind.FadeToColor else None
+  @property
+  def value(self) -> tuple[FloatLiteral, StringLiteral]:  # 字面值元组（时长、方向）
+    return super().value
 
-  def get_fade_to_color_fade_in(self) -> Value | None:
-    """FadeToColor 淡入时长。"""
-    return self.get_operand(3) if self.get_kind() == VNSceneTransitionKind.FadeToColor else None
+  @property
+  def duration(self) -> FloatLiteral:  # 滑出动画时长（秒）
+    return self.get_operand(0)
 
-  def get_fade_to_color_color(self) -> ColorLiteral | None:
-    """FadeToColor 目标颜色。"""
-    if self.get_kind() == VNSceneTransitionKind.FadeToColor and self.get_num_operands() >= 5:
-      o = self.get_operand(4)
-      if isinstance(o, ColorLiteral):
-        return o
-    return None
+  @property
+  def direction(self) -> StringLiteral:  # 规范方向键（如 left/right/up/down）
+    return self.get_operand(1)
 
-  @classmethod
-  def get_fade_in(cls, context: Context, duration: Value) -> VNGenericSceneTransitionExpr:
-    ty = VNEffectFunctionType.get(context)
-    kind_lit = EnumLiteral.get(context, VNSceneTransitionKind.FadeIn)
-    return cls._get_impl(ty, [kind_lit, duration])
+  @staticmethod
+  def get(context: Context, duration: FloatLiteral, direction: StringLiteral) -> VNSlideOutSceneTransitionLit:  # 工厂：context 下去重
+    return VNSlideOutSceneTransitionLit._get_literalexpr_impl((duration, direction), context)
 
-  @classmethod
-  def get_fade_out(cls, context: Context, duration: Value) -> VNGenericSceneTransitionExpr:
-    ty = VNEffectFunctionType.get(context)
-    kind_lit = EnumLiteral.get(context, VNSceneTransitionKind.FadeOut)
-    return cls._get_impl(ty, [kind_lit, duration])
 
-  @classmethod
-  def get_dissolve(cls, context: Context, duration: Value) -> VNGenericSceneTransitionExpr:
-    ty = VNEffectFunctionType.get(context)
-    kind_lit = EnumLiteral.get(context, VNSceneTransitionKind.Dissolve)
-    return cls._get_impl(ty, [kind_lit, duration])
+@IRObjectJsonTypeName("vn_tr_push_le")
+class VNPushSceneTransitionLit(LiteralExpr):
+  def construct_init(self, *, context: Context, value_tuple: tuple[FloatLiteral, StringLiteral], **kwargs) -> None:  # 时长 + 推移方向键字面值，挂到特效函数类型
+    assert len(value_tuple) == 2 and isinstance(value_tuple[0], FloatLiteral) and isinstance(value_tuple[1], StringLiteral)
+    ty = VNEffectFunctionType.get(context)  # 转场与特效函数值共用占位类型
+    super().construct_init(ty=ty, value_tuple=value_tuple, **kwargs)
 
-  @classmethod
-  def get_slide_in(cls, context: Context, duration: Value, direction: StringLiteral) -> VNGenericSceneTransitionExpr:
-    ty = VNEffectFunctionType.get(context)
-    kind_lit = EnumLiteral.get(context, VNSceneTransitionKind.SlideIn)
-    return cls._get_impl(ty, [kind_lit, duration, direction])
+  @staticmethod
+  def get_fixed_value_type():  # LiteralExpr 对外 IR 类型
+    return VNEffectFunctionType
 
-  @classmethod
-  def get_slide_out(cls, context: Context, duration: Value, direction: StringLiteral) -> VNGenericSceneTransitionExpr:
-    ty = VNEffectFunctionType.get(context)
-    kind_lit = EnumLiteral.get(context, VNSceneTransitionKind.SlideOut)
-    return cls._get_impl(ty, [kind_lit, duration, direction])
+  @property
+  def value(self) -> tuple[FloatLiteral, StringLiteral]:  # 字面值元组（时长、方向）
+    return super().value
 
-  @classmethod
-  def get_push(cls, context: Context, duration: Value, direction: StringLiteral) -> VNGenericSceneTransitionExpr:
-    ty = VNEffectFunctionType.get(context)
-    kind_lit = EnumLiteral.get(context, VNSceneTransitionKind.Push)
-    return cls._get_impl(ty, [kind_lit, duration, direction])
+  @property
+  def duration(self) -> FloatLiteral:  # 整屏推移时长（秒）
+    return self.get_operand(0)
 
-  @classmethod
-  def get_fade_to_color(cls, context: Context, fade_out: Value, hold: Value, fade_in: Value, color: ColorLiteral) -> VNGenericSceneTransitionExpr:
-    ty = VNEffectFunctionType.get(context)
-    kind_lit = EnumLiteral.get(context, VNSceneTransitionKind.FadeToColor)
-    return cls._get_impl(ty, [kind_lit, fade_out, hold, fade_in, color])
+  @property
+  def direction(self) -> StringLiteral:  # 推移方向规范键
+    return self.get_operand(1)
 
-  @classmethod
-  def get_zoom(cls, context: Context, direction: StringLiteral, duration: Value, point: StringLiteral) -> VNGenericSceneTransitionExpr:
-    """Zoom：方向 in/out，时长 duration，点 point（进入=起始点，退出=结束点）。"""
-    ty = VNEffectFunctionType.get(context)
-    kind_lit = EnumLiteral.get(context, VNSceneTransitionKind.Zoom)
-    return cls._get_impl(ty, [kind_lit, direction, duration, point])
+  @staticmethod
+  def get(context: Context, duration: FloatLiteral, direction: StringLiteral) -> VNPushSceneTransitionLit:  # 工厂：context 下去重
+    return VNPushSceneTransitionLit._get_literalexpr_impl((duration, direction), context)
+
+
+@IRObjectJsonTypeName("vn_tr_fade_to_color_le")
+class VNFadeToColorSceneTransitionLit(LiteralExpr):
+  def construct_init(
+    self,  # IR 对象自身
+    *,  # 仅关键字参数
+    context: Context,  # IR 上下文（类型注册与去重）
+    value_tuple: tuple[FloatLiteral, FloatLiteral, FloatLiteral, ColorLiteral],  # 淡出时长、全黑停留、淡入时长、中间色
+    **kwargs,
+  ) -> None:  # 校验四元组并注册为场景转场字面值
+    assert len(value_tuple) == 4
+    assert all(isinstance(value_tuple[i], FloatLiteral) for i in range(3))
+    assert isinstance(value_tuple[3], ColorLiteral)
+    ty = VNEffectFunctionType.get(context)  # 转场与特效函数值共用占位类型
+    super().construct_init(ty=ty, value_tuple=value_tuple, **kwargs)
+
+  @staticmethod
+  def get_fixed_value_type():  # LiteralExpr 对外 IR 类型
+    return VNEffectFunctionType
+
+  @property
+  def value(self) -> tuple[FloatLiteral, FloatLiteral, FloatLiteral, ColorLiteral]:  # 四段时序与颜色的字面值元组
+    return super().value
+
+  @property
+  def fade_out(self) -> FloatLiteral:  # 画面淡出至纯色段时长（秒）
+    return self.get_operand(0)
+
+  @property
+  def hold(self) -> FloatLiteral:  # 保持纯色全屏时长（秒）
+    return self.get_operand(1)
+
+  @property
+  def fade_in(self) -> FloatLiteral:  # 从纯色淡回画面时长（秒）
+    return self.get_operand(2)
+
+  @property
+  def color(self) -> ColorLiteral:  # 中间过渡使用的 RGBA 色
+    return self.get_operand(3)
+
+  @staticmethod
+  def get(
+    context: Context,  # IR 上下文
+    fade_out: FloatLiteral,  # 淡出段时长
+    hold: FloatLiteral,  # 纯色停留时长
+    fade_in: FloatLiteral,  # 淡入段时长
+    color: ColorLiteral,  # 中间色
+  ) -> VNFadeToColorSceneTransitionLit:  # 工厂：context 下去重
+    return VNFadeToColorSceneTransitionLit._get_literalexpr_impl((fade_out, hold, fade_in, color), context)
+
+
+@IRObjectJsonTypeName("vn_tr_zoom_le")
+class VNZoomSceneTransitionLit(LiteralExpr):
+  """缩放过渡：direction 为 in/out；point 为九格锚点键（进入=起始点，退出=结束点）。"""
+
+  def construct_init(self, *, context: Context, value_tuple: tuple[StringLiteral, FloatLiteral, StringLiteral], **kwargs) -> None:  # 缩放方向、时长、锚点键字面值
+    assert len(value_tuple) == 3
+    assert isinstance(value_tuple[0], StringLiteral) and isinstance(value_tuple[1], FloatLiteral) and isinstance(value_tuple[2], StringLiteral)
+    ty = VNEffectFunctionType.get(context)  # 转场与特效函数值共用占位类型
+    super().construct_init(ty=ty, value_tuple=value_tuple, **kwargs)
+
+  @staticmethod
+  def get_fixed_value_type():  # LiteralExpr 对外 IR 类型
+    return VNEffectFunctionType
+
+  @property
+  def value(self) -> tuple[StringLiteral, FloatLiteral, StringLiteral]:  # 字面值元组（方向、时长、锚点）
+    return super().value
+
+  @property
+  def direction(self) -> StringLiteral:  # 缩放方向 in（进入）/out（退出）
+    return self.get_operand(0)
+
+  @property
+  def duration(self) -> FloatLiteral:  # 缩放过渡时长（秒）
+    return self.get_operand(1)
+
+  @property
+  def point(self) -> StringLiteral:  # 九格锚点规范键（缩放中心/终点）
+    return self.get_operand(2)
+
+  @staticmethod
+  def get(context: Context, direction: StringLiteral, duration: FloatLiteral, point: StringLiteral) -> VNZoomSceneTransitionLit:  # 工厂：context 下去重
+    return VNZoomSceneTransitionLit._get_literalexpr_impl((direction, duration, point), context)
+
+
+VN_SCENE_TRANSITION_LIT_TYPES: typing.Tuple[type, ...] = (  # 所有场景转场 LiteralExpr 子类，供 isinstance/遍历
+  VNFadeInSceneTransitionLit,  # 新画面淡入
+  VNFadeOutSceneTransitionLit,  # 旧画面淡出
+  VNDissolveSceneTransitionLit,  # 溶解交叉
+  VNSlideInSceneTransitionLit,  # 新画面滑入
+  VNSlideOutSceneTransitionLit,  # 旧画面滑出
+  VNPushSceneTransitionLit,  # 整屏推移
+  VNFadeToColorSceneTransitionLit,  # 经纯色全屏的淡变
+  VNZoomSceneTransitionLit,  # 缩放进出
+)
 
 
 # 目前音频仅支持淡入淡出渐变
@@ -1116,33 +1248,33 @@ class VNVisualEffectInst(VNInstruction):
 class VNShakeEffectInst(VNVisualEffectInst):
   """场景/立绘震动（各后端运行时实现）。"""
 
-  scene_wide : OpOperand[BoolLiteral]
-  sprite : OpOperand[Value]
-  has_place : OpOperand[BoolLiteral]
-  place_x : OpOperand[IntLiteral]
-  place_y : OpOperand[IntLiteral]
-  place_w : OpOperand[IntLiteral]
-  place_h : OpOperand[IntLiteral]
-  duration : OpOperand[FloatLiteral]
-  amplitude : OpOperand[FloatLiteral]
-  decay : OpOperand[FloatLiteral]
-  direction : OpOperand[StringLiteral]
+  scene_wide : OpOperand[BoolLiteral]  # True：全屏场景震动；False：针对立绘/局部矩形
+  sprite : OpOperand[Value]  # 目标立绘句柄；无目标时用占位整数字面值
+  has_place : OpOperand[BoolLiteral]  # 是否使用下方矩形（相对/绝对区域由后端约定）
+  place_x : OpOperand[IntLiteral]  # 目标区域左上角 X（像素）
+  place_y : OpOperand[IntLiteral]  # 目标区域左上角 Y（像素）
+  place_w : OpOperand[IntLiteral]  # 目标区域宽度（像素）
+  place_h : OpOperand[IntLiteral]  # 目标区域高度（像素）
+  duration : OpOperand[FloatLiteral]  # 震动持续时长（秒）
+  amplitude : OpOperand[FloatLiteral]  # 初始振幅（像素或归一化，由后端解释）
+  decay : OpOperand[FloatLiteral]  # 振幅衰减系数（由后端解释）
+  direction : OpOperand[StringLiteral]  # 震动轴向/模式规范键（如 horizontal/vertical）
 
   @staticmethod
   def create(
-    context : Context,
-    start_time : Value,
+    context : Context,  # IR 上下文
+    start_time : Value,  # 本指令开始时间序值
     *,
-    scene_wide : bool,
-    sprite : Value | None,
-    has_place : bool,
-    place_xywh : tuple[int, int, int, int] | None,
-    duration : float,
-    amplitude : float,
-    decay : float,
-    direction : str,
-    name : str = "",
-    loc : Location | None = None,
+    scene_wide : bool,  # 是否全屏场景震动
+    sprite : Value | None,  # 立绘句柄；None 表示无立绘目标
+    has_place : bool,  # 是否提供 place_xywh
+    place_xywh : tuple[int, int, int, int] | None,  # 可选矩形 x,y,w,h
+    duration : float,  # 持续秒数
+    amplitude : float,  # 振幅
+    decay : float,  # 衰减
+    direction : str,  # 方向/模式键
+    name : str = "",  # IR 操作名
+    loc : Location | None = None,  # 源码位置
   ) -> VNShakeEffectInst:
     x, y, w, h = place_xywh if place_xywh else (0, 0, 0, 0)
     sp = sprite if sprite is not None else IntLiteral.get(0, context)
@@ -1171,33 +1303,33 @@ class VNShakeEffectInst(VNVisualEffectInst):
 class VNFlashEffectInst(VNVisualEffectInst):
   """场景/立绘闪烁（非转场）。"""
 
-  scene_wide : OpOperand[BoolLiteral]
-  sprite : OpOperand[Value]
-  has_place : OpOperand[BoolLiteral]
-  place_x : OpOperand[IntLiteral]
-  place_y : OpOperand[IntLiteral]
-  place_w : OpOperand[IntLiteral]
-  place_h : OpOperand[IntLiteral]
-  color : OpOperand[StringLiteral]
-  fade_in : OpOperand[FloatLiteral]
-  hold : OpOperand[FloatLiteral]
-  fade_out : OpOperand[FloatLiteral]
+  scene_wide : OpOperand[BoolLiteral]  # True：全屏闪色；False：立绘/局部
+  sprite : OpOperand[Value]  # 目标立绘句柄或占位
+  has_place : OpOperand[BoolLiteral]  # 是否使用矩形区域
+  place_x : OpOperand[IntLiteral]  # 区域左上角 X
+  place_y : OpOperand[IntLiteral]  # 区域左上角 Y
+  place_w : OpOperand[IntLiteral]  # 区域宽
+  place_h : OpOperand[IntLiteral]  # 区域高
+  color : OpOperand[StringLiteral]  # 闪烁叠加色规范串（如 #RRGGBB 或命名色）
+  fade_in : OpOperand[FloatLiteral]  # 淡入段时长（秒）
+  hold : OpOperand[FloatLiteral]  # 峰值保持时长（秒）
+  fade_out : OpOperand[FloatLiteral]  # 淡出段时长（秒）
 
   @staticmethod
   def create(
-    context : Context,
-    start_time : Value,
+    context : Context,  # IR 上下文
+    start_time : Value,  # 开始时间序值
     *,
-    scene_wide : bool,
-    sprite : Value | None,
-    has_place : bool,
-    place_xywh : tuple[int, int, int, int] | None,
-    color : str,
-    fade_in : float,
-    hold : float,
-    fade_out : float,
-    name : str = "",
-    loc : Location | None = None,
+    scene_wide : bool,  # 是否全屏
+    sprite : Value | None,  # 立绘句柄；None 无立绘
+    has_place : bool,  # 是否带矩形
+    place_xywh : tuple[int, int, int, int] | None,  # 可选 x,y,w,h
+    color : str,  # 颜色键/串
+    fade_in : float,  # 淡入秒数
+    hold : float,  # 保持秒数
+    fade_out : float,  # 淡出秒数
+    name : str = "",  # IR 操作名
+    loc : Location | None = None,  # 源码位置
   ) -> VNFlashEffectInst:
     x, y, w, h = place_xywh if place_xywh else (0, 0, 0, 0)
     sp = sprite if sprite is not None else IntLiteral.get(0, context)
@@ -1226,30 +1358,30 @@ class VNFlashEffectInst(VNVisualEffectInst):
 class VNWeatherEffectInst(VNVisualEffectInst):
   """全屏粒子天气（雪/雨），各后端实现。"""
 
-  weather_kind : OpOperand[StringLiteral]
-  intensity : OpOperand[FloatLiteral]
-  inner_fade_in : OpOperand[FloatLiteral]
-  inner_fade_out : OpOperand[FloatLiteral]
-  overlay_fade_in : OpOperand[FloatLiteral]
-  sustain : OpOperand[FloatLiteral]
-  vx : OpOperand[FloatLiteral]
-  vy : OpOperand[FloatLiteral]
+  weather_kind : OpOperand[StringLiteral]  # 天气类型键（如 snow/rain）
+  intensity : OpOperand[FloatLiteral]  # 粒子密度/强度
+  inner_fade_in : OpOperand[FloatLiteral]  # 粒子层自身淡入（秒）
+  inner_fade_out : OpOperand[FloatLiteral]  # 粒子层自身淡出（秒）
+  overlay_fade_in : OpOperand[FloatLiteral]  # 全屏遮罩/叠层淡入（秒）
+  sustain : OpOperand[FloatLiteral]  # 稳定持续时长（秒）
+  vx : OpOperand[FloatLiteral]  # 粒子水平漂移速度分量
+  vy : OpOperand[FloatLiteral]  # 粒子垂直漂移速度分量
 
   @staticmethod
   def create(
-    context : Context,
-    start_time : Value,
+    context : Context,  # IR 上下文
+    start_time : Value,  # 开始时间序值
     *,
-    weather_kind : str,
-    intensity : float,
-    inner_fade_in : float,
-    inner_fade_out : float,
-    overlay_fade_in : float,
-    sustain : float,
-    vx : float,
-    vy : float,
-    name : str = "",
-    loc : Location | None = None,
+    weather_kind : str,  # 天气种类键
+    intensity : float,  # 强度
+    inner_fade_in : float,  # 内层淡入
+    inner_fade_out : float,  # 内层淡出
+    overlay_fade_in : float,  # 叠层淡入
+    sustain : float,  # 持续
+    vx : float,  # 水平速度
+    vy : float,  # 垂直速度
+    name : str = "",  # IR 操作名
+    loc : Location | None = None,  # 源码位置
   ) -> VNWeatherEffectInst:
     return VNWeatherEffectInst(
       init_mode=IRObjectInitMode.CONSTRUCT,
@@ -1273,37 +1405,37 @@ class VNWeatherEffectInst(VNVisualEffectInst):
 class VNCharacterSpriteMoveInst(VNVisualEffectInst):
   """立绘补间（跳动/平移/缩放/旋转），各后端实现。"""
 
-  sprite : OpOperand[Value]
-  has_place : OpOperand[BoolLiteral]
-  place_x : OpOperand[IntLiteral]
-  place_y : OpOperand[IntLiteral]
-  place_w : OpOperand[IntLiteral]
-  place_h : OpOperand[IntLiteral]
-  move_kind : OpOperand[StringLiteral]
-  duration : OpOperand[FloatLiteral]
-  n1 : OpOperand[FloatLiteral]
-  n2 : OpOperand[FloatLiteral]
-  n3 : OpOperand[FloatLiteral]
-  n4 : OpOperand[FloatLiteral]
-  style : OpOperand[StringLiteral]
+  sprite : OpOperand[Value]  # 目标立绘句柄或占位
+  has_place : OpOperand[BoolLiteral]  # 是否使用矩形（定位/裁剪视后端）
+  place_x : OpOperand[IntLiteral]  # 区域 X
+  place_y : OpOperand[IntLiteral]  # 区域 Y
+  place_w : OpOperand[IntLiteral]  # 区域宽
+  place_h : OpOperand[IntLiteral]  # 区域高
+  move_kind : OpOperand[StringLiteral]  # 补间种类键（平移/缩放/旋转/跳动等）
+  duration : OpOperand[FloatLiteral]  # 补间时长（秒）
+  n1 : OpOperand[FloatLiteral]  # 数值参数 1（位移/角度等，语义依 move_kind）
+  n2 : OpOperand[FloatLiteral]  # 数值参数 2
+  n3 : OpOperand[FloatLiteral]  # 数值参数 3
+  n4 : OpOperand[FloatLiteral]  # 数值参数 4
+  style : OpOperand[StringLiteral]  # 缓动/曲线风格键（如 linear/ease）
 
   @staticmethod
   def create(
-    context : Context,
-    start_time : Value,
+    context : Context,  # IR 上下文
+    start_time : Value,  # 开始时间序值
     *,
-    sprite : Value | None,
-    has_place : bool,
-    place_xywh : tuple[int, int, int, int] | None,
-    move_kind : str,
-    duration : float,
-    n1 : float,
-    n2 : float,
-    n3 : float,
-    n4 : float,
-    style : str,
-    name : str = "",
-    loc : Location | None = None,
+    sprite : Value | None,  # 立绘句柄；None 占位
+    has_place : bool,  # 是否带矩形
+    place_xywh : tuple[int, int, int, int] | None,  # 可选 x,y,w,h
+    move_kind : str,  # 补间类型键
+    duration : float,  # 秒
+    n1 : float,  # 参数 1
+    n2 : float,  # 参数 2
+    n3 : float,  # 参数 3
+    n4 : float,  # 参数 4
+    style : str,  # 缓动键
+    name : str = "",  # IR 操作名
+    loc : Location | None = None,  # 源码位置
   ) -> VNCharacterSpriteMoveInst:
     x, y, w, h = place_xywh if place_xywh else (0, 0, 0, 0)
     sp = sprite if sprite is not None else IntLiteral.get(0, context)
@@ -1334,29 +1466,29 @@ class VNCharacterSpriteMoveInst(VNVisualEffectInst):
 class VNCharTrembleEffectInst(VNVisualEffectInst):
   """立绘发抖（左右往复）；duration<0 表示持续至结束特效。"""
 
-  sprite : OpOperand[Value]
-  has_place : OpOperand[BoolLiteral]
-  place_x : OpOperand[IntLiteral]
-  place_y : OpOperand[IntLiteral]
-  place_w : OpOperand[IntLiteral]
-  place_h : OpOperand[IntLiteral]
-  amplitude : OpOperand[FloatLiteral]
-  period : OpOperand[FloatLiteral]
-  duration : OpOperand[FloatLiteral]
+  sprite : OpOperand[Value]  # 目标立绘句柄或占位
+  has_place : OpOperand[BoolLiteral]  # 是否使用矩形区域
+  place_x : OpOperand[IntLiteral]  # 区域 X
+  place_y : OpOperand[IntLiteral]  # 区域 Y
+  place_w : OpOperand[IntLiteral]  # 区域宽
+  place_h : OpOperand[IntLiteral]  # 区域高
+  amplitude : OpOperand[FloatLiteral]  # 单次摆动幅度（像素，由后端解释）
+  period : OpOperand[FloatLiteral]  # 往复周期（秒）
+  duration : OpOperand[FloatLiteral]  # 总时长（秒）；负值表示持续到 End 指令
 
   @staticmethod
   def create(
-    context : Context,
-    start_time : Value,
+    context : Context,  # IR 上下文
+    start_time : Value,  # 开始时间序值
     *,
-    sprite : Value | None,
-    has_place : bool,
-    place_xywh : tuple[int, int, int, int] | None,
-    amplitude : float,
-    period : float,
-    duration : float,
-    name : str = "",
-    loc : Location | None = None,
+    sprite : Value | None,  # 立绘句柄；None 占位
+    has_place : bool,  # 是否带矩形
+    place_xywh : tuple[int, int, int, int] | None,  # 可选 x,y,w,h
+    amplitude : float,  # 幅度
+    period : float,  # 周期秒
+    duration : float,  # 总时长秒（可负表示持续）
+    name : str = "",  # IR 操作名
+    loc : Location | None = None,  # 源码位置
   ) -> VNCharTrembleEffectInst:
     x, y, w, h = place_xywh if place_xywh else (0, 0, 0, 0)
     sp = sprite if sprite is not None else IntLiteral.get(0, context)
@@ -1383,33 +1515,33 @@ class VNCharTrembleEffectInst(VNVisualEffectInst):
 class VNFilterEffectInst(VNVisualEffectInst):
   """场景/立绘滤镜：灰化、半透明、色调叠加、模糊。strength 语义依 filter_kind；color 仅 tint 使用。"""
 
-  scene_wide : OpOperand[BoolLiteral]
-  sprite : OpOperand[Value]
-  has_place : OpOperand[BoolLiteral]
-  place_x : OpOperand[IntLiteral]
-  place_y : OpOperand[IntLiteral]
-  place_w : OpOperand[IntLiteral]
-  place_h : OpOperand[IntLiteral]
-  filter_kind : OpOperand[StringLiteral]
-  strength : OpOperand[FloatLiteral]
-  duration : OpOperand[FloatLiteral]
-  color : OpOperand[StringLiteral]
+  scene_wide : OpOperand[BoolLiteral]  # True：全屏滤镜；False：立绘/局部
+  sprite : OpOperand[Value]  # 目标立绘句柄或占位
+  has_place : OpOperand[BoolLiteral]  # 是否使用矩形
+  place_x : OpOperand[IntLiteral]  # 区域 X
+  place_y : OpOperand[IntLiteral]  # 区域 Y
+  place_w : OpOperand[IntLiteral]  # 区域宽
+  place_h : OpOperand[IntLiteral]  # 区域高
+  filter_kind : OpOperand[StringLiteral]  # 滤镜类型键（灰化/半透明/tint/模糊等）
+  strength : OpOperand[FloatLiteral]  # 强度（0–1 或后端约定，依 filter_kind）
+  duration : OpOperand[FloatLiteral]  # 过渡到目标强度的时长（秒）
+  color : OpOperand[StringLiteral]  # tint 等需要的颜色串；非 tint 可为占位
 
   @staticmethod
   def create(
-    context : Context,
-    start_time : Value,
+    context : Context,  # IR 上下文
+    start_time : Value,  # 开始时间序值
     *,
-    scene_wide : bool,
-    sprite : Value | None,
-    has_place : bool,
-    place_xywh : tuple[int, int, int, int] | None,
-    filter_kind : str,
-    strength : float,
-    duration : float,
-    color : str,
-    name : str = "",
-    loc : Location | None = None,
+    scene_wide : bool,  # 是否全屏
+    sprite : Value | None,  # 立绘句柄；None 占位
+    has_place : bool,  # 是否带矩形
+    place_xywh : tuple[int, int, int, int] | None,  # 可选 x,y,w,h
+    filter_kind : str,  # 滤镜键
+    strength : float,  # 强度
+    duration : float,  # 过渡秒数
+    color : str,  # 颜色串
+    name : str = "",  # IR 操作名
+    loc : Location | None = None,  # 源码位置
   ) -> VNFilterEffectInst:
     x, y, w, h = place_xywh if place_xywh else (0, 0, 0, 0)
     sp = sprite if sprite is not None else IntLiteral.get(0, context)
@@ -1438,25 +1570,25 @@ class VNFilterEffectInst(VNVisualEffectInst):
 class VNEndEffectInst(VNVisualEffectInst):
   """结束持续类特效（角色立绘 / 场景占位）。"""
 
-  scene_wide : OpOperand[BoolLiteral]
-  sprite : OpOperand[Value]
-  has_place : OpOperand[BoolLiteral]
-  place_x : OpOperand[IntLiteral]
-  place_y : OpOperand[IntLiteral]
-  place_w : OpOperand[IntLiteral]
-  place_h : OpOperand[IntLiteral]
+  scene_wide : OpOperand[BoolLiteral]  # True：结束场景级持续效果；False：结束立绘/局部
+  sprite : OpOperand[Value]  # 目标立绘句柄或占位
+  has_place : OpOperand[BoolLiteral]  # 是否与某矩形区域绑定的持续效果一并结束
+  place_x : OpOperand[IntLiteral]  # 区域 X
+  place_y : OpOperand[IntLiteral]  # 区域 Y
+  place_w : OpOperand[IntLiteral]  # 区域宽
+  place_h : OpOperand[IntLiteral]  # 区域高
 
   @staticmethod
   def create(
-    context : Context,
-    start_time : Value,
+    context : Context,  # IR 上下文
+    start_time : Value,  # 开始时间序值
     *,
-    scene_wide : bool,
-    sprite : Value | None = None,
-    has_place : bool = False,
-    place_xywh : tuple[int, int, int, int] | None = None,
-    name : str = "",
-    loc : Location | None = None,
+    scene_wide : bool,  # 是否场景范围结束
+    sprite : Value | None = None,  # 立绘句柄；默认 None 占位
+    has_place : bool = False,  # 是否带矩形
+    place_xywh : tuple[int, int, int, int] | None = None,  # 可选 x,y,w,h
+    name : str = "",  # IR 操作名
+    loc : Location | None = None,  # 源码位置
   ) -> VNEndEffectInst:
     x, y, w, h = place_xywh if place_xywh else (0, 0, 0, 0)
     sp = sprite if sprite is not None else IntLiteral.get(0, context)
@@ -1481,14 +1613,14 @@ def is_vn_visual_effect_instruction(inst: VNInstruction) -> bool:
   return isinstance(inst, VNVisualEffectInst)
 
 
-VN_VISUAL_EFFECT_INST_TYPES: tuple[type[VNVisualEffectInst], ...] = (
-  VNShakeEffectInst,
-  VNFlashEffectInst,
-  VNWeatherEffectInst,
-  VNCharacterSpriteMoveInst,
-  VNCharTrembleEffectInst,
-  VNFilterEffectInst,
-  VNEndEffectInst,
+VN_VISUAL_EFFECT_INST_TYPES: tuple[type[VNVisualEffectInst], ...] = (  # 所有视觉效果指令类，供遍历/类型判断
+  VNShakeEffectInst,  # 震动
+  VNFlashEffectInst,  # 闪烁
+  VNWeatherEffectInst,  # 天气粒子
+  VNCharacterSpriteMoveInst,  # 立绘补间
+  VNCharTrembleEffectInst,  # 立绘发抖
+  VNFilterEffectInst,  # 滤镜
+  VNEndEffectInst,  # 结束持续特效
 )
 
 
@@ -1650,10 +1782,9 @@ class VNModifyInst(VNInstruction, Value):
 @IROperationDataclass
 class VNRemoveInst(VNInstruction):
   # 去除某对象句柄所用的指令，只能指定渐变效果
-  # placeat：可选，用于 Ren'Py 等在退场动画的 show 上链式带上 screen2d_abs（与入场一致）
-  handlein : OpOperand
-  transition : OpOperand[Value]
-  placeat : SymbolTableRegion
+  handlein : OpOperand  # 要移除的资源/显示句柄（操作数）
+  transition : OpOperand[Value]  # 退场使用的转场或渐变表达式（如 LiteralExpr）
+  placeat : SymbolTableRegion  # 可选符号区：退场 show 链式位置（如 Ren'Py screen2d_abs，与入场一致）
 
   @staticmethod
   def create(context : Context, start_time: Value, handlein : Value, name: str = '', loc: Location | None = None) -> VNRemoveInst:

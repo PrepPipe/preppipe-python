@@ -726,8 +726,8 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
           renpy_displayable_transition = transition.expression.get_string()
         else:
           return self._resolve_transition(transition.fallback)
-      elif isinstance(transition, VNGenericSceneTransitionExpr):
-        renpy_displayable_transition = self._generic_scene_transition_to_renpy(transition)
+      elif isinstance(transition, VN_SCENE_TRANSITION_LIT_TYPES):
+        renpy_displayable_transition = self._scene_transition_lit_to_renpy(transition)
       elif isinstance(transition, VNAudioFadeTransitionExpr):
         renpy_audio_transition = (transition.fadein.value, transition.fadeout.value)
       else:
@@ -735,76 +735,63 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
         pass
     return (renpy_displayable_transition, renpy_audio_transition)
 
-  def _generic_scene_transition_to_renpy(self, t: VNGenericSceneTransitionExpr) -> str:
-    """将通用场景过渡（与后端无关符号）映射为 Ren'Py with 表达式字符串。"""
-    kind = t.get_kind()
-    if kind == VNSceneTransitionKind.FadeIn:
-      d = t.get_duration()
+  def _scene_transition_lit_to_renpy(self, t) -> str:
+    """将场景转场 LiteralExpr 映射为 Ren'Py with 表达式字符串。"""
+    if isinstance(t, VNFadeInSceneTransitionLit):
+      d = t.duration
       sec = _RenPyCodeGenHelper._float_from_transition_duration_operand(d, default=0.5)
       # 须用脚本命名空间中的 Fade（见 renpy.common）；勿写 renpy.display.transition.Fade，8.5+ 上该名可能已是 MultipleTransition 实例，不可再调用
       return f"Fade(0, 0, {sec})"  # 新画面淡入
-    if kind == VNSceneTransitionKind.FadeOut:
-      d = t.get_duration()
+    if isinstance(t, VNFadeOutSceneTransitionLit):
+      d = t.duration
       sec = _RenPyCodeGenHelper._float_from_transition_duration_operand(d, default=0.5)
       return f"Fade({sec}, 0, 0)"  # 旧画面淡出
-    if kind == VNSceneTransitionKind.Dissolve:
-      d = t.get_duration()
+    if isinstance(t, VNDissolveSceneTransitionLit):
+      d = t.duration
       sec = _RenPyCodeGenHelper._float_from_transition_duration_operand(d, default=0.5)
       return f"Dissolve({sec})" if sec != 0.5 else "dissolve"
-    if kind == VNSceneTransitionKind.SlideIn:
-      d = t.get_duration()
+    if isinstance(t, VNSlideInSceneTransitionLit):
+      d = t.duration
       sec = _RenPyCodeGenHelper._float_from_transition_duration_operand(d, default=0.5)
-      if not t.get_direction():
-        raise PPInternalError("IR 缺少 SlideIn 方向（应由 parse_transition 填充）")
-      direction = t.get_direction().get_string().strip().lower()
+      direction = t.direction.get_string().strip().lower()
       if direction not in ("left", "right", "up", "down"):
         raise PPInternalError(f"IR 滑移方向非规范键: {direction!r}")
       mode = "slide" + direction  # slideleft, slideright, slideup, slidedown
       if sec != 0.5:
         return f'CropMove({sec}, "{mode}")'
       return mode
-    if kind == VNSceneTransitionKind.SlideOut:
-      d = t.get_duration()
+    if isinstance(t, VNSlideOutSceneTransitionLit):
+      d = t.duration
       sec = _RenPyCodeGenHelper._float_from_transition_duration_operand(d, default=0.5)
-      if not t.get_direction():
-        raise PPInternalError("IR 缺少 SlideOut 方向（应由 parse_transition 填充）")
-      direction = t.get_direction().get_string().strip().lower()
+      direction = t.direction.get_string().strip().lower()
       if direction not in ("left", "right", "up", "down"):
         raise PPInternalError(f"IR 滑移方向非规范键: {direction!r}")
       mode = "slideaway" + direction  # slideawayleft, slideawayright, ...
       if sec != 0.5:
         return f'CropMove({sec}, "{mode}")'
       return mode
-    if kind == VNSceneTransitionKind.Push:
-      d = t.get_duration()
+    if isinstance(t, VNPushSceneTransitionLit):
+      d = t.duration
       sec = _RenPyCodeGenHelper._float_from_transition_duration_operand(d, default=0.5)
-      if not t.get_direction():
-        raise PPInternalError("IR 缺少 Push 方向（应由 parse_transition 填充）")
-      direction = t.get_direction().get_string().strip().lower()
+      direction = t.direction.get_string().strip().lower()
       if direction not in ("left", "right", "up", "down"):
         raise PPInternalError(f"IR 推移方向非规范键: {direction!r}")
       mode = "push" + direction  # pushright, pushleft, pushup, pushdown
       if sec != 0.5:
         return f'PushMove({sec}, "{mode}")'
       return mode
-    if kind == VNSceneTransitionKind.FadeToColor:
-      fo = t.get_fade_to_color_fade_out()
-      ho = t.get_fade_to_color_hold()
-      fi = t.get_fade_to_color_fade_in()
-      out_s = _RenPyCodeGenHelper._float_from_transition_duration_operand(fo, default=0.5)
-      hold_s = _RenPyCodeGenHelper._float_from_transition_duration_operand(ho, default=0.2)
-      in_s = _RenPyCodeGenHelper._float_from_transition_duration_operand(fi, default=0.5)
-      col = self._fade_to_color_hex(t)
+    if isinstance(t, VNFadeToColorSceneTransitionLit):
+      out_s = _RenPyCodeGenHelper._float_from_transition_duration_operand(t.fade_out, default=0.5)
+      hold_s = _RenPyCodeGenHelper._float_from_transition_duration_operand(t.hold, default=0.2)
+      in_s = _RenPyCodeGenHelper._float_from_transition_duration_operand(t.fade_in, default=0.5)
+      col = self._fade_to_color_hex_lit(t)
       return f'Fade({out_s}, {hold_s}, {in_s}, color="{col}")'
-    if kind == VNSceneTransitionKind.Zoom:
-      if not t.get_zoom_direction():
-        raise PPInternalError("IR 缺少 Zoom 方向（应由 parse_transition 填充）")
-      direction = t.get_zoom_direction().get_string().strip().lower()
+    if isinstance(t, VNZoomSceneTransitionLit):
+      direction = t.direction.get_string().strip().lower()
       if direction not in ("in", "out"):
         raise PPInternalError(f"IR 缩放方向非规范键: {direction!r}")
-      d = t.get_duration()
-      sec = _RenPyCodeGenHelper._float_from_transition_duration_operand(d, default=0.5)
-      pt = (t.get_zoom_point() or "").get_string() if t.get_zoom_point() else ""
+      sec = _RenPyCodeGenHelper._float_from_transition_duration_operand(t.duration, default=0.5)
+      pt = t.point.get_string()
       if not pt.strip():
         raise PPInternalError("IR 缺少 Zoom 缩放点（应由 parse_transition 填充）")
       pt_key = pt.strip().replace(" ", "_").replace("-", "_").lower()
@@ -813,7 +800,7 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
       pt_escaped = pt.replace("\\", "\\\\").replace("'", "\\'")
       name = "preppipe_zoomout" if direction == "out" else "preppipe_zoomin"
       return f"{name}({sec}, '{pt_escaped}')"
-    raise NotImplementedError(f"Unhandled VNSceneTransitionKind: {kind}")
+    raise NotImplementedError(f"Unhandled scene transition literal: {type(t).__name__}")
 
   def resolve_displayable_transition(self, transition : Value) -> str | None:
     renpy_displayable_transition, renpy_audio_transition = self._resolve_transition(transition)
@@ -838,11 +825,8 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
 
   _SLIDE_DIST: typing.ClassVar[float] = 2500.0
 
-  def _fade_to_color_hex(self, t: VNGenericSceneTransitionExpr) -> str:
-    col_lit = t.get_fade_to_color_color()
-    if col_lit is None:
-      return "#000000"
-    c = col_lit.value
+  def _fade_to_color_hex_lit(self, t: VNFadeToColorSceneTransitionLit) -> str:
+    c = t.color.value
     return f"#{c.r:02x}{c.g:02x}{c.b:02x}"
 
   def _vn_duration_sec(self, d) -> float:
@@ -868,58 +852,51 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
       return (0.0, s)
     raise PPInternalError(f"IR 滑移方向非规范键: {direction!r}（应由 parse_transition 规范化）")
 
-  def _sprite_zoom_align(self, t : VNGenericSceneTransitionExpr) -> tuple[float, float, float]:
-    d = t.get_duration()
+  def _sprite_zoom_align(self, t : VNZoomSceneTransitionLit) -> tuple[float, float, float]:
+    d = t.duration
     sec = self._vn_duration_sec(d)
-    pt = (t.get_zoom_point() or "").get_string() if t.get_zoom_point() else "center"
+    pt = t.point.get_string() or "center"
     key = pt.strip().replace(" ", "_").replace("-", "_").lower()
     if key not in self._ZOOM_POINT_XY:
       raise PPInternalError(f"IR 缩放点非规范键: {key!r}（应由 parse_transition 规范化）")
     xa, ya = self._ZOOM_POINT_XY[key]
     return sec, xa, ya
 
-  def _generic_to_sprite_show_at(self, t : VNGenericSceneTransitionExpr) -> str | None:
+  def _generic_to_sprite_show_at(self, t) -> str | None:
     """仅入场语义：show 上不处理 FadeOut / SlideOut / ZoomOut。"""
-    kind = t.get_kind()
-    sec = self._vn_duration_sec(t.get_duration())
-    if kind == VNSceneTransitionKind.Zoom:
-      dout = t.get_zoom_direction()
-      if (dout.get_string().lower() if dout else "") == "out":
+    if isinstance(t, VNZoomSceneTransitionLit):
+      if t.direction.get_string().lower() == "out":
         return None
       s, xa, ya = self._sprite_zoom_align(t)
       return f"preppipe_sprite_zoom_in({s}, {xa}, {ya})"
-    if kind == VNSceneTransitionKind.FadeIn:
+    if isinstance(t, VNFadeInSceneTransitionLit):
+      sec = self._vn_duration_sec(t.duration)
       return f"preppipe_sprite_fade_in({sec})"
-    if kind == VNSceneTransitionKind.Dissolve:
+    if isinstance(t, VNDissolveSceneTransitionLit):
+      sec = self._vn_duration_sec(t.duration)
       return f"preppipe_sprite_dissolve_in({sec})"
-    if kind == VNSceneTransitionKind.SlideIn:
-      if not t.get_direction():
-        raise PPInternalError("IR 缺少 SlideIn 方向（应由 parse_transition 填充）")
-      dr = t.get_direction().get_string().strip().lower()
+    if isinstance(t, VNSlideInSceneTransitionLit):
+      dr = t.direction.get_string().strip().lower()
+      sec = self._vn_duration_sec(t.duration)
       ox, oy = self._direction_slide_offset(dr)
       return f"preppipe_sprite_slide_in({sec}, {ox}, {oy})"
-    if kind == VNSceneTransitionKind.Push:
-      if not t.get_direction():
-        raise PPInternalError("IR 缺少 Push 方向（应由 parse_transition 填充）")
-      dr = t.get_direction().get_string().strip().lower()
+    if isinstance(t, VNPushSceneTransitionLit):
+      dr = t.direction.get_string().strip().lower()
+      sec = self._vn_duration_sec(t.duration)
       ox, oy = self._direction_slide_offset(dr)
       return f"preppipe_sprite_slide_in({sec}, {ox}, {oy})"
-    if kind == VNSceneTransitionKind.FadeToColor:
-      fo = t.get_fade_to_color_fade_out()
-      ho = t.get_fade_to_color_hold()
-      fi = t.get_fade_to_color_fade_in()
-      total = self._vn_duration_sec(fo) + self._vn_duration_sec(ho) + self._vn_duration_sec(fi)
+    if isinstance(t, VNFadeToColorSceneTransitionLit):
+      total = self._vn_duration_sec(t.fade_out) + self._vn_duration_sec(t.hold) + self._vn_duration_sec(t.fade_in)
       return f"preppipe_sprite_fade_in({total})"
     return None
 
-  def _generic_is_exit_only_on_show(self, t : VNGenericSceneTransitionExpr) -> bool:
-    k = t.get_kind()
-    if k == VNSceneTransitionKind.FadeOut:
+  def _generic_is_exit_only_on_show(self, t) -> bool:
+    if isinstance(t, VNFadeOutSceneTransitionLit):
       return True
-    if k == VNSceneTransitionKind.SlideOut:
+    if isinstance(t, VNSlideOutSceneTransitionLit):
       return True
-    if k == VNSceneTransitionKind.Zoom:
-      return (t.get_zoom_direction().get_string().lower() if t.get_zoom_direction() else "") == "out"
+    if isinstance(t, VNZoomSceneTransitionLit):
+      return t.direction.get_string().lower() == "out"
     return False
 
   def _transition_has_visual_effect(self, transition : Value | None) -> bool:
@@ -931,7 +908,7 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
 
   def _require_foreground_show_at(self, transition : Value) -> str | None:
     """立绘入场转场：不支持的类型或参数直接报错。"""
-    if isinstance(transition, VNGenericSceneTransitionExpr):
+    if isinstance(transition, VN_SCENE_TRANSITION_LIT_TYPES):
       if self._generic_is_exit_only_on_show(transition):
         raise PPNotImplementedError(
           "立绘入场不支持退场类转场（淡出、滑出、缩小离场等）；请使用淡入、滑入等入场类转场，"
@@ -1025,28 +1002,25 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
     base_showat = None
     if position := instr.placeat.get(VNPositionSymbol.NAME_SCREEN2D):
       base_showat = self._get_screen2d_position(position)
-    if isinstance(transition, VNGenericSceneTransitionExpr):
-      k = transition.get_kind()
-      sec = self._vn_duration_sec(transition.get_duration())
-      if k == VNSceneTransitionKind.Zoom:
+    if isinstance(transition, VN_SCENE_TRANSITION_LIT_TYPES):
+      if isinstance(transition, VNZoomSceneTransitionLit):
         s, _xa, _ya = self._sprite_zoom_align(transition)
         at_expr = f"preppipe_sprite_zoom_out({s})"
         return self._foreground_hide_sprite_at_pause(imspec, insert_before, at_expr, s, base_showat=base_showat)
-      if k == VNSceneTransitionKind.SlideOut:
-        if not transition.get_direction():
-          raise PPInternalError("IR 缺少 SlideOut 方向（应由 parse_transition 填充）")
-        dr = transition.get_direction().get_string().strip().lower()
+      if isinstance(transition, VNSlideOutSceneTransitionLit):
+        sec = self._vn_duration_sec(transition.duration)
+        dr = transition.direction.get_string().strip().lower()
         ox, oy = self._direction_slide_offset(dr)
         at_expr = f"preppipe_sprite_slide_out({sec}, {ox}, {oy})"
         return self._foreground_hide_sprite_at_pause(imspec, insert_before, at_expr, sec, base_showat=base_showat)
-      if k == VNSceneTransitionKind.Push:
-        if not transition.get_direction():
-          raise PPInternalError("IR 缺少 Push 方向（应由 parse_transition 填充）")
-        dr = transition.get_direction().get_string().strip().lower()
+      if isinstance(transition, VNPushSceneTransitionLit):
+        sec = self._vn_duration_sec(transition.duration)
+        dr = transition.direction.get_string().strip().lower()
         ox, oy = self._push_direction_to_sprite_exit_offset(dr)
         at_expr = f"preppipe_sprite_slide_out({sec}, {ox}, {oy})"
         return self._foreground_hide_sprite_at_pause(imspec, insert_before, at_expr, sec, base_showat=base_showat)
-      if k in (VNSceneTransitionKind.FadeOut, VNSceneTransitionKind.Dissolve):
+      if isinstance(transition, (VNFadeOutSceneTransitionLit, VNDissolveSceneTransitionLit)):
+        sec = self._vn_duration_sec(transition.duration)
         return self._foreground_hide_fade_sequence(imspec, sec, insert_before, base_showat=base_showat)
     dt = VNDefaultTransitionType.get_default_transition_type(transition)
     if dt == VNDefaultTransitionType.DT_SPRITE_HIDE:
