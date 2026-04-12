@@ -1017,6 +1017,7 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
       if first_fatal_error is not None:
         unmatched_results.append((cb, first_fatal_error))
         continue
+      is_positional_arg_used = positional_arg_index == len(positional_args)
       # 检查是否有参数没用上，有的话同样报错（除非有 UnconstrainedValue）
       if not is_unconstrained_param_found:
         if not is_positional_arg_used:

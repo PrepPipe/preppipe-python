@@ -12,6 +12,7 @@ from ..util.imagepackexportop import *
 from ..util import nameconvert
 from ..enginecommon.codegen import BackendCodeGenHelperBase
 from ..exceptions import PPNotImplementedError
+from ..frontend.vnmodel.vnutil import map_sprite_transition_entry_to_exit
 
 @dataclasses.dataclass
 class _RenPyScriptFileWrapper:
@@ -1019,11 +1020,12 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
         ox, oy = self._push_direction_to_sprite_exit_offset(dr)
         at_expr = f"preppipe_sprite_slide_out({sec}, {ox}, {oy})"
         return self._foreground_hide_sprite_at_pause(imspec, insert_before, at_expr, sec, base_showat=base_showat)
-      if isinstance(transition, (VNFadeOutSceneTransitionLit, VNDissolveSceneTransitionLit)):
+      if isinstance(transition, (VNFadeOutSceneTransitionLit, VNDissolveSceneTransitionLit, VNFadeInSceneTransitionLit)):
+        # 淡入误绑在退场时按同时长淡出（与 map_sprite_transition_entry_to_exit 一致）
         sec = self._vn_duration_sec(transition.duration)
         return self._foreground_hide_fade_sequence(imspec, sec, insert_before, base_showat=base_showat)
     dt = VNDefaultTransitionType.get_default_transition_type(transition)
-    if dt == VNDefaultTransitionType.DT_SPRITE_HIDE:
+    if dt in (VNDefaultTransitionType.DT_SPRITE_HIDE, VNDefaultTransitionType.DT_IMAGE_HIDE):
       return self._foreground_hide_fade_sequence(imspec, 0.5, insert_before, base_showat=base_showat)
     if isinstance(transition, VNBackendDisplayableTransitionExpr):
       if transition.backend.get_string().lower() == "renpy":
@@ -1150,6 +1152,8 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
         case VNStandardDeviceKind.O_BACKGROUND_DISPLAY | VNStandardDeviceKind.O_FOREGROUND_DISPLAY:
           imspec = self.get_impsec(removevalue, kind)
           transition = instr.transition.try_get_value()
+          if kind == VNStandardDeviceKind.O_FOREGROUND_DISPLAY and transition is not None:
+            transition = map_sprite_transition_entry_to_exit(self.context, transition)
           if self._transition_has_visual_effect(transition) and kind == VNStandardDeviceKind.O_FOREGROUND_DISPLAY:
             if hid := self._emit_foreground_hide(imspec, transition, insert_before, instr):
               return hid

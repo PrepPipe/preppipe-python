@@ -22,6 +22,7 @@ from ...util.message import MessageHandler
 from ...exceptions import *
 from ...language import TranslationDomain
 from ...vnmodel import (
+  VNDefaultTransitionType,
   VNDissolveSceneTransitionLit,
   VNFadeInSceneTransitionLit,
   VNFadeOutSceneTransitionLit,
@@ -664,16 +665,16 @@ def ensure_builtin_effect_presets(ast : VNAST) -> None:
 
 
 def parse_transition(context : Context, transition_name : str, transition_args : list[Literal], transition_kwargs : dict[str, Literal], warnings : list[tuple[str, str]], ast : VNAST | None = None) -> Value | tuple[StringLiteral, StringLiteral] | None:
-  # 如果没有提供转场，就返回 None
-  # 如果提供了后端专有的转场，则返回 tuple[StringLiteral, StringLiteral] 表示后端名和表达式
-  # 如果提供了通用的转场，则返回对应的值 (Value)
+  # - 未写转场名（空字符串）：返回 None，表示「本条 Transition 结点未指定效果」；外层 codegen 对立绘等仍会套用默认淡入/淡出。
+  # - 显式「无」等：返回 DT_NO_TRANSITION，表示用户要求立刻切换、不要渐变。
+  # - 后端专有：tuple[backend, expr]；通用场景转场：对应 LiteralExpr / 等价值。
   # ast 用于从 EffectDecl 预设效果集解析 direction 等多语言参数；为 None 时退化为仅接受英文规范键。
 
   transition_name = (transition_name or "").strip()
   if len(transition_name) == 0:
     return None
 
-  # 1. 无：立即发生，无转场
+  # 1. 无：立即发生，无转场（与「未写转场名」不同，后者为 None）
   if transition_name in _tr_transition_none.get_all_candidates():
     return VNDefaultTransitionType.DT_NO_TRANSITION.get_enum_literal(context)
 
@@ -783,6 +784,50 @@ def parse_transition(context : Context, transition_name : str, transition_args :
       else "请检查参数名与类型（「黑白酒」须用：淡出/淡出时长、停留时长、淡入/淡入时长、颜色；勿使用单独的「时长」）。",
     ),
   )
+
+
+_DEFAULT_TRANSITION_DURATION = decimal.Decimal("0.5")
+
+
+def map_sprite_transition_entry_to_exit(context : Context, entry : Value) -> Value:
+  """立绘退场：若包裹块给出的是「入场类」通用转场，映射为对应的退场类，避免把淡入等绑在 hide 上。
+
+  DT_NO_TRANSITION 与已是退场类 / 未知值保持原样；DT_SPRITE_SHOW 视为默认入场，映射为默认淡出。"""
+  if isinstance(entry, VNFadeInSceneTransitionLit):
+    return VNFadeOutSceneTransitionLit.get(context, entry.duration)
+  if isinstance(entry, VNDissolveSceneTransitionLit):
+    return VNDissolveSceneTransitionLit.get(context, entry.duration)
+  if isinstance(entry, VNSlideInSceneTransitionLit):
+    return VNSlideOutSceneTransitionLit.get(context, entry.duration, entry.direction)
+  if isinstance(entry, VNPushSceneTransitionLit):
+    return VNPushSceneTransitionLit.get(context, entry.duration, entry.direction)
+  if isinstance(entry, VNFadeToColorSceneTransitionLit):
+    return VNFadeOutSceneTransitionLit.get(context, entry.fade_out)
+  if isinstance(entry, VNZoomSceneTransitionLit):
+    if entry.direction.get_string().strip().lower() == "in":
+      return VNZoomSceneTransitionLit.get(
+        context,
+        StringLiteral.get("out", context),
+        entry.duration,
+        entry.point,
+      )
+    return entry
+  dt = VNDefaultTransitionType.get_default_transition_type(entry)
+  if dt == VNDefaultTransitionType.DT_NO_TRANSITION:
+    return entry
+  if dt == VNDefaultTransitionType.DT_SPRITE_SHOW:
+    return VNFadeOutSceneTransitionLit.get(context, FloatLiteral.get(_DEFAULT_TRANSITION_DURATION, context))
+  return entry
+
+
+def default_scene_fade_in_lit(context : Context) -> VNFadeInSceneTransitionLit:
+  """用户未在命令中指定转场时，对立绘/场景显示采用的默认效果（淡入）。"""
+  return VNFadeInSceneTransitionLit.get(context, FloatLiteral.get(_DEFAULT_TRANSITION_DURATION, context))
+
+
+def default_scene_fade_out_lit(context : Context) -> VNFadeOutSceneTransitionLit:
+  """用户未在命令中指定转场时，对立绘/场景退场采用的默认效果（淡出）。"""
+  return VNFadeOutSceneTransitionLit.get(context, FloatLiteral.get(_DEFAULT_TRANSITION_DURATION, context))
 
 
 _tr_effect_bounce = _TR_vn_util.tr("instant_bounce", en="Bounce", zh_cn="跳动", zh_hk="跳動")
