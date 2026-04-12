@@ -1728,7 +1728,7 @@ class VNPlacementInstBase(VNInstruction):
   content : OpOperand[Value]
   device : OpOperand[VNDeviceSymbol]
   placeat : SymbolTableRegion[VNPositionSymbol]
-  transition : OpOperand[Value]
+  transition : OpOperand[Value]  # 未绑定/None：后端无转场；剧本未写转场时由 codegen 写入默认淡入等
 
 @IROperationDataclass
 class VNPutInst(VNPlacementInstBase):
@@ -1783,7 +1783,7 @@ class VNModifyInst(VNInstruction, Value):
 class VNRemoveInst(VNInstruction):
   # 去除某对象句柄所用的指令，只能指定渐变效果
   handlein : OpOperand  # 要移除的资源/显示句柄（操作数）
-  transition : OpOperand[Value]  # 退场使用的转场或渐变表达式（如 LiteralExpr）
+  transition : OpOperand[Value]  # 退场转场；未绑定或 try_get_value 为 None 时后端按「无转场」直接切换；codegen 会为未写命令转场填入默认淡出
   placeat : SymbolTableRegion  # 可选符号区：退场 show 链式位置（如 Ren'Py screen2d_abs，与入场一致）
 
   @staticmethod
