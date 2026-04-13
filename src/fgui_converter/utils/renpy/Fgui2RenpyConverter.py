@@ -400,6 +400,102 @@ class FguiToRenpyConverter:
         sound_definitions.append("")
         self.sound_definition_code.extend(sound_definitions)
 
+    def generate_progressbar_style(self, fgui_progressbar : FguiProgressBar) -> None:
+        """
+        生成进度条样式。
+        目标样例：
+        image horizontal_idle_bar_image:
+            Frame("horizontal_progressbar_base")
+
+        image horizontal_hover_bar_image:
+            Frame("horizontal_progressbar_active")
+        style horizontal_progressbar:
+            xsize 100
+            ysize 10
+            left_bar "horizontal_hover_bar_image"
+            right_bar "horizontal_idle_bar_image"
+        """
+        bar_image_definition_code = []
+        style_definition_code = []
+        progressbar_style_code = []
+        if not isinstance(fgui_progressbar, FguiProgressBar):
+            print("It is not a progressbar.")
+            return
+        
+        # 默认为水平进度条。
+        progressbar_type = BarOrientationType.HORIZONTAL
+        # bar的第一段，水平方向为right_bar。
+        first_bar_name = ''
+        # bar的第二段，水平方向为left_bar。
+        second_bar_name = ''
+
+        # progressbar 组件固定由两张图片(图形)构成。
+        # 图片(图形)固定名称为n0和bar。
+        # 其他组件暂不处理。
+        for displayable in fgui_progressbar.display_list.displayable_list:
+            # FGUI中进度条的背景
+            if displayable.name == 'n0':
+                if isinstance(displayable, FguiImage):
+                    second_bar_name = self.fgui_assets.get_componentname_by_id(displayable.src)
+                elif isinstance(displayable, FguiGraph):
+                    bar_image_definition_code.extend(self.generate_graph_definitions(displayable, fgui_progressbar.name))
+                    second_bar_name = f"{fgui_progressbar.name}_{displayable.id}"
+                else:
+                    print("Slider base is neither image nor graph.")
+                    return
+            # FGUI中水平滑动条的可变bar部分
+            if displayable.name == 'bar':
+                if isinstance(displayable, FguiImage):
+                    first_bar_name = self.fgui_assets.get_componentname_by_id(displayable.src)
+                elif isinstance(displayable, FguiGraph):
+                    bar_image_definition_code.extend(self.generate_graph_definitions(displayable, fgui_progressbar.name))
+                    first_bar_name = f"{fgui_progressbar.name}_{displayable.id}"
+                else:
+                    print("Slider bar is neither image nor graph.")
+                    return
+                bar_id = displayable.id
+                continue
+            # FGUI中滑动条的标题类型文本
+            if displayable.name == 'title':
+                if isinstance(displayable, FguiText):
+                    style_name = f"slider_{fgui_progressbar.id}_title"
+                    self.generate_text_style(displayable, style_name)
+                    # 暂时不生成标题文本
+                    continue
+                else:
+                    print("ProgressBar title is not text.")
+                    return
+
+        # 生成bar的image
+        bar_image_definition_code.append(f"image {fgui_progressbar.name}_base_bar_image:")
+        bar_image_definition_code.append(f"{self.indent_unit}Frame('{second_bar_name}')")
+        bar_image_definition_code.append(f"image {fgui_progressbar.name}_active_bar_image:")
+        bar_image_definition_code.append(f"{self.indent_unit}Frame('{first_bar_name}')")
+        bar_image_definition_code.append("")
+
+        # 生成progressbar样式
+        is_vertical = (progressbar_type==BarOrientationType.VERTICAL)
+        style_definition_code.append(f"style {fgui_progressbar.name}:")
+        style_definition_code.append(f"{self.indent_unit}bar_vertical {is_vertical}")
+        style_definition_code.append(f"{self.indent_unit}xysize {fgui_progressbar.size}")
+        # FairyGUI中前景图片使用缩放来改变进度，Ren'Py中使用bar_resizing来实现。
+        style_definition_code.append(f"{self.indent_unit}bar_resizing True")
+        if is_vertical:
+            style_definition_code.append(f"{self.indent_unit}top_bar '{fgui_progressbar.name}_base_bar_image'")
+            style_definition_code.append(f"{self.indent_unit}bottom_bar '{fgui_progressbar.name}_active_bar_image'")
+            thumb_ypos = 0
+        else:
+            style_definition_code.append(f"{self.indent_unit}left_bar '{fgui_progressbar.name}_active_bar_image'")
+            style_definition_code.append(f"{self.indent_unit}right_bar '{fgui_progressbar.name}_base_bar_image'")
+        style_definition_code.append("")
+
+        # 添加头部注释
+        progressbar_style_code.extend(bar_image_definition_code)
+        progressbar_style_code.append("# 进度条样式定义")
+        progressbar_style_code.extend(style_definition_code)
+
+        self.style_code.extend(progressbar_style_code)
+
     def generate_slider_style(self, fgui_slider : FguiSlider) -> None:
         """
         生成滑块样式。
@@ -425,6 +521,7 @@ class FguiToRenpyConverter:
             thumb_offset 24
             left_bar "horizontal_hover_bar_image"
             right_bar "horizontal_idle_bar_image"
+            bar_resizing True
             thumb Fixed(Frame("horizontal_[prefix_]thumb_image",xsize=48,ysize=54,ypos=-22))
         """
         bar_image_definition_code = []
@@ -494,6 +591,7 @@ class FguiToRenpyConverter:
                 if isinstance(displayable, FguiText):
                     style_name = f"slider_{fgui_slider.id}_title"
                     self.generate_text_style(displayable, style_name)
+                    # 暂时不生成标题文本
                     continue
                 else:
                     print("Slider title is not text.")
@@ -531,6 +629,7 @@ class FguiToRenpyConverter:
         style_definition_code.append(f"style {fgui_slider.name}:")
         style_definition_code.append(f"{self.indent_unit}bar_vertical {is_vertical}")
         style_definition_code.append(f"{self.indent_unit}xysize {fgui_slider.size}")
+        # FairyGUI中前景图片使用缩放来改变进度，Ren'Py中使用bar_resizing来实现。
         style_definition_code.append(f"{self.indent_unit}bar_resizing True")
         style_definition_code.append(f"{self.indent_unit}thumb_offset {thumb_offset}")
         if is_vertical:
@@ -628,13 +727,13 @@ class FguiToRenpyConverter:
             thumb_size = grip_com.size
 
         # 生成scrollbar样式
-        scrollbar_style_code.append(f"style {fgui_scrollbar.name}:")
-        scrollbar_style_code.append(f"{self.indent_unit}bar_vertical {is_vertical}")
-        scrollbar_style_code.append(f"{self.indent_unit}bar_invert {is_vertical}")
-        scrollbar_style_code.append(f"{self.indent_unit}xysize {fgui_scrollbar.size}")
-        scrollbar_style_code.append(f"{self.indent_unit}base_bar Frame('{fgui_scrollbar.name}_[prefix_]bar')")
-        scrollbar_style_code.append(f"{self.indent_unit}thumb Frame('{thumb_image_name}', xysize={thumb_size})")
-        scrollbar_style_code.append("")
+        style_definition_code.append(f"style {fgui_scrollbar.name}:")
+        style_definition_code.append(f"{self.indent_unit}bar_vertical {is_vertical}")
+        style_definition_code.append(f"{self.indent_unit}bar_invert {is_vertical}")
+        style_definition_code.append(f"{self.indent_unit}xysize {fgui_scrollbar.size}")
+        style_definition_code.append(f"{self.indent_unit}base_bar Frame('{fgui_scrollbar.name}_[prefix_]bar')")
+        style_definition_code.append(f"{self.indent_unit}thumb Frame('{thumb_image_name}', xysize={thumb_size})")
+        style_definition_code.append("")
 
         # 添加头部注释
         # scrollbar_style_code.extend(scrollbar_image_definition_code)
@@ -704,6 +803,7 @@ class FguiToRenpyConverter:
             # 装载器
             elif isinstance(displayable, FguiLoader):
                 screen_ui_code.extend(self.generate_loader_displayable(displayable))
+                # 目前装载器只支持图片。
                 pass
             # 其他组件
             else:
@@ -763,6 +863,22 @@ class FguiToRenpyConverter:
                         variable_name = f"{component.name}_{displayable.name}_barvalue"
                         screen_ui_code.append(f"{self.indent_str}{self.generate_variable_definition_str(variable_name, current_value=displayable.slider_property.current_value)}")
                         bar_value = self.generate_barvalue_definition_str(variable_name, min_value=displayable.slider_property.min_value, max_value=displayable.slider_property.max_value)
+                    screen_ui_code.append(f"{self.indent_str}bar value {bar_value} style '{ref_com.name}' id '{component.name}_{displayable.id}'")
+                    self.indent_level_down(end_indent_level)
+                    continue
+                # 进度条
+                if ref_com.extention == "ProgressBar" and ref_com.name != None:
+                    # 若在自定义数据中指定了关联数据对象，则直接使用。
+                    if displayable.custom_data:
+                        bar_value = displayable.custom_data
+                    # 否则再查找引用源对象的自定义数据
+                    elif ref_com.custom_data:
+                        bar_value = ref_com.custom_data
+                    # 若未指定则在screen中生成一个临时变量
+                    else:
+                        variable_name = f"{component.name}_{displayable.name}_barvalue"
+                        screen_ui_code.append(f"{self.indent_str}{self.generate_variable_definition_str(variable_name, current_value=displayable.progressbar_property.current_value)}")
+                        bar_value = self.generate_barvalue_definition_str(variable_name, min_value=displayable.progressbar_property.min_value, max_value=displayable.progressbar_property.max_value)
                     screen_ui_code.append(f"{self.indent_str}bar value {bar_value} style '{ref_com.name}' id '{component.name}_{displayable.id}'")
                     self.indent_level_down(end_indent_level)
                     continue
@@ -2860,7 +2976,7 @@ class FguiToRenpyConverter:
             elif component.extention == 'ComboBox':
                 pass
             elif component.extention == 'ProgressBar':
-                pass
+                self.generate_progressbar_style(component)
             else:
                 self.generate_screen(component)
         

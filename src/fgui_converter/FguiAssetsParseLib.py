@@ -406,16 +406,17 @@ class FguiComboBox(FguiComponent):
 class FguiProgressBar(FguiComponent):
     """
     FairyGUI中的进度条。
-    相比其他component，多一个ProgressBar标签，大部分情况为空。
+    被其他组件引用时，相比其他component，多一个ProgressBar标签，包含最小值、最大值与当前值。
     """
     def __init__(self, component_etree, id, name, package_desc=None):
         super().__init__(component_etree, id, name, package_desc=package_desc)
         self.progressbar = component_etree.find("ProgressBar")
+        self.title_type = self.progressbar.get("titleType")
 
 class FguiSlider(FguiComponent):
     """
     FairyGUI中的滑动条。
-    相比其他component，多一个Slider标签，大部分情况为空。
+    被其他组件引用时，相比其他component，多一个Slider标签，包含最小值、最大值与当前值。
     滑动条会有一个相应的其他组件，同名带后缀“_grip”的按钮。
     """
     def __init__(self, component_etree, id, name, package_desc=None):
@@ -595,6 +596,9 @@ class FguiDisplayable:
         # Button，按钮专有属性
         self.button_property = None
 
+        # ProgressBar，进度条专有属性
+        self.progressbar_property = None
+
         # Slider，滑动条专有属性
         self.slider_property = None
 
@@ -637,6 +641,8 @@ class FguiDisplayable:
                 self.relations = FguiRelation(self.display_item_tree[i])
             elif self.display_item_tree[i].tag == "Slider" :
                 self.slider_property = FguiSliderProperty(self.display_item_tree[i])
+            elif self.display_item_tree[i].tag == "ProgressBar" :
+                self.progressbar_property = FguiProgressBarProperty(self.display_item_tree[i])
             else:
                 print(f"Tag not parse: {self.display_item_tree[i].tag}.")
 
@@ -986,6 +992,19 @@ class FguiRelation:
         value = self.relation_item_tree.get("sidePair")
         self.relation_dict[key] = value
 
+class FguiProgressBarProperty:
+    """
+    进度条的数值属性。分别包含最小值、最大值与当前值。
+    如果某一项属性未出现则等于默认值0。
+    """
+    def __init__(self, progressbar_property_tree):
+        if progressbar_property_tree.tag != "ProgressBar":
+            raise ValueError("xml tag is not ProgressBar.")
+        self.progressbar_property_tree = progressbar_property_tree
+        self.current_value = self.progressbar_property_tree.get("value", 0)
+        self.min_value = self.progressbar_property_tree.get("min", 0)
+        self.max_value = self.progressbar_property_tree.get("max", 0)
+
 class FguiSliderProperty:
     """
     滑块的数值属性。分别包含最小值、最大值与当前值。
@@ -1231,6 +1250,8 @@ class FguiAssets():
                 component = FguiLabel(self.object_dict[component.id], component.id, component.name, package_desc=self.package_desc)
             elif extention_type == "Slider":
                 component = FguiSlider(self.object_dict[component.id], component.id, component.name, package_desc=self.package_desc)
+            elif extention_type == "ProgressBar":
+                component = FguiProgressBar(self.object_dict[component.id], component.id, component.name, package_desc=self.package_desc)
             else:
                 component = FguiComponent(self.object_dict[component.id], component.id, component.name, package_desc=self.package_desc)
             self.fgui_component_set.append(component)
