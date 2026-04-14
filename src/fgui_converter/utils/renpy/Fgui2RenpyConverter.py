@@ -870,16 +870,16 @@ class FguiToRenpyConverter:
                 if ref_com.extention == "ProgressBar" and ref_com.name != None:
                     # 若在自定义数据中指定了关联数据对象，则直接使用。
                     if displayable.custom_data:
-                        bar_value = displayable.custom_data
+                        variable_name = displayable.custom_data
                     # 否则再查找引用源对象的自定义数据
                     elif ref_com.custom_data:
-                        bar_value = ref_com.custom_data
+                        variable_name = ref_com.custom_data
                     # 若未指定则在screen中生成一个临时变量
                     else:
-                        variable_name = f"{component.name}_{displayable.name}_barvalue"
-                        screen_ui_code.append(f"{self.indent_str}{self.generate_variable_definition_str(variable_name, current_value=displayable.progressbar_property.current_value)}")
-                        bar_value = self.generate_barvalue_definition_str(variable_name, min_value=displayable.progressbar_property.min_value, max_value=displayable.progressbar_property.max_value)
-                    screen_ui_code.append(f"{self.indent_str}bar value {bar_value} style '{ref_com.name}' id '{component.name}_{displayable.id}'")
+                        variable_name = f"{component.name}_{displayable.name}_value"
+                        range_value = (int)(displayable.progressbar_property.max_value) - (int)(displayable.progressbar_property.min_value)
+                        screen_ui_code.append(f"{self.indent_str}{self.generate_uiadjustment_definition_str(name=variable_name, range=range_value, value=(int)(displayable.progressbar_property.current_value))}")
+                    screen_ui_code.append(f"{self.indent_str}bar adjustment {variable_name} style '{ref_com.name}' id '{component.name}_{displayable.id}'")
                     self.indent_level_down(end_indent_level)
                     continue
                 # 其他组件
@@ -1839,6 +1839,11 @@ class FguiToRenpyConverter:
     @staticmethod
     def generate_variable_definition_str(variable_name, current_value=None):
         return f"default {variable_name} = {current_value}"
+
+    @staticmethod
+    def generate_uiadjustment_definition_str(name, range=1, value=0):
+        # return f"default {uiadjustment_name} = {adjustment_value}"
+        return f"default {name} = ui.adjustment(range={range}, value={value}, adjustable=False)"
 
     @staticmethod
     def generate_barvalue_definition_str(barvalue_name, min_value=0, max_value=100, current_value=0, scope='local'):
