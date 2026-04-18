@@ -643,6 +643,8 @@ class FguiDisplayable:
                 self.slider_property = FguiSliderProperty(self.display_item_tree[i])
             elif self.display_item_tree[i].tag == "ProgressBar" :
                 self.progressbar_property = FguiProgressBarProperty(self.display_item_tree[i])
+            elif self.display_item_tree[i].tag == "Label" :
+                self.label_property = FguiLabelProperty(self.display_item_tree[i])
             else:
                 print(f"Tag not parse: {self.display_item_tree[i].tag}.")
 
@@ -677,6 +679,18 @@ class FguiButtonProperty(FguiComponentPropertyBase):
         self.controller_name = self.component_property_tree.get("controller")
         self.controller_index = self.component_property_tree.get("page")
         # TODO 待添加点击音效
+
+class FguiLabelProperty(FguiComponentPropertyBase):
+    """
+    组件子属性中的Label信息。
+    """
+    def __init__(self, component_property_tree):
+        super().__init__(component_property_tree)
+        if self.property_name != "Label" :
+            raise ValueError("xml tag is not Label")
+        self.title = self.component_property_tree.get("title")
+        self.text_color = self.component_property_tree.get("titleColor")
+        self.font_size = int(self.component_property_tree.get("titleFontSize", 24))
 
 class FguiGraph(FguiDisplayable):
     """

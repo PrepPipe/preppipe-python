@@ -883,10 +883,101 @@ class FguiToRenpyConverter:
                     self.indent_level_down(end_indent_level)
                     continue
                 # 其他组件
-                screen_ui_code.append(f"{self.indent_str}use {ref_com.name} id '{component.name}_{displayable.id}'")
+                parameter_str=''
+                parameter_str = self.generate_label_screen_parameter(displayable.label_property)
+
+
+                screen_ui_code.append(f"{self.indent_str}use {ref_com.name}({parameter_str}) id '{component.name}_{displayable.id}'")
                 self.indent_level_down(end_indent_level)
 
         return screen_ui_code
+
+    def generate_label_screen(self, component : FguiComponent):
+        """
+        生成FGUI标签组件对应screen。目标样例：
+        screen label_screen(title='', xysize=(100, 100)):
+            fixed:
+                xysize xysize
+                text title:
+                    align (0.5, 0.5)
+                    font "hyzjhj.ttf"
+                    color "#FEDAAA"
+                    size 32
+        """
+        self.screen_definition_head.clear()
+        self.screen_variable_code.clear()
+        self.screen_function_code.clear()
+        self.screen_ui_code.clear()
+        self.screen_has_dismiss = False
+        self.dismiss_action_list.clear()
+        self.reset_indent_level()
+ 
+        # 生成标签组件screen
+        self.screen_definition_head.append("# 标签screen定义")
+        self.screen_definition_head.append(f"# 从FairyGUI标签组件{component.name}转换而来")
+        id = component.id
+        label_name = component.name
+        xysize = component.size
+
+        title_index = -1
+        default_title = ''
+        title_displayable = None
+        text_xalign, text_yalign = 0, 0
+        title_pos = (0, 0)
+        title_anchor = (0, 0)
+        title_xysize = (0, 0)
+        title_style = None
+        title_color = '#FFFFFF'
+        title_size = 32
+
+        # 查找title文本组件
+        for index, displayable in enumerate(component.display_list.displayable_list):
+            if isinstance(displayable, FguiText) and displayable.name == 'title':
+                title_index = index
+                title_displayable = displayable
+                default_title = title_displayable.text
+                if displayable.single_line:
+                    default_title = default_title.replace("\n", "").replace("\r", "")
+                title_xysize = title_displayable.size
+                text_xalign, text_yalign = self.trans_text_align(title_displayable.align, title_displayable.v_align)
+                title_pos = title_displayable.xypos
+                title_anchor = title_displayable.pivot
+                self.generate_text_style(title_displayable, f"{label_name}_title_text")
+                title_style = f"{label_name}_title_text"
+                title_color = title_displayable.text_color
+                title_size = title_displayable.font_size
+                break
+
+        # 界面定义
+        self.screen_definition_head.append(f"screen {label_name}(title_text='{default_title}', title_color='{title_color}', title_size={title_size}):")
+        self.indent_level_up()
+
+        # 显式添加一个fixed，设置界面尺寸。
+        self.screen_ui_code.append(f"{self.indent_str}fixed:")
+        self.indent_level_up()
+        self.screen_ui_code.append(f"{self.indent_str}{self.generate_screen_fixed_size_str(component)}")
+
+        # 生成title组件前的组件
+        self.screen_ui_code.extend(self.convert_component_display_list(component, list_begin_index=0, list_end_index=title_index))
+
+        if title_displayable:
+            # title组件
+            self.screen_ui_code.append(f"{self.indent_str}text title_text style '{title_style}':")
+            self.indent_level_up()
+            self.screen_ui_code.append(f"{self.indent_str}xysize {title_xysize}")
+            self.screen_ui_code.append(f"{self.indent_str}color title_color")
+            self.screen_ui_code.append(f"{self.indent_str}size title_size")
+
+            self.indent_level_down()
+
+            # 生成title组件后的组件
+            self.screen_ui_code.extend(self.convert_component_display_list(component, list_begin_index=title_index + 1, list_end_index=-1))
+
+        self.screen_code.extend(self.screen_definition_head)
+
+        self.screen_ui_code.append("")
+        self.screen_code.extend(self.screen_ui_code)
+
 
     def generate_screen(self, component : FguiComponent):
         """
@@ -1855,6 +1946,19 @@ class FguiToRenpyConverter:
         return barvalue_str
 
     @staticmethod
+    def generate_label_screen_parameter(label_property):
+        parameter_list = []
+        parameter_str = ""
+        if label_property.title:
+            parameter_list.append(f"title_text='{label_property.title}'")
+        if label_property.text_color:
+            parameter_list.append(f"title_color='{label_property.text_color}'")
+        if label_property.font_size:
+            parameter_list.append(f"title_size={label_property.font_size}")
+        parameter_str = ",".join(parameter_list)
+        return parameter_str
+
+    @staticmethod
     def generate_button_default_parameter(button_title=None, original_actions_str=None, icon=None, activate_sound=None):
         parameter_str = ""
         title_str = "title=''"
@@ -1962,8 +2066,6 @@ class FguiToRenpyConverter:
         self.style_code.append(f"{style_indent}font '{text_font}'")
         self.style_code.append(f"{style_indent}size {fgui_text.font_size}")
         self.style_code.append(f"{style_indent}color '{fgui_text.text_color}'")
-        # xalign, yalign = self.trans_text_align(fgui_text.align, fgui_text.v_align)
-        # self.style_code.append(f"{style_indent}align ({xalign}, {yalign})")
 
         text_outline_string = self.generate_text_outline_string(fgui_text)
         self.style_code.append(f"{style_indent}outlines {text_outline_string}")
@@ -1972,8 +2074,10 @@ class FguiToRenpyConverter:
         #设置最小宽度才能使text_align生效
         self.style_code.append(f"{style_indent}min_width {fgui_text.size[0]}")
         xalign, yalign = self.trans_text_align(fgui_text.align, fgui_text.v_align)
-        # 默认两侧居中对齐
+        # 默认文本居中，如果文本长度超出文本框，效果可能与FairyGUI不一致。
         self.style_code.append(f"{style_indent}textalign {xalign}")
+        # 垂直方向对齐方式使用yalign，可能有问题。
+        self.style_code.append(f"{style_indent}yalign {yalign}")
         # 粗体、斜体、下划线、删除线
         if fgui_text.bold:
             self.style_code.append(f"{style_indent}bold {fgui_text.bold}")
@@ -1982,7 +2086,9 @@ class FguiToRenpyConverter:
         if fgui_text.underline:
             self.style_code.append(f"{style_indent}underline {fgui_text.underline}")
         if fgui_text.strike:
-            self.style_code.append(f"{style_indent}strikethrough {fgui_text.strike}")
+            self.style_code.append(f"{style_indent}strikethrough {fgui_text.strike}")        # 不自动换行
+        if fgui_text.single_line:
+            self.style_code.append(f"{style_indent}layout 'nobreak'")
         self.style_code.append("")
 
     @staticmethod
@@ -2099,7 +2205,6 @@ class FguiToRenpyConverter:
             textalign 0.5
         """
 
-        # self.screen_code.clear()
         self.screen_definition_head.clear()
         self.screen_variable_code.clear()
         self.screen_function_code.clear()
@@ -2295,7 +2400,6 @@ class FguiToRenpyConverter:
 
         self.screen_code.extend(self.screen_definition_head)
         self.screen_code.extend(self.screen_ui_code)
-        # self.renpy_code.extend(self.screen_code)
 
     def trans_text_align(self, text_horizontal_align="left", text_vertical_align="top"):
         return self.align_dict.get(text_horizontal_align, 0.5), self.align_dict.get(text_vertical_align, 0.5)
@@ -2975,11 +3079,12 @@ class FguiToRenpyConverter:
             elif component.extention == 'ScrollBar':
                 self.generate_scrollbar_style(component)
             elif component.extention == 'Label':
-                pass
+                self.generate_label_screen(component)
             elif component.extention == 'Slider':
                 self.generate_slider_style(component)
             elif component.extention == 'ComboBox':
                 pass
+                # self.generate_combobox_screen(component)
             elif component.extention == 'ProgressBar':
                 self.generate_progressbar_style(component)
             else:
