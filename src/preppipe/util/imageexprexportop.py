@@ -7,15 +7,12 @@ import concurrent.futures
 import PIL
 import PIL.Image
 import PIL.ImageDraw
-import PIL.ImageFont
 
 from ..irbase import *
 from ..exportcache import CacheableOperationSymbol
 from ..imageexpr import *
 from ..commontypes import *
 from ..irdataop import *
-from ..assets.assetmanager import AssetManager
-
 ImageExprType = typing.TypeVar('ImageExprType', bound=BaseImageLiteralExpr)
 
 @IROperationDataclass
@@ -34,7 +31,8 @@ class ImageExprExportOpSymbolBase(CacheableOperationSymbol, typing.Generic[Image
     relpath = self.export_path.get().value
     fullpath = os.path.join(output_rootdir, relpath)
     os.makedirs(os.path.dirname(fullpath), exist_ok=True)
-    img.save(fullpath, format='PNG')
+    # 固定 PNG 编码参数，便于同一输入在各平台得到一致字节（便于校验与用户资源不应被无端改写的原则）
+    img.save(fullpath, format="PNG", compress_level=9, optimize=False)
 
   @classmethod
   def get_image(cls, v : ImageExprType) -> PIL.Image.Image:
@@ -52,12 +50,7 @@ class ImageExprExportOpSymbolBase(CacheableOperationSymbol, typing.Generic[Image
 class PlaceholderImageExportOpSymbol(ImageExprExportOpSymbolBase[PlaceholderImageLiteralExpr]):
   @classmethod
   def cls_prepare_export(cls, tp : concurrent.futures.ThreadPoolExecutor) -> None:
-    # 尝试载入一下字体
-    AssetManager.get_font()
-
-  @staticmethod
-  def get_starting_font_point_size(width : int, height : int) -> int:
-    return int(width*0.75)
+    pass
 
   @classmethod
   def get_image(cls, v : PlaceholderImageLiteralExpr) -> PIL.Image.Image:
@@ -66,7 +59,6 @@ class PlaceholderImageExportOpSymbol(ImageExprExportOpSymbolBase[PlaceholderImag
     fg_color = (255, 255, 255, 255) # 白色前景
     stroke_color = (0, 0, 0, 255) # 黑色描边
     linewidth = 3
-    strokewidth = 3
 
     width, height = v.size.value
     img = PIL.Image.new('RGBA', (width, height), (0, 0, 0, 0))
@@ -80,21 +72,8 @@ class PlaceholderImageExportOpSymbol(ImageExprExportOpSymbolBase[PlaceholderImag
     draw.line((left, top, right, bottom), fill=fg_color, width=linewidth)
     draw.line((left, bottom, right, top), fill=fg_color, width=linewidth)
 
-    # 准备把描述文本画上去
-    text = v.description.get_string()
-    curfontsize = PlaceholderImageExportOpSymbol.get_starting_font_point_size(width, height)
-    font = AssetManager.get_font(curfontsize)
-    center = ((left+right)/2, (top+bottom)/2)
-    while True:
-      bbox = draw.textbbox(center, text=text, font=font, align='center', anchor="mm", stroke_width=strokewidth)
-      if bbox[0] > 0 and bbox[1] > 0 and bbox[2] < width and bbox[3] < height:
-        break
-      next_size = int(curfontsize * 0.9)
-      if next_size == curfontsize or next_size == 0:
-        break
-      curfontsize = next_size
-      font = AssetManager.get_font(curfontsize)
-    draw.text(center, text=text, font=font, fill=fg_color, align='center', anchor="mm", stroke_width=strokewidth, stroke_fill=stroke_color)
+    # 不在位图中绘制描述文字：字体与 FreeType 版本会导致同一占位图在不同机器上 PNG 字节不一致。
+    # 描述仍保留在 PlaceholderImageLiteralExpr / Ren'Py 脚本侧；导出像素仅由尺寸与 bbox 决定，跨平台稳定。
     return img
 
 @IROperationDataclass

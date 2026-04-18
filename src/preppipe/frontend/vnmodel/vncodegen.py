@@ -2253,7 +2253,7 @@ class VNCodeGen:
         if (pv := self._scene_switch_parent_transition_as_value()) is not None:
           rm.transition.set_operand(0, map_sprite_transition_entry_to_exit(self.context, pv))
         else:
-          rm.transition.set_operand(0, default_scene_fade_out_lit(self.context))
+          rm.transition.set_operand(0, default_scene_dissolve_lit(self.context))
         switchnode.body.push_back(rm)
         rmtimes.append(rm.get_finish_time())
         self.scenecontext.scene_bg.output_handle = None
@@ -2267,7 +2267,7 @@ class VNCodeGen:
         if (pv := self._scene_switch_parent_transition_as_value()) is not None:
           cnode.transition.set_operand(0, pv)
         else:
-          cnode.transition.set_operand(0, default_scene_fade_in_lit(self.context))
+          cnode.transition.set_operand(0, default_scene_dissolve_lit(self.context))
         self.scenecontext.scene_bg = VNCodeGen.SceneContext.AssetState(dev=self.parsecontext.dev_background, search_names=[], data=scene_background, output_handle=cnode)
         best_finish_time = cnode.get_finish_time()
         switchnode.body.push_back(cnode)
