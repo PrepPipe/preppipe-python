@@ -2710,6 +2710,7 @@ class ImageAssetData(AssetData[PIL.Image.Image, str]):
     if data := self._data:
       data.save(dest_path)
       return
+    # 源与目标扩展名一致时直接拷贝字节流，避免无谓的解码重编码改变文件内容（除非目标格式要求转换）。
     # we do file copy iff the source and dest format matches
     # otherwise, we open the source file and save it in the destination
     _srcname, srcext = os.path.splitext(self.backing_store_path)
