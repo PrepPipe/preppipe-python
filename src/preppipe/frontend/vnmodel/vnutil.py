@@ -830,6 +830,11 @@ def default_scene_fade_out_lit(context : Context) -> VNFadeOutSceneTransitionLit
   return VNFadeOutSceneTransitionLit.get(context, FloatLiteral.get(_DEFAULT_TRANSITION_DURATION, context))
 
 
+def default_scene_dissolve_lit(context : Context) -> VNDissolveSceneTransitionLit:
+  """场景背景在切换时的默认转场（溶解，与 Ren'Py dissolve 一致）。"""
+  return VNDissolveSceneTransitionLit.get(context, FloatLiteral.get(_DEFAULT_TRANSITION_DURATION, context))
+
+
 _tr_effect_bounce = _TR_vn_util.tr("instant_bounce", en="Bounce", zh_cn="跳动", zh_hk="跳動")
 _tr_motion_style = _TR_vn_util.tr("motion_style", en="style", zh_cn="方式", zh_hk="方式")
 _tr_bounce_height_ratio = _TR_vn_util.tr("bounce_height_ratio", en="height", zh_cn="高度", zh_hk="高度")
