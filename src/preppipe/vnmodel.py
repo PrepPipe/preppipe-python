@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import io
 import pathlib
+import decimal
 import typing
 import pydub
 import pathlib
@@ -21,6 +22,7 @@ from .nameresolution import NamespaceNodeInterface, NameResolver
 from .language import TranslationDomain
 
 TR_vnmodel = TranslationDomain("vnmodel")
+
 
 # VNModel 只保留核心的、基于文本的IR信息，其他内容（如图片显示位置等）大部分都会放在抽象接口后
 # 像图片位置（2D屏幕坐标）、设备外观（对话框贴图）等信息，在后端生成时会用到，所以需要在IR中记录
@@ -1076,8 +1078,8 @@ VN_SCENE_TRANSITION_LIT_TYPES: typing.Tuple[type, ...] = (  # 所有场景转场
 # 目前音频仅支持淡入淡出渐变
 # TODO 加入前端支持
 class VNAudioFadeTransitionExpr(LiteralExpr):
-  DEFAULT_FADEIN : typing.ClassVar[decimal.Decimal] = decimal.Decimal(0.5)
-  DEFAULT_FADEOUT : typing.ClassVar[decimal.Decimal] = decimal.Decimal(0.5)
+  DEFAULT_FADEIN : typing.ClassVar[decimal.Decimal] = decimal.Decimal("0.5")
+  DEFAULT_FADEOUT : typing.ClassVar[decimal.Decimal] = decimal.Decimal("0.5")
 
   def construct_init(self, *, context : Context, value_tuple : tuple[FloatLiteral, FloatLiteral], **kwargs) -> None:
     assert len(value_tuple) == 2
@@ -1232,6 +1234,53 @@ class VNBackendInstructionGroup(VNInstructionGroup):
     return VNBackendInstructionGroup(init_mode=IRObjectInitMode.CONSTRUCT, context=context, start_time=start_time, name=name, loc=loc)
 
 
+@IRWrappedStatelessClassJsonName("vn_filter_effect_kind_e")
+class VNFilterEffectKind(str, enum.Enum):
+  """立绘/场景滤镜在 IR 中的规范种类（与即时特效 AST 中的键一致）。"""
+
+  GRAYSCALE = "grayscale"
+  OPACITY = "opacity"
+  TINT = "tint"
+  BLUR = "blur"
+
+
+@IRWrappedStatelessClassJsonName("vn_character_sprite_move_kind_e")
+class VNCharacterSpriteMoveKind(str, enum.Enum):
+  """立绘补间种类（平移/缩放/旋转/跳动）。"""
+
+  MOVE = "move"
+  SCALE = "scale"
+  ROTATE = "rotate"
+  BOUNCE = "bounce"
+
+
+@IRWrappedStatelessClassJsonName("vn_weather_effect_kind_e")
+class VNWeatherEffectKind(str, enum.Enum):
+  """全屏粒子天气种类（与即时特效解析中的键一致）。"""
+
+  SNOW = "snow"
+  RAIN = "rain"
+
+
+@IRWrappedStatelessClassJsonName("vn_shake_axis_kind_e")
+class VNShakeAxisKind(str, enum.Enum):
+  """震动轴向（解析层规范为 horizontal / vertical / 空）。"""
+
+  NONE = ""
+  HORIZONTAL = "horizontal"
+  VERTICAL = "vertical"
+
+
+@IRWrappedStatelessClassJsonName("vn_motion_style_kind_e")
+class VNMotionStyleKind(str, enum.Enum):
+  """立绘补间/跳动缓动键（与 ``_normalize_motion_style`` 输出一致）。"""
+
+  LINEAR = "linear"
+  EASE = "ease"
+  EASEIN = "easein"
+  EASEOUT = "easeout"
+
+
 class VNVisualEffectInst(VNInstruction):
   """舞台视觉效果指令的抽象基类（震动、闪烁、天气、立绘补间/发抖、滤镜、结束持续效果等）。
 
@@ -1258,7 +1307,7 @@ class VNShakeEffectInst(VNVisualEffectInst):
   duration : OpOperand[FloatLiteral]  # 震动持续时长（秒）
   amplitude : OpOperand[FloatLiteral]  # 初始振幅（像素或归一化，由后端解释）
   decay : OpOperand[FloatLiteral]  # 振幅衰减系数（由后端解释）
-  direction : OpOperand[StringLiteral]  # 震动轴向/模式规范键（如 horizontal/vertical）
+  direction : OpOperand[EnumLiteral[VNShakeAxisKind]]
 
   @staticmethod
   def create(
@@ -1269,10 +1318,10 @@ class VNShakeEffectInst(VNVisualEffectInst):
     sprite : Value | None,  # 立绘句柄；None 表示无立绘目标
     has_place : bool,  # 是否提供 place_xywh
     place_xywh : tuple[int, int, int, int] | None,  # 可选矩形 x,y,w,h
-    duration : float,  # 持续秒数
-    amplitude : float,  # 振幅
-    decay : float,  # 衰减
-    direction : str,  # 方向/模式键
+    duration : decimal.Decimal,  # 持续秒数
+    amplitude : decimal.Decimal,  # 振幅
+    decay : decimal.Decimal,  # 衰减
+    direction : VNShakeAxisKind,
     name : str = "",  # IR 操作名
     loc : Location | None = None,  # 源码位置
   ) -> VNShakeEffectInst:
@@ -1289,10 +1338,10 @@ class VNShakeEffectInst(VNVisualEffectInst):
       place_y=IntLiteral.get(y, context),
       place_w=IntLiteral.get(w, context),
       place_h=IntLiteral.get(h, context),
-      duration=FloatLiteral.get(decimal.Decimal(str(duration)), context),
-      amplitude=FloatLiteral.get(decimal.Decimal(str(amplitude)), context),
-      decay=FloatLiteral.get(decimal.Decimal(str(decay)), context),
-      direction=StringLiteral.get(direction, context),
+      duration=FloatLiteral.get(duration, context),
+      amplitude=FloatLiteral.get(amplitude, context),
+      decay=FloatLiteral.get(decay, context),
+      direction=EnumLiteral.get(context, direction),
       name=name,
       loc=loc,
     )
@@ -1325,9 +1374,9 @@ class VNFlashEffectInst(VNVisualEffectInst):
     has_place : bool,  # 是否带矩形
     place_xywh : tuple[int, int, int, int] | None,  # 可选 x,y,w,h
     color : str,  # 颜色键/串
-    fade_in : float,  # 淡入秒数
-    hold : float,  # 保持秒数
-    fade_out : float,  # 淡出秒数
+    fade_in : decimal.Decimal,  # 淡入秒数
+    hold : decimal.Decimal,  # 保持秒数
+    fade_out : decimal.Decimal,  # 淡出秒数
     name : str = "",  # IR 操作名
     loc : Location | None = None,  # 源码位置
   ) -> VNFlashEffectInst:
@@ -1345,9 +1394,9 @@ class VNFlashEffectInst(VNVisualEffectInst):
       place_w=IntLiteral.get(w, context),
       place_h=IntLiteral.get(h, context),
       color=StringLiteral.get(color, context),
-      fade_in=FloatLiteral.get(decimal.Decimal(str(fade_in)), context),
-      hold=FloatLiteral.get(decimal.Decimal(str(hold)), context),
-      fade_out=FloatLiteral.get(decimal.Decimal(str(fade_out)), context),
+      fade_in=FloatLiteral.get(fade_in, context),
+      hold=FloatLiteral.get(hold, context),
+      fade_out=FloatLiteral.get(fade_out, context),
       name=name,
       loc=loc,
     )
@@ -1358,7 +1407,7 @@ class VNFlashEffectInst(VNVisualEffectInst):
 class VNWeatherEffectInst(VNVisualEffectInst):
   """全屏粒子天气（雪/雨），各后端实现。"""
 
-  weather_kind : OpOperand[StringLiteral]  # 天气类型键（如 snow/rain）
+  weather_kind : OpOperand[EnumLiteral[VNWeatherEffectKind]]
   intensity : OpOperand[FloatLiteral]  # 粒子密度/强度
   inner_fade_in : OpOperand[FloatLiteral]  # 粒子层自身淡入（秒）
   inner_fade_out : OpOperand[FloatLiteral]  # 粒子层自身淡出（秒）
@@ -1372,14 +1421,14 @@ class VNWeatherEffectInst(VNVisualEffectInst):
     context : Context,  # IR 上下文
     start_time : Value,  # 开始时间序值
     *,
-    weather_kind : str,  # 天气种类键
-    intensity : float,  # 强度
-    inner_fade_in : float,  # 内层淡入
-    inner_fade_out : float,  # 内层淡出
-    overlay_fade_in : float,  # 叠层淡入
-    sustain : float,  # 持续
-    vx : float,  # 水平速度
-    vy : float,  # 垂直速度
+    weather_kind : VNWeatherEffectKind,
+    intensity : decimal.Decimal,  # 强度
+    inner_fade_in : decimal.Decimal,  # 内层淡入
+    inner_fade_out : decimal.Decimal,  # 内层淡出
+    overlay_fade_in : decimal.Decimal,  # 叠层淡入
+    sustain : decimal.Decimal,  # 持续
+    vx : decimal.Decimal,  # 水平速度
+    vy : decimal.Decimal,  # 垂直速度
     name : str = "",  # IR 操作名
     loc : Location | None = None,  # 源码位置
   ) -> VNWeatherEffectInst:
@@ -1387,14 +1436,14 @@ class VNWeatherEffectInst(VNVisualEffectInst):
       init_mode=IRObjectInitMode.CONSTRUCT,
       context=context,
       start_time=start_time,
-      weather_kind=StringLiteral.get(weather_kind, context),
-      intensity=FloatLiteral.get(decimal.Decimal(str(intensity)), context),
-      inner_fade_in=FloatLiteral.get(decimal.Decimal(str(inner_fade_in)), context),
-      inner_fade_out=FloatLiteral.get(decimal.Decimal(str(inner_fade_out)), context),
-      overlay_fade_in=FloatLiteral.get(decimal.Decimal(str(overlay_fade_in)), context),
-      sustain=FloatLiteral.get(decimal.Decimal(str(sustain)), context),
-      vx=FloatLiteral.get(decimal.Decimal(str(vx)), context),
-      vy=FloatLiteral.get(decimal.Decimal(str(vy)), context),
+      weather_kind=EnumLiteral.get(context, weather_kind),
+      intensity=FloatLiteral.get(intensity, context),
+      inner_fade_in=FloatLiteral.get(inner_fade_in, context),
+      inner_fade_out=FloatLiteral.get(inner_fade_out, context),
+      overlay_fade_in=FloatLiteral.get(overlay_fade_in, context),
+      sustain=FloatLiteral.get(sustain, context),
+      vx=FloatLiteral.get(vx, context),
+      vy=FloatLiteral.get(vy, context),
       name=name,
       loc=loc,
     )
@@ -1411,13 +1460,13 @@ class VNCharacterSpriteMoveInst(VNVisualEffectInst):
   place_y : OpOperand[IntLiteral]  # 区域 Y
   place_w : OpOperand[IntLiteral]  # 区域宽
   place_h : OpOperand[IntLiteral]  # 区域高
-  move_kind : OpOperand[StringLiteral]  # 补间种类键（平移/缩放/旋转/跳动等）
+  move_kind : OpOperand[EnumLiteral[VNCharacterSpriteMoveKind]]
   duration : OpOperand[FloatLiteral]  # 补间时长（秒）
   n1 : OpOperand[FloatLiteral]  # 数值参数 1（位移/角度等，语义依 move_kind）
   n2 : OpOperand[FloatLiteral]  # 数值参数 2
   n3 : OpOperand[FloatLiteral]  # 数值参数 3
   n4 : OpOperand[FloatLiteral]  # 数值参数 4
-  style : OpOperand[StringLiteral]  # 缓动/曲线风格键（如 linear/ease）
+  style : OpOperand[EnumLiteral[VNMotionStyleKind]]
 
   @staticmethod
   def create(
@@ -1427,13 +1476,13 @@ class VNCharacterSpriteMoveInst(VNVisualEffectInst):
     sprite : Value | None,  # 立绘句柄；None 占位
     has_place : bool,  # 是否带矩形
     place_xywh : tuple[int, int, int, int] | None,  # 可选 x,y,w,h
-    move_kind : str,  # 补间类型键
-    duration : float,  # 秒
-    n1 : float,  # 参数 1
-    n2 : float,  # 参数 2
-    n3 : float,  # 参数 3
-    n4 : float,  # 参数 4
-    style : str,  # 缓动键
+    move_kind : VNCharacterSpriteMoveKind,
+    duration : decimal.Decimal,  # 秒
+    n1 : decimal.Decimal,  # 参数 1
+    n2 : decimal.Decimal,  # 参数 2
+    n3 : decimal.Decimal,  # 参数 3
+    n4 : decimal.Decimal,  # 参数 4
+    style : VNMotionStyleKind,
     name : str = "",  # IR 操作名
     loc : Location | None = None,  # 源码位置
   ) -> VNCharacterSpriteMoveInst:
@@ -1449,13 +1498,13 @@ class VNCharacterSpriteMoveInst(VNVisualEffectInst):
       place_y=IntLiteral.get(y, context),
       place_w=IntLiteral.get(w, context),
       place_h=IntLiteral.get(h, context),
-      move_kind=StringLiteral.get(move_kind, context),
-      duration=FloatLiteral.get(decimal.Decimal(str(duration)), context),
-      n1=FloatLiteral.get(decimal.Decimal(str(n1)), context),
-      n2=FloatLiteral.get(decimal.Decimal(str(n2)), context),
-      n3=FloatLiteral.get(decimal.Decimal(str(n3)), context),
-      n4=FloatLiteral.get(decimal.Decimal(str(n4)), context),
-      style=StringLiteral.get(style, context),
+      move_kind=EnumLiteral.get(context, move_kind),
+      duration=FloatLiteral.get(duration, context),
+      n1=FloatLiteral.get(n1, context),
+      n2=FloatLiteral.get(n2, context),
+      n3=FloatLiteral.get(n3, context),
+      n4=FloatLiteral.get(n4, context),
+      style=EnumLiteral.get(context, style),
       name=name,
       loc=loc,
     )
@@ -1484,9 +1533,9 @@ class VNCharTrembleEffectInst(VNVisualEffectInst):
     sprite : Value | None,  # 立绘句柄；None 占位
     has_place : bool,  # 是否带矩形
     place_xywh : tuple[int, int, int, int] | None,  # 可选 x,y,w,h
-    amplitude : float,  # 幅度
-    period : float,  # 周期秒
-    duration : float,  # 总时长秒（可负表示持续）
+    amplitude : decimal.Decimal,  # 幅度
+    period : decimal.Decimal,  # 周期秒
+    duration : decimal.Decimal,  # 总时长秒（可负表示持续）
     name : str = "",  # IR 操作名
     loc : Location | None = None,  # 源码位置
   ) -> VNCharTrembleEffectInst:
@@ -1502,9 +1551,9 @@ class VNCharTrembleEffectInst(VNVisualEffectInst):
       place_y=IntLiteral.get(y, context),
       place_w=IntLiteral.get(w, context),
       place_h=IntLiteral.get(h, context),
-      amplitude=FloatLiteral.get(decimal.Decimal(str(amplitude)), context),
-      period=FloatLiteral.get(decimal.Decimal(str(period)), context),
-      duration=FloatLiteral.get(decimal.Decimal(str(duration)), context),
+      amplitude=FloatLiteral.get(amplitude, context),
+      period=FloatLiteral.get(period, context),
+      duration=FloatLiteral.get(duration, context),
       name=name,
       loc=loc,
     )
@@ -1522,7 +1571,7 @@ class VNFilterEffectInst(VNVisualEffectInst):
   place_y : OpOperand[IntLiteral]  # 区域 Y
   place_w : OpOperand[IntLiteral]  # 区域宽
   place_h : OpOperand[IntLiteral]  # 区域高
-  filter_kind : OpOperand[StringLiteral]  # 滤镜类型键（灰化/半透明/tint/模糊等）
+  filter_kind : OpOperand[EnumLiteral[VNFilterEffectKind]]
   strength : OpOperand[FloatLiteral]  # 强度（0–1 或后端约定，依 filter_kind）
   duration : OpOperand[FloatLiteral]  # 过渡到目标强度的时长（秒）
   color : OpOperand[StringLiteral]  # tint 等需要的颜色串；非 tint 可为占位
@@ -1536,9 +1585,9 @@ class VNFilterEffectInst(VNVisualEffectInst):
     sprite : Value | None,  # 立绘句柄；None 占位
     has_place : bool,  # 是否带矩形
     place_xywh : tuple[int, int, int, int] | None,  # 可选 x,y,w,h
-    filter_kind : str,  # 滤镜键
-    strength : float,  # 强度
-    duration : float,  # 过渡秒数
+    filter_kind : VNFilterEffectKind,
+    strength : decimal.Decimal,  # 强度
+    duration : decimal.Decimal,  # 过渡秒数
     color : str,  # 颜色串
     name : str = "",  # IR 操作名
     loc : Location | None = None,  # 源码位置
@@ -1556,9 +1605,9 @@ class VNFilterEffectInst(VNVisualEffectInst):
       place_y=IntLiteral.get(y, context),
       place_w=IntLiteral.get(w, context),
       place_h=IntLiteral.get(h, context),
-      filter_kind=StringLiteral.get(filter_kind, context),
-      strength=FloatLiteral.get(decimal.Decimal(str(strength)), context),
-      duration=FloatLiteral.get(decimal.Decimal(str(duration)), context),
+      filter_kind=EnumLiteral.get(context, filter_kind),
+      strength=FloatLiteral.get(strength, context),
+      duration=FloatLiteral.get(duration, context),
       color=StringLiteral.get(color, context),
       name=name,
       loc=loc,

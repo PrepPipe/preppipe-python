@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import dataclasses
+import decimal
 import enum
 import typing
 from typing import Any
@@ -1527,6 +1528,26 @@ class VNCodeGen:
       zh_cn="角色立绘须使用绝对屏幕位置(screen2d) 才能使用角色特效。",
       zh_hk="角色立繪須使用絕對屏幕位置(screen2d) 才能使用角色特效。",
     )
+    _tr_instant_effect_scene_bounce_tremble = TR_vn_codegen.tr(
+      "instant_effect_scene_bounce_tremble",
+      en="Scene-wide instant effects do not support Bounce or Tremble.",
+      zh_cn="场景特效不支持跳动或发抖。",
+      zh_hk="場景特效不支援跳動或發抖。",
+    )
+    _tr_sprite_handle_internal = TR_vn_codegen.tr(
+      "sprite_handle_internal",
+      en="Internal error while resolving the sprite handle.",
+      zh_cn="解析立绘句柄时发生内部错误。",
+      zh_hk="解析立繪句柄時發生內部錯誤。",
+    )
+    # AST 滤镜种类 → IR 滤镜种类（不落回字符串）
+    _FILTER_KIND_FROM_INSTANT_EFFECT : typing.ClassVar[dict[VNInstantEffectKind, VNFilterEffectKind]] = {
+      VNInstantEffectKind.GRAYSCALE: VNFilterEffectKind.GRAYSCALE,
+      VNInstantEffectKind.OPACITY: VNFilterEffectKind.OPACITY,
+      VNInstantEffectKind.TINT: VNFilterEffectKind.TINT,
+      VNInstantEffectKind.BLUR: VNFilterEffectKind.BLUR,
+    }
+
     def _sprite_content_and_screen2d(self, handle : Value) -> tuple[Value, tuple[int, int, int, int] | None]:
       h : Any = handle
       place : tuple[int, int, int, int] | None = None
@@ -1558,59 +1579,35 @@ class VNCodeGen:
     def visitVNASTInstantEffectNode(self, node : VNASTInstantEffectNode) -> VNTerminatorInstBase | None:
       if self.check_blocklocal_cond(node):
         return None
-      kind = node.effect_kind.get().get_string()
+      kind_e : VNInstantEffectKind = node.effect_kind.get().value
       scene = bool(node.scene_wide.get().value)
 
-      def _efloat(op : typing.Any, label_zh : str) -> float | None:
-        lit = op.get()
-        r = coerce_instant_effect_float_operand(lit)
-        if r is None:
-          self.codegen.emit_error(
-            "vncodegen-instant-effect-invalid-number",
-            "即时特效「%s」的参数「%s」须为有效数值字面值（与剧本解析规则一致），当前无法解析为浮点数：%s。"
-            % (kind, label_zh, lit),
-            node.location,
-            self.destblock,
-          )
-          return None
-        return r
-
-      d = _efloat(node.duration, "时长")
-      if d is None:
-        return None
-      amp = _efloat(node.amplitude, "幅度/强度")
-      if amp is None:
-        return None
-      dec = _efloat(node.decay, "衰减")
-      if dec is None:
-        return None
-      dire = node.direction.get().get_string()
+      d = node.duration.get().value
+      amp = node.amplitude.get().value
+      dec = node.decay.get().value
       fc = node.flash_color.get().get_string()
-      fi = _efloat(node.flash_in, "切入时长")
-      if fi is None:
-        return None
-      fh = _efloat(node.flash_hold, "停留时长")
-      if fh is None:
-        return None
-      fo = _efloat(node.flash_out, "恢复时长")
-      if fo is None:
-        return None
+      fi = node.flash_in.get().value
+      fh = node.flash_hold.get().value
+      fo = node.flash_out.get().value
       st = self.starttime
+
+      filt_kinds = frozenset(self._FILTER_KIND_FROM_INSTANT_EFFECT.keys())
+
       if scene:
-        if kind in ("bounce", "tremble"):
+        if kind_e in (VNInstantEffectKind.BOUNCE, VNInstantEffectKind.TREMBLE):
           self.codegen.emit_error(
             "vncodegen-instant-effect",
-            "场景特效不支持跳动或发抖。",
+            self._tr_instant_effect_scene_bounce_tremble.get(),
             node.location,
             self.destblock,
           )
           return None
-        if kind == "shake":
+        if kind_e == VNInstantEffectKind.SHAKE:
           inst = VNShakeEffectInst.create(
             self.context, st, scene_wide=True, sprite=None, has_place=False, place_xywh=None,
-            duration=d, amplitude=amp, decay=dec, direction=dire, name=node.name, loc=node.location,
+            duration=d, amplitude=amp, decay=dec, direction=node.shake_axis.get().value, name=node.name, loc=node.location,
           )
-        elif kind in ("grayscale", "opacity", "tint", "blur"):
+        elif kind_e in filt_kinds:
           inst = VNFilterEffectInst.create(
             self.context,
             st,
@@ -1618,7 +1615,7 @@ class VNCodeGen:
             sprite=None,
             has_place=False,
             place_xywh=None,
-            filter_kind=kind,
+            filter_kind=self._FILTER_KIND_FROM_INSTANT_EFFECT[kind_e],
             strength=amp,
             duration=d,
             color=fc,
@@ -1651,7 +1648,12 @@ class VNCodeGen:
       try:
         sp, place = self._sprite_content_and_screen2d(info.sprite_handle)
       except PPInternalError:
-        self.codegen.emit_error("vncodegen-instant-effect", "sprite handle error", node.location, self.destblock)
+        self.codegen.emit_error(
+          "vncodegen-instant-effect",
+          self._tr_sprite_handle_internal.get(),
+          node.location,
+          self.destblock,
+        )
         return None
       if place is None:
         self.codegen.emit_error(
@@ -1661,30 +1663,31 @@ class VNCodeGen:
           self.destblock,
         )
         return None
-      if kind == "shake":
+      if kind_e == VNInstantEffectKind.SHAKE:
         inst = VNShakeEffectInst.create(
           self.context, st, scene_wide=False, sprite=sp, has_place=True, place_xywh=place,
-          duration=d, amplitude=amp, decay=dec, direction=dire, name=node.name, loc=node.location,
+          duration=d, amplitude=amp, decay=dec, direction=node.shake_axis.get().value, name=node.name, loc=node.location,
         )
-      elif kind == "bounce":
-        cnt = max(1, int(round(dec)))
+      elif kind_e == VNInstantEffectKind.BOUNCE:
+        cnt = max(1, int(dec.to_integral_value(rounding=decimal.ROUND_HALF_UP)))
         inst = VNCharacterSpriteMoveInst.create(
           self.context,
           st,
           sprite=sp,
           has_place=True,
           place_xywh=place,
-          move_kind="bounce",
+          move_kind=VNCharacterSpriteMoveKind.BOUNCE,
           duration=d,
           n1=amp,
-          n2=float(cnt),
-          n3=0.0,
-          n4=0.0,
-          style=dire,
+          n2=decimal.Decimal(cnt),
+          n3=decimal.Decimal(0),
+          n4=decimal.Decimal(0),
+          style=node.motion_style.get().value,
           name=node.name,
           loc=node.location,
         )
-      elif kind == "tremble":
+      elif kind_e == VNInstantEffectKind.TREMBLE:
+        period = max(decimal.Decimal("0.04"), dec)
         inst = VNCharTrembleEffectInst.create(
           self.context,
           st,
@@ -1692,12 +1695,12 @@ class VNCodeGen:
           has_place=True,
           place_xywh=place,
           amplitude=amp,
-          period=max(0.04, dec),
+          period=period,
           duration=d,
           name=node.name,
           loc=node.location,
         )
-      elif kind in ("grayscale", "opacity", "tint", "blur"):
+      elif kind_e in filt_kinds:
         inst = VNFilterEffectInst.create(
           self.context,
           st,
@@ -1705,7 +1708,7 @@ class VNCodeGen:
           sprite=sp,
           has_place=True,
           place_xywh=place,
-          filter_kind=kind,
+          filter_kind=self._FILTER_KIND_FROM_INSTANT_EFFECT[kind_e],
           strength=amp,
           duration=d,
           color=fc,
@@ -1727,14 +1730,14 @@ class VNCodeGen:
       inst = VNWeatherEffectInst.create(
         self.context,
         st,
-        weather_kind=node.weather_kind.get().get_string(),
-        intensity=float(node.intensity.get().value),
-        inner_fade_in=float(node.inner_fade_in.get().value),
-        inner_fade_out=float(node.inner_fade_out.get().value),
-        overlay_fade_in=float(node.overlay_fade_in.get().value),
-        sustain=float(node.sustain.get().value),
-        vx=float(node.vx.get().value),
-        vy=float(node.vy.get().value),
+        weather_kind=node.weather_kind.get().value,
+        intensity=node.intensity.get().value,
+        inner_fade_in=node.inner_fade_in.get().value,
+        inner_fade_out=node.inner_fade_out.get().value,
+        overlay_fade_in=node.overlay_fade_in.get().value,
+        sustain=node.sustain.get().value,
+        vx=node.vx.get().value,
+        vy=node.vy.get().value,
         name=node.name,
         loc=node.location,
       )
@@ -1777,7 +1780,7 @@ class VNCodeGen:
       try:
         sp, place = self._sprite_content_and_screen2d(info.sprite_handle)
       except PPInternalError:
-        self.codegen.emit_error("vncodegen-end-effect", "sprite handle error", node.location, self.destblock)
+        self.codegen.emit_error("vncodegen-end-effect", self._tr_sprite_handle_internal.get(), node.location, self.destblock)
         return None
       if place is None:
         self.codegen.emit_error(
@@ -1804,16 +1807,16 @@ class VNCodeGen:
       self,
       node : VNASTNodeBase,
       *,
-      move_kind : str,
-      duration : float,
-      n1 : float,
-      n2 : float,
-      n3 : float,
-      n4 : float,
-      style : str,
+      move_kind : VNCharacterSpriteMoveKind,
+      duration : decimal.Decimal,
+      n1 : decimal.Decimal,
+      n2 : decimal.Decimal,
+      n3 : decimal.Decimal,
+      n4 : decimal.Decimal,
+      style : VNMotionStyleKind,
       sync_screen2d_from_xy_ratios : bool,
-      screen_x_ratio : float,
-      screen_y_ratio : float,
+      screen_x_ratio : decimal.Decimal,
+      screen_y_ratio : decimal.Decimal,
     ) -> VNTerminatorInstBase | None:
       if self.check_blocklocal_cond(node):
         return None
@@ -1837,7 +1840,7 @@ class VNCodeGen:
       try:
         sp, place = self._sprite_content_and_screen2d(info.sprite_handle)
       except PPInternalError:
-        self.codegen.emit_error("vncodegen-character-move", "sprite handle error", node.location, self.destblock)
+        self.codegen.emit_error("vncodegen-character-move", self._tr_sprite_handle_internal.get(), node.location, self.destblock)
         return None
       if place is None:
         self.codegen.emit_error(
@@ -1867,8 +1870,10 @@ class VNCodeGen:
       self.destblock.push_back(inst)
       if sync_screen2d_from_xy_ratios:
         sw, sh = self.codegen.ast.screen_resolution.get().value
-        ex = int(round(screen_x_ratio * float(sw)))
-        ey = int(round(screen_y_ratio * float(sh)))
+        swd = decimal.Decimal(int(sw))
+        shd = decimal.Decimal(int(sh))
+        ex = int((screen_x_ratio * swd).to_integral_value(rounding=decimal.ROUND_HALF_UP))
+        ey = int((screen_y_ratio * shd).to_integral_value(rounding=decimal.ROUND_HALF_UP))
         prev_content, prev_device = self._get_info_from_handle(info.sprite_handle)
         mod = VNModifyInst.create(
           context=self.context,
@@ -1887,52 +1892,52 @@ class VNCodeGen:
       return None
 
     def visitVNASTCharacterMoveTweenNode(self, node : VNASTCharacterMoveTweenNode) -> VNTerminatorInstBase | None:
-      rx = float(node.target_screen_x_ratio.get().value)
-      ry = float(node.target_screen_y_ratio.get().value)
+      rx = node.target_screen_x_ratio.get().value
+      ry = node.target_screen_y_ratio.get().value
       return self._emit_character_sprite_tween(
         node,
-        move_kind="move",
-        duration=float(node.duration.get().value),
+        move_kind=VNCharacterSpriteMoveKind.MOVE,
+        duration=node.duration.get().value,
         n1=rx,
         n2=ry,
-        n3=0.0,
-        n4=0.0,
-        style=node.style.get().get_string(),
+        n3=decimal.Decimal(0),
+        n4=decimal.Decimal(0),
+        style=node.style.get().value,
         sync_screen2d_from_xy_ratios=True,
         screen_x_ratio=rx,
         screen_y_ratio=ry,
       )
 
     def visitVNASTCharacterScaleTweenNode(self, node : VNASTCharacterScaleTweenNode) -> VNTerminatorInstBase | None:
-      sc = float(node.target_scale.get().value)
+      sc = node.target_scale.get().value
       return self._emit_character_sprite_tween(
         node,
-        move_kind="scale",
-        duration=float(node.duration.get().value),
+        move_kind=VNCharacterSpriteMoveKind.SCALE,
+        duration=node.duration.get().value,
         n1=sc,
-        n2=0.0,
-        n3=0.0,
-        n4=0.0,
-        style=node.style.get().get_string(),
+        n2=decimal.Decimal(0),
+        n3=decimal.Decimal(0),
+        n4=decimal.Decimal(0),
+        style=node.style.get().value,
         sync_screen2d_from_xy_ratios=False,
-        screen_x_ratio=0.0,
-        screen_y_ratio=0.0,
+        screen_x_ratio=decimal.Decimal(0),
+        screen_y_ratio=decimal.Decimal(0),
       )
 
     def visitVNASTCharacterRotateTweenNode(self, node : VNASTCharacterRotateTweenNode) -> VNTerminatorInstBase | None:
-      ang = float(node.angle_degrees.get().value)
+      ang = node.angle_degrees.get().value
       return self._emit_character_sprite_tween(
         node,
-        move_kind="rotate",
-        duration=float(node.duration.get().value),
+        move_kind=VNCharacterSpriteMoveKind.ROTATE,
+        duration=node.duration.get().value,
         n1=ang,
-        n2=0.0,
-        n3=0.0,
-        n4=0.0,
-        style=node.style.get().get_string(),
+        n2=decimal.Decimal(0),
+        n3=decimal.Decimal(0),
+        n4=decimal.Decimal(0),
+        style=node.style.get().value,
         sync_screen2d_from_xy_ratios=False,
-        screen_x_ratio=0.0,
-        screen_y_ratio=0.0,
+        screen_x_ratio=decimal.Decimal(0),
+        screen_y_ratio=decimal.Decimal(0),
       )
 
     _tr_assetref_video_not_supported = TR_vn_codegen.tr("assetref_video_not_supported",
