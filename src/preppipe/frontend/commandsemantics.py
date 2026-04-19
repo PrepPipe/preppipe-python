@@ -1392,7 +1392,7 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
         return None
       value = value[0]
 
-    # Word/表格常把 0、0.5 落成 IntLiteral/FloatLiteral，须能参与 Decimal/int 形参解析
+    # Word/表格常把 0、0.5 落成 IntLiteral/FloatLiteral，须能参与 Decimal 形参解析
     if ty == decimal.Decimal:
       if isinstance(value, FloatLiteral):
         return value.value

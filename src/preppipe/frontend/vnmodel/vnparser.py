@@ -54,6 +54,18 @@ _tr_cmd_instant_effect_duration_on_flash = TR_vnparse.tr(
   zh_cn="闪烁(Flash) 的时间形态由内层「切入时长」「停留时长」「恢复时长」决定，请勿在「场景特效/角色特效」命令上使用「时长」参数。",
   zh_hk="閃爍(Flash) 的時間形態由內層「切入時長」「停留時長」「恢復時長」決定，請勿在「場景特效/角色特效」命令上使用「時長」參數。",
 )
+_tr_scene_effect_no_bounce_tremble = TR_vnparse.tr(
+  "scene_effect_no_bounce_tremble",
+  en="Scene effects do not support Bounce or Tremble; use Shake, Flash, filters, or place these effects under Character Instant Effect.",
+  zh_cn="场景特效不支持跳动(Bounce)、发抖(Tremble)；请使用震动、闪烁、滤镜类，或将上述效果写在「角色特效」中。",
+  zh_hk="場景特效不支援跳動(Bounce)、發抖(Tremble)；請使用震動、閃爍、濾鏡類，或將上述效果寫在「角色特效」中。",
+)
+_tr_character_effect_no_weather = TR_vnparse.tr(
+  "character_effect_no_weather",
+  en="Rain and snow are full-screen weather effects; use Scene Instant Effect, not Character Instant Effect.",
+  zh_cn="雨、雪为全屏场景天气，请使用「场景特效」，不能使用「角色特效」。",
+  zh_hk="雨、雪為全屏場景天氣，請使用「場景特效」，不能使用「角色特效」。",
+)
 _tr_category_image = TR_vnparse.tr("category_image",
   en="Image",
   zh_cn="图片",
@@ -1116,13 +1128,6 @@ def cmd_character_exit(parser : VNParser, state : VNASTParsingState, commandop :
     node = VNASTCharacterExitNode.create(state.context, chname, name='', loc=commandop.location)
     transition.push_back(node)
 
-def _instant_effect_decimal(v: typing.Any) -> decimal.Decimal:
-  """将解析阶段标量转为 ``decimal.Decimal``，供 ``VNASTInstantEffectNode.create``。"""
-  if isinstance(v, decimal.Decimal):
-    return v
-  return decimal.Decimal(str(v))
-
-
 def _helper_make_filter_instant_effect_node(
   ctx : Context,
   loc : Location | None,
@@ -1136,7 +1141,7 @@ def _helper_make_filter_instant_effect_node(
 ) -> VNASTInstantEffectNode:
   fk = r[0]
   d = parse_instant_effect_command_duration(fk, duration)
-  if fk == "tint":
+  if fk == VNInstantEffectKind.TINT:
     fc, amp = r[1], r[2]
   else:
     fc, amp = "#ffffff", r[1]
@@ -1146,10 +1151,11 @@ def _helper_make_filter_instant_effect_node(
     character_name=character_name,
     character_states_csv=character_states_csv,
     effect_kind=fk,
-    duration=_instant_effect_decimal(d),
-    amplitude=_instant_effect_decimal(amp),
+    duration=d,
+    amplitude=amp,
     decay=decimal.Decimal(0),
-    direction="",
+    shake_axis=VNShakeAxisKind.NONE,
+    motion_style=VNMotionStyleKind.LINEAR,
     flash_color=fc,
     flash_in=decimal.Decimal("0.06"),
     flash_hold=decimal.Decimal("0.1"),
@@ -1185,24 +1191,24 @@ def cmd_scene_instant_effect(parser : VNParser, state : VNASTParsingState, comma
     return
   for code, msg in w:
     state.emit_error(code, msg, loc=commandop.location)
-  if r[0] in ("bounce", "tremble"):
+  if r[0] in (VNInstantEffectKind.BOUNCE, VNInstantEffectKind.TREMBLE):
     state.emit_error(
       "vnparse-scene-effect-no-char-only-fx",
-      "场景特效不支持 跳动(Bounce)、发抖(Tremble)；请使用 震动、闪烁、滤镜类，或将上述效果写在「角色特效」中。",
+      _tr_scene_effect_no_bounce_tremble.get(),
       loc=commandop.location,
     )
     return
   loc = commandop.location
   ctx = state.context
-  if r[0] == "shake":
+  if r[0] == VNInstantEffectKind.SHAKE:
     node = VNASTInstantEffectNode.create(
       ctx,
       scene_wide=True,
-      effect_kind="shake",
-      duration=_instant_effect_decimal(parse_instant_effect_command_duration("shake", duration)),
-      amplitude=_instant_effect_decimal(r[1]),
-      decay=_instant_effect_decimal(r[2]),
-      direction=r[3],
+      effect_kind=VNInstantEffectKind.SHAKE,
+      duration=parse_instant_effect_command_duration(VNInstantEffectKind.SHAKE, duration),
+      amplitude=r[1],
+      decay=r[2],
+      shake_axis=vn_shake_axis_from_parsed_str(r[3]),
       flash_color="#ffffff",
       flash_in=decimal.Decimal("0.06"),
       flash_hold=decimal.Decimal("0.1"),
@@ -1210,33 +1216,33 @@ def cmd_scene_instant_effect(parser : VNParser, state : VNASTParsingState, comma
       name=commandop.name,
       loc=loc,
     )
-  elif r[0] in ("grayscale", "opacity", "tint", "blur"):
+  elif r[0] in (VNInstantEffectKind.GRAYSCALE, VNInstantEffectKind.OPACITY, VNInstantEffectKind.TINT, VNInstantEffectKind.BLUR):
     node = _helper_make_filter_instant_effect_node(ctx, loc, commandop, scene_wide=True, r=r, duration=duration)
-  elif r[0] == "snow":
+  elif r[0] == VNInstantEffectKind.SNOW:
     node = VNASTWeatherEffectNode.create(
       ctx,
-      weather_kind="snow",
-      intensity=float(r[1]),
-      inner_fade_in=float(r[2]),
-      inner_fade_out=float(r[3]),
-      overlay_fade_in=parse_weather_effect_overlay_fade_in("snow", duration),
-      sustain=-1.0,
-      vx=0.0,
-      vy=0.0,
+      weather_kind=VNWeatherEffectKind.SNOW,
+      intensity=r[1],
+      inner_fade_in=r[2],
+      inner_fade_out=r[3],
+      overlay_fade_in=parse_weather_effect_overlay_fade_in(VNInstantEffectKind.SNOW, duration),
+      sustain=decimal.Decimal("-1"),
+      vx=decimal.Decimal(0),
+      vy=decimal.Decimal(0),
       name=commandop.name,
       loc=loc,
     )
-  elif r[0] == "rain":
+  elif r[0] == VNInstantEffectKind.RAIN:
     node = VNASTWeatherEffectNode.create(
       ctx,
-      weather_kind="rain",
-      intensity=float(r[1]),
-      inner_fade_in=float(r[2]),
-      inner_fade_out=float(r[3]),
-      overlay_fade_in=parse_weather_effect_overlay_fade_in("rain", duration),
-      sustain=-1.0,
-      vx=float(r[4]),
-      vy=float(r[5]),
+      weather_kind=VNWeatherEffectKind.RAIN,
+      intensity=r[1],
+      inner_fade_in=r[2],
+      inner_fade_out=r[3],
+      overlay_fade_in=parse_weather_effect_overlay_fade_in(VNInstantEffectKind.RAIN, duration),
+      sustain=decimal.Decimal("-1"),
+      vx=r[4],
+      vy=r[5],
       name=commandop.name,
       loc=loc,
     )
@@ -1247,15 +1253,14 @@ def cmd_scene_instant_effect(parser : VNParser, state : VNASTParsingState, comma
     node = VNASTInstantEffectNode.create(
       ctx,
       scene_wide=True,
-      effect_kind="flash",
+      effect_kind=VNInstantEffectKind.FLASH,
       duration=decimal.Decimal(0),
       amplitude=decimal.Decimal(0),
       decay=decimal.Decimal(0),
-      direction="",
       flash_color=r[1],
-      flash_in=_instant_effect_decimal(r[2]),
-      flash_hold=_instant_effect_decimal(r[3]),
-      flash_out=_instant_effect_decimal(r[4]),
+      flash_in=r[2],
+      flash_hold=r[3],
+      flash_out=r[4],
       name=commandop.name,
       loc=loc,
     )
@@ -1336,10 +1341,10 @@ def cmd_character_instant_effect(
     return
   for code, msg in w:
     state.emit_error(code, msg, loc=commandop.location)
-  if r[0] in ("snow", "rain"):
+  if r[0] in (VNInstantEffectKind.SNOW, VNInstantEffectKind.RAIN):
     state.emit_error(
       "vnparse-char-weather-effect",
-      "雨、雪为全屏场景天气，请使用「场景特效」，不能使用「角色特效」。",
+      _tr_character_effect_no_weather.get(),
       loc=commandop.location,
     )
     return
@@ -1348,17 +1353,17 @@ def cmd_character_instant_effect(
   loc = commandop.location
   ctx = state.context
   cn = _helper_subject_display_name(character)
-  if r[0] == "shake":
+  if r[0] == VNInstantEffectKind.SHAKE:
     node = VNASTInstantEffectNode.create(
       ctx,
       scene_wide=False,
       character_name=cn,
       character_states_csv=csv,
-      effect_kind="shake",
-      duration=_instant_effect_decimal(parse_instant_effect_command_duration("shake", duration)),
-      amplitude=_instant_effect_decimal(r[1]),
-      decay=_instant_effect_decimal(r[2]),
-      direction=r[3],
+      effect_kind=VNInstantEffectKind.SHAKE,
+      duration=parse_instant_effect_command_duration(VNInstantEffectKind.SHAKE, duration),
+      amplitude=r[1],
+      decay=r[2],
+      shake_axis=vn_shake_axis_from_parsed_str(r[3]),
       flash_color="#ffffff",
       flash_in=decimal.Decimal("0.06"),
       flash_hold=decimal.Decimal("0.1"),
@@ -1366,17 +1371,17 @@ def cmd_character_instant_effect(
       name=commandop.name,
       loc=loc,
     )
-  elif r[0] == "bounce":
+  elif r[0] == VNInstantEffectKind.BOUNCE:
     node = VNASTInstantEffectNode.create(
       ctx,
       scene_wide=False,
       character_name=cn,
       character_states_csv=csv,
-      effect_kind="bounce",
-      duration=_instant_effect_decimal(parse_instant_effect_command_duration("bounce", duration)),
-      amplitude=_instant_effect_decimal(r[1]),
-      decay=_instant_effect_decimal(r[2]),
-      direction=r[3],
+      effect_kind=VNInstantEffectKind.BOUNCE,
+      duration=parse_instant_effect_command_duration(VNInstantEffectKind.BOUNCE, duration),
+      amplitude=r[1],
+      decay=r[2],
+      motion_style=r[3],
       flash_color="#ffffff",
       flash_in=decimal.Decimal("0.06"),
       flash_hold=decimal.Decimal("0.1"),
@@ -1384,17 +1389,16 @@ def cmd_character_instant_effect(
       name=commandop.name,
       loc=loc,
     )
-  elif r[0] == "tremble":
+  elif r[0] == VNInstantEffectKind.TREMBLE:
     node = VNASTInstantEffectNode.create(
       ctx,
       scene_wide=False,
       character_name=cn,
       character_states_csv=csv,
-      effect_kind="tremble",
-      duration=_instant_effect_decimal(parse_instant_effect_command_duration("tremble", duration)),
-      amplitude=_instant_effect_decimal(r[1]),
-      decay=_instant_effect_decimal(r[2]),
-      direction="",
+      effect_kind=VNInstantEffectKind.TREMBLE,
+      duration=parse_instant_effect_command_duration(VNInstantEffectKind.TREMBLE, duration),
+      amplitude=r[1],
+      decay=r[2],
       flash_color="#ffffff",
       flash_in=decimal.Decimal("0.06"),
       flash_hold=decimal.Decimal("0.1"),
@@ -1402,7 +1406,7 @@ def cmd_character_instant_effect(
       name=commandop.name,
       loc=loc,
     )
-  elif r[0] in ("grayscale", "opacity", "tint", "blur"):
+  elif r[0] in (VNInstantEffectKind.GRAYSCALE, VNInstantEffectKind.OPACITY, VNInstantEffectKind.TINT, VNInstantEffectKind.BLUR):
     node = _helper_make_filter_instant_effect_node(
       ctx,
       loc,
@@ -1422,15 +1426,14 @@ def cmd_character_instant_effect(
       scene_wide=False,
       character_name=cn,
       character_states_csv=csv,
-      effect_kind="flash",
+      effect_kind=VNInstantEffectKind.FLASH,
       duration=decimal.Decimal(0),
       amplitude=decimal.Decimal(0),
       decay=decimal.Decimal(0),
-      direction="",
       flash_color=r[1],
-      flash_in=_instant_effect_decimal(r[2]),
-      flash_hold=_instant_effect_decimal(r[3]),
-      flash_out=_instant_effect_decimal(r[4]),
+      flash_in=r[2],
+      flash_hold=r[3],
+      flash_out=r[4],
       name=commandop.name,
       loc=loc,
     )
@@ -1476,37 +1479,36 @@ def cmd_character_move(
   loc = commandop.location
   ctx = state.context
   cn = _helper_subject_display_name(character)
-  dur_dec = _instant_effect_decimal(dur)
-  if mk == "move":
+  if mk == VNCharacterSpriteMoveKind.MOVE:
     node = VNASTCharacterMoveTweenNode.create(
       ctx,
       character_name=cn,
       character_states_csv=csv,
-      duration=dur_dec,
-      target_screen_x_ratio=_instant_effect_decimal(n1),
-      target_screen_y_ratio=_instant_effect_decimal(n2),
+      duration=dur,
+      target_screen_x_ratio=n1,
+      target_screen_y_ratio=n2,
       style=sty,
       name=commandop.name,
       loc=loc,
     )
-  elif mk == "scale":
+  elif mk == VNCharacterSpriteMoveKind.SCALE:
     node = VNASTCharacterScaleTweenNode.create(
       ctx,
       character_name=cn,
       character_states_csv=csv,
-      duration=dur_dec,
-      target_scale=_instant_effect_decimal(n1),
+      duration=dur,
+      target_scale=n1,
       style=sty,
       name=commandop.name,
       loc=loc,
     )
-  elif mk == "rotate":
+  elif mk == VNCharacterSpriteMoveKind.ROTATE:
     node = VNASTCharacterRotateTweenNode.create(
       ctx,
       character_name=cn,
       character_states_csv=csv,
-      duration=dur_dec,
-      angle_degrees=_instant_effect_decimal(n1),
+      duration=dur,
+      angle_degrees=n1,
       style=sty,
       name=commandop.name,
       loc=loc,

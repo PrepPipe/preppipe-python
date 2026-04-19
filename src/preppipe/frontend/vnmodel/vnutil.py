@@ -22,6 +22,9 @@ from ...util.message import MessageHandler
 from ...exceptions import *
 from ...language import TranslationDomain
 from ...vnmodel import (
+  VNCharacterSpriteMoveKind,
+  VNMotionStyleKind,
+  VNShakeAxisKind,
   VNDefaultTransitionType,
   VNDissolveSceneTransitionLit,
   VNFadeInSceneTransitionLit,
@@ -488,21 +491,6 @@ def _transition_decimal_to_value(context: Context, v: decimal.Decimal | int) -> 
   return FloatLiteral.get(decimal.Decimal(int(v)), context)
 
 
-def coerce_instant_effect_float_operand(v : Value) -> float | None:
-  """VN 代码生成阶段：把时长/幅度/衰减等字面值规范为 float（与命令解析 try_convert 一致）。失败返回 None，由调用方 emit_error。"""
-  if isinstance(v, FloatLiteral):
-    return float(v.value)
-  if isinstance(v, IntLiteral):
-    return float(int(v.value))
-  try:
-    conv = FrontendParserBase.try_convert_parameter(decimal.Decimal, v)
-  except NotImplementedError:
-    return None
-  if conv is not None:
-    return float(conv)
-  return None
-
-
 # 预设效果集名称（与后端无关的固定键，用于 AST effect_presets 查找）
 EFFECT_PRESET_SLIDE_DIRECTION = "SlideDirection"
 EFFECT_PRESET_ZOOM_DIRECTION = "ZoomDirection"
@@ -856,9 +844,14 @@ _tr_weather_vx = _TR_vn_util.tr("weather_horizontal_speed", en="horizontal_speed
 _tr_weather_vy = _TR_vn_util.tr("weather_vertical_speed", en="vertical_speed", zh_cn="垂直速度", zh_hk="垂直速度")
 
 
-def _parse_effect_duration_sustain(v : typing.Any) -> float:
-  """时长：数值为秒；字符串「持续」等表示无限（IR 用 -1.0），需配合「结束特效」。
-  Word 格子里常为 TextFragmentLiteral 或带引号的 \"0\"，不得对非 float 字面值直接 float(v)。"""
+def _vnutil_clamp_dec(lo : decimal.Decimal, hi : decimal.Decimal, x : decimal.Decimal) -> decimal.Decimal:
+  return max(lo, min(hi, x))
+
+
+def _parse_effect_duration_sustain(v : typing.Any) -> decimal.Decimal:
+  """时长：数值为秒；字符串「持续」等表示无限（IR 用 -1）；需配合「结束特效」。
+  Word 格子里常为 TextFragmentLiteral 或带引号的数值串，须走 Decimal 路径而非内置 float。"""
+  D = decimal.Decimal
   if isinstance(v, TextFragmentLiteral):
     raw = v.get_string()
   elif isinstance(v, StringLiteral):
@@ -866,21 +859,21 @@ def _parse_effect_duration_sustain(v : typing.Any) -> float:
   elif isinstance(v, str):
     raw = v
   elif isinstance(v, FloatLiteral):
-    return float(v.value)
+    return v.value
   elif isinstance(v, IntLiteral):
-    return float(int(v.value))
+    return D(int(v.value))
   else:
     try:
-      return float(v)
-    except (TypeError, ValueError):
-      return 0.8
+      return D(str(v))
+    except decimal.InvalidOperation:
+      return D("0.8")
   t = _strip_wrapping_quotes_for_numeric(raw).strip().lower()
   if t in ("持续", "永续", "无限", "sustain", "infinite", "loop", "forever"):
-    return -1.0
+    return D("-1")
   try:
-    return float(t)
-  except ValueError:
-    return -1.0 if t else 0.8
+    return D(t)
+  except decimal.InvalidOperation:
+    return D("-1") if t else D("0.8")
 
 
 def _normalize_motion_style(v : typing.Any) -> str:
@@ -900,30 +893,61 @@ def _normalize_motion_style(v : typing.Any) -> str:
   return t
 
 
-def parse_weather_effect_overlay_fade_in(effect_kind : str, cmd_duration : typing.Any) -> float:
-  """天气（雨/雪）命令「时长」：正数为全屏层 alpha 淡入秒数；「持续」或省略时用该效果类型的默认淡入（如雪/雨 0.8）。"""
+_MOTION_STYLE_STR_TO_ENUM : dict[str, VNMotionStyleKind] = {
+  VNMotionStyleKind.LINEAR.value: VNMotionStyleKind.LINEAR,
+  VNMotionStyleKind.EASE.value: VNMotionStyleKind.EASE,
+  VNMotionStyleKind.EASEIN.value: VNMotionStyleKind.EASEIN,
+  VNMotionStyleKind.EASEOUT.value: VNMotionStyleKind.EASEOUT,
+}
+
+
+def vn_motion_style_normalize_to_enum(v : typing.Any) -> VNMotionStyleKind:
+  raw = _normalize_motion_style(v)
+  return _MOTION_STYLE_STR_TO_ENUM.get(raw, VNMotionStyleKind.LINEAR)
+
+
+def vn_shake_axis_from_parsed_str(s : str) -> VNShakeAxisKind:
+  t = (s or "").strip().lower()
+  if t == "":
+    return VNShakeAxisKind.NONE
+  if t == "horizontal":
+    return VNShakeAxisKind.HORIZONTAL
+  if t == "vertical":
+    return VNShakeAxisKind.VERTICAL
+  return VNShakeAxisKind.HORIZONTAL
+
+
+def parse_weather_effect_overlay_fade_in(effect_kind : VNInstantEffectKind, cmd_duration : typing.Any) -> decimal.Decimal:
+  """天气（雨/雪）命令「时长」：正数为全屏层 alpha 淡入秒数；「持续」或省略时用该效果类型的默认淡入（如雪/雨 0.8）。
+
+  ``effect_kind`` 须为 ``VNInstantEffectKind``（与 ``parse_instant_effect`` 首项及 AST 一致），勿传裸字符串。"""
   if cmd_duration is None:
     return parse_instant_effect_command_duration(effect_kind, None)
   raw = _parse_effect_duration_sustain(cmd_duration)
   if raw < 0:
     return parse_instant_effect_command_duration(effect_kind, None)
-  return float(raw)
+  return raw
 
 
-def parse_instant_effect_command_duration(effect_kind : str, cmd_duration : typing.Any) -> float:
-  """场景/角色特效命令上的「时长」：秒；None 时按效果类型给默认；「持续」等同义词见 _parse_effect_duration_sustain。"""
+def parse_instant_effect_command_duration(effect_kind : VNInstantEffectKind, cmd_duration : typing.Any) -> decimal.Decimal:
+  """场景/角色特效命令上的「时长」：秒；None 时按效果类型给默认；「持续」等同义词见 _parse_effect_duration_sustain。
+
+  ``effect_kind`` 须为 ``VNInstantEffectKind``（与 ``parse_instant_effect`` 首项及 AST 一致），勿传裸字符串。"""
+  D = decimal.Decimal
   if cmd_duration is None:
-    if effect_kind == "shake":
-      return 0.5
-    if effect_kind == "bounce":
-      return 0.4
-    if effect_kind == "tremble":
-      return 0.8
-    if effect_kind in ("grayscale", "opacity", "tint", "blur"):
-      return 0.35
-    if effect_kind in ("snow", "rain"):
-      return 0.8
-    return 0.0
+    match effect_kind:
+      case VNInstantEffectKind.SHAKE:
+        return D("0.5")
+      case VNInstantEffectKind.BOUNCE:
+        return D("0.4")
+      case VNInstantEffectKind.TREMBLE:
+        return D("0.8")
+      case VNInstantEffectKind.GRAYSCALE | VNInstantEffectKind.OPACITY | VNInstantEffectKind.TINT | VNInstantEffectKind.BLUR:
+        return D("0.35")
+      case VNInstantEffectKind.SNOW | VNInstantEffectKind.RAIN:
+        return D("0.8")
+      case _:
+        return D(0)
   return _parse_effect_duration_sustain(cmd_duration)
 
 
@@ -932,16 +956,17 @@ def parse_instant_effect(
   call : CallExprOperand,
   ast : VNAST | None,
   warnings : list[tuple[str, str]],
-) -> tuple[str, ...]:
+) -> tuple[VNInstantEffectKind, ...]:
   """
-  解析场景/角色即时特效（震动、闪烁、跳动、发抖及滤镜类）。**整体过渡/持续时长**由外层命令 **时长** 提供（滤镜为过渡到目标状态的秒数；持续见 _parse_effect_duration_sustain）。返回:
-  ("shake", amplitude, decay, direction_str) 或
-  ("flash", color_hex, fade_in, hold, fade_out) 或
-  ("bounce", height_ratio, count, style_str) 或
-  ("tremble", amplitude, period) 或
-  ("grayscale", strength) 或 ("opacity", alpha) 或 ("tint", color_hex, strength) 或 ("blur", radius) 或
-  ("snow", intensity, inner_fade_in, inner_fade_out) 或
-  ("rain", intensity, inner_fade_in, inner_fade_out, horizontal_speed, vertical_speed)
+  解析场景/角色即时特效（震动、闪烁、跳动、发抖及滤镜类）。**整体过渡/持续时长**由外层命令 **时长** 提供（滤镜为过渡到目标状态的秒数；持续见 _parse_effect_duration_sustain）。
+  首项恒为 ``VNInstantEffectKind``；其余标量数值均为 ``decimal.Decimal``（bounce 次数等亦以 Decimal 表示以便写入 IR）:
+  (SHAKE, amplitude, decay, direction_str) 或
+  (FLASH, color_hex, fade_in, hold, fade_out) 或
+  (BOUNCE, height_ratio, count, style_enum) 或
+  (TREMBLE, amplitude, period) 或
+  (GRAYSCALE, strength) 或 (OPACITY, alpha) 或 (TINT, color_hex, strength) 或 (BLUR, radius) 或
+  (SNOW, intensity, inner_fade_in, inner_fade_out) 或
+  (RAIN, intensity, inner_fade_in, inner_fade_out, horizontal_speed, vertical_speed)
   """
   def _shake_dir(s : str) -> str:
     s = (s or "").strip()
@@ -949,13 +974,18 @@ def parse_instant_effect(
       return ""
     r = resolve_effect_preset_value(ast, EFFECT_PRESET_SHAKE_DIRECTION, s) if ast else None
     if r is not None:
-      return r.get_string().lower()
+      low = r.get_string().strip().lower()
+      if low in ("horizontal", "h", "x", "水平"):
+        return "horizontal"
+      if low in ("vertical", "v", "y", "垂直"):
+        return "vertical"
+      return "horizontal"
     low = s.lower()
     if low in ("horizontal", "h", "x", "水平"):
       return "horizontal"
     if low in ("vertical", "v", "y", "垂直"):
       return "vertical"
-    return low
+    return "horizontal"
 
   def _color_str(v) -> str:
     if isinstance(v, ColorLiteral):
@@ -980,7 +1010,7 @@ def parse_instant_effect(
     direction: typing.Any = "",
   ):
     dstr = direction.get_string() if isinstance(direction, StringLiteral) else str(direction or "")
-    return ("shake", float(amplitude), float(decay), _shake_dir(dstr))
+    return (VNInstantEffectKind.SHAKE, amplitude, decay, _shake_dir(dstr))
 
   def handle_flash(
     *,
@@ -993,32 +1023,35 @@ def parse_instant_effect(
       co = _color_str(StringLiteral.get(color, context))
     else:
       co = _color_str(color)
-    return ("flash", co, float(fade_in), float(hold), float(fade_out))
+    return (VNInstantEffectKind.FLASH, co, fade_in, hold, fade_out)
 
   def handle_bounce(
     *,
     height: decimal.Decimal = decimal.Decimal("0.04"),
-    count: int = 1,
+    count: decimal.Decimal = decimal.Decimal(1),
     style: typing.Any = "linear",
   ):
-    c = max(1, int(count))
-    return ("bounce", float(height), float(c), _normalize_motion_style(style))
+    cnt = max(decimal.Decimal(1), count.to_integral_value(rounding=decimal.ROUND_HALF_UP))
+    return (VNInstantEffectKind.BOUNCE, height, cnt, vn_motion_style_normalize_to_enum(style))
 
   def handle_tremble(
     *,
     amplitude: decimal.Decimal = decimal.Decimal(6),
     period: decimal.Decimal = decimal.Decimal("0.14"),
   ):
-    p = max(0.04, float(period))
-    return ("tremble", float(amplitude), float(p))
+    p = max(decimal.Decimal("0.04"), period)
+    return (VNInstantEffectKind.TREMBLE, amplitude, p)
+
+  D0 = decimal.Decimal(0)
+  D1 = decimal.Decimal(1)
 
   def handle_grayscale(strength: decimal.Decimal = decimal.Decimal(1)):
-    st = max(0.0, min(1.0, float(strength)))
-    return ("grayscale", st)
+    st = _vnutil_clamp_dec(D0, D1, strength)
+    return (VNInstantEffectKind.GRAYSCALE, st)
 
   def handle_opacity(alpha: decimal.Decimal = decimal.Decimal("0.7")):
-    a = max(0.0, min(1.0, float(alpha)))
-    return ("opacity", a)
+    a = _vnutil_clamp_dec(D0, D1, alpha)
+    return (VNInstantEffectKind.OPACITY, a)
 
   def handle_tint(
     *,
@@ -1029,12 +1062,12 @@ def parse_instant_effect(
       co = _color_str(StringLiteral.get(color, context))
     else:
       co = _color_str(color)
-    st = max(0.0, min(1.0, float(strength)))
-    return ("tint", co, st)
+    st = _vnutil_clamp_dec(D0, D1, strength)
+    return (VNInstantEffectKind.TINT, co, st)
 
   def handle_blur(strength: decimal.Decimal = decimal.Decimal(8)):
-    b = max(0.0, min(48.0, float(strength)))
-    return ("blur", b)
+    b = _vnutil_clamp_dec(decimal.Decimal(0), decimal.Decimal(48), strength)
+    return (VNInstantEffectKind.BLUR, b)
 
   def handle_snow(
     *,
@@ -1042,8 +1075,10 @@ def parse_instant_effect(
     fade_in: decimal.Decimal = decimal.Decimal("0.25"),
     fade_out: decimal.Decimal = decimal.Decimal("0.45"),
   ):
-    n = max(10.0, min(400.0, float(intensity)))
-    return ("snow", n, max(0.0, float(fade_in)), max(0.05, float(fade_out)))
+    n = _vnutil_clamp_dec(decimal.Decimal(10), decimal.Decimal(400), intensity)
+    fi = max(D0, fade_in)
+    fo = max(decimal.Decimal("0.05"), fade_out)
+    return (VNInstantEffectKind.SNOW, n, fi, fo)
 
   def handle_rain(
     *,
@@ -1053,10 +1088,12 @@ def parse_instant_effect(
     horizontal_speed: decimal.Decimal = decimal.Decimal("-40"),
     vertical_speed: decimal.Decimal = decimal.Decimal(520),
   ):
-    n = max(20.0, min(500.0, float(intensity)))
-    vx = float(horizontal_speed)
-    vy = max(80.0, min(1200.0, float(vertical_speed)))
-    return ("rain", n, max(0.0, float(fade_in)), max(0.05, float(fade_out)), vx, vy)
+    n = _vnutil_clamp_dec(decimal.Decimal(20), decimal.Decimal(500), intensity)
+    vx = horizontal_speed
+    vy = _vnutil_clamp_dec(decimal.Decimal(80), decimal.Decimal(1200), vertical_speed)
+    fi = max(D0, fade_in)
+    fo = max(decimal.Decimal("0.05"), fade_out)
+    return (VNInstantEffectKind.RAIN, n, fi, fo, vx, vy)
 
   callexpr = CallExprOperand(call.name, call.args, collections.OrderedDict(call.kwargs))
   out = FrontendParserBase.resolve_call(
@@ -1117,14 +1154,15 @@ def parse_character_sprite_move(
   call : CallExprOperand,
   ast : VNAST | None,
   warnings : list[tuple[str, str]],
-) -> tuple[str, float, float, float, float, float, str]:
+) -> tuple[VNCharacterSpriteMoveKind, decimal.Decimal, decimal.Decimal, decimal.Decimal, decimal.Decimal, decimal.Decimal, VNMotionStyleKind]:
   """
   解析角色立绘补间（移动/缩放/旋转）。返回:
-  (move_kind, duration, n1, n2, n3, n4, style)
+  (move_kind, duration, n1, n2, n3, n4, style)；move_kind 为 ``VNCharacterSpriteMoveKind``，标量均为 ``decimal.Decimal``，style 为 ``VNMotionStyleKind``。
   move: n1=横向位置比例(0~1), n2=纵向位置比例, n3=n4=0
   scale: n1=目标缩放(相对1.0), n2=n3=n4=0（缩放中心固定为立绘中心）
   rotate: n1=角度(度), n2=n3=n4=0（绕中心旋转）
   """
+  z = decimal.Decimal(0)
   def handle_move(
     spec: list[decimal.Decimal],
     *,
@@ -1143,7 +1181,7 @@ def parse_character_sprite_move(
       raise PPInvalidOperationError(
         "立绘移动需要：两个按位参数（横向比例、纵向比例，可选第三项时长），或同时使用关键字「横向比例」「纵向比例」（时长、方式仍可用关键字）。",
       )
-    return ("move", float(dur), float(x), float(y), 0.0, 0.0, _normalize_motion_style(style))
+    return (VNCharacterSpriteMoveKind.MOVE, dur, x, y, z, z, vn_motion_style_normalize_to_enum(style))
 
   def handle_scale(
     spec: list[decimal.Decimal],
@@ -1162,7 +1200,7 @@ def parse_character_sprite_move(
       raise PPInvalidOperationError(
         "立绘缩放需要：一个按位参数（目标比例，可选第二项时长），或使用关键字「比例」指定比例（时长、方式仍可用关键字）。",
       )
-    return ("scale", float(dur), float(sc), 0.0, 0.0, 0.0, _normalize_motion_style(style))
+    return (VNCharacterSpriteMoveKind.SCALE, dur, sc, z, z, z, vn_motion_style_normalize_to_enum(style))
 
   def handle_rotate(
     spec: list[decimal.Decimal],
@@ -1181,7 +1219,7 @@ def parse_character_sprite_move(
       raise PPInvalidOperationError(
         "立绘旋转需要：一个按位参数（角度，单位度；可选第二项时长），或使用关键字「角度」或 angle（时长、方式仍可用关键字）。",
       )
-    return ("rotate", float(dur), float(ang), 0.0, 0.0, 0.0, _normalize_motion_style(style))
+    return (VNCharacterSpriteMoveKind.ROTATE, dur, ang, z, z, z, vn_motion_style_normalize_to_enum(style))
 
   callexpr = CallExprOperand(call.name, call.args, collections.OrderedDict(call.kwargs))
   out = FrontendParserBase.resolve_call(

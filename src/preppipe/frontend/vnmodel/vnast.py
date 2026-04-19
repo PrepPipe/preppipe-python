@@ -13,6 +13,7 @@ from ...irdataop import *
 from ..commandsyntaxparser import *
 from ...vnmodel import *
 
+
 @IROperationDataclass
 class VNASTNodeBase(Operation):
   # 该结点是否只能出现在函数内
@@ -81,6 +82,25 @@ class VNASTSayNode(VNASTNodeBase):
 # ----------------------------------------------------------
 # 交替模式       |   旁白   | 按次序排列的人 |指定角色，修正说话者
 # ----------------------------------------------------------
+
+@IRWrappedStatelessClassJsonName("vnast_instant_effect_kind_e")
+class VNInstantEffectKind(str, enum.Enum):
+  """即时特效种类（与 ``parse_instant_effect``、``parse_instant_effect_command_duration`` 等 API 一致）。
+
+  管线内须使用本枚举成员，勿以裸字符串代替；值即规范小写英文键（与剧本命令名一致）。"""
+
+  SHAKE = "shake"
+  FLASH = "flash"
+  BOUNCE = "bounce"
+  TREMBLE = "tremble"
+  GRAYSCALE = "grayscale"
+  OPACITY = "opacity"
+  TINT = "tint"
+  BLUR = "blur"
+  # 与 ``parse_instant_effect`` 中天气分支一致（场景特效解析元组首项；AST 上仍用 ``VNASTWeatherEffectNode``）
+  SNOW = "snow"
+  RAIN = "rain"
+
 
 @IRWrappedStatelessClassJsonName("vnast_say_mode_e")
 class VNASTSayMode(enum.Enum):
@@ -385,7 +405,6 @@ class VNASTInstantEffectNode(VNASTNodeBase):
 
   数值在 IR 中一律为 ``FloatLiteral``，其底层为 ``decimal.Decimal``（秒、像素、比例等按字段说明）。
   ``create()`` 的标量参数请传 ``decimal.Decimal``，勿传内置 ``float``。
-  不同 ``effect_kind`` 下同一字段可能复用为不同语义（见各字段注释）。
   """
 
   # True：场景级全屏；False：绑定角色立绘（须配合 character_name / character_states_csv）。
@@ -394,16 +413,17 @@ class VNASTInstantEffectNode(VNASTNodeBase):
   character_name : OpOperand[StringLiteral]
   # 该角色当前立绘状态列表的逗号分隔文本（与后端槽位解析一致）；无多状态时可为空串。
   character_states_csv : OpOperand[StringLiteral]
-  # 规范小写英文种类：shake | flash | bounce | tremble | grayscale | opacity | tint | blur 等（与 parse_instant_effect 一致）。
-  effect_kind : OpOperand[StringLiteral]
+  effect_kind : OpOperand[EnumLiteral[VNInstantEffectKind]]
   # 整体持续或过渡到目标状态的时长（秒）。<0 表示持续到用户执行「结束特效」；闪烁 flash 在命令层通常固定为 0（由内层切入/停留/恢复控制形态）。
   duration : OpOperand[FloatLiteral]
   # 依 effect_kind：shake 为像素级幅度；bounce 为跳起高度占屏高比例(约 0~1)；tremble 为像素幅度；滤镜类(grayscale/opacity/tint/blur)为 0~1 强度或半径等（与后端约定一致）。
   amplitude : OpOperand[FloatLiteral]
-  # 依 effect_kind：shake 为衰减系数；bounce 存重复次数（数值以浮点字面量存放）；tremble 存往复周期（秒）；其余情况多为 0。
+  # 依 effect_kind：shake 为衰减系数；bounce 存重复次数（Decimal 字面值）；tremble 存往复周期（秒）；其余情况多为 0。
   decay : OpOperand[FloatLiteral]
-  # shake：horizontal | vertical 或简写；bounce：motion style 字符串（linear/ease/…）；其余可为空串。
-  direction : OpOperand[StringLiteral]
+  # 仅 ``effect_kind==shake`` 时有效；其余种类填 ``VNShakeAxisKind.NONE``。
+  shake_axis : OpOperand[EnumLiteral[VNShakeAxisKind]]
+  # 仅 ``effect_kind==bounce`` 时有效；其余种类填 ``VNMotionStyleKind.LINEAR``。
+  motion_style : OpOperand[EnumLiteral[VNMotionStyleKind]]
   # #RRGGBB；tint 为叠加色；非色调类滤镜时常为占位 ``#ffffff``。
   flash_color : OpOperand[StringLiteral]
   # 以下为闪烁(flash)专用三段时长（秒）；其它 effect_kind 下多为占位默认（如 0.06/0.1/0.18）。
@@ -413,7 +433,7 @@ class VNASTInstantEffectNode(VNASTNodeBase):
 
   def get_short_str(self, indent : int = 0) -> str:
     sc = "scene" if self.scene_wide.get().value else ("char:" + self.character_name.get().get_string())
-    return f"InstantEffect<{self.effect_kind.get().get_string()}> {sc}"
+    return f"InstantEffect<{self.effect_kind.get().value.value}> {sc}"
 
   @staticmethod
   def create(
@@ -422,15 +442,16 @@ class VNASTInstantEffectNode(VNASTNodeBase):
     scene_wide : bool,
     character_name : str = "",
     character_states_csv : str = "",
-    effect_kind : str,
+    effect_kind : VNInstantEffectKind,
     duration : decimal.Decimal,
     amplitude : decimal.Decimal,
     decay : decimal.Decimal,
-    direction : str,
     flash_color : str,
     flash_in : decimal.Decimal,
     flash_hold : decimal.Decimal,
     flash_out : decimal.Decimal,
+    shake_axis : VNShakeAxisKind = VNShakeAxisKind.NONE,
+    motion_style : VNMotionStyleKind = VNMotionStyleKind.LINEAR,
     name : str = "",
     loc : Location | None = None,
   ) -> VNASTInstantEffectNode:
@@ -440,11 +461,12 @@ class VNASTInstantEffectNode(VNASTNodeBase):
       scene_wide=BoolLiteral.get(scene_wide, context),
       character_name=StringLiteral.get(character_name, context),
       character_states_csv=StringLiteral.get(character_states_csv, context),
-      effect_kind=StringLiteral.get(effect_kind, context),
+      effect_kind=EnumLiteral.get(context, effect_kind),
       duration=FloatLiteral.get(duration, context),
       amplitude=FloatLiteral.get(amplitude, context),
       decay=FloatLiteral.get(decay, context),
-      direction=StringLiteral.get(direction, context),
+      shake_axis=EnumLiteral.get(context, shake_axis),
+      motion_style=EnumLiteral.get(context, motion_style),
       flash_color=StringLiteral.get(flash_color, context),
       flash_in=FloatLiteral.get(flash_in, context),
       flash_hold=FloatLiteral.get(flash_hold, context),
@@ -457,7 +479,7 @@ class VNASTInstantEffectNode(VNASTNodeBase):
 class VNASTWeatherEffectNode(VNASTNodeBase):
   """全屏粒子天气（雪/雨），独立 screen 层；sustain<0 表示持续至「结束特效·场景」。"""
 
-  weather_kind : OpOperand[StringLiteral]
+  weather_kind : OpOperand[EnumLiteral[VNWeatherEffectKind]]
   intensity : OpOperand[FloatLiteral]
   inner_fade_in : OpOperand[FloatLiteral]
   inner_fade_out : OpOperand[FloatLiteral]
@@ -467,36 +489,34 @@ class VNASTWeatherEffectNode(VNASTNodeBase):
   vy : OpOperand[FloatLiteral]
 
   def get_short_str(self, indent : int = 0) -> str:
-    return f"Weather<{self.weather_kind.get().get_string()}>"
+    return f"Weather<{self.weather_kind.get().value.value}>"
 
   @staticmethod
   def create(
     context : Context,
     *,
-    weather_kind : str,
-    intensity : float,
-    inner_fade_in : float,
-    inner_fade_out : float,
-    overlay_fade_in : float,
-    sustain : float,
-    vx : float,
-    vy : float,
+    weather_kind : VNWeatherEffectKind,
+    intensity : decimal.Decimal,
+    inner_fade_in : decimal.Decimal,
+    inner_fade_out : decimal.Decimal,
+    overlay_fade_in : decimal.Decimal,
+    sustain : decimal.Decimal,
+    vx : decimal.Decimal,
+    vy : decimal.Decimal,
     name : str = "",
     loc : Location | None = None,
   ) -> VNASTWeatherEffectNode:
-    import decimal
-
     return VNASTWeatherEffectNode(
       init_mode=IRObjectInitMode.CONSTRUCT,
       context=context,
-      weather_kind=StringLiteral.get(weather_kind, context),
-      intensity=FloatLiteral.get(decimal.Decimal(str(intensity)), context),
-      inner_fade_in=FloatLiteral.get(decimal.Decimal(str(inner_fade_in)), context),
-      inner_fade_out=FloatLiteral.get(decimal.Decimal(str(inner_fade_out)), context),
-      overlay_fade_in=FloatLiteral.get(decimal.Decimal(str(overlay_fade_in)), context),
-      sustain=FloatLiteral.get(decimal.Decimal(str(sustain)), context),
-      vx=FloatLiteral.get(decimal.Decimal(str(vx)), context),
-      vy=FloatLiteral.get(decimal.Decimal(str(vy)), context),
+      weather_kind=EnumLiteral.get(context, weather_kind),
+      intensity=FloatLiteral.get(intensity, context),
+      inner_fade_in=FloatLiteral.get(inner_fade_in, context),
+      inner_fade_out=FloatLiteral.get(inner_fade_out, context),
+      overlay_fade_in=FloatLiteral.get(overlay_fade_in, context),
+      sustain=FloatLiteral.get(sustain, context),
+      vx=FloatLiteral.get(vx, context),
+      vy=FloatLiteral.get(vy, context),
       name=name,
       loc=loc,
     )
@@ -514,7 +534,7 @@ class VNASTCharacterMoveTweenNode(VNASTNodeBase):
   duration : OpOperand[FloatLiteral]
   target_screen_x_ratio : OpOperand[FloatLiteral]
   target_screen_y_ratio : OpOperand[FloatLiteral]
-  style : OpOperand[StringLiteral]
+  style : OpOperand[EnumLiteral[VNMotionStyleKind]]
 
   def get_short_str(self, indent : int = 0) -> str:
     return f"CharacterMove<move> {self.character_name.get().get_string()}"
@@ -528,7 +548,7 @@ class VNASTCharacterMoveTweenNode(VNASTNodeBase):
     duration : decimal.Decimal,
     target_screen_x_ratio : decimal.Decimal,
     target_screen_y_ratio : decimal.Decimal,
-    style : str,
+    style : VNMotionStyleKind,
     name : str = "",
     loc : Location | None = None,
   ) -> VNASTCharacterMoveTweenNode:
@@ -540,7 +560,7 @@ class VNASTCharacterMoveTweenNode(VNASTNodeBase):
       duration=FloatLiteral.get(duration, context),
       target_screen_x_ratio=FloatLiteral.get(target_screen_x_ratio, context),
       target_screen_y_ratio=FloatLiteral.get(target_screen_y_ratio, context),
-      style=StringLiteral.get(style, context),
+      style=EnumLiteral.get(context, style),
       name=name,
       loc=loc,
     )
@@ -554,7 +574,7 @@ class VNASTCharacterScaleTweenNode(VNASTNodeBase):
   character_states_csv : OpOperand[StringLiteral]
   duration : OpOperand[FloatLiteral]
   target_scale : OpOperand[FloatLiteral]
-  style : OpOperand[StringLiteral]
+  style : OpOperand[EnumLiteral[VNMotionStyleKind]]
 
   def get_short_str(self, indent : int = 0) -> str:
     return f"CharacterMove<scale> {self.character_name.get().get_string()}"
@@ -567,7 +587,7 @@ class VNASTCharacterScaleTweenNode(VNASTNodeBase):
     character_states_csv : str,
     duration : decimal.Decimal,
     target_scale : decimal.Decimal,
-    style : str,
+    style : VNMotionStyleKind,
     name : str = "",
     loc : Location | None = None,
   ) -> VNASTCharacterScaleTweenNode:
@@ -578,7 +598,7 @@ class VNASTCharacterScaleTweenNode(VNASTNodeBase):
       character_states_csv=StringLiteral.get(character_states_csv, context),
       duration=FloatLiteral.get(duration, context),
       target_scale=FloatLiteral.get(target_scale, context),
-      style=StringLiteral.get(style, context),
+      style=EnumLiteral.get(context, style),
       name=name,
       loc=loc,
     )
@@ -592,7 +612,7 @@ class VNASTCharacterRotateTweenNode(VNASTNodeBase):
   character_states_csv : OpOperand[StringLiteral]
   duration : OpOperand[FloatLiteral]
   angle_degrees : OpOperand[FloatLiteral]
-  style : OpOperand[StringLiteral]
+  style : OpOperand[EnumLiteral[VNMotionStyleKind]]
 
   def get_short_str(self, indent : int = 0) -> str:
     return f"CharacterMove<rotate> {self.character_name.get().get_string()}"
@@ -605,7 +625,7 @@ class VNASTCharacterRotateTweenNode(VNASTNodeBase):
     character_states_csv : str,
     duration : decimal.Decimal,
     angle_degrees : decimal.Decimal,
-    style : str,
+    style : VNMotionStyleKind,
     name : str = "",
     loc : Location | None = None,
   ) -> VNASTCharacterRotateTweenNode:
@@ -616,7 +636,7 @@ class VNASTCharacterRotateTweenNode(VNASTNodeBase):
       character_states_csv=StringLiteral.get(character_states_csv, context),
       duration=FloatLiteral.get(duration, context),
       angle_degrees=FloatLiteral.get(angle_degrees, context),
-      style=StringLiteral.get(style, context),
+      style=EnumLiteral.get(context, style),
       name=name,
       loc=loc,
     )

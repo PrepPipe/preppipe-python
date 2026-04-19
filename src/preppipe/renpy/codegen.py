@@ -3,6 +3,7 @@
 
 import re
 import dataclasses
+import decimal
 import typing
 
 from .ast import *
@@ -13,6 +14,11 @@ from ..util import nameconvert
 from ..enginecommon.codegen import BackendCodeGenHelperBase
 from ..exceptions import PPNotImplementedError
 from ..frontend.vnmodel.vnutil import map_sprite_transition_entry_to_exit
+
+# Ren'Py 导出脚本中与 IR 一致的默认转场时长（decimal，避免经 float 丢精度）
+_DEFAULT_TRANSITION_SEC = decimal.Decimal("0.5")
+_DEFAULT_TRANSITION_HOLD = decimal.Decimal("0.2")
+_TRANSITION_DURATION_EPS = decimal.Decimal("1e-6")
 
 @dataclasses.dataclass
 class _RenPyScriptFileWrapper:
@@ -140,7 +146,7 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
     self.audiospec_dict = collections.OrderedDict()
     self.numeric_image_index = 0
     # 场景 master 层滤镜：Ren'Py 的 scene 会清掉 show_layer_at，切换场景后在同一条脚本链上补一行以维持到「结束特效:场景」
-    self._pending_scene_master_filter : tuple[str, float, str] | None = None
+    self._pending_scene_master_filter : tuple[str, decimal.Decimal, str] | None = None
 
     if not self.is_matchtree_installed():
       _RenPyCodeGenHelper.init_matchtable()
@@ -473,14 +479,14 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
     return self.result
 
   @staticmethod
-  def _float_from_transition_duration_operand(v : Value | None, *, default : float) -> float:
-    """转场时长操作数须为数值字面值；若 IR 异常则在**导出 codegen**阶段失败，避免 Ren'Py 运行时才 float 报错。"""
+  def _decimal_from_transition_duration_operand(v : Value | None, *, default : decimal.Decimal) -> decimal.Decimal:
+    """转场时长操作数须为数值字面值（FloatLiteral 底层为 Decimal）；导出为脚本字面量时不经 float。"""
     if v is None:
       return default
     if isinstance(v, FloatLiteral):
-      return float(v.value)
+      return v.value
     if isinstance(v, IntLiteral):
-      return float(int(v.value))
+      return decimal.Decimal(int(v.value))
     raise PPInternalError(
       "转场时长 IR 应为 FloatLiteral 或 IntLiteral，实际为 "
       + type(v).__name__
@@ -740,58 +746,58 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
     """将场景转场 LiteralExpr 映射为 Ren'Py with 表达式字符串。"""
     if isinstance(t, VNFadeInSceneTransitionLit):
       d = t.duration
-      sec = _RenPyCodeGenHelper._float_from_transition_duration_operand(d, default=0.5)
+      sec = _RenPyCodeGenHelper._decimal_from_transition_duration_operand(d, default=_DEFAULT_TRANSITION_SEC)
       # 须用脚本命名空间中的 Fade（见 renpy.common）；勿写 renpy.display.transition.Fade，8.5+ 上该名可能已是 MultipleTransition 实例，不可再调用
       return f"Fade(0, 0, {sec})"  # 新画面淡入
     if isinstance(t, VNFadeOutSceneTransitionLit):
       d = t.duration
-      sec = _RenPyCodeGenHelper._float_from_transition_duration_operand(d, default=0.5)
+      sec = _RenPyCodeGenHelper._decimal_from_transition_duration_operand(d, default=_DEFAULT_TRANSITION_SEC)
       return f"Fade({sec}, 0, 0)"  # 旧画面淡出
     if isinstance(t, VNDissolveSceneTransitionLit):
       d = t.duration
-      sec = _RenPyCodeGenHelper._float_from_transition_duration_operand(d, default=0.5)
-      return f"Dissolve({sec})" if sec != 0.5 else "dissolve"
+      sec = _RenPyCodeGenHelper._decimal_from_transition_duration_operand(d, default=_DEFAULT_TRANSITION_SEC)
+      return f"Dissolve({sec})" if sec != _DEFAULT_TRANSITION_SEC else "dissolve"
     if isinstance(t, VNSlideInSceneTransitionLit):
       d = t.duration
-      sec = _RenPyCodeGenHelper._float_from_transition_duration_operand(d, default=0.5)
+      sec = _RenPyCodeGenHelper._decimal_from_transition_duration_operand(d, default=_DEFAULT_TRANSITION_SEC)
       direction = t.direction.get_string().strip().lower()
       if direction not in ("left", "right", "up", "down"):
         raise PPInternalError(f"IR 滑移方向非规范键: {direction!r}")
       mode = "slide" + direction  # slideleft, slideright, slideup, slidedown
-      if sec != 0.5:
+      if sec != _DEFAULT_TRANSITION_SEC:
         return f'CropMove({sec}, "{mode}")'
       return mode
     if isinstance(t, VNSlideOutSceneTransitionLit):
       d = t.duration
-      sec = _RenPyCodeGenHelper._float_from_transition_duration_operand(d, default=0.5)
+      sec = _RenPyCodeGenHelper._decimal_from_transition_duration_operand(d, default=_DEFAULT_TRANSITION_SEC)
       direction = t.direction.get_string().strip().lower()
       if direction not in ("left", "right", "up", "down"):
         raise PPInternalError(f"IR 滑移方向非规范键: {direction!r}")
       mode = "slideaway" + direction  # slideawayleft, slideawayright, ...
-      if sec != 0.5:
+      if sec != _DEFAULT_TRANSITION_SEC:
         return f'CropMove({sec}, "{mode}")'
       return mode
     if isinstance(t, VNPushSceneTransitionLit):
       d = t.duration
-      sec = _RenPyCodeGenHelper._float_from_transition_duration_operand(d, default=0.5)
+      sec = _RenPyCodeGenHelper._decimal_from_transition_duration_operand(d, default=_DEFAULT_TRANSITION_SEC)
       direction = t.direction.get_string().strip().lower()
       if direction not in ("left", "right", "up", "down"):
         raise PPInternalError(f"IR 推移方向非规范键: {direction!r}")
       mode = "push" + direction  # pushright, pushleft, pushup, pushdown
-      if sec != 0.5:
+      if sec != _DEFAULT_TRANSITION_SEC:
         return f'PushMove({sec}, "{mode}")'
       return mode
     if isinstance(t, VNFadeToColorSceneTransitionLit):
-      out_s = _RenPyCodeGenHelper._float_from_transition_duration_operand(t.fade_out, default=0.5)
-      hold_s = _RenPyCodeGenHelper._float_from_transition_duration_operand(t.hold, default=0.2)
-      in_s = _RenPyCodeGenHelper._float_from_transition_duration_operand(t.fade_in, default=0.5)
+      out_s = _RenPyCodeGenHelper._decimal_from_transition_duration_operand(t.fade_out, default=_DEFAULT_TRANSITION_SEC)
+      hold_s = _RenPyCodeGenHelper._decimal_from_transition_duration_operand(t.hold, default=_DEFAULT_TRANSITION_HOLD)
+      in_s = _RenPyCodeGenHelper._decimal_from_transition_duration_operand(t.fade_in, default=_DEFAULT_TRANSITION_SEC)
       col = self._fade_to_color_hex_lit(t)
       return f'Fade({out_s}, {hold_s}, {in_s}, color="{col}")'
     if isinstance(t, VNZoomSceneTransitionLit):
       direction = t.direction.get_string().strip().lower()
       if direction not in ("in", "out"):
         raise PPInternalError(f"IR 缩放方向非规范键: {direction!r}")
-      sec = _RenPyCodeGenHelper._float_from_transition_duration_operand(t.duration, default=0.5)
+      sec = _RenPyCodeGenHelper._decimal_from_transition_duration_operand(t.duration, default=_DEFAULT_TRANSITION_SEC)
       pt = t.point.get_string()
       if not pt.strip():
         raise PPInternalError("IR 缺少 Zoom 缩放点（应由 parse_transition 填充）")
@@ -830,10 +836,10 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
     c = t.color.value
     return f"#{c.r:02x}{c.g:02x}{c.b:02x}"
 
-  def _vn_duration_sec(self, d) -> float:
-    sec = _RenPyCodeGenHelper._float_from_transition_duration_operand(d, default=0.5)
+  def _vn_duration_sec(self, d) -> decimal.Decimal:
+    sec = _RenPyCodeGenHelper._decimal_from_transition_duration_operand(d, default=_DEFAULT_TRANSITION_SEC)
     # 时长为 0 时 Ren'Py 中线性 ATL 与 pause 均为零，退场会「一闪而过」
-    return sec if sec > 1e-6 else 0.5
+    return sec if sec > _TRANSITION_DURATION_EPS else _DEFAULT_TRANSITION_SEC
 
   def _chain_show_at(self, showat : RenPyASMExpr | None, at_suffix : str) -> RenPyASMExpr:
     if showat is not None:
@@ -853,7 +859,7 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
       return (0.0, s)
     raise PPInternalError(f"IR 滑移方向非规范键: {direction!r}（应由 parse_transition 规范化）")
 
-  def _sprite_zoom_align(self, t : VNZoomSceneTransitionLit) -> tuple[float, float, float]:
+  def _sprite_zoom_align(self, t : VNZoomSceneTransitionLit) -> tuple[decimal.Decimal, float, float]:
     d = t.duration
     sec = self._vn_duration_sec(d)
     pt = t.point.get_string() or "center"
@@ -925,7 +931,7 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
     if dt == VNDefaultTransitionType.DT_NO_TRANSITION:
       return None
     if dt in (VNDefaultTransitionType.DT_SPRITE_SHOW, VNDefaultTransitionType.DT_IMAGE_SHOW):
-      return "preppipe_sprite_dissolve_in(0.5)"
+      return f"preppipe_sprite_dissolve_in({_DEFAULT_TRANSITION_SEC})"
     if isinstance(transition, VNBackendDisplayableTransitionExpr):
       if transition.backend.get_string().lower() != "renpy":
         raise PPNotImplementedError(
@@ -933,7 +939,7 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
         )
       e = transition.expression.get_string().strip().lower()
       if e == "dissolve" or e.startswith("dissolve(") or e.startswith("dissolve "):
-        return "preppipe_sprite_dissolve_in(0.5)"
+        return f"preppipe_sprite_dissolve_in({_DEFAULT_TRANSITION_SEC})"
       raise PPNotImplementedError(
         "立绘入场仅支持「溶解」形式的显示层转场，请改用溶解或通用入场转场。",
       )
@@ -963,7 +969,7 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
     imspec : tuple,
     insert_before : RenPyNode,
     at_expr : str,
-    pause_sec : float,
+    pause_sec : decimal.Decimal,
     base_showat : RenPyASMExpr | None = None,
   ) -> RenPyShowNode:
     """立绘退场：只动该层，不用 hide … with 整屏转场。
@@ -991,7 +997,7 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
     return show
 
   def _foreground_hide_fade_sequence(
-    self, imspec : tuple, duration : float, insert_before : RenPyNode, base_showat : RenPyASMExpr | None = None
+    self, imspec : tuple, duration : decimal.Decimal, insert_before : RenPyNode, base_showat : RenPyASMExpr | None = None
   ) -> RenPyShowNode:
     return self._foreground_hide_sprite_at_pause(
       imspec, insert_before, f"preppipe_sprite_fade_out({duration})", duration, base_showat=base_showat
@@ -1026,12 +1032,12 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
         return self._foreground_hide_fade_sequence(imspec, sec, insert_before, base_showat=base_showat)
     dt = VNDefaultTransitionType.get_default_transition_type(transition)
     if dt in (VNDefaultTransitionType.DT_SPRITE_HIDE, VNDefaultTransitionType.DT_IMAGE_HIDE):
-      return self._foreground_hide_fade_sequence(imspec, 0.5, insert_before, base_showat=base_showat)
+      return self._foreground_hide_fade_sequence(imspec, _DEFAULT_TRANSITION_SEC, insert_before, base_showat=base_showat)
     if isinstance(transition, VNBackendDisplayableTransitionExpr):
       if transition.backend.get_string().lower() == "renpy":
         e = transition.expression.get_string().strip().lower()
         if e == "dissolve" or e.startswith("dissolve"):
-          return self._foreground_hide_fade_sequence(imspec, 0.5, insert_before, base_showat=base_showat)
+          return self._foreground_hide_fade_sequence(imspec, _DEFAULT_TRANSITION_SEC, insert_before, base_showat=base_showat)
     return None
 
   def _add_image_transition(self, transition : Value, node : RenPyShowNode | RenPyHideNode):
@@ -1189,10 +1195,10 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
   def gen_shake_effect(self, instrs : list[VNInstruction], insert_before : RenPyNode) -> RenPyNode:
     inst = instrs[0]
     assert isinstance(inst, VNShakeEffectInst)
-    d = float(inst.duration.get().value)
-    amp = float(inst.amplitude.get().value)
-    dec = float(inst.decay.get().value)
-    dr = inst.direction.get().get_string()
+    d = inst.duration.get().value
+    amp = inst.amplitude.get().value
+    dec = inst.decay.get().value
+    dr = inst.direction.get().value.value
     if inst.scene_wide.get().value:
       line = f"$ preppipe_scene_shake({d}, {amp}, {dec}, {repr(dr)})"
     else:
@@ -1211,9 +1217,9 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
     inst = instrs[0]
     assert isinstance(inst, VNFlashEffectInst)
     fc = inst.color.get().get_string().replace("\\", "\\\\").replace('"', '\\"')
-    fi = float(inst.fade_in.get().value)
-    fh = float(inst.hold.get().value)
-    fo = float(inst.fade_out.get().value)
+    fi = inst.fade_in.get().value
+    fh = inst.hold.get().value
+    fo = inst.fade_out.get().value
     if inst.scene_wide.get().value:
       line = f'$ preppipe_scene_flash("{fc}", {fi}, {fh}, {fo})'
     else:
@@ -1237,13 +1243,13 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
     y = int(inst.place_y.get().value)
     w = int(inst.place_w.get().value)
     h = int(inst.place_h.get().value)
-    mk = inst.move_kind.get().get_string().replace("\\", "\\\\").replace('"', '\\"')
-    es = inst.style.get().get_string().replace("\\", "\\\\").replace('"', '\\"')
-    d = float(inst.duration.get().value)
-    f1 = float(inst.n1.get().value)
-    f2 = float(inst.n2.get().value)
-    f3 = float(inst.n3.get().value)
-    f4 = float(inst.n4.get().value)
+    mk = inst.move_kind.get().value.value.replace("\\", "\\\\").replace('"', '\\"')
+    es = inst.style.get().value.value.replace("\\", "\\\\").replace('"', '\\"')
+    d = inst.duration.get().value
+    f1 = inst.n1.get().value
+    f2 = inst.n2.get().value
+    f3 = inst.n3.get().value
+    f4 = inst.n4.get().value
     line = (
       f'$ preppipe_char_sprite_anim(({parts}), {x}, {y}, {w}, {h}, "{mk}", {d}, {f1}, {f2}, {f3}, {f4}, "{es}")'
     )
@@ -1260,9 +1266,9 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
     y = int(inst.place_y.get().value)
     w = int(inst.place_w.get().value)
     h = int(inst.place_h.get().value)
-    amp = float(inst.amplitude.get().value)
-    per = float(inst.period.get().value)
-    dur = float(inst.duration.get().value)
+    amp = inst.amplitude.get().value
+    per = inst.period.get().value
+    dur = inst.duration.get().value
     line = f"$ preppipe_char_tremble(({parts}), {x}, {y}, {w}, {h}, {amp}, {per}, {dur})"
     node = RenPyASMNode.create(self.context, StringLiteral.get(line, self.context))
     node.insert_before(insert_before)
@@ -1271,13 +1277,13 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
   def gen_filter_effect(self, instrs : list[VNInstruction], insert_before : RenPyNode) -> RenPyNode:
     inst = instrs[0]
     assert isinstance(inst, VNFilterEffectInst)
-    fk = inst.filter_kind.get().get_string().replace("\\", "\\\\").replace('"', '\\"')
-    s = float(inst.strength.get().value)
-    d = float(inst.duration.get().value)
+    fk = inst.filter_kind.get().value.value.replace("\\", "\\\\").replace('"', '\\"')
+    s = inst.strength.get().value
+    d = inst.duration.get().value
     col = inst.color.get().get_string().replace("\\", "\\\\").replace('"', '\\"')
     if inst.scene_wide.get().value:
       line = f'$ preppipe_scene_filter("{fk}", {s}, {d}, "{col}")'
-      self._pending_scene_master_filter = (fk, float(s), col)
+      self._pending_scene_master_filter = (fk, s, col)
     else:
       spec = self.get_impsec(inst.sprite.get(), user_hint=VNStandardDeviceKind.O_FOREGROUND_DISPLAY)
       parts = ", ".join(repr(x.get_string()) for x in spec)
@@ -1293,14 +1299,14 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
   def gen_weather_effect(self, instrs : list[VNInstruction], insert_before : RenPyNode) -> RenPyNode:
     inst = instrs[0]
     assert isinstance(inst, VNWeatherEffectInst)
-    k = inst.weather_kind.get().get_string().replace("\\", "\\\\").replace('"', '\\"')
-    intensity = float(inst.intensity.get().value)
-    ifi = float(inst.inner_fade_in.get().value)
-    ifo = float(inst.inner_fade_out.get().value)
-    ov = float(inst.overlay_fade_in.get().value)
-    sus = float(inst.sustain.get().value)
-    vx = float(inst.vx.get().value)
-    vy = float(inst.vy.get().value)
+    k = inst.weather_kind.get().value.value.replace("\\", "\\\\").replace('"', '\\"')
+    intensity = inst.intensity.get().value
+    ifi = inst.inner_fade_in.get().value
+    ifo = inst.inner_fade_out.get().value
+    ov = inst.overlay_fade_in.get().value
+    sus = inst.sustain.get().value
+    vx = inst.vx.get().value
+    vy = inst.vy.get().value
     line = f'$ preppipe_weather_start("{k}", {intensity}, {ifi}, {ifo}, {ov}, {vx}, {vy}, {sus})'
     node = RenPyASMNode.create(self.context, StringLiteral.get(line, self.context))
     node.insert_before(insert_before)
