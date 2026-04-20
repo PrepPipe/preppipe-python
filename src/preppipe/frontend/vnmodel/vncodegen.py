@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import dataclasses
+import decimal
 import enum
 import typing
 from typing import Any
@@ -876,7 +877,7 @@ class VNCodeGen:
     is_in_transition : bool = False
     # 如果是 Value, 这是一个通用的转场
     # 如果是 tuple, 这是某个后端独有的转场
-    # 如果是 None,  则父转场结点没有提供转场
+    # None：Transition 结点未写转场名（子指令仍用各自默认淡入/淡出）；显式「无」解析为 DT_NO_TRANSITION，由 parse_transition 得到
     parent_transition : Value | tuple[StringLiteral, StringLiteral] | None = None
     transition_child_finishtimes : list[Value] = dataclasses.field(default_factory=list)
 
@@ -1099,7 +1100,7 @@ class VNCodeGen:
           self.destblock.push_back(rm)
           rmfinishtimes.append(rm.get_finish_time())
 
-        chhide = VNDefaultTransitionType.DT_SPRITE_HIDE.get_enum_literal(self.context)
+        chhide = default_scene_dissolve_lit(self.context)
         for ch, d in character_sprites.items():
           for creation, handle in d.items():
             remove_handle(handle, chhide)
@@ -1390,7 +1391,11 @@ class VNCodeGen:
       else:
         if self.parent_transition is not None:
           if isinstance(self.parent_transition, Value):
-            node.transition.set_operand(0, self.parent_transition)
+            # 人物与场景共用同一套通用转场；退场须把入场类（淡入等）映射为淡出等，见 map_sprite_transition_entry_to_exit
+            applied : Value = self.parent_transition
+            if isinstance(node, VNRemoveInst):
+              applied = map_sprite_transition_entry_to_exit(self.context, applied)
+            node.transition.set_operand(0, applied)
           elif isinstance(self.parent_transition, tuple):
             curfallback = node.transition.try_get_value()
             if isinstance(curfallback, EnumLiteral) and isinstance(curfallback.value, VNDefaultTransitionType):
@@ -1399,10 +1404,24 @@ class VNCodeGen:
               curfallback = VNDefaultTransitionType.DT_NO_TRANSITION.get_enum_literal(self.context)
             backend, expr = self.parent_transition
             final_transition = VNBackendDisplayableTransitionExpr.get(context=self.context, backend=backend, expression=expr, fallback=curfallback)
+            if isinstance(node, VNRemoveInst):
+              final_transition = map_sprite_transition_entry_to_exit(self.context, final_transition)
             node.transition.set_operand(0, final_transition)
           else:
             raise PPInternalError("Unexpected parent_transition type")
         self.transition_child_finishtimes.append(node.get_finish_time())
+
+    def _scene_switch_parent_transition_as_value(self) -> Value | None:
+      """场景切换时把 parent_transition 规范为单一 Value（与 handle_transition_and_finishtime 的 tuple 分支一致）。"""
+      if not self.is_in_transition or self.parent_transition is None:
+        return None
+      if isinstance(self.parent_transition, Value):
+        return self.parent_transition
+      if isinstance(self.parent_transition, tuple):
+        backend, expr = self.parent_transition
+        fb = VNDefaultTransitionType.DT_NO_TRANSITION.get_enum_literal(self.context)
+        return VNBackendDisplayableTransitionExpr.get(context=self.context, backend=backend, expression=expr, fallback=fb)
+      raise PPInternalError("Unexpected parent_transition type")
 
     _tr_character_entry_character_notfound = TR_vn_codegen.tr("character_entry_character_notfound",
       en="Character {sayname} not found and the entry with state {change} is ignored. Please declare the character with sprite info if you want to use sprites. Please check the spelling if you already have the declaration.",
@@ -1441,7 +1460,7 @@ class VNCodeGen:
           raise PPAssertionError("We only support image types for now")
 
         cnode = VNCreateInst.create(context=self.context, start_time=self.starttime, content=sprite, ty=VNHandleType.get(sprite.valuetype), device=self.parsecontext.dev_foreground, loc=node.location)
-        cnode.transition.set_operand(0, VNDefaultTransitionType.DT_SPRITE_SHOW.get_enum_literal(self.context))
+        cnode.transition.set_operand(0, default_scene_dissolve_lit(self.context))
         self.handle_transition_and_finishtime(cnode)
         # 在更新 info.sprite_handle 之前就把事件加上去，这样可以使调用 placer 时能记录事件发生前的状态
         self.placer.add_character_event(info, self.codegen.get_character_astnode(info.identity), sprite=sprite, instr=cnode, destexpr=node)
@@ -1475,7 +1494,8 @@ class VNCodeGen:
       if info := self.scenecontext.try_get_character_state(sayname, ch):
         if info.sprite_handle:
           rm = VNRemoveInst.create(self.context, start_time=self.starttime, handlein=info.sprite_handle, loc=node.location)
-          rm.transition.set_operand(0, VNDefaultTransitionType.DT_SPRITE_HIDE.get_enum_literal(self.context))
+          self._copy_sprite_screen2d_to_remove(rm, info.sprite_handle)
+          rm.transition.set_operand(0, default_scene_dissolve_lit(self.context))
           self.handle_transition_and_finishtime(rm)
           self.destblock.push_back(rm)
           self.placer.add_character_event(info, self.codegen.get_character_astnode(info.identity), sprite=None, instr=rm, destexpr=node)
@@ -1498,11 +1518,428 @@ class VNCodeGen:
       zh_cn="该资源并不正在被使用，所以停用操作将被忽略: {asset}",
       zh_hk="該資源並不正在被使用，所以停用操作將被忽略: {asset}",
     )
-    _tr_assetref_se_not_supported = TR_vn_codegen.tr("assetref_se_not_supporte",
-      en="Special effect is not supported yet and the reference is ignored. Please contact the developer if you want this feature.",
-      zh_cn="特效暂不支持，对特效的引用将被忽略。如果您需要该功能，请联系开发者。",
-      zh_hk="特效暫不支持，對特效的引用將被忽略。如果您需要該功能，請聯系開發者。",
+    _tr_instant_effect_char_no_sprite = TR_vn_codegen.tr("instant_effect_char_no_sprite",
+      en="Character {n} has no sprite on stage; character effect ignored.",
+      zh_cn="角色 {n} 无在场立绘，角色特效已忽略。",
+      zh_hk="角色 {n} 無在場立繪，角色特效已忽略。",
     )
+    _tr_instant_effect_need_screen2d = TR_vn_codegen.tr("instant_effect_need_screen2d",
+      en="Character sprite must use absolute screen position (screen2d) for character effects.",
+      zh_cn="角色立绘须使用绝对屏幕位置(screen2d) 才能使用角色特效。",
+      zh_hk="角色立繪須使用絕對屏幕位置(screen2d) 才能使用角色特效。",
+    )
+    _tr_instant_effect_scene_bounce_tremble = TR_vn_codegen.tr(
+      "instant_effect_scene_bounce_tremble",
+      en="Scene-wide instant effects do not support Bounce or Tremble.",
+      zh_cn="场景特效不支持跳动或发抖。",
+      zh_hk="場景特效不支援跳動或發抖。",
+    )
+    _tr_sprite_handle_internal = TR_vn_codegen.tr(
+      "sprite_handle_internal",
+      en="Internal error while resolving the sprite handle.",
+      zh_cn="解析立绘句柄时发生内部错误。",
+      zh_hk="解析立繪句柄時發生內部錯誤。",
+    )
+    # AST 滤镜种类 → IR 滤镜种类（不落回字符串）
+    _FILTER_KIND_FROM_INSTANT_EFFECT : typing.ClassVar[dict[VNInstantEffectKind, VNFilterEffectKind]] = {
+      VNInstantEffectKind.GRAYSCALE: VNFilterEffectKind.GRAYSCALE,
+      VNInstantEffectKind.OPACITY: VNFilterEffectKind.OPACITY,
+      VNInstantEffectKind.TINT: VNFilterEffectKind.TINT,
+      VNInstantEffectKind.BLUR: VNFilterEffectKind.BLUR,
+    }
+
+    def _sprite_content_and_screen2d(self, handle : Value) -> tuple[Value, tuple[int, int, int, int] | None]:
+      h : Any = handle
+      place : tuple[int, int, int, int] | None = None
+      while isinstance(h, VNModifyInst):
+        if position := h.placeat.get(VNPositionSymbol.NAME_SCREEN2D):
+          pos = position.position.get()
+          if isinstance(pos, VNScreen2DPositionLiteralExpr):
+            place = (int(pos.x_abs.value), int(pos.y_abs.value), int(pos.width.value), int(pos.height.value))
+        h = h.handlein.get()
+      if isinstance(h, VNCreateInst):
+        if position := h.placeat.get(VNPositionSymbol.NAME_SCREEN2D):
+          pos = position.position.get()
+          if isinstance(pos, VNScreen2DPositionLiteralExpr):
+            place = (int(pos.x_abs.value), int(pos.y_abs.value), int(pos.width.value), int(pos.height.value))
+        return h.content.get(), place
+      raise PPInternalError("sprite handle root must be VNCreateInst")
+
+    def _copy_sprite_screen2d_to_remove(self, rm : VNRemoveInst, sprite_handle : Value) -> None:
+      h : typing.Any = sprite_handle
+      while isinstance(h, VNModifyInst):
+        if sym := h.placeat.get(VNPositionSymbol.NAME_SCREEN2D):
+          rm.placeat.add(sym.clone())
+          return
+        h = h.handlein.get()
+      if isinstance(h, VNCreateInst):
+        if sym := h.placeat.get(VNPositionSymbol.NAME_SCREEN2D):
+          rm.placeat.add(sym.clone())
+
+    def visitVNASTInstantEffectNode(self, node : VNASTInstantEffectNode) -> VNTerminatorInstBase | None:
+      if self.check_blocklocal_cond(node):
+        return None
+      kind_e : VNInstantEffectKind = node.effect_kind.get().value
+      scene = bool(node.scene_wide.get().value)
+
+      d = node.duration.get().value
+      amp = node.amplitude.get().value
+      dec = node.decay.get().value
+      fc = node.flash_color.get().get_string()
+      fi = node.flash_in.get().value
+      fh = node.flash_hold.get().value
+      fo = node.flash_out.get().value
+      st = self.starttime
+
+      filt_kinds = frozenset(self._FILTER_KIND_FROM_INSTANT_EFFECT.keys())
+
+      if scene:
+        if kind_e in (VNInstantEffectKind.BOUNCE, VNInstantEffectKind.TREMBLE):
+          self.codegen.emit_error(
+            "vncodegen-instant-effect",
+            self._tr_instant_effect_scene_bounce_tremble.get(),
+            node.location,
+            self.destblock,
+          )
+          return None
+        if kind_e == VNInstantEffectKind.SHAKE:
+          inst = VNShakeEffectInst.create(
+            self.context, st, scene_wide=True, sprite=None, has_place=False, place_xywh=None,
+            duration=d, amplitude=amp, decay=dec, direction=node.shake_axis.get().value, name=node.name, loc=node.location,
+          )
+        elif kind_e in filt_kinds:
+          inst = VNFilterEffectInst.create(
+            self.context,
+            st,
+            scene_wide=True,
+            sprite=None,
+            has_place=False,
+            place_xywh=None,
+            filter_kind=self._FILTER_KIND_FROM_INSTANT_EFFECT[kind_e],
+            strength=amp,
+            duration=d,
+            color=fc,
+            name=node.name,
+            loc=node.location,
+          )
+        else:
+          inst = VNFlashEffectInst.create(
+            self.context, st, scene_wide=True, sprite=None, has_place=False, place_xywh=None,
+            color=fc, fade_in=fi, hold=fh, fade_out=fo, name=node.name, loc=node.location,
+          )
+        self.destblock.push_back(inst)
+        return None
+      raw = node.character_name.get().get_string()
+      sayname = self.parsecontext.resolve_alias(raw)
+      ch = self.codegen.resolve_character(sayname=sayname, from_namespace=self.namespace_tuple, parsecontext=self.parsecontext)
+      if ch is None:
+        msg = self._tr_character_entry_character_notfound.format(sayname=raw, change="")
+        self.codegen.emit_error("vncodegen-instant-effect", msg, node.location, self.destblock)
+        return None
+      info = self.scenecontext.try_get_character_state(sayname, ch)
+      if info is None or info.sprite_handle is None:
+        self.codegen.emit_error(
+          "vncodegen-instant-effect",
+          self._tr_instant_effect_char_no_sprite.format(n=raw),
+          node.location,
+          self.destblock,
+        )
+        return None
+      try:
+        sp, place = self._sprite_content_and_screen2d(info.sprite_handle)
+      except PPInternalError:
+        self.codegen.emit_error(
+          "vncodegen-instant-effect",
+          self._tr_sprite_handle_internal.get(),
+          node.location,
+          self.destblock,
+        )
+        return None
+      if place is None:
+        self.codegen.emit_error(
+          "vncodegen-instant-effect",
+          self._tr_instant_effect_need_screen2d.get(),
+          node.location,
+          self.destblock,
+        )
+        return None
+      if kind_e == VNInstantEffectKind.SHAKE:
+        inst = VNShakeEffectInst.create(
+          self.context, st, scene_wide=False, sprite=sp, has_place=True, place_xywh=place,
+          duration=d, amplitude=amp, decay=dec, direction=node.shake_axis.get().value, name=node.name, loc=node.location,
+        )
+      elif kind_e == VNInstantEffectKind.BOUNCE:
+        cnt = max(1, int(dec.to_integral_value(rounding=decimal.ROUND_HALF_UP)))
+        inst = VNCharacterSpriteMoveInst.create(
+          self.context,
+          st,
+          sprite=sp,
+          has_place=True,
+          place_xywh=place,
+          move_kind=VNCharacterSpriteMoveKind.BOUNCE,
+          duration=d,
+          n1=amp,
+          n2=decimal.Decimal(cnt),
+          n3=decimal.Decimal(0),
+          n4=decimal.Decimal(0),
+          style=node.motion_style.get().value,
+          name=node.name,
+          loc=node.location,
+        )
+      elif kind_e == VNInstantEffectKind.TREMBLE:
+        period = max(decimal.Decimal("0.04"), dec)
+        inst = VNCharTrembleEffectInst.create(
+          self.context,
+          st,
+          sprite=sp,
+          has_place=True,
+          place_xywh=place,
+          amplitude=amp,
+          period=period,
+          duration=d,
+          name=node.name,
+          loc=node.location,
+        )
+      elif kind_e in filt_kinds:
+        inst = VNFilterEffectInst.create(
+          self.context,
+          st,
+          scene_wide=False,
+          sprite=sp,
+          has_place=True,
+          place_xywh=place,
+          filter_kind=self._FILTER_KIND_FROM_INSTANT_EFFECT[kind_e],
+          strength=amp,
+          duration=d,
+          color=fc,
+          name=node.name,
+          loc=node.location,
+        )
+      else:
+        inst = VNFlashEffectInst.create(
+          self.context, st, scene_wide=False, sprite=sp, has_place=True, place_xywh=place,
+          color=fc, fade_in=fi, hold=fh, fade_out=fo, name=node.name, loc=node.location,
+        )
+      self.destblock.push_back(inst)
+      return None
+
+    def visitVNASTWeatherEffectNode(self, node : VNASTWeatherEffectNode) -> VNTerminatorInstBase | None:
+      if self.check_blocklocal_cond(node):
+        return None
+      st = self.starttime
+      inst = VNWeatherEffectInst.create(
+        self.context,
+        st,
+        weather_kind=node.weather_kind.get().value,
+        intensity=node.intensity.get().value,
+        inner_fade_in=node.inner_fade_in.get().value,
+        inner_fade_out=node.inner_fade_out.get().value,
+        overlay_fade_in=node.overlay_fade_in.get().value,
+        sustain=node.sustain.get().value,
+        vx=node.vx.get().value,
+        vy=node.vy.get().value,
+        name=node.name,
+        loc=node.location,
+      )
+      self.destblock.push_back(inst)
+      return None
+
+    def visitVNASTEndEffectNode(self, node : VNASTEndEffectNode) -> VNTerminatorInstBase | None:
+      if self.check_blocklocal_cond(node):
+        return None
+      st = self.starttime
+      if bool(node.scene_wide.get().value):
+        inst = VNEndEffectInst.create(
+          self.context,
+          st,
+          scene_wide=True,
+          sprite=None,
+          has_place=False,
+          place_xywh=None,
+          name=node.name,
+          loc=node.location,
+        )
+        self.destblock.push_back(inst)
+        return None
+      raw = node.character_name.get().get_string()
+      sayname = self.parsecontext.resolve_alias(raw)
+      ch = self.codegen.resolve_character(sayname=sayname, from_namespace=self.namespace_tuple, parsecontext=self.parsecontext)
+      if ch is None:
+        msg = self._tr_character_entry_character_notfound.format(sayname=raw, change="")
+        self.codegen.emit_error("vncodegen-end-effect", msg, node.location, self.destblock)
+        return None
+      info = self.scenecontext.try_get_character_state(sayname, ch)
+      if info is None or info.sprite_handle is None:
+        self.codegen.emit_error(
+          "vncodegen-end-effect",
+          self._tr_instant_effect_char_no_sprite.format(n=raw),
+          node.location,
+          self.destblock,
+        )
+        return None
+      try:
+        sp, place = self._sprite_content_and_screen2d(info.sprite_handle)
+      except PPInternalError:
+        self.codegen.emit_error("vncodegen-end-effect", self._tr_sprite_handle_internal.get(), node.location, self.destblock)
+        return None
+      if place is None:
+        self.codegen.emit_error(
+          "vncodegen-end-effect",
+          self._tr_instant_effect_need_screen2d.get(),
+          node.location,
+          self.destblock,
+        )
+        return None
+      inst = VNEndEffectInst.create(
+        self.context,
+        st,
+        scene_wide=False,
+        sprite=sp,
+        has_place=True,
+        place_xywh=place,
+        name=node.name,
+        loc=node.location,
+      )
+      self.destblock.push_back(inst)
+      return None
+
+    def _emit_character_sprite_tween(
+      self,
+      node : VNASTNodeBase,
+      *,
+      move_kind : VNCharacterSpriteMoveKind,
+      duration : decimal.Decimal,
+      n1 : decimal.Decimal,
+      n2 : decimal.Decimal,
+      n3 : decimal.Decimal,
+      n4 : decimal.Decimal,
+      style : VNMotionStyleKind,
+      sync_screen2d_from_xy_ratios : bool,
+      screen_x_ratio : decimal.Decimal,
+      screen_y_ratio : decimal.Decimal,
+    ) -> VNTerminatorInstBase | None:
+      if self.check_blocklocal_cond(node):
+        return None
+      st = self.starttime
+      raw = node.character_name.get().get_string()
+      sayname = self.parsecontext.resolve_alias(raw)
+      ch = self.codegen.resolve_character(sayname=sayname, from_namespace=self.namespace_tuple, parsecontext=self.parsecontext)
+      if ch is None:
+        msg = self._tr_character_entry_character_notfound.format(sayname=raw, change="")
+        self.codegen.emit_error("vncodegen-character-move", msg, node.location, self.destblock)
+        return None
+      info = self.scenecontext.try_get_character_state(sayname, ch)
+      if info is None or info.sprite_handle is None:
+        self.codegen.emit_error(
+          "vncodegen-character-move",
+          self._tr_instant_effect_char_no_sprite.format(n=raw),
+          node.location,
+          self.destblock,
+        )
+        return None
+      try:
+        sp, place = self._sprite_content_and_screen2d(info.sprite_handle)
+      except PPInternalError:
+        self.codegen.emit_error("vncodegen-character-move", self._tr_sprite_handle_internal.get(), node.location, self.destblock)
+        return None
+      if place is None:
+        self.codegen.emit_error(
+          "vncodegen-character-move",
+          self._tr_instant_effect_need_screen2d.get(),
+          node.location,
+          self.destblock,
+        )
+        return None
+      _sx, _sy, w, h = place
+      inst = VNCharacterSpriteMoveInst.create(
+        self.context,
+        st,
+        sprite=sp,
+        has_place=True,
+        place_xywh=place,
+        move_kind=move_kind,
+        duration=duration,
+        n1=n1,
+        n2=n2,
+        n3=n3,
+        n4=n4,
+        style=style,
+        name=node.name,
+        loc=node.location,
+      )
+      self.destblock.push_back(inst)
+      if sync_screen2d_from_xy_ratios:
+        sw, sh = self.codegen.ast.screen_resolution.get().value
+        swd = decimal.Decimal(int(sw))
+        shd = decimal.Decimal(int(sh))
+        ex = int((screen_x_ratio * swd).to_integral_value(rounding=decimal.ROUND_HALF_UP))
+        ey = int((screen_y_ratio * shd).to_integral_value(rounding=decimal.ROUND_HALF_UP))
+        prev_content, prev_device = self._get_info_from_handle(info.sprite_handle)
+        mod = VNModifyInst.create(
+          context=self.context,
+          start_time=st,
+          handlein=info.sprite_handle,
+          content=prev_content,
+          device=prev_device,
+          loc=node.location,
+        )
+        pos_lit = VNScreen2DPositionLiteralExpr.get(self.context, ex, ey, w, h)
+        mod.placeat.add(VNPositionSymbol.create(self.context, name=VNPositionSymbol.NAME_SCREEN2D, position=pos_lit))
+        info.sprite_handle = mod
+        self.destblock.push_back(mod)
+        if not self.is_in_transition:
+          self.starttime = mod.get_finish_time()
+      return None
+
+    def visitVNASTCharacterMoveTweenNode(self, node : VNASTCharacterMoveTweenNode) -> VNTerminatorInstBase | None:
+      rx = node.target_screen_x_ratio.get().value
+      ry = node.target_screen_y_ratio.get().value
+      return self._emit_character_sprite_tween(
+        node,
+        move_kind=VNCharacterSpriteMoveKind.MOVE,
+        duration=node.duration.get().value,
+        n1=rx,
+        n2=ry,
+        n3=decimal.Decimal(0),
+        n4=decimal.Decimal(0),
+        style=node.style.get().value,
+        sync_screen2d_from_xy_ratios=True,
+        screen_x_ratio=rx,
+        screen_y_ratio=ry,
+      )
+
+    def visitVNASTCharacterScaleTweenNode(self, node : VNASTCharacterScaleTweenNode) -> VNTerminatorInstBase | None:
+      sc = node.target_scale.get().value
+      return self._emit_character_sprite_tween(
+        node,
+        move_kind=VNCharacterSpriteMoveKind.SCALE,
+        duration=node.duration.get().value,
+        n1=sc,
+        n2=decimal.Decimal(0),
+        n3=decimal.Decimal(0),
+        n4=decimal.Decimal(0),
+        style=node.style.get().value,
+        sync_screen2d_from_xy_ratios=False,
+        screen_x_ratio=decimal.Decimal(0),
+        screen_y_ratio=decimal.Decimal(0),
+      )
+
+    def visitVNASTCharacterRotateTweenNode(self, node : VNASTCharacterRotateTweenNode) -> VNTerminatorInstBase | None:
+      ang = node.angle_degrees.get().value
+      return self._emit_character_sprite_tween(
+        node,
+        move_kind=VNCharacterSpriteMoveKind.ROTATE,
+        duration=node.duration.get().value,
+        n1=ang,
+        n2=decimal.Decimal(0),
+        n3=decimal.Decimal(0),
+        n4=decimal.Decimal(0),
+        style=node.style.get().value,
+        sync_screen2d_from_xy_ratios=False,
+        screen_x_ratio=decimal.Decimal(0),
+        screen_y_ratio=decimal.Decimal(0),
+      )
+
     _tr_assetref_video_not_supported = TR_vn_codegen.tr("assetref_video_not_supported",
       en="Video playing is not supported yet and the reference is ignored. Please contact the developer if you want this feature.",
       zh_cn="视频播放暂不支持，对视频的引用将被忽略。如果您需要该功能，请联系开发者。",
@@ -1541,6 +1978,8 @@ class VNCodeGen:
               cnode = VNCreateInst.create(context=self.context, start_time=self.starttime, content=content, ty=VNHandleType.get(assetdata.valuetype), device=self.parsecontext.dev_foreground, name=node.name, loc=node.location)
               if transition := node.transition.try_get_value():
                 cnode.transition.set_operand(0, transition)
+              else:
+                cnode.transition.set_operand(0, default_scene_dissolve_lit(self.context))
               self.destblock.push_back(cnode)
               self.handle_transition_and_finishtime(cnode)
               info = VNCodeGen.SceneContext.AssetState(dev=self.parsecontext.dev_foreground, search_names=description, data=content, output_handle=cnode)
@@ -1568,6 +2007,8 @@ class VNCodeGen:
                   rnode = VNRemoveInst.create(context=self.context, start_time=self.starttime, handlein=info.output_handle, name=node.name, loc=node.location)
                   if transition := node.transition.try_get_value():
                     rnode.transition.set_operand(0, transition)
+                  else:
+                    rnode.transition.set_operand(0, default_scene_dissolve_lit(self.context))
                   self.handle_transition_and_finishtime(rnode)
                   self.destblock.push_back(rnode)
                   self.placer.add_image_event(handle=info, content=info.output_handle, instr=rnode, destexpr=node)
@@ -1589,10 +2030,6 @@ class VNCodeGen:
               # 当前不应该出现这种情况
               raise NotImplementedError()
           return None
-        case VNASTAssetKind.KIND_EFFECT:
-          msg = self._tr_assetref_se_not_supported.get()
-          self.codegen.emit_error(code='vncodegen-not-implemented', msg=msg, loc=node.location, dest=self.destblock)
-          return None
         case VNASTAssetKind.KIND_VIDEO:
           msg = self._tr_assetref_video_not_supported.get()
           self.codegen.emit_error(code='vncodegen-not-implemented', msg=msg, loc=node.location, dest=self.destblock)
@@ -1607,7 +2044,11 @@ class VNCodeGen:
       transition_kwargs = {}
       transition_name = node.populate_argdicts(transition_args, transition_kwargs)
       warnings = []
-      transition = parse_transition(self.context, transition_name=transition_name, transition_args=transition_args, transition_kwargs=transition_kwargs, warnings=warnings)
+      try:
+        transition = parse_transition(self.context, transition_name=transition_name, transition_args=transition_args, transition_kwargs=transition_kwargs, warnings=warnings, ast=self.codegen.ast)
+      except PPInvalidOperationError as e:
+        self.codegen.emit_error(code='transition-param-invalid', msg=str(e), loc=node.location, dest=self.destblock)
+        return None
       for code, msg in warnings:
         self.codegen.emit_error(code, msg, node.location, dest=self.destblock)
       if self.is_in_transition:
@@ -1788,8 +2229,8 @@ class VNCodeGen:
         if info.output_handle is None:
           raise PPAssertionError
         rm = VNRemoveInst.create(context=self.context, start_time=self.starttime, handlein=info.output_handle, loc=node.location)
-        if self.is_in_transition and self.parent_transition is not None:
-          rm.transition.set_operand(0, self.parent_transition)
+        if (pv := self._scene_switch_parent_transition_as_value()) is not None:
+          rm.transition.set_operand(0, map_sprite_transition_entry_to_exit(self.context, pv))
         switchnode.body.push_back(rm)
         rmtimes.append(rm.get_finish_time())
       self.scenecontext.asset_info.clear()
@@ -1797,10 +2238,10 @@ class VNCodeGen:
       for characterinfo in self.scenecontext.character_states.values():
         if characterinfo.sprite_handle:
           rm = VNRemoveInst.create(context=self.context, start_time=self.starttime, handlein=characterinfo.sprite_handle, loc=node.location)
-          if self.is_in_transition and self.parent_transition is not None:
-            rm.transition.set_operand(0, self.parent_transition)
+          if (pv := self._scene_switch_parent_transition_as_value()) is not None:
+            rm.transition.set_operand(0, map_sprite_transition_entry_to_exit(self.context, pv))
           else:
-            rm.transition.set_operand(0, VNDefaultTransitionType.DT_SPRITE_HIDE.get_enum_literal(self.context))
+            rm.transition.set_operand(0, default_scene_dissolve_lit(self.context))
           switchnode.body.push_back(rm)
           rmtimes.append(rm.get_finish_time())
           characterinfo.sprite_handle = None
@@ -1814,10 +2255,10 @@ class VNCodeGen:
       if self.scenecontext.scene_bg and self.scenecontext.scene_bg.output_handle:
         # 现在已有背景
         rm = VNRemoveInst.create(context=self.context, start_time=self.starttime, handlein=self.scenecontext.scene_bg.output_handle, loc=node.location)
-        if self.is_in_transition and self.parent_transition is not None:
-          rm.transition.set_operand(0, self.parent_transition)
+        if (pv := self._scene_switch_parent_transition_as_value()) is not None:
+          rm.transition.set_operand(0, map_sprite_transition_entry_to_exit(self.context, pv))
         else:
-          rm.transition.set_operand(0, VNDefaultTransitionType.DT_BACKGROUND_HIDE.get_enum_literal(self.context))
+          rm.transition.set_operand(0, default_scene_dissolve_lit(self.context))
         switchnode.body.push_back(rm)
         rmtimes.append(rm.get_finish_time())
         self.scenecontext.scene_bg.output_handle = None
@@ -1828,10 +2269,10 @@ class VNCodeGen:
       best_finish_time = rmtimes[-1] if len(rmtimes) > 0 else self.starttime
       if scene_background is not None:
         cnode = VNCreateInst.create(context=self.context, start_time=best_finish_time, content=scene_background, ty=VNHandleType.get(scene_background.valuetype), device=self.parsecontext.dev_background, loc=node.location)
-        if self.is_in_transition and self.parent_transition is not None:
-          cnode.transition.set_operand(0, self.parent_transition)
+        if (pv := self._scene_switch_parent_transition_as_value()) is not None:
+          cnode.transition.set_operand(0, pv)
         else:
-          cnode.transition.set_operand(0, VNDefaultTransitionType.DT_BACKGROUND_SHOW.get_enum_literal(self.context))
+          cnode.transition.set_operand(0, default_scene_dissolve_lit(self.context))
         self.scenecontext.scene_bg = VNCodeGen.SceneContext.AssetState(dev=self.parsecontext.dev_background, search_names=[], data=scene_background, output_handle=cnode)
         best_finish_time = cnode.get_finish_time()
         switchnode.body.push_back(cnode)

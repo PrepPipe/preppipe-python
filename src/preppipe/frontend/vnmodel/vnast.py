@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import dataclasses
+import decimal
 import enum
 import typing
 
@@ -11,6 +12,7 @@ from ...irbase import *
 from ...irdataop import *
 from ..commandsyntaxparser import *
 from ...vnmodel import *
+
 
 @IROperationDataclass
 class VNASTNodeBase(Operation):
@@ -80,6 +82,25 @@ class VNASTSayNode(VNASTNodeBase):
 # ----------------------------------------------------------
 # 交替模式       |   旁白   | 按次序排列的人 |指定角色，修正说话者
 # ----------------------------------------------------------
+
+@IRWrappedStatelessClassJsonName("vnast_instant_effect_kind_e")
+class VNInstantEffectKind(str, enum.Enum):
+  """即时特效种类（与 ``parse_instant_effect``、``parse_instant_effect_command_duration`` 等 API 一致）。
+
+  管线内须使用本枚举成员，勿以裸字符串代替；值即规范小写英文键（与剧本命令名一致）。"""
+
+  SHAKE = "shake"
+  FLASH = "flash"
+  BOUNCE = "bounce"
+  TREMBLE = "tremble"
+  GRAYSCALE = "grayscale"
+  OPACITY = "opacity"
+  TINT = "tint"
+  BLUR = "blur"
+  # 与 ``parse_instant_effect`` 中天气分支一致（场景特效解析元组首项；AST 上仍用 ``VNASTWeatherEffectNode``）
+  SNOW = "snow"
+  RAIN = "rain"
+
 
 @IRWrappedStatelessClassJsonName("vnast_say_mode_e")
 class VNASTSayMode(enum.Enum):
@@ -187,7 +208,6 @@ class VNASTAssetIntendedOperation(enum.Enum):
 class VNASTAssetKind(enum.Enum):
   KIND_IMAGE = 0
   KIND_AUDIO = enum.auto()
-  KIND_EFFECT = enum.auto()
   KIND_VIDEO = enum.auto()
 
 @IROperationDataclass
@@ -378,6 +398,281 @@ class VNASTCharacterExitNode(VNASTNodeBase):
   @staticmethod
   def create(context : Context, character : StringLiteral | str, name : str = '', loc : Location | None = None):
     return VNASTCharacterExitNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, character=character, name=name, loc=loc)
+
+@IROperationDataclass
+class VNASTInstantEffectNode(VNASTNodeBase):
+  """场景/角色「瞬时」类特效 AST 结点（非转场）。
+
+  数值在 IR 中一律为 ``FloatLiteral``，其底层为 ``decimal.Decimal``（秒、像素、比例等按字段说明）。
+  ``create()`` 的标量参数请传 ``decimal.Decimal``，勿传内置 ``float``。
+  """
+
+  # True：场景级全屏；False：绑定角色立绘（须配合 character_name / character_states_csv）。
+  scene_wide : OpOperand[BoolLiteral]
+  # 角色在符号表中的规范名（来自特效 CallExpr 的角色部分）；仅 scene_wide=False 时有效，否则可为空串。
+  character_name : OpOperand[StringLiteral]
+  # 该角色当前立绘状态列表的逗号分隔文本（与后端槽位解析一致）；无多状态时可为空串。
+  character_states_csv : OpOperand[StringLiteral]
+  effect_kind : OpOperand[EnumLiteral[VNInstantEffectKind]]
+  # 整体持续或过渡到目标状态的时长（秒）。<0 表示持续到用户执行「结束特效」；闪烁 flash 在命令层通常固定为 0（由内层切入/停留/恢复控制形态）。
+  duration : OpOperand[FloatLiteral]
+  # 依 effect_kind：shake 为像素级幅度；bounce 为跳起高度占屏高比例(约 0~1)；tremble 为像素幅度；滤镜类(grayscale/opacity/tint/blur)为 0~1 强度或半径等（与后端约定一致）。
+  amplitude : OpOperand[FloatLiteral]
+  # 依 effect_kind：shake 为衰减系数；bounce 存重复次数（Decimal 字面值）；tremble 存往复周期（秒）；其余情况多为 0。
+  decay : OpOperand[FloatLiteral]
+  # 仅 ``effect_kind==shake`` 时有效；其余种类填 ``VNShakeAxisKind.NONE``。
+  shake_axis : OpOperand[EnumLiteral[VNShakeAxisKind]]
+  # 仅 ``effect_kind==bounce`` 时有效；其余种类填 ``VNMotionStyleKind.LINEAR``。
+  motion_style : OpOperand[EnumLiteral[VNMotionStyleKind]]
+  # #RRGGBB；tint 为叠加色；非色调类滤镜时常为占位 ``#ffffff``。
+  flash_color : OpOperand[StringLiteral]
+  # 以下为闪烁(flash)专用三段时长（秒）；其它 effect_kind 下多为占位默认（如 0.06/0.1/0.18）。
+  flash_in : OpOperand[FloatLiteral]
+  flash_hold : OpOperand[FloatLiteral]
+  flash_out : OpOperand[FloatLiteral]
+
+  def get_short_str(self, indent : int = 0) -> str:
+    sc = "scene" if self.scene_wide.get().value else ("char:" + self.character_name.get().get_string())
+    return f"InstantEffect<{self.effect_kind.get().value.value}> {sc}"
+
+  @staticmethod
+  def create(
+    context : Context,
+    *,
+    scene_wide : bool,
+    character_name : str = "",
+    character_states_csv : str = "",
+    effect_kind : VNInstantEffectKind,
+    duration : decimal.Decimal,
+    amplitude : decimal.Decimal,
+    decay : decimal.Decimal,
+    flash_color : str,
+    flash_in : decimal.Decimal,
+    flash_hold : decimal.Decimal,
+    flash_out : decimal.Decimal,
+    shake_axis : VNShakeAxisKind = VNShakeAxisKind.NONE,
+    motion_style : VNMotionStyleKind = VNMotionStyleKind.LINEAR,
+    name : str = "",
+    loc : Location | None = None,
+  ) -> VNASTInstantEffectNode:
+    return VNASTInstantEffectNode(
+      init_mode=IRObjectInitMode.CONSTRUCT,
+      context=context,
+      scene_wide=BoolLiteral.get(scene_wide, context),
+      character_name=StringLiteral.get(character_name, context),
+      character_states_csv=StringLiteral.get(character_states_csv, context),
+      effect_kind=EnumLiteral.get(context, effect_kind),
+      duration=FloatLiteral.get(duration, context),
+      amplitude=FloatLiteral.get(amplitude, context),
+      decay=FloatLiteral.get(decay, context),
+      shake_axis=EnumLiteral.get(context, shake_axis),
+      motion_style=EnumLiteral.get(context, motion_style),
+      flash_color=StringLiteral.get(flash_color, context),
+      flash_in=FloatLiteral.get(flash_in, context),
+      flash_hold=FloatLiteral.get(flash_hold, context),
+      flash_out=FloatLiteral.get(flash_out, context),
+      name=name,
+      loc=loc,
+    )
+
+@IROperationDataclass
+class VNASTWeatherEffectNode(VNASTNodeBase):
+  """全屏粒子天气（雪/雨），独立 screen 层；sustain<0 表示持续至「结束特效·场景」。"""
+
+  weather_kind : OpOperand[EnumLiteral[VNWeatherEffectKind]]
+  intensity : OpOperand[FloatLiteral]
+  inner_fade_in : OpOperand[FloatLiteral]
+  inner_fade_out : OpOperand[FloatLiteral]
+  overlay_fade_in : OpOperand[FloatLiteral]
+  sustain : OpOperand[FloatLiteral]
+  vx : OpOperand[FloatLiteral]
+  vy : OpOperand[FloatLiteral]
+
+  def get_short_str(self, indent : int = 0) -> str:
+    return f"Weather<{self.weather_kind.get().value.value}>"
+
+  @staticmethod
+  def create(
+    context : Context,
+    *,
+    weather_kind : VNWeatherEffectKind,
+    intensity : decimal.Decimal,
+    inner_fade_in : decimal.Decimal,
+    inner_fade_out : decimal.Decimal,
+    overlay_fade_in : decimal.Decimal,
+    sustain : decimal.Decimal,
+    vx : decimal.Decimal,
+    vy : decimal.Decimal,
+    name : str = "",
+    loc : Location | None = None,
+  ) -> VNASTWeatherEffectNode:
+    return VNASTWeatherEffectNode(
+      init_mode=IRObjectInitMode.CONSTRUCT,
+      context=context,
+      weather_kind=EnumLiteral.get(context, weather_kind),
+      intensity=FloatLiteral.get(intensity, context),
+      inner_fade_in=FloatLiteral.get(inner_fade_in, context),
+      inner_fade_out=FloatLiteral.get(inner_fade_out, context),
+      overlay_fade_in=FloatLiteral.get(overlay_fade_in, context),
+      sustain=FloatLiteral.get(sustain, context),
+      vx=FloatLiteral.get(vx, context),
+      vy=FloatLiteral.get(vy, context),
+      name=name,
+      loc=loc,
+    )
+
+@IROperationDataclass
+class VNASTCharacterMoveTweenNode(VNASTNodeBase):
+  """立绘平移补间：目标须已上屏且具备 screen2d 占位。
+
+  ``target_screen_x_ratio`` / ``target_screen_y_ratio`` 为相对游戏分辨率的比例（约 0~1）。
+  时长与缓动见 ``duration``、``style``；codegen 中换算为像素并下发 ``VNCharacterSpriteMoveInst``（move_kind=``move``）。
+  """
+
+  character_name : OpOperand[StringLiteral]
+  character_states_csv : OpOperand[StringLiteral]
+  duration : OpOperand[FloatLiteral]
+  target_screen_x_ratio : OpOperand[FloatLiteral]
+  target_screen_y_ratio : OpOperand[FloatLiteral]
+  style : OpOperand[EnumLiteral[VNMotionStyleKind]]
+
+  def get_short_str(self, indent : int = 0) -> str:
+    return f"CharacterMove<move> {self.character_name.get().get_string()}"
+
+  @staticmethod
+  def create(
+    context : Context,
+    *,
+    character_name : str,
+    character_states_csv : str,
+    duration : decimal.Decimal,
+    target_screen_x_ratio : decimal.Decimal,
+    target_screen_y_ratio : decimal.Decimal,
+    style : VNMotionStyleKind,
+    name : str = "",
+    loc : Location | None = None,
+  ) -> VNASTCharacterMoveTweenNode:
+    return VNASTCharacterMoveTweenNode(
+      init_mode=IRObjectInitMode.CONSTRUCT,
+      context=context,
+      character_name=StringLiteral.get(character_name, context),
+      character_states_csv=StringLiteral.get(character_states_csv, context),
+      duration=FloatLiteral.get(duration, context),
+      target_screen_x_ratio=FloatLiteral.get(target_screen_x_ratio, context),
+      target_screen_y_ratio=FloatLiteral.get(target_screen_y_ratio, context),
+      style=EnumLiteral.get(context, style),
+      name=name,
+      loc=loc,
+    )
+
+
+@IROperationDataclass
+class VNASTCharacterScaleTweenNode(VNASTNodeBase):
+  """立绘缩放补间（相对 1.0 的目标缩放系数，中心固定为立绘中心）。"""
+
+  character_name : OpOperand[StringLiteral]
+  character_states_csv : OpOperand[StringLiteral]
+  duration : OpOperand[FloatLiteral]
+  target_scale : OpOperand[FloatLiteral]
+  style : OpOperand[EnumLiteral[VNMotionStyleKind]]
+
+  def get_short_str(self, indent : int = 0) -> str:
+    return f"CharacterMove<scale> {self.character_name.get().get_string()}"
+
+  @staticmethod
+  def create(
+    context : Context,
+    *,
+    character_name : str,
+    character_states_csv : str,
+    duration : decimal.Decimal,
+    target_scale : decimal.Decimal,
+    style : VNMotionStyleKind,
+    name : str = "",
+    loc : Location | None = None,
+  ) -> VNASTCharacterScaleTweenNode:
+    return VNASTCharacterScaleTweenNode(
+      init_mode=IRObjectInitMode.CONSTRUCT,
+      context=context,
+      character_name=StringLiteral.get(character_name, context),
+      character_states_csv=StringLiteral.get(character_states_csv, context),
+      duration=FloatLiteral.get(duration, context),
+      target_scale=FloatLiteral.get(target_scale, context),
+      style=EnumLiteral.get(context, style),
+      name=name,
+      loc=loc,
+    )
+
+
+@IROperationDataclass
+class VNASTCharacterRotateTweenNode(VNASTNodeBase):
+  """立绘旋转补间（绕立绘中心，角度单位为度）。"""
+
+  character_name : OpOperand[StringLiteral]
+  character_states_csv : OpOperand[StringLiteral]
+  duration : OpOperand[FloatLiteral]
+  angle_degrees : OpOperand[FloatLiteral]
+  style : OpOperand[EnumLiteral[VNMotionStyleKind]]
+
+  def get_short_str(self, indent : int = 0) -> str:
+    return f"CharacterMove<rotate> {self.character_name.get().get_string()}"
+
+  @staticmethod
+  def create(
+    context : Context,
+    *,
+    character_name : str,
+    character_states_csv : str,
+    duration : decimal.Decimal,
+    angle_degrees : decimal.Decimal,
+    style : VNMotionStyleKind,
+    name : str = "",
+    loc : Location | None = None,
+  ) -> VNASTCharacterRotateTweenNode:
+    return VNASTCharacterRotateTweenNode(
+      init_mode=IRObjectInitMode.CONSTRUCT,
+      context=context,
+      character_name=StringLiteral.get(character_name, context),
+      character_states_csv=StringLiteral.get(character_states_csv, context),
+      duration=FloatLiteral.get(duration, context),
+      angle_degrees=FloatLiteral.get(angle_degrees, context),
+      style=EnumLiteral.get(context, style),
+      name=name,
+      loc=loc,
+    )
+
+@IROperationDataclass
+class VNASTEndEffectNode(VNASTNodeBase):
+  """结束持续类特效：目标为场景或指定角色立绘。"""
+
+  scene_wide : OpOperand[BoolLiteral]
+  character_name : OpOperand[StringLiteral]
+  character_states_csv : OpOperand[StringLiteral]
+
+  def get_short_str(self, indent : int = 0) -> str:
+    if self.scene_wide.get().value:
+      return "EndEffect<scene>"
+    return "EndEffect<char:" + self.character_name.get().get_string() + ">"
+
+  @staticmethod
+  def create(
+    context : Context,
+    *,
+    scene_wide : bool,
+    character_name : str = "",
+    character_states_csv : str = "",
+    name : str = "",
+    loc : Location | None = None,
+  ) -> VNASTEndEffectNode:
+    return VNASTEndEffectNode(
+      init_mode=IRObjectInitMode.CONSTRUCT,
+      context=context,
+      scene_wide=BoolLiteral.get(scene_wide, context),
+      character_name=StringLiteral.get(character_name, context),
+      character_states_csv=StringLiteral.get(character_states_csv, context),
+      name=name,
+      loc=loc,
+    )
 
 @IROperationDataclass
 class VNASTCodegenRegion(VNASTNodeBase):
@@ -725,6 +1020,54 @@ class VNASTImagePresetPlaceSymbol(Symbol):
   def create(context : Context, kind : VNASTImagePlacerKind, parameters : typing.Iterable[Literal], name : str, loc : Location | None = None):
     return VNASTImagePresetPlaceSymbol(init_mode=IRObjectInitMode.CONSTRUCT, context=context, kind=kind, parameters=parameters, name=name, loc=loc)
 
+# ------------------------------------------------------------------------------
+# EffectDecl 预设效果集：用于多语言解析 left/右/左 等固定参数（转场方向等）
+# ------------------------------------------------------------------------------
+
+@IROperationDataclass
+class VNASTEffectPresetEntrySymbol(Symbol):
+  """预设效果集（``VNASTEffectPresetSetSymbol``）中的一条取值。
+
+  ``name`` / ``canonical_value`` 均为该条目的 **规范键**（小写英文蛇形，与转场/特效 codegen 约定一致）。
+  ``aliases`` 为指向同一规范键的多语言或别称（0..N 个 ``StringLiteral``）。
+
+  **canonical_value 的可能取值** 取决于该条目所属预设集的 **名称**（``VNASTEffectPresetSetSymbol`` 的 ``name``，如 ``SlideDirection``）：
+
+  - **内置**时，各集允许出现的规范键 **全集** 见 ``preppipe.frontend.vnmodel.vnutil`` 中的
+    ``BUILTIN_EFFECT_PRESET_CANONICAL_BY_SET``（键为预设集名，值为 ``frozenset[str]``），
+    与同文件中的 ``CANONICAL_SLIDE_DIRECTIONS``、``CANONICAL_ZOOM_DIRECTIONS``、
+    ``CANONICAL_ZOOM_POINTS``、``CANONICAL_SHAKE_DIRECTIONS`` 及注入函数
+    ``ensure_builtin_effect_presets`` 中的表格一致。
+  - **用户**可在文档 ``EffectDecl`` 中为同名集 **追加** 条目，因此运行时也可能出现上述全集中未列出的
+    ``canonical_value``（无法用单一 Enum 封闭）。
+  """
+  # 该条目对应的规范键字符串；含义由父级预设集 name 决定，取值范围见类文档。
+  canonical_value : OpOperand[StringLiteral]
+  aliases : OpOperand[StringLiteral]         # 0 到 N 个别名（多语言等）
+
+  @staticmethod
+  def create(context : Context, canonical_value : str, aliases : typing.Iterable[str | StringLiteral], name : str | None = None, loc : Location | None = None):
+    # Symbol 的 name 用于符号表查找，与 canonical_value 一致；aliases 逐个 add_operand 以支持多值
+    key = canonical_value if isinstance(canonical_value, str) else canonical_value.get_string()
+    cv = StringLiteral.get(key, context) if isinstance(canonical_value, str) else canonical_value
+    alias_list = [StringLiteral.get(a, context) if isinstance(a, str) else a for a in aliases]
+    first = alias_list[0] if alias_list else StringLiteral.get("", context)
+    entry = VNASTEffectPresetEntrySymbol(init_mode=IRObjectInitMode.CONSTRUCT, context=context, canonical_value=cv, aliases=first, name=name or key, loc=loc)
+    for a in alias_list[1:]:
+      entry.aliases.add_operand(a)
+    return entry
+
+
+@IROperationDataclass
+class VNASTEffectPresetSetSymbol(Symbol):
+  """EffectDecl 预设效果集：一组命名取值（如 SlideDirection: left/右/左, right/右, ...）。"""
+  entries : SymbolTableRegion[VNASTEffectPresetEntrySymbol]  # 每个 entry 的 name 为规范键
+
+  @staticmethod
+  def create(context : Context, name : str, loc : Location | None = None):
+    return VNASTEffectPresetSetSymbol(init_mode=IRObjectInitMode.CONSTRUCT, context=context, name=name, loc=loc)
+
+
 @IROperationDataclass
 class VNASTCharacterSymbol(Symbol):
   aliases : OpOperand[StringLiteral]
@@ -846,6 +1189,7 @@ class VNASTFileInfo(VNASTNodeBase):
 class VNAST(Operation):
   screen_resolution : OpOperand[IntTuple2DLiteral]
   files : Block # VNASTFileInfo
+  effect_presets : SymbolTableRegion[VNASTEffectPresetSetSymbol]  # EffectDecl 预设效果集（如 SlideDirection, ZoomDirection）
 
   def get_short_str(self, indent : int = 0) -> str:
     width, height = self.screen_resolution.get().value
@@ -929,6 +1273,18 @@ class VNASTVisitor:
   def visitVNASTCharacterStateChangeNode(self, node : VNASTCharacterStateChangeNode):
     return self.visit_default_handler(node)
   def visitVNASTCharacterExitNode(self, node : VNASTCharacterExitNode):
+    return self.visit_default_handler(node)
+  def visitVNASTInstantEffectNode(self, node : VNASTInstantEffectNode):
+    return self.visit_default_handler(node)
+  def visitVNASTWeatherEffectNode(self, node : VNASTWeatherEffectNode):
+    return self.visit_default_handler(node)
+  def visitVNASTCharacterMoveTweenNode(self, node : VNASTCharacterMoveTweenNode):
+    return self.visit_default_handler(node)
+  def visitVNASTCharacterScaleTweenNode(self, node : VNASTCharacterScaleTweenNode):
+    return self.visit_default_handler(node)
+  def visitVNASTCharacterRotateTweenNode(self, node : VNASTCharacterRotateTweenNode):
+    return self.visit_default_handler(node)
+  def visitVNASTEndEffectNode(self, node : VNASTEndEffectNode):
     return self.visit_default_handler(node)
   def visitVNASTCodegenRegion(self, node : VNASTCodegenRegion):
     return self.visit_default_handler(node)
