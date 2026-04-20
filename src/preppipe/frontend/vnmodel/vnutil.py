@@ -780,7 +780,7 @@ _DEFAULT_TRANSITION_DURATION = decimal.Decimal("0.5")
 def map_sprite_transition_entry_to_exit(context : Context, entry : Value) -> Value:
   """立绘退场：若包裹块给出的是「入场类」通用转场，映射为对应的退场类，避免把淡入等绑在 hide 上。
 
-  DT_NO_TRANSITION 与已是退场类 / 未知值保持原样；DT_SPRITE_SHOW 视为默认入场，映射为默认淡出。"""
+  DT_NO_TRANSITION 与已是退场类 / 未知值保持原样；DT_SPRITE_SHOW 视为默认入场，映射为默认溶解退场（与 codegen 默认一致）。"""
   if isinstance(entry, VNFadeInSceneTransitionLit):
     return VNFadeOutSceneTransitionLit.get(context, entry.duration)
   if isinstance(entry, VNDissolveSceneTransitionLit):
@@ -804,22 +804,22 @@ def map_sprite_transition_entry_to_exit(context : Context, entry : Value) -> Val
   if dt == VNDefaultTransitionType.DT_NO_TRANSITION:
     return entry
   if dt == VNDefaultTransitionType.DT_SPRITE_SHOW:
-    return VNFadeOutSceneTransitionLit.get(context, FloatLiteral.get(_DEFAULT_TRANSITION_DURATION, context))
+    return VNDissolveSceneTransitionLit.get(context, FloatLiteral.get(_DEFAULT_TRANSITION_DURATION, context))
   return entry
 
 
 def default_scene_fade_in_lit(context : Context) -> VNFadeInSceneTransitionLit:
-  """用户未在命令中指定转场时，对立绘/场景显示采用的默认效果（淡入）。"""
+  """显式淡入（FadeIn）；未写转场的立绘/前景/背景默认路径用 default_scene_dissolve_lit。"""
   return VNFadeInSceneTransitionLit.get(context, FloatLiteral.get(_DEFAULT_TRANSITION_DURATION, context))
 
 
 def default_scene_fade_out_lit(context : Context) -> VNFadeOutSceneTransitionLit:
-  """用户未在命令中指定转场时，对立绘/场景退场采用的默认效果（淡出）。"""
+  """显式淡出（FadeOut）；未写转场的立绘/前景/背景默认路径用 default_scene_dissolve_lit。"""
   return VNFadeOutSceneTransitionLit.get(context, FloatLiteral.get(_DEFAULT_TRANSITION_DURATION, context))
 
 
 def default_scene_dissolve_lit(context : Context) -> VNDissolveSceneTransitionLit:
-  """场景背景在切换时的默认转场（溶解，与 Ren'Py dissolve 一致）。"""
+  """用户未写转场时，场景、立绘、前景图等采用的默认溶解（与 Ren'Py dissolve 一致）。"""
   return VNDissolveSceneTransitionLit.get(context, FloatLiteral.get(_DEFAULT_TRANSITION_DURATION, context))
 
 
