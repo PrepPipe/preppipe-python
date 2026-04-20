@@ -1100,7 +1100,7 @@ class VNCodeGen:
           self.destblock.push_back(rm)
           rmfinishtimes.append(rm.get_finish_time())
 
-        chhide = default_scene_fade_out_lit(self.context)
+        chhide = default_scene_dissolve_lit(self.context)
         for ch, d in character_sprites.items():
           for creation, handle in d.items():
             remove_handle(handle, chhide)
@@ -1460,7 +1460,7 @@ class VNCodeGen:
           raise PPAssertionError("We only support image types for now")
 
         cnode = VNCreateInst.create(context=self.context, start_time=self.starttime, content=sprite, ty=VNHandleType.get(sprite.valuetype), device=self.parsecontext.dev_foreground, loc=node.location)
-        cnode.transition.set_operand(0, default_scene_fade_in_lit(self.context))
+        cnode.transition.set_operand(0, default_scene_dissolve_lit(self.context))
         self.handle_transition_and_finishtime(cnode)
         # 在更新 info.sprite_handle 之前就把事件加上去，这样可以使调用 placer 时能记录事件发生前的状态
         self.placer.add_character_event(info, self.codegen.get_character_astnode(info.identity), sprite=sprite, instr=cnode, destexpr=node)
@@ -1495,7 +1495,7 @@ class VNCodeGen:
         if info.sprite_handle:
           rm = VNRemoveInst.create(self.context, start_time=self.starttime, handlein=info.sprite_handle, loc=node.location)
           self._copy_sprite_screen2d_to_remove(rm, info.sprite_handle)
-          rm.transition.set_operand(0, default_scene_fade_out_lit(self.context))
+          rm.transition.set_operand(0, default_scene_dissolve_lit(self.context))
           self.handle_transition_and_finishtime(rm)
           self.destblock.push_back(rm)
           self.placer.add_character_event(info, self.codegen.get_character_astnode(info.identity), sprite=None, instr=rm, destexpr=node)
@@ -1979,7 +1979,7 @@ class VNCodeGen:
               if transition := node.transition.try_get_value():
                 cnode.transition.set_operand(0, transition)
               else:
-                cnode.transition.set_operand(0, default_scene_fade_in_lit(self.context))
+                cnode.transition.set_operand(0, default_scene_dissolve_lit(self.context))
               self.destblock.push_back(cnode)
               self.handle_transition_and_finishtime(cnode)
               info = VNCodeGen.SceneContext.AssetState(dev=self.parsecontext.dev_foreground, search_names=description, data=content, output_handle=cnode)
@@ -2008,7 +2008,7 @@ class VNCodeGen:
                   if transition := node.transition.try_get_value():
                     rnode.transition.set_operand(0, transition)
                   else:
-                    rnode.transition.set_operand(0, default_scene_fade_out_lit(self.context))
+                    rnode.transition.set_operand(0, default_scene_dissolve_lit(self.context))
                   self.handle_transition_and_finishtime(rnode)
                   self.destblock.push_back(rnode)
                   self.placer.add_image_event(handle=info, content=info.output_handle, instr=rnode, destexpr=node)
@@ -2241,7 +2241,7 @@ class VNCodeGen:
           if (pv := self._scene_switch_parent_transition_as_value()) is not None:
             rm.transition.set_operand(0, map_sprite_transition_entry_to_exit(self.context, pv))
           else:
-            rm.transition.set_operand(0, default_scene_fade_out_lit(self.context))
+            rm.transition.set_operand(0, default_scene_dissolve_lit(self.context))
           switchnode.body.push_back(rm)
           rmtimes.append(rm.get_finish_time())
           characterinfo.sprite_handle = None
