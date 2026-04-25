@@ -1,5 +1,6 @@
 init python:
 
+    # 圆边矩形
     renpy.register_shader("CursedOctopus.rectangle", variables="""
         uniform vec4 u_rectangle_color;
         uniform vec4 u_stroke_color;
@@ -30,6 +31,7 @@ init python:
         gl_FragColor = c1 + c2;
     """)
 
+    # 带抗锯齿的圆边矩形
     renpy.register_shader("CursedOctopus.rectangleAA", variables="""
         uniform vec4 u_rectangle_color;
         uniform vec4 u_stroke_color;
@@ -61,6 +63,7 @@ init python:
         gl_FragColor = mix(c2, c1, fill_alpha);
     """)
 
+    # 椭圆
     renpy.register_shader("CursedOctopus.ellipse", variables="""
         uniform vec4 u_ellipse_color;
         uniform vec4 u_stroke_color;
@@ -82,6 +85,7 @@ init python:
         gl_FragColor = c1 + c2;
     """)
 
+    # 带抗锯齿的椭圆
     renpy.register_shader("CursedOctopus.ellipseAA", variables="""
         uniform vec4 u_ellipse_color;
         uniform vec4 u_stroke_color;
@@ -103,3 +107,43 @@ init python:
         vec4 c2 = border_alpha * u_stroke_color;
         gl_FragColor = mix(c2, c1, fill_alpha);
     """)
+
+    # 边缘虚化：按左、右、上、下四个方向的距离，边缘逐渐透明。
+    renpy.register_shader("CursedOctopus.edge_virtualization",
+        variables="""
+            uniform sampler2D tex0;
+            uniform float u_edge_left;
+            uniform float u_edge_right;
+            uniform float u_edge_top;
+            uniform float u_edge_bottom;
+            uniform float u_edge_softness;
+            attribute vec2 a_tex_coord;
+            varying vec2 v_tex_coord;
+        """,
+        vertex_300="""
+            v_tex_coord = a_tex_coord;
+        """,
+        fragment_300="""
+            vec2 uv = v_tex_coord.xy;
+            vec4 color = texture2D(tex0, uv);
+
+            float left = clamp(u_edge_left, 0.0, 0.5);
+            float right = clamp(u_edge_right, 0.0, 0.5);
+            float top = clamp(u_edge_top, 0.0, 0.5);
+            float bottom = clamp(u_edge_bottom, 0.0, 0.5);
+
+            float alpha = 1.0;
+            float left_alpha =  left > 0.0 ? smoothstep(0.0, left, uv.x) : 1.0;
+            float right_alpha =  right > 0.0 ? smoothstep(0.0, right, 1.0 - uv.x) : 1.0;
+            float top_alpha =  top > 0.0 ? smoothstep(0.0, top, uv.y) : 1.0;
+            float bottom_alpha =  bottom > 0.0 ? smoothstep(0.0, bottom, 1.0 - uv.y) : 1.0;
+            alpha *= pow(left_alpha * right_alpha * top_alpha * bottom_alpha, u_edge_softness);
+
+            gl_FragColor = color * alpha;
+        """
+    )
+
+
+
+
+
