@@ -83,6 +83,7 @@ def _ensure_renpy_project_generated(game_dir: str, language: str | None = None) 
   renpy_py = os.path.join(sdk_dir, 'renpy.py')
   cmd_generate = [
     python_exe, renpy_py, 'launcher', 'generate_gui',
+    '--width', '1920', '--height', '1080',
     abs_project_root, '--start',
   ]
   if language is not None:
