@@ -1066,6 +1066,12 @@ class FguiToRenpyConverter:
                 selected_index = controller.selected
             self.screen_variable_code.append(f"{self.indent_str}default {controller.name} = {selected_index}")            
 
+        # 根据是否可滚动，添加ui.adjustment对象
+        if component.overflow == "scroll":
+            self.screen_variable_code.append(f"{self.indent_str}# 滚动容器使用的ui.adjustment对象：") 
+            self.screen_variable_code.append(f"{self.indent_str}default xadj = ui.adjustment()")
+            self.screen_variable_code.append(f"{self.indent_str}default yadj = ui.adjustment()")
+
         # 显式添加一个fixed，设置界面尺寸。
         self.screen_ui_code.append(f"{self.indent_str}fixed:")
         self.indent_level_up()
@@ -1083,6 +1089,16 @@ class FguiToRenpyConverter:
         elif component.overflow == "scroll":
             self.screen_ui_code.append(f"{self.indent_str}viewport:")
             self.indent_level_up()
+            # 添加边缘虚化变换
+            self.screen_ui_code.append(f"{self.indent_str}yadjustment yadj")
+            self.screen_ui_code.append(f"{self.indent_str}xadjustment xadj")
+            left_edge = 0.0
+            left_edge = float(component.clip_softness[0]) / component.size[0]
+            right_edge = left_edge
+            top_edge = 0.0
+            top_edge = float(component.clip_softness[1]) / component.size[1]
+            bottom_edge = top_edge
+            self.screen_ui_code.append(f"{self.indent_str}at dynamic_edge_virtualization(xadj, yadj, left={left_edge}, right={right_edge}, top={top_edge}, bottom={bottom_edge}, softness=1.0)")
             self.screen_ui_code.append(f"{self.indent_str}xysize {component.size}")
             self.screen_ui_code.append(f"{self.indent_str}draggable True") 
             # 在Ren'Py中实际可能无法滚动。
@@ -3237,7 +3253,7 @@ class FguiToRenpyConverter:
         """
         复制预定义cdd和cds的文件
         """
-        print(f"source_dir: {source_dir}")
+        # print(f"source_dir: {source_dir}")
         # 所有rpy文件
         all_files = os.listdir(source_dir)
         for file in all_files:

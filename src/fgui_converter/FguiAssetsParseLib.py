@@ -309,6 +309,7 @@ class FguiComponent:
         self.min_width, self.max_width, self.min_height, self.max_height = tuple(map(int, restrict_size.split(",")))
         self.overflow = component_etree.get("overflow", "visible")
         self.scroll = component_etree.get("scroll", "vertical")
+        self.clip_softness = tuple(map(int, component_etree.get("clipSoftness", "0,0").split(",")))
         self.extention = component_etree.get("extention")
         self.mask = component_etree.get("mask")
         # 轴心。默认值为(0.0, 0.0)。
