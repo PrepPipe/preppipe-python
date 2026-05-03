@@ -1,0 +1,14 @@
+# {component_name} 内部装载器 {loader_name}
+screen {loader_screen_name}(xysize=(0,0), pos=(0,0), child=None, child_type="image", fit_xysize=(None,None), fit_type=None, child_align=(0.0,0.0)):
+    frame:
+        pos pos
+        xysize xysize
+        if child_type == "image":
+            add child:
+                xysize fit_xysize
+                fit fit_type
+                align child_align
+        elif child_type == "screen":
+            use expression child
+        else:
+            add null

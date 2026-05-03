@@ -1,5 +1,7 @@
 # {component_name} 内部列表 {list_name}
 screen {list_screen_name}(overflow=None, layout='row', row_num=1, column_num=1, transpose=False, xspacing=0, yspacing=0, xysize=(0,0), pos=(0,0), margin=(0,0,0,0)):
+    default xadj = ui.adjustment()
+    default yadj = ui.adjustment()
     if overflow == 'visible':
         frame:
             margin margin
@@ -43,12 +45,13 @@ screen {list_screen_name}(overflow=None, layout='row', row_num=1, column_num=1, 
                     transclude
     else:
         frame:
-            has side 'c r b'
+            has side {side_layout}  pos pos xysize xysize
             viewport id '{list_screen_name}_vp':
+                yadjustment yadj
+                xadjustment xadj
+                at dynamic_edge_virtualization(xadj, yadj, left={left_edge}, right={right_edge}, top={top_edge}, bottom={bottom_edge}, softness=1.0)
                 draggable True
                 mousewheel True
-                pos pos
-                xysize xysize
                 if layout == 'row':
                     hbox:
                         spacing xspacing
@@ -66,10 +69,10 @@ screen {list_screen_name}(overflow=None, layout='row', row_num=1, column_num=1, 
             vbar:
                 value YScrollValue('{list_screen_name}_vp')
                 style {vscrollbar_style}
-                ysize xysize[1]
-                pos pos
+                xysize {vertical_scrollbar_size}
+                unscrollable {unscrollable_type}
             bar:
                 value XScrollValue('{list_screen_name}_vp')
                 style {hscrollbar_style}
-                xsize xysize[0]
-                pos pos
+                xysize {horizontal_scrollbar_size}
+                unscrollable {unscrollable_type}
