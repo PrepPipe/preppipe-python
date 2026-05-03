@@ -2946,6 +2946,16 @@ class FguiToRenpyConverter:
             if fgui_list.scrollbar_flags_dict['hide_when_not_overflow']:
                 unscrollable_type = "'hide'"
         list_screen_template_content = list_screen_template_content.replace('{side_layout}', f"{side_layout}")
+        left_edge, right_edge, top_edge, bottom_edge = 0.0, 0.0, 0.0, 0.0
+        if fgui_list.clip_softness:
+            left_edge = float(fgui_list.clip_softness[0]) / fgui_list.size[0]
+            right_edge = left_edge
+            top_edge = float(fgui_list.clip_softness[1]) / fgui_list.size[1]
+            bottom_edge = top_edge
+        list_screen_template_content = list_screen_template_content.replace('{left_edge}', f"{left_edge}")
+        list_screen_template_content = list_screen_template_content.replace('{right_edge}', f"{right_edge}")
+        list_screen_template_content = list_screen_template_content.replace('{top_edge}', f"{top_edge}")
+        list_screen_template_content = list_screen_template_content.replace('{bottom_edge}', f"{bottom_edge}")
         vertical_scrollbar_component, horizontal_scrollbar_component = self.get_scrollbar_style(fgui_list.scrollbar_res)
         if vertical_scrollbar_component:
             vscrollbar_style = vertical_scrollbar_component.name

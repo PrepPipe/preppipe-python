@@ -883,7 +883,7 @@ class FguiList(FguiDisplayable):
         self.scrollbar_flags_dict = self.get_scrollbar_flags_dict()
         margin = self.display_item_tree.get("margin")
         self.margin = tuple(map(int, margin.split(","))) if margin else (0,0,0,0)
-        self.clip_softness = self.display_item_tree.get("clipSoftness", "0,0")
+        self.clip_softness = tuple(map(int, self.display_item_tree.get("clipSoftness", "0,0").split(",")))
         self.line_item_count = int(self.display_item_tree.get("lineItemCount", "0"))
         self.line_item_count2 = int(self.display_item_tree.get("lineItemCount2", "0"))
         self.line_gap = int(self.display_item_tree.get("lineGap", "0"))
