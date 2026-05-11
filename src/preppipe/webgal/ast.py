@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: 2024 PrepPipe's Contributors
 # SPDX-License-Identifier: Apache-2.0
 
+import typing
+
 from ..irbase import *
 from .. import irdataop
 from ..language import TranslationDomain, Translatable
@@ -216,11 +218,26 @@ class WebGalJumpLabelNode(WebGalNode):
       label = StringLiteral.get(label, context=context)
     return WebGalJumpLabelNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, label=label, loc=loc)
 
-irdataop.IROperationDataclass
+@irdataop.IROperationDataclass
 class WebGalSetVarNode(WebGalNode):
   varname : OpOperand[StringLiteral]
   expr : OpOperand[StringLiteral]
   flag_global : OpOperand[BoolLiteral]
+
+  @staticmethod
+  def create(
+    context : Context,
+    varname : str,
+    expr : str,
+    *,
+    global_var : bool = False,
+    loc : Location | None = None,
+  ):
+    n = WebGalSetVarNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, loc=loc)
+    n.varname.set_operand(0, StringLiteral.get(varname, context))
+    n.expr.set_operand(0, StringLiteral.get(expr, context))
+    n.flag_global.set_operand(0, BoolLiteral.get(global_var, context))
+    return n
 
 @irdataop.IROperationDataclass
 class WebGalGetUserInputNode(WebGalNode):
@@ -233,6 +250,42 @@ class WebGalSetAnimationNode(WebGalNode):
   animation : OpOperand[StringLiteral]
   target : OpOperand[StringLiteral]
 
+  @staticmethod
+  def create(
+    context : Context,
+    animation : str,
+    target : str,
+    loc : Location | None = None,
+  ):
+    n = WebGalSetAnimationNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, loc=loc)
+    n.animation.set_operand(0, StringLiteral.get(animation, context))
+    n.target.set_operand(0, StringLiteral.get(target, context))
+    return n
+
+@irdataop.IROperationDataclass
+class WebGalSetTransformNode(WebGalNode):
+  transform_json : OpOperand[StringLiteral]
+  target : OpOperand[StringLiteral]
+  duration_ms : OpOperand[IntLiteral]
+  flag_write_default : OpOperand[BoolLiteral]
+
+  @staticmethod
+  def create(
+    context : Context,
+    transform_json : str,
+    target : str,
+    duration_ms : int,
+    *,
+    write_default : bool = False,
+    loc : Location | None = None,
+  ):
+    n = WebGalSetTransformNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, loc=loc)
+    n.transform_json.set_operand(0, StringLiteral.get(transform_json, context))
+    n.target.set_operand(0, StringLiteral.get(target, context))
+    n.duration_ms.set_operand(0, IntLiteral.get(duration_ms, context))
+    n.flag_write_default.set_operand(0, BoolLiteral.get(write_default, context))
+    return n
+
 @irdataop.IROperationDataclass
 class WebGalSetTransitionNode(WebGalNode):
   target : OpOperand[StringLiteral]
@@ -241,11 +294,34 @@ class WebGalSetTransitionNode(WebGalNode):
 
 @irdataop.IROperationDataclass
 class WebGalPixiInitNode(WebGalNode):
-  pass
+  @staticmethod
+  def create(context : Context, loc : Location | None = None):
+    return WebGalPixiInitNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, loc=loc)
 
 @irdataop.IROperationDataclass
 class WebGalPixiPerformNode(WebGalNode):
   effect : OpOperand[StringLiteral]
+
+  @staticmethod
+  def create(context : Context, effect : str, loc : Location | None = None):
+    n = WebGalPixiPerformNode(init_mode=IRObjectInitMode.CONSTRUCT, context=context, loc=loc)
+    n.effect.set_operand(0, StringLiteral.get(effect, context))
+    return n
+
+@irdataop.IROperationDataclass
+class WebGalTextDataFileOp(Symbol):
+  """导出到工程内的 UTF-8 文本文件（如 game/animation/*.json）。"""
+  text_body : OpOperand[StringLiteral]
+
+  @staticmethod
+  def create(context : Context, relpath : str, text : str, loc : Location | None = None):
+    return WebGalTextDataFileOp(
+      init_mode=IRObjectInitMode.CONSTRUCT,
+      context=context,
+      name=relpath,
+      text_body=StringLiteral.get(text, context),
+      loc=loc,
+    )
 
 @irdataop.IROperationDataclass
 class WebGalScriptFileOp(Symbol):
@@ -263,7 +339,17 @@ class WebGalASTVisitor(BackendASTVisitorBase):
 
 @irdataop.IROperationDataclass
 class WebGalModel(BackendProjectModelBase[WebGalScriptFileOp]):
+  _data_file_region : SymbolTableRegion = irdataop.symtable_field(lookup_name="data_file")
 
   @staticmethod
   def create(context : Context):
     return WebGalModel(init_mode=IRObjectInitMode.CONSTRUCT, context=context)
+
+  def add_data_file(self, op : WebGalTextDataFileOp) -> None:
+    self._data_file_region.add(op)
+
+  def get_data_file(self, relpath : str) -> WebGalTextDataFileOp | None:
+    return self._data_file_region.get(relpath)
+
+  def data_files(self) -> typing.Iterable[WebGalTextDataFileOp]:
+    return self._data_file_region

@@ -1,8 +1,11 @@
 # SPDX-FileCopyrightText: 2024 PrepPipe's Contributors
 # SPDX-License-Identifier: Apache-2.0
 
+import dataclasses
+
 from .ast import *
 from ..vnmodel import *
+from ..exceptions import PPInternalError
 from ..util.imagepackexportop import ImagePackExportDataBuilder
 from ..util.imagepack import *
 from ..util import nameconvert
@@ -66,9 +69,18 @@ class _WebGalCodeGenHelper(BackendCodeGenHelperBase[WebGalNode]):
 
   @staticmethod
   def init_matchtable():
+    # TODO(WebGAL): 待引擎支持工程内开箱扩展（或 PrepPipe 分发定制构建）后，恢复 VN*EffectInst 的
+    # setAnimation / setTransform / Pixi 等价生成；当前凡遇此类 IR 一律 _webgal_unsupported_vn_effect。
     _WebGalCodeGenHelper.install_codegen_matchtree({
       VNWaitInstruction : {
         VNSayInstructionGroup: _WebGalCodeGenHelper.gen_say_wait,
+        VNShakeEffectInst: _WebGalCodeGenHelper.gen_shake_effect_wait,
+        VNFlashEffectInst: _WebGalCodeGenHelper.gen_flash_effect_wait,
+        VNWeatherEffectInst: _WebGalCodeGenHelper.gen_weather_effect_wait,
+        VNCharacterSpriteMoveInst: _WebGalCodeGenHelper.gen_character_sprite_move_wait,
+        VNCharTrembleEffectInst: _WebGalCodeGenHelper.gen_char_tremble_effect_wait,
+        VNFilterEffectInst: _WebGalCodeGenHelper.gen_filter_effect_wait,
+        VNEndEffectInst: _WebGalCodeGenHelper.gen_end_effect_wait,
         None: _WebGalCodeGenHelper.gen_wait,
       },
       VNSayInstructionGroup: _WebGalCodeGenHelper.gen_say_nowait,
@@ -79,6 +91,13 @@ class _WebGalCodeGenHelper(BackendCodeGenHelperBase[WebGalNode]):
       VNRemoveInst : _WebGalCodeGenHelper.gen_remove,
       VNCallInst : _WebGalCodeGenHelper.gen_call,
       VNBackendInstructionGroup : _WebGalCodeGenHelper.gen_asm,
+      VNShakeEffectInst : _WebGalCodeGenHelper.gen_shake_effect_inst,
+      VNFlashEffectInst : _WebGalCodeGenHelper.gen_flash_effect_inst,
+      VNWeatherEffectInst : _WebGalCodeGenHelper.gen_weather_effect_inst,
+      VNCharacterSpriteMoveInst : _WebGalCodeGenHelper.gen_character_sprite_move_inst,
+      VNCharTrembleEffectInst : _WebGalCodeGenHelper.gen_char_tremble_effect_inst,
+      VNFilterEffectInst : _WebGalCodeGenHelper.gen_filter_effect_inst,
+      VNEndEffectInst : _WebGalCodeGenHelper.gen_end_effect_inst,
     })
     _WebGalCodeGenHelper.install_asset_basedir_matchtree({
       AudioAssetData : {
@@ -534,6 +553,73 @@ class _WebGalCodeGenHelper(BackendCodeGenHelperBase[WebGalNode]):
     wait = WebGalWaitPseudoNode.create(self.context)
     wait.insert_before(insert_before)
     return wait
+
+  def _webgal_unsupported_vn_effect(self, inst : VNInstruction) -> None:
+    """TODO(WebGAL): Open WebGAL 若支持工程内运行时扩展 Pixi / 或 PrepPipe 固定分发定制引擎，再实现等价导出。"""
+    cls = type(inst).__name__
+    raise PPInternalError(
+      "WebGAL 后端暂不支持通用特效 IR（"
+      + cls
+      + "）：官方引擎无法在工程目录内像 Ren'Py 一样开箱加载自定义脚本；"
+      "语义等价导出待 WebGAL 侧能力或 PrepPipe 定制构建就绪后恢复（见 webgal/codegen.py init_matchtable TODO）。"
+      "请改用 Ren'Py 导出，或从工程中移除此类特效指令。",
+    )
+
+  def gen_shake_effect_wait(self, instrs: list[VNInstruction], insert_before: WebGalNode) -> WebGalNode:
+    assert len(instrs) == 2 and isinstance(instrs[1], VNShakeEffectInst)
+    self._webgal_unsupported_vn_effect(instrs[1])
+
+  def gen_shake_effect_inst(self, instrs: list[VNInstruction], insert_before: WebGalNode) -> WebGalNode:
+    assert len(instrs) == 1 and isinstance(instrs[0], VNShakeEffectInst)
+    self._webgal_unsupported_vn_effect(instrs[0])
+
+  def gen_flash_effect_wait(self, instrs: list[VNInstruction], insert_before: WebGalNode) -> WebGalNode:
+    assert len(instrs) == 2 and isinstance(instrs[1], VNFlashEffectInst)
+    self._webgal_unsupported_vn_effect(instrs[1])
+
+  def gen_flash_effect_inst(self, instrs: list[VNInstruction], insert_before: WebGalNode) -> WebGalNode:
+    assert len(instrs) == 1 and isinstance(instrs[0], VNFlashEffectInst)
+    self._webgal_unsupported_vn_effect(instrs[0])
+
+  def gen_weather_effect_wait(self, instrs: list[VNInstruction], insert_before: WebGalNode) -> WebGalNode:
+    assert len(instrs) == 2 and isinstance(instrs[1], VNWeatherEffectInst)
+    self._webgal_unsupported_vn_effect(instrs[1])
+
+  def gen_weather_effect_inst(self, instrs: list[VNInstruction], insert_before: WebGalNode) -> WebGalNode:
+    assert len(instrs) == 1 and isinstance(instrs[0], VNWeatherEffectInst)
+    self._webgal_unsupported_vn_effect(instrs[0])
+
+  def gen_character_sprite_move_wait(self, instrs: list[VNInstruction], insert_before: WebGalNode) -> WebGalNode:
+    assert len(instrs) == 2 and isinstance(instrs[1], VNCharacterSpriteMoveInst)
+    self._webgal_unsupported_vn_effect(instrs[1])
+
+  def gen_character_sprite_move_inst(self, instrs: list[VNInstruction], insert_before: WebGalNode) -> WebGalNode:
+    assert len(instrs) == 1 and isinstance(instrs[0], VNCharacterSpriteMoveInst)
+    self._webgal_unsupported_vn_effect(instrs[0])
+
+  def gen_char_tremble_effect_wait(self, instrs: list[VNInstruction], insert_before: WebGalNode) -> WebGalNode:
+    assert len(instrs) == 2 and isinstance(instrs[1], VNCharTrembleEffectInst)
+    self._webgal_unsupported_vn_effect(instrs[1])
+
+  def gen_char_tremble_effect_inst(self, instrs: list[VNInstruction], insert_before: WebGalNode) -> WebGalNode:
+    assert len(instrs) == 1 and isinstance(instrs[0], VNCharTrembleEffectInst)
+    self._webgal_unsupported_vn_effect(instrs[0])
+
+  def gen_filter_effect_wait(self, instrs: list[VNInstruction], insert_before: WebGalNode) -> WebGalNode:
+    assert len(instrs) == 2 and isinstance(instrs[1], VNFilterEffectInst)
+    self._webgal_unsupported_vn_effect(instrs[1])
+
+  def gen_filter_effect_inst(self, instrs: list[VNInstruction], insert_before: WebGalNode) -> WebGalNode:
+    assert len(instrs) == 1 and isinstance(instrs[0], VNFilterEffectInst)
+    self._webgal_unsupported_vn_effect(instrs[0])
+
+  def gen_end_effect_wait(self, instrs: list[VNInstruction], insert_before: WebGalNode) -> WebGalNode:
+    assert len(instrs) == 2 and isinstance(instrs[1], VNEndEffectInst)
+    self._webgal_unsupported_vn_effect(instrs[1])
+
+  def gen_end_effect_inst(self, instrs: list[VNInstruction], insert_before: WebGalNode) -> WebGalNode:
+    assert len(instrs) == 1 and isinstance(instrs[0], VNEndEffectInst)
+    self._webgal_unsupported_vn_effect(instrs[0])
 
   def _assign_block_labels(self, f : VNFunction) -> dict[Block | None, str]:
     # 为每个基本块分配一个标签，入口除外

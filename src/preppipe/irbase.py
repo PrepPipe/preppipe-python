@@ -2309,7 +2309,7 @@ class ConstExpr(Value, User):
   def _get_impl(cexpr_cls, ty : ValueType, values : typing.Iterable[Value]):
     key_tuple = (cexpr_cls, *values)
     return ty.context.get_constexpr_uniquing_dict(cexpr_cls).get_or_create(key_tuple,
-      lambda: cexpr_cls(init_mode = IRObjectInitMode.CONSTRUCT, context = ty.context, values = values))
+      lambda: cexpr_cls(init_mode = IRObjectInitMode.CONSTRUCT, context = ty.context, ty = ty, values = values))
 
 class LiteralUniquingDict:
   _ty : type
@@ -2710,6 +2710,7 @@ class ImageAssetData(AssetData[PIL.Image.Image, str]):
     if data := self._data:
       data.save(dest_path)
       return
+    # 源与目标扩展名一致时直接拷贝字节流，避免无谓的解码重编码改变文件内容（除非目标格式要求转换）。
     # we do file copy iff the source and dest format matches
     # otherwise, we open the source file and save it in the destination
     _srcname, srcext = os.path.splitext(self.backing_store_path)

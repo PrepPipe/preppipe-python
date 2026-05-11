@@ -23,3 +23,10 @@ class PPAssertionError(AssertionError):
 class PPInvalidOperationError(RuntimeError):
   def __init__(self, msg : str = '') -> None:
     super().__init__(TR_preppipe.invalid_operation.get_with_msg(msg))
+
+
+class PPCommandHandlerSignatureError(RuntimeError):
+  """注册到 resolve_call 的回调函数签名不符合约定（例如多个可按位的业务形参）。"""
+
+  def __init__(self, msg: str = "") -> None:
+    super().__init__(msg)

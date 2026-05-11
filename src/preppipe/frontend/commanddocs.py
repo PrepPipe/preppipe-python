@@ -218,7 +218,7 @@ class FrontendCommandDumper:
         return self._tr_vtype_callexpr.get()
       if issubclass(a, (StringLiteral, str)):
         return self._tr_vtype_str.get()
-      if issubclass(a, (FloatLiteral, decimal.Decimal, float)):
+      if issubclass(a, (FloatLiteral, decimal.Decimal)):
         return self._tr_vtype_float.get()
       if issubclass(a, (IntLiteral, int)):
         return self._tr_vtype_int.get()

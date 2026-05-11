@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import io
+import json
 
 from .ast import *
 from ..enginecommon.export import *
@@ -243,6 +244,17 @@ class WebGalExportVisitor(BackendASTVisitorBase):
     self.add_common_flags(result, node)
     self.dest.write(' '.join(result) + ';\n')
 
+  def visitWebGalSetTransformNode(self, node : WebGalSetTransformNode):
+    result = [
+      'setTransform:' + node.transform_json.get().get_string(),
+      '-target=' + node.target.get().get_string(),
+      '-duration=' + str(node.duration_ms.get().value),
+    ]
+    if self.test(node.flag_write_default):
+      result.append('-writeDefault')
+    self.add_common_flags(result, node)
+    self.dest.write(' '.join(result) + ';\n')
+
   def visitWebGalSetTransitionNode(self, node : WebGalSetTransitionNode):
     result = ['setTransition:']
     if target := node.target.try_get_value():
@@ -267,6 +279,41 @@ class WebGalExportVisitor(BackendASTVisitorBase):
   def start_visit(self, file : WebGalScriptFileOp):
     self.walk_body(file.body)
 
+def _merge_animation_table(out_path : str, new_names : list[str]) -> None:
+  table_path = os.path.join(out_path, 'game', 'animationTable.json')
+  existing : list[str] = []
+  if os.path.isfile(table_path):
+    try:
+      with open(table_path, 'r', encoding='utf-8') as tf:
+        data = json.load(tf)
+      if isinstance(data, list):
+        existing = [str(x) for x in data]
+    except (json.JSONDecodeError, OSError):
+      existing = []
+  merged = sorted(set(existing) | set(new_names))
+  os.makedirs(os.path.dirname(table_path), exist_ok=True)
+  with open(table_path, 'w', encoding='utf-8') as tf:
+    json.dump(merged, tf, ensure_ascii=False)
+
+def _copy_preppipe_runtime(out_path : str) -> None:
+  """TODO(WebGAL): 与 `webgal/codegen.py` 中特效 IR 导出一并恢复；将包内 runtime 递归复制到 `game/prepipe/`。"""
+  pkg_rt = os.path.join(os.path.dirname(__file__), 'runtime')
+  if not os.path.isdir(pkg_rt):
+    return
+  dest_root = os.path.join(out_path, 'game', 'prepipe')
+  skip_dir_names = {'__pycache__'}
+  for root, dirnames, filenames in os.walk(pkg_rt):
+    dirnames[:] = [d for d in dirnames if d not in skip_dir_names]
+    rel = os.path.relpath(root, pkg_rt)
+    dest_dir = dest_root if rel == '.' else os.path.join(dest_root, rel)
+    os.makedirs(dest_dir, exist_ok=True)
+    for fname in filenames:
+      if fname.endswith('.pyc'):
+        continue
+      src_f = os.path.join(root, fname)
+      if os.path.isfile(src_f):
+        shutil.copy2(src_f, os.path.join(dest_dir, fname))
+
 def export_webgal(m : WebGalModel, out_path : str, template_dir : str = '') -> None:
   assert isinstance(m, WebGalModel)
   os.makedirs(out_path, exist_ok=True)
@@ -274,7 +321,23 @@ def export_webgal(m : WebGalModel, out_path : str, template_dir : str = '') -> N
   if len(template_dir) > 0:
     shutil.copytree(template_dir, out_path, dirs_exist_ok=True)
 
-  # step 2: start walking all script files
+  # TODO(WebGAL): 特效等价导出启用后取消注释，随导出附带 game/prepipe/ 自定义脚本与说明。
+  # _copy_preppipe_runtime(out_path)
+
+  # step 2: data files (animation JSON 等)
+  generated_anim_names : list[str] = []
+  for df in m.data_files():
+    fp = os.path.join(out_path, df.name)
+    parentdir = os.path.dirname(fp)
+    os.makedirs(parentdir, exist_ok=True)
+    body = df.text_body.get().get_string()
+    with open(fp, 'w', encoding='utf-8') as wf:
+      wf.write(body)
+    norm = df.name.replace('\\', '/')
+    if norm.startswith('game/animation/') and norm.endswith('.json'):
+      generated_anim_names.append(os.path.splitext(os.path.basename(norm))[0])
+
+  # step 3: start walking all script files
   # apply the default transform to make output nicer
   for script in m.scripts():
     scriptpath = os.path.join(out_path, script.name)
@@ -283,6 +346,9 @@ def export_webgal(m : WebGalModel, out_path : str, template_dir : str = '') -> N
     with open(scriptpath, 'w', encoding="utf-8") as f:
       exporter = WebGalExportVisitor(f)
       exporter.start_visit(script)
+
+  if generated_anim_names:
+    _merge_animation_table(out_path, generated_anim_names)
 
   export_assets_and_cacheable(m, out_path=out_path)
   # done for now
