@@ -180,3 +180,4 @@ thumbnails
 
 # version files for pyinstaller build
 versionfile_*.txt
+/src/ScriptFlowEditor
