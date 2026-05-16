@@ -347,6 +347,12 @@ class FguiComponent:
                     # 包围框尺寸。FGUI不考虑子组件坐标xy小于0的情况，仅扩展组件的右侧和下方。
                     self.bbox_width = max(self.bbox_width, displayable.xypos[0] + displayable_size[0])
                     self.bbox_height = max(self.bbox_height, displayable.xypos[1] + displayable_size[1])
+        # 关联组件。表示组件自身的尺寸受到子对象的约束。
+        self.relations = []
+        for relation in component_etree.findall("./relation"):
+            self.relations.append(FguiRelation(relation))
+        # if len(self.relations) > 0:
+        #     print(f"component {self.name} relations: {self.relations}")
 
     def __repr__(self):
         return f"FguiComponent({self.id}, {self.name}, {self.size}, {self.extention}, {self.mask})"
@@ -396,13 +402,24 @@ class FguiLabel(FguiComponent):
 class FguiComboBox(FguiComponent):
     """
     FairyGUI中的下拉框。
-    相比其他component，多一个ComboBox标签，属性dropdown对应点击后显示的选项列表。
+    类似按钮，多一个ComboBox标签，属性dropdown对应点击后显示的选项列表。
     通常下拉框都会有两个对应的其他组件，分别为同名带后缀“_item”的按钮和同名带后缀“_popup”的组件
     """
     def __init__(self, component_etree, id, name, package_desc=None):
         super().__init__(component_etree, id, name, package_desc=package_desc)
         combobox = component_etree.find("ComboBox")
-        self.dropdown = combobox.get("dropdown")
+        dropdown = combobox.get("dropdown")
+        # 解析dropdown，dropdown是一个字符串，格式为"ui://" + "packageDescription id" + "component id"。
+        self.dropdown = dropdown[dropdown.find(package_desc.id)+len(package_desc.id):]
+        # 根据dropdown，获取dropdown的组件
+        self.dropdown_component = self.package_desc.get_component_by_id(self.dropdown)
+        sound = combobox.get("sound")
+        if sound:
+            # 格式为“ui://”+“packageDescription id” + “sound id”。
+            self.button_sound = sound[sound.find(package_desc.id)+len(package_desc.id):]
+        else:
+            self.button_sound = None
+        self.button_down_effect = None
 
 class FguiProgressBar(FguiComponent):
     """
@@ -603,6 +620,12 @@ class FguiDisplayable:
         # Slider，滑动条专有属性
         self.slider_property = None
 
+        # Label，标签专有属性
+        self.label_property = None
+
+        # ComboBox，下拉框专有属性
+        self.combobox_property = None
+
         # gear属性
         self.gear_display = None
         self.gear_display_2 = None
@@ -614,11 +637,11 @@ class FguiDisplayable:
         self.gear_icon = None
 
         # relation
-        self.relations = None
+        self.relations = []
 
         # 一级子对象
         self.child_num = len(self.display_item_tree)
-        # 控制器gear子组件和relation关联项
+        # 控制器gear子组件、relation关联项和一些组件的子属性
         for i in range(self.child_num):
             if self.display_item_tree[i].tag == "gearDisplay" :
                 self.gear_display = FguiGearDisplay(self.display_item_tree[i])
@@ -639,13 +662,15 @@ class FguiDisplayable:
             elif self.display_item_tree[i].tag == "Button" :
                 self.button_property = FguiButtonProperty(self.display_item_tree[i])
             elif self.display_item_tree[i].tag == "relation" :
-                self.relations = FguiRelation(self.display_item_tree[i])
+                self.relations.append(FguiRelation(self.display_item_tree[i]))
             elif self.display_item_tree[i].tag == "Slider" :
                 self.slider_property = FguiSliderProperty(self.display_item_tree[i])
             elif self.display_item_tree[i].tag == "ProgressBar" :
                 self.progressbar_property = FguiProgressBarProperty(self.display_item_tree[i])
             elif self.display_item_tree[i].tag == "Label" :
                 self.label_property = FguiLabelProperty(self.display_item_tree[i])
+            elif self.display_item_tree[i].tag == "ComboBox" :
+                self.combobox_property = FguiComboBoxProperty(self.display_item_tree[i])
             else:
                 print(f"Tag not parse: {self.display_item_tree[i].tag}.")
 
@@ -680,6 +705,34 @@ class FguiButtonProperty(FguiComponentPropertyBase):
         self.controller_name = self.component_property_tree.get("controller")
         self.controller_index = self.component_property_tree.get("page")
         # TODO 待添加点击音效
+
+class FguiComboBoxListItem:
+    """
+    下拉框弹出列表的按钮信息。
+    """
+    def __init__(self, item_tree):
+        self.item_tree = item_tree
+        self.title = self.item_tree.get("title")
+        self.icon = self.item_tree.get("icon")
+        self.value = self.item_tree.get("value")
+
+class FguiComboBoxProperty(FguiComponentPropertyBase):
+    """
+    组件子属性中的ComboBox信息。
+    包括下拉框弹出列表的可见元素数量和一个列表内按钮的title、icon信息列表。
+    """
+    def __init__(self, component_property_tree):
+        super().__init__(component_property_tree)
+        if self.property_name != "ComboBox" :
+            raise ValueError("xml tag is not ComboBox")
+        self.visible_count = int(self.component_property_tree.get("visibleItemCount", 0))
+        self.item_list = []
+        for item_tree in self.component_property_tree.findall("item"):
+            item = FguiComboBoxListItem(item_tree)
+            self.item_list.append(item)
+
+    def __repr__(self):
+        return f"FguiComboBoxProperty({self.visible_count}, {self.item_list})"
 
 class FguiLabelProperty(FguiComponentPropertyBase):
     """
@@ -895,8 +948,12 @@ class FguiList(FguiDisplayable):
             self.get_default_item(package_desc.id)
         self.item_list = []
         for item_tree in display_item_tree:
-            item = FguiListItem(item_tree, self.package_description_id)
-            self.item_list.append(item)
+            # 列表内部布局关联对象可能出现在这里。
+            if item_tree.tag == "relation":
+                continue
+            else:
+                item = FguiListItem(item_tree, self.package_description_id)
+                self.item_list.append(item)
         self.item_list_length = 0
 
     def get_default_item(self, packageDescription_id):
@@ -993,19 +1050,96 @@ class FguiLoader(FguiDisplayable):
     def get_item_id(self, packageDescription_id):
         self.item_url = self.url[self.url.find(packageDescription_id)+len(packageDescription_id):]
 
+class FguiSidePairProperty:
+    """
+    组件边框关联属性类。一般表示组件的宽、高与关联组件的宽、高之间的数值关系。
+    原始数据为字符串，使用英文逗号分隔，最多有24项。若每项结尾以英文百分号结束，表示该项为百分比。
+    样例数据如下：
+    "width-width%,height-height,center-center%,middle-middle,left-left,left-right,left-center,right-left,right-right,right-center,top-top,top-bottom,top-middle,bottom-top,bottom-bottom,bottom-middle,rightext-left,rightext-right,topext-top,topext-bottom,bottomext-top,bottomext-bottom,leftext-left,leftext-right"
+    """
+    def __init__(self, sidepair_property_str):
+        self.sidepair_property_list = sidepair_property_str.split(",")
+        # 初始化字典的24个值为False。
+        self.sidepair_property_dict = {
+            "width-width": False,
+            "height-height": False,
+            "center-center": False,
+            "middle-middle": False,
+            "left-left": False,
+            "left-right": False,
+            "left-center": False,
+            "right-left": False,
+            "right-right": False,
+            "right-center": False,
+            "top-top": False,
+            "top-bottom": False,
+            "top-middle": False,
+            "bottom-top": False,
+            "bottom-bottom": False,
+            "bottom-middle": False,
+            "rightext-left": False,
+            "rightext-right": False,
+            "topext-top": False,
+            "topext-bottom": False,
+            "bottomext-top": False,
+            "bottomext-bottom": False,
+            "leftext-left": False,
+            "leftext-right": False,
+        }
+        self.sidepair_property_percent_dict = {
+            "width-width": False,
+            "height-height": False,
+            "center-center": False,
+            "middle-middle": False,
+            "left-left": False,
+            "left-right": False,
+            "left-center": False,
+            "right-left": False,
+            "right-right": False,
+            "right-center": False,
+            "top-top": False,
+            "top-bottom": False,
+            "top-middle": False,
+            "bottom-top": False,
+            "bottom-bottom": False,
+            "bottom-middle": False,
+            "rightext-left": False,
+            "rightext-right": False,
+            "topext-top": False,
+            "topext-bottom": False,
+            "bottomext-top": False,
+            "bottomext-bottom": False,
+            "leftext-left": False,
+            "leftext-right": False
+        }
+        for item in self.sidepair_property_list:
+            if item.endswith("%"):
+                key = item[:-1]
+                self.sidepair_property_dict[key] = True
+                self.sidepair_property_percent_dict[key] = True
+            else:
+                key = item
+                self.sidepair_property_dict[key] = True
+                self.sidepair_property_percent_dict[key] = False
+
+    def __repr__(self):
+        return f"sidepair_property_dict: {self.sidepair_property_dict}, sidepair_property_percent_dict: {self.sidepair_property_percent_dict}"
+
+
 class FguiRelation:
     """
-    组件关联属性对象。表示与其他组件的相对关系。
+    组件关联属性类。表示与其他组件的相对关系。
     通常是一个target：“关联对象”-sidePair“关联方式”的类字典结构。
     """
     def __init__(self, relation_item_tree):
         if relation_item_tree.tag != "relation":
             raise ValueError("xml tag is not relation.")
         self.relation_item_tree = relation_item_tree
-        self.relation_dict = {}
-        key = self.relation_item_tree.get("target")
+        self.target = self.relation_item_tree.get("target")
         value = self.relation_item_tree.get("sidePair")
-        self.relation_dict[key] = value
+        self.sidepair_property = FguiSidePairProperty(value)
+    def __repr__(self):
+        return f"target: {self.target}, sidepair_property: {self.sidepair_property}"
 
 class FguiProgressBarProperty:
     """
@@ -1267,6 +1401,8 @@ class FguiAssets():
                 component = FguiSlider(self.object_dict[component.id], component.id, component.name, package_desc=self.package_desc)
             elif extention_type == "ProgressBar":
                 component = FguiProgressBar(self.object_dict[component.id], component.id, component.name, package_desc=self.package_desc)
+            elif extention_type == "ComboBox":
+                component = FguiComboBox(self.object_dict[component.id], component.id, component.name, package_desc=self.package_desc)
             else:
                 component = FguiComponent(self.object_dict[component.id], component.id, component.name, package_desc=self.package_desc)
             self.fgui_component_set.append(component)

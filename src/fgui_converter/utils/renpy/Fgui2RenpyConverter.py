@@ -155,6 +155,9 @@ class FguiToRenpyConverter:
     main_menu_title = None
     main_menu_logo = None
 
+    # 可以生成按钮screen的组件类型元组。
+    button_component_extention_list = ['Button', 'ComboBox']
+
     def __init__(self, fgui_assets):
         self.fgui_assets = fgui_assets
         self.renpy_code = []
@@ -168,6 +171,8 @@ class FguiToRenpyConverter:
         self.graph_definition_code = []
         self.sound_definition_code = []
         self.game_global_variables_code = []
+        self.screen_global_variable_dict = {}
+        self.screen_global_variable_code = []
         self.gallery_screen_code = []
         self.music_room_screen_code = []
 
@@ -400,6 +405,17 @@ class FguiToRenpyConverter:
         sound_definitions.append("")
         self.sound_definition_code.extend(sound_definitions)
 
+    def generate_screen_global_variable_code(self):
+        """生成界面相关的全局变量"""
+        self.screen_global_variable_code.append("# 界面相关的全局变量")
+        for variable_name, variable_value in self.screen_global_variable_dict.items():
+            self.screen_global_variable_code.append(f"default {variable_name} = {variable_value}")
+        self.screen_global_variable_code.append("")
+
+    def set_screen_global_variable(self, variable_name : str, variable_value : any):
+        """设置界面相关的全局变量"""
+        self.screen_global_variable_dict[variable_name] = variable_value
+
     def generate_progressbar_style(self, fgui_progressbar : FguiProgressBar) -> None:
         """
         生成进度条样式。
@@ -604,11 +620,6 @@ class FguiToRenpyConverter:
                     thumb_idle_name = f"{fgui_slider.name}_grip_idle_background"
                     thumb_hover_name = f"{fgui_slider.name}_grip_hover_background"
                     thumb_xpos, thumb_ypos = displayable.xypos
-                    # 根据grip中relation的sidePair属性来确定方向
-                    side_pair_str = displayable.relations.relation_dict[bar_id]
-                    # 只有该值表示垂直滑动条
-                    # if side_pair_str == "bottom-bottom":
-                    #     slider_type = BarOrientationType.VERTICAL
                 else:
                     print("Slider grp is not button.")
                     return
@@ -692,8 +703,7 @@ class FguiToRenpyConverter:
             # 根据bar部分判断滚动条方向
             if displayable.name == 'bar' and isinstance(displayable, FguiGraph):
                 # 根据relation中的sidePair属性判断滚动条方向
-                side_pair_str = displayable.relations.relation_dict['']
-                if side_pair_str == "height-height":
+                if displayable.relations[0].target == '' and displayable.relations[0].sidepair_property.sidepair_property_dict['height-height']:
                     is_vertical = True
                 else:
                     is_vertical = False
@@ -788,26 +798,27 @@ class FguiToRenpyConverter:
         end_index = len(component.display_list.displayable_list) if (list_end_index == -1) else list_end_index
         for displayable in component.display_list.displayable_list[list_begin_index:end_index]:
             # print(displayable.name)
-            # 图片组件
+            # 图片
             if isinstance(displayable, FguiImage):
-                screen_ui_code.extend(self.generate_image_displayable(displayable))
+                screen_ui_code.extend(self.generate_image_displayable(displayable, component))
             # 图形控件
             elif isinstance(displayable, FguiGraph):
-                screen_ui_code.extend(self.generate_graph_displayable(displayable))
+                screen_ui_code.extend(self.generate_graph_displayable(displayable, component))
             # 文本控件
             elif isinstance(displayable, FguiText):
-                screen_ui_code.extend(self.generate_text_displayable(displayable))
+                screen_ui_code.extend(self.generate_text_displayable(displayable, component))
             # 列表
             elif isinstance(displayable, FguiList):
-                screen_ui_code.extend(self.generate_list_displayable(displayable))
+                screen_ui_code.extend(self.generate_list_displayable(displayable, component))
             # 装载器
             elif isinstance(displayable, FguiLoader):
-                screen_ui_code.extend(self.generate_loader_displayable(displayable))
+                screen_ui_code.extend(self.generate_loader_displayable(displayable, component))
                 # 目前装载器只支持图片。
                 pass
             # 其他组件
             else:
                 end_indent_level = 1
+                parameter_str=''
 
                 # 根据显示控制器gearDisplay设置显示条件
                 if displayable.gear_display:
@@ -831,6 +842,10 @@ class FguiToRenpyConverter:
                     self.indent_level_down()
                 # 根据引用源id查找组件
                 ref_com = self.fgui_assets.get_component_by_id(displayable.src)
+                # 是否需要修改引用对象的尺寸
+                xysize = ref_com.size
+                if displayable.size and displayable.size != (0, 0):
+                    xysize = displayable.size
                 # 按钮。可设置标题，并根据自定义数据字段设置action。
                 if ref_com.extention == "Button" and ref_com.name != None:
                     # 取FguiComponent和FguiDisplayable对象的自定义数据作为action。FguiDisplayable对象中的自定义数据优先。
@@ -844,9 +859,9 @@ class FguiToRenpyConverter:
                             button_controller_action = f"SetScreenVariable('{displayable.button_property.controller_name}', {displayable.button_property.controller_index})"
                             action_list.append(button_controller_action)
                             actions = f"[{', '.join(action_list)}]"
-                        parameter_str = self.generate_button_parameter(displayable.button_property.title, actions)
+                        parameter_str = self.generate_button_parameter(button_title=displayable.button_property.title, original_actions_str=actions, xysize=displayable.size)
                     else:
-                        parameter_str = self.generate_button_parameter(None, actions)
+                        parameter_str = self.generate_button_parameter(button_title=None, original_actions_str=actions, xysize=displayable.size)
                     screen_ui_code.append(f"{self.indent_str}use {ref_com.name}({parameter_str}) id '{component.name}_{displayable.id}'")
                     self.indent_level_down(end_indent_level)
                     continue
@@ -882,12 +897,49 @@ class FguiToRenpyConverter:
                     screen_ui_code.append(f"{self.indent_str}bar adjustment {variable_name} style '{ref_com.name}' id '{component.name}_{displayable.id}'")
                     self.indent_level_down(end_indent_level)
                     continue
+                # 下拉框
+                if ref_com.extention == "ComboBox" and ref_com.name != None:
+                    # 下拉框尺寸处理
+                    button_xysize = xysize
+                    popup_xysize = ref_com.dropdown_component.size
+                    popup_component = self.fgui_assets.get_component_by_id(ref_com.dropdown)
+                    # 查找popup组件中的列表元件
+                    popup_component_list = None
+                    popup_component_list_item = None
+                    for popup_displayable in popup_component.display_list.displayable_list:
+                        if isinstance(popup_displayable, FguiList):
+                            popup_component_list = popup_displayable
+                            popup_component_list_item = self.fgui_assets.get_component_by_id(popup_component_list.default_item_id)
+                            popup_list_item_size = popup_component_list_item.size
+                            break
+
+                    popup_list_item_count = displayable.combobox_property.visible_count
+                    if displayable.size and displayable.size != (0, 0):
+                        button_xysize = displayable.size
+                        popup_xysize = (button_xysize[0], popup_list_item_size[1] * popup_list_item_count + popup_component_list.line_gap * (popup_list_item_count - 1))
+                    # 生成弹窗按钮信息列表；为 None 的字段不写入字典。
+                    popup_list = []
+                    for item in displayable.combobox_property.item_list:
+                        popup_item = {}
+                        if item.title is not None:
+                            popup_item['title'] = item.title
+                        if item.icon is not None:
+                            popup_item['icon'] = item.icon
+                        if item.value is not None:
+                            popup_item['value'] = item.value
+                        popup_list.append(popup_item)
+                    screen_ui_code.append(f"{self.indent_str}use {ref_com.name}(button_xysize={button_xysize}, popup_xysize={popup_xysize}, popup_list={popup_list})")
+                    self.indent_level_down(end_indent_level)
+                    continue
+                # 标签
+                if ref_com.extention == "Label" and ref_com.name != None:
+                    # 标签处理
+                    parameter_str = self.generate_label_screen_parameter(displayable.label_property)
+                    screen_ui_code.append(f"{self.indent_str}use {ref_com.name}({parameter_str}, xysize={xysize}) id '{component.name}_{displayable.id}'")
+                    self.indent_level_down(end_indent_level)
+                    continue
                 # 其他组件
-                parameter_str=''
-                parameter_str = self.generate_label_screen_parameter(displayable.label_property)
-
-
-                screen_ui_code.append(f"{self.indent_str}use {ref_com.name}({parameter_str}) id '{component.name}_{displayable.id}'")
+                screen_ui_code.append(f"{self.indent_str}use {ref_com.name}({parameter_str}, xysize={xysize}) id '{component.name}_{displayable.id}'")
                 self.indent_level_down(end_indent_level)
 
         return screen_ui_code
@@ -949,7 +1001,7 @@ class FguiToRenpyConverter:
                 break
 
         # 界面定义
-        self.screen_definition_head.append(f"screen {label_name}(title_text='{default_title}', title_color='{title_color}', title_size={title_size}):")
+        self.screen_definition_head.append(f"screen {label_name}(title_text='{default_title}', title_color='{title_color}', title_size={title_size}, xysize={xysize}):")
         self.indent_level_up()
 
         # 显式添加一个fixed，设置界面尺寸。
@@ -977,6 +1029,140 @@ class FguiToRenpyConverter:
 
         self.screen_ui_code.append("")
         self.screen_code.extend(self.screen_ui_code)
+
+    def generate_combobox_screen(self, component : FguiComponent):
+        """
+        下拉框组件对应screen。目标样例：
+        screen combobox_screen(title='', xysize=(100, 100)):
+            default combbox_popup_controller = False
+            vbox:
+                button:
+                    padding (0, 0, 0, 0)
+                    xysize (360, 60)
+                    style_prefix 'combobox_button'
+                    background 'combobox_button_bg'
+                    text title:
+                        align (0.5, 0.5)
+                    selected combbox_popup_controller
+                    action ToggleScreenVariable('combbox_popup_controller')
+                if combbox_popup_controller:
+                    use ComboBox_popup()
+
+        """
+        print("This is combobox screen.")
+        self.screen_definition_head.clear()
+        self.screen_variable_code.clear()
+        self.screen_function_code.clear()
+        self.screen_ui_code.clear()
+        self.screen_has_dismiss = False
+        self.dismiss_action_list.clear()
+        self.reset_indent_level()
+
+        # 生成下拉框组件screen
+        screen_definition_head = []
+        screen_ui_code = []
+        screen_definition_head.append("# 下拉框screen定义")
+        screen_definition_head.append(f"# 从FairyGUI下拉框组件{component.name}转换而来")
+        id = component.id
+        combobox_name = component.name
+        xysize = component.size
+
+        dropdown_component = self.fgui_assets.get_component_by_id(component.dropdown)
+        visible_count = 1
+        item_list = []
+        popup_xysize = dropdown_component.size
+
+        # 查找popup组件中的列表元件。
+        popup_component_list = None
+        for displayable in dropdown_component.display_list.displayable_list:
+            if isinstance(displayable, FguiList) and displayable.name == 'list':
+                popup_component_list = displayable
+                break
+        if not popup_component_list:
+            print("Popup component list not found.")
+            return
+        popup_component_list_item = self.fgui_assets.get_component_by_id(popup_component_list.default_item_id)
+        popup_list_item_size = popup_component_list_item.size
+        visible_count = popup_component_list.get_item_list_length()
+        popup_xysize = (xysize[0], popup_list_item_size[1] * visible_count + popup_component_list.line_gap * (visible_count - 1))
+
+        # 生成一个按钮的界面定义。
+        self.generate_button_screen(component)
+        button_screen_name = f"{combobox_name}_button"
+        # 根据popup_component_list生成popup_list的默认值。
+        popup_list = []
+        for item in popup_component_list.item_list:
+            popup_item = {}
+            if item.item_title is not None:
+                popup_item['title'] = item.item_title
+            if item.item_icon is not None:
+                popup_item['icon'] = item.item_icon
+            if item.item_name is not None:
+                popup_item['value'] = item.item_name
+            popup_list.append(popup_item)
+        screen_ui_code.append(f"screen {combobox_name}(button_xysize={xysize}, popup_xysize={popup_xysize}, popup_list={popup_list}):")
+        self.indent_level_up()
+        # 声明一个本地变量，用于控制按钮的选中状态。
+        combobox_popup_controller_name = f"{combobox_name}_popup_controller"
+        screen_ui_code.append(f"{self.indent_str}default {combobox_popup_controller_name} = False")
+        # 声明一个本地变量，用于控制列表的尺寸。使用xysize便于后续可视组件调整尺寸。
+        screen_ui_code.append(f"{self.indent_str}default xysize = popup_xysize")
+        # 声明两个ui.adjustment对象，用于控制列表的滚动。
+        screen_ui_code.append(f"{self.indent_str}default xadj = ui.adjustment()")
+        screen_ui_code.append(f"{self.indent_str}default yadj = ui.adjustment()")
+        screen_ui_code.append(f"{self.indent_str}vbox:")
+        self.indent_level_up()
+        screen_ui_code.append(f"{self.indent_str}use {button_screen_name}(actions=ToggleLocalVariable('{combobox_popup_controller_name}'), xysize=button_xysize)")
+
+        # 添加下拉框的选项列表。
+        screen_ui_code.append(f"{self.indent_str}if {combobox_popup_controller_name}:")
+        self.indent_level_up()
+        # screen_ui_code.append(f"{self.indent_str}use {component.dropdown_component.name}(xysize=popup_xysize)")
+        # self.indent_level_down()
+        # 不引用dropdown组件，直接生成列表组件。
+        screen_ui_code.append(f"{self.indent_str}fixed:")
+        self.indent_level_up()
+        screen_ui_code.append(f"{self.indent_str}xysize popup_xysize")
+        # 查找列表元件。
+        popup_component_list_index = -1
+        for index, displayable in enumerate(dropdown_component.display_list.displayable_list):
+            if isinstance(displayable, FguiList) and displayable.name == 'list':
+                popup_component_list = displayable
+                popup_component_list_index = index
+                break
+        if not popup_component_list:
+            print("Popup component list not found.")
+            return
+        # 生成列表之前的元件。
+        screen_ui_code.extend(self.convert_component_display_list(dropdown_component, list_begin_index=0, list_end_index=popup_component_list_index))
+        # 生成列表。只考虑单列竖排且可滚动的情况。
+        screen_ui_code.append(f"{self.indent_str}viewport id '{popup_component_list.name}_vp':")
+        self.indent_level_up()
+        screen_ui_code.append(f"{self.indent_str}yadjustment yadj")
+        screen_ui_code.append(f"{self.indent_str}xadjustment xadj")
+        screen_ui_code.append(f"{self.indent_str}draggable True")
+        screen_ui_code.append(f"{self.indent_str}mousewheel True")
+        screen_ui_code.append(f"{self.indent_str}vbox:")
+        self.indent_level_up()
+        screen_ui_code.append(f"{self.indent_str}spacing {popup_component_list.line_gap}")
+        screen_ui_code.append(f"{self.indent_str}for item in popup_list:")
+        self.indent_level_up()
+        popup_item_use_args = []
+        if any(list_item.item_title is not None for list_item in popup_component_list.item_list):
+            popup_item_use_args.append("item['title']")
+        if any(list_item.item_icon is not None for list_item in popup_component_list.item_list):
+            popup_item_use_args.append("item['icon']")
+        if any(list_item.item_name is not None for list_item in popup_component_list.item_list):
+            popup_item_use_args.append("item['value']")
+        popup_item_xysize = (xysize[0], popup_list_item_size[1])
+        popup_item_use_args.append(f"xysize={popup_item_xysize}")
+        screen_ui_code.append(f"{self.indent_str}use {popup_component_list_item.name}({', '.join(popup_item_use_args)})")
+        self.indent_level_down()
+        self.indent_level_down()
+        self.indent_level_down()
+        screen_ui_code.append("")
+        self.screen_code.extend(screen_definition_head)
+        self.screen_code.extend(screen_ui_code)
 
 
     def generate_screen(self, component : FguiComponent):
@@ -1039,7 +1225,9 @@ class FguiToRenpyConverter:
 
         # confirm 界面固定入参
         if screen_name == 'confirm':
-            screen_params = 'message, yes_action, no_action'
+            screen_params = f"message, yes_action, no_action, xysize={component.size}"
+        else:
+            screen_params = f"xysize={component.size}"
 
         self.reset_indent_level()
         self.screen_definition_head.append(f"screen {screen_name}({screen_params}):")
@@ -1081,7 +1269,7 @@ class FguiToRenpyConverter:
         if component.overflow == "hidden":
             self.screen_ui_code.append(f"{self.indent_str}viewport:")
             self.indent_level_up()
-            self.screen_ui_code.append(f"{self.indent_str}xysize {component.size}")
+            self.screen_ui_code.append(f"{self.indent_str}xysize xysize")
             self.screen_ui_code.append(f"{self.indent_str}draggable False")
             self.screen_ui_code.append(f"{self.indent_str}mousewheel False")
             self.screen_ui_code.append(f"{self.indent_str}fixed:")
@@ -1099,7 +1287,7 @@ class FguiToRenpyConverter:
             top_edge = float(component.clip_softness[1]) / component.size[1]
             bottom_edge = top_edge
             self.screen_ui_code.append(f"{self.indent_str}at dynamic_edge_virtualization(xadj, yadj, left={left_edge}, right={right_edge}, top={top_edge}, bottom={bottom_edge}, softness=1.0)")
-            self.screen_ui_code.append(f"{self.indent_str}xysize {component.size}")
+            self.screen_ui_code.append(f"{self.indent_str}xysize xysize")
             self.screen_ui_code.append(f"{self.indent_str}draggable True") 
             # 在Ren'Py中实际可能无法滚动。
             # 需要添加一个fixed组件，并设置一个合适的xysize。该xysize应为容纳所有子组件的包围框。
@@ -1137,7 +1325,7 @@ class FguiToRenpyConverter:
         self.dismiss_action_list.clear()
 
         self.reset_indent_level()
-        self.screen_definition_head.append(f"screen main_menu():")
+        self.screen_definition_head.append(f"screen main_menu(xysize={component.size}):")
         self.indent_level_up()
         self.screen_ui_code.append(f"{self.indent_str}tag menu\n")
 
@@ -1176,11 +1364,11 @@ class FguiToRenpyConverter:
         if component.overflow == "hidden":
             self.screen_ui_code.append(f"{self.indent_str}viewport:")
             self.indent_level_up()
-            self.screen_ui_code.append(f"{self.indent_str}xysize {component.size}")
+            self.screen_ui_code.append(f"{self.indent_str}xysize xysize")
         elif component.overflow == "scroll":
             self.screen_ui_code.append(f"{self.indent_str}viewport:")
             self.indent_level_up()
-            self.screen_ui_code.append(f"{self.indent_str}xysize {component.size}")
+            self.screen_ui_code.append(f"{self.indent_str}xysize xysize")
             self.screen_ui_code.append(f"{self.indent_str}draggable True") 
             # 在Ren'Py中实际可能无法滚动。
             # 需要添加一个fixed组件，并设置一个合适的xysize。该xysize应为容纳所有子组件的包围框。
@@ -1240,7 +1428,7 @@ class FguiToRenpyConverter:
             return
 
         choice_screen_code = []
-        screen_params = 'items'
+        screen_params = f"items, xysize={component.size}"
         choice_screen_code.append(f"# 选项界面")
         choice_screen_code.append(f"screen {component.name}({screen_params}):")
 
@@ -1314,7 +1502,9 @@ class FguiToRenpyConverter:
         
         comment_screen_name = "存档" if component.name == "save" else "读档"
         self.screen_definition_head.append(f"# {comment_screen_name} 界面")
-        self.screen_definition_head.append(f"screen {component.name}():")
+        self.screen_definition_head.append(f"screen {component.name}(xysize={component.size}):")
+        self.reset_indent_level()
+        self.indent_level_up()
 
         # 菜单标签
         self.screen_definition_head.append(f"{self.indent_str}tag menu")
@@ -1400,32 +1590,33 @@ class FguiToRenpyConverter:
         pos = (0, 0)
 
         # 根据列表布局计算行数与列数。
+        row_num, column_num = self.get_list_row_column_num(fgui_list, default_item)
         # layout-列表布局：(column)默认-单列竖排，row-单行横排，flow_hz-横向流动，flow_vt-纵向流动、pagination-分页
         # lineItemCount：列表布局为横向流动或分页时，表示列数。列表布局为竖向流动时，表示行数。其他布局中，该参数无效果。
         # lineItemCount2：列表布局为分页时，表示行数。其他布局中，该参数无效果。
-        if fgui_list.layout == "column":
-            column_num = 1
-            row_num = list_length
-        elif fgui_list.layout == "row":
-            row_num = 1
-            column_num = list_length
-        elif fgui_list.layout == 'flow_hz':
-            # column_num可能为0，需要根据列表尺寸与元素尺寸计算实际的列数。
-            if fgui_list.line_item_count == 0:
-                column_num = math.floor(fgui_list.size[0] / (default_item_size[0] + fgui_list.col_gap) + 1)
-            else:
-                column_num = fgui_list.line_item_count
-            row_num = math.ceil(list_length / column_num)
-        elif fgui_list.layout == 'flow_vt':
-            # row_num可能为0，需要根据列表尺寸与元素尺寸计算实际的行数。
-            if fgui_list.line_item_count == 0:
-                row_num = math.floor(fgui_list.size[1] / (default_item_size[1] + fgui_list.line_gap) + 1)
-            else:
-                row_num = fgui_list.line_item_count
-            column_num = math.ceil(list_length / row_num)
-        else:
-            row_num = fgui_list.line_item_count
-            column_num = fgui_list.line_item_count2 + 1
+        # if fgui_list.layout == "column":
+        #     column_num = 1
+        #     row_num = list_length
+        # elif fgui_list.layout == "row":
+        #     row_num = 1
+        #     column_num = list_length
+        # elif fgui_list.layout == 'flow_hz':
+        #     # column_num可能为0，需要根据列表尺寸与元素尺寸计算实际的列数。
+        #     if fgui_list.line_item_count == 0:
+        #         column_num = math.floor(fgui_list.size[0] / (default_item_size[0] + fgui_list.col_gap) + 1)
+        #     else:
+        #         column_num = fgui_list.line_item_count
+        #     row_num = math.ceil(list_length / column_num)
+        # elif fgui_list.layout == 'flow_vt':
+        #     # row_num可能为0，需要根据列表尺寸与元素尺寸计算实际的行数。
+        #     if fgui_list.line_item_count == 0:
+        #         row_num = math.floor(fgui_list.size[1] / (default_item_size[1] + fgui_list.line_gap) + 1)
+        #     else:
+        #         row_num = fgui_list.line_item_count
+        #     column_num = math.ceil(list_length / row_num)
+        # else:
+        #     row_num = fgui_list.line_item_count
+        #     column_num = fgui_list.line_item_count2 + 1
 
         xspacing = fgui_list.col_gap
         yspacing = fgui_list.line_gap
@@ -1436,6 +1627,41 @@ class FguiToRenpyConverter:
         screen_params = f"overflow='{overflow}', layout='{layout}', row_num={row_num}, column_num={column_num}, transpose={transpose}, xspacing={xspacing}, yspacing={yspacing}, xysize={xysize}, pos={pos}, margin={margin}"
 
         return screen_params
+
+    def get_list_row_column_num(self, fgui_list : FguiList, default_item : FguiComponent) -> tuple[int ,int] :
+        """
+        根据列表布局计算行数与列数。
+        layout-列表布局：(column)默认-单列竖排，row-单行横排，flow_hz-横向流动，flow_vt-纵向流动、pagination-分页
+        lineItemCount：列表布局为横向流动或分页时，表示列数。列表布局为竖向流动时，表示行数。其他布局中，该参数无效果。
+        lineItemCount2：列表布局为分页时，表示行数。其他布局中，该参数无效果。
+        """
+        if not isinstance(fgui_list, FguiList):
+            print("It is not a list displayable.")
+            return 0, 0
+        row_num = 1
+        column_num = 1
+        if fgui_list.layout == "column":
+            column_num = 1
+            row_num = fgui_list.get_item_list_length()
+        elif fgui_list.layout == "row":
+            row_num = 1
+            column_num = fgui_list.get_item_list_length()
+        elif fgui_list.layout == 'flow_hz':
+            if fgui_list.line_item_count == 0:
+                column_num = math.floor(fgui_list.size[0] / (default_item.size[0] + fgui_list.col_gap) + 1)
+            else:
+                column_num = fgui_list.line_item_count
+            row_num = math.ceil(fgui_list.get_item_list_length() / column_num)
+        elif fgui_list.layout == 'flow_vt':
+            if fgui_list.line_item_count == 0:
+                row_num = math.floor(fgui_list.size[1] / (default_item.size[1] + fgui_list.line_gap) + 1)
+            else:
+                row_num = fgui_list.line_item_count
+            column_num = math.ceil(fgui_list.get_item_list_length() / row_num)
+        else:
+            row_num = fgui_list.line_item_count
+            column_num = fgui_list.line_item_count2 + 1
+        return row_num, column_num
 
     def get_scrollbar_style(self, scrollbar_res : tuple[str, str]) -> tuple[str, str]:
         """
@@ -1508,7 +1734,7 @@ class FguiToRenpyConverter:
 
         self.reset_indent_level()
         self.screen_definition_head.append("# 对话历史界面")
-        self.screen_definition_head.append(f"screen {component.name}():")
+        self.screen_definition_head.append(f"screen {component.name}(xysize={component.size}):")
         self.indent_level_up()
         self.screen_definition_head.append(f"{self.indent_str}tag menu")
         self.screen_definition_head.append(f"{self.indent_str}predict False")
@@ -1593,7 +1819,7 @@ class FguiToRenpyConverter:
         # what_text_str = f"{what_text.text}".replace("\n", "\\n").replace("\r", "\\n")
         who_text_str = ''
         what_text_str = '无对话记录。'
-        screen_params = f"who='{who_text_str}', what='{what_text_str}'"
+        screen_params = f"who='{who_text_str}', what='{what_text_str}', xysize={component.size}"
         self.reset_indent_level()
         # say界面需要覆盖默认gui设置
         self.screen_definition_head.append("# history_item界面，用于显示一条对话记录。")
@@ -1673,7 +1899,7 @@ class FguiToRenpyConverter:
 
         self.reset_indent_level()
         self.screen_definition_head.append("# CG图鉴界面")
-        self.screen_definition_head.append(f"screen {component.name}():")
+        self.screen_definition_head.append(f"screen {component.name}(xysize={component.size}):")
         self.indent_level_up()
         self.screen_definition_head.append(f"{self.indent_str}tag menu")
         # 显式添加一个fixed，设置界面尺寸。
@@ -1786,7 +2012,7 @@ class FguiToRenpyConverter:
 
         self.reset_indent_level()
         self.screen_definition_head.append("# 音乐室界面")
-        self.screen_definition_head.append(f"screen {component.name}():")
+        self.screen_definition_head.append(f"screen {component.name}(xysize={component.size}):")
         self.indent_level_up()
         self.screen_definition_head.append(f"{self.indent_str}tag menu")
         # 显式添加一个fixed，设置界面尺寸。
@@ -1897,7 +2123,7 @@ class FguiToRenpyConverter:
         if textbox:
             print("Textbox background is Null.")
 
-        screen_params = 'who, what'
+        screen_params = f'who, what, xysize={component.size}'
         self.reset_indent_level()
         # say界面需要覆盖默认gui设置
         self.screen_definition_head.append("# say界面")
@@ -1975,12 +2201,13 @@ class FguiToRenpyConverter:
         return parameter_str
 
     @staticmethod
-    def generate_button_default_parameter(button_title=None, original_actions_str=None, icon=None, activate_sound=None):
+    def generate_button_default_parameter(button_title=None, original_actions_str=None, icon=None, activate_sound=None, xysize=None):
         parameter_str = ""
         title_str = "title=''"
         actions_str = "actions=NullAction()"
         icon_str = "icon=Null()"
         activate_sound_str = "activate_sound=None"
+        xysize_str = "xysize=(0,0)"
         if button_title :
             title_str = f"title=\"{button_title}\"".replace("\n", "\\n").replace("\r", "\\n")
         if original_actions_str :
@@ -1991,16 +2218,19 @@ class FguiToRenpyConverter:
             activate_sound_str = f"activate_sound=audio.{activate_sound}"
         else:
             activate_sound_str = "activate_sound=None"
-        parameter_str = f"{title_str}, {actions_str}, {icon_str}, {activate_sound_str}"
+        if xysize:
+            xysize_str = f"xysize={xysize}"
+        parameter_str = f"{title_str}, {actions_str}, {icon_str}, {activate_sound_str}, {xysize_str}"
         return parameter_str
 
     @staticmethod
-    def generate_button_parameter(button_title=None, original_actions_str=None, icon=None, activate_sound=None):
+    def generate_button_parameter(button_title=None, original_actions_str=None, icon=None, activate_sound=None, xysize=None):
         parameter_str = ""
         title_str = None
         actions_str = None
         icon_str = None
         activate_sound_str = None
+        xysize_str = None
         if button_title :
             title_str = f"title=\"{button_title}\"".replace("\n", "\\n").replace("\r", "\\n")
         if original_actions_str :
@@ -2009,9 +2239,11 @@ class FguiToRenpyConverter:
             icon_str = f"icon={icon}"
         if activate_sound:
             activate_sound_str = f"activate_sound=audio.{activate_sound}"
+        if xysize:
+            xysize_str = f"xysize={xysize}"
 
         # 仅生成非None的参数
-        parameter_str = ",".join([param for param in [title_str, actions_str, icon_str, activate_sound_str] if param is not None])
+        parameter_str = ",".join([param for param in [title_str, actions_str, icon_str, activate_sound_str, xysize_str] if param is not None])
         if parameter_str:
             parameter_str = f"{parameter_str}"
         return parameter_str
@@ -2037,7 +2269,7 @@ class FguiToRenpyConverter:
         size_str = ""
 
         if component.max_width == 0 and component.min_width == 0 and component.max_height == 0 and component.min_height == 0:
-            size_str = f"xysize {component.size}"
+            size_str = f"xysize xysize"
             return size_str
 
         max_width = component.max_width if component.max_width > 0 else component.size[0]
@@ -2086,12 +2318,13 @@ class FguiToRenpyConverter:
         text_outline_string = self.generate_text_outline_string(fgui_text)
         self.style_code.append(f"{style_indent}outlines {text_outline_string}")
 
-
         #设置最小宽度才能使text_align生效
         self.style_code.append(f"{style_indent}min_width {fgui_text.size[0]}")
         xalign, yalign = self.trans_text_align(fgui_text.align, fgui_text.v_align)
         # 默认文本居中，如果文本长度超出文本框，效果可能与FairyGUI不一致。
         self.style_code.append(f"{style_indent}textalign {xalign}")
+        # 水平方向对齐方式默认为0.0。
+        self.style_code.append(f"{style_indent}xalign 0.0")
         # 垂直方向对齐方式使用yalign，可能有问题。
         self.style_code.append(f"{style_indent}yalign {yalign}")
         # 粗体、斜体、下划线、删除线
@@ -2198,16 +2431,15 @@ class FguiToRenpyConverter:
         return component.name.endswith('_grip')
 
     def generate_button_screen(self, component : FguiComponent):
-
         """
         生成按钮组件screen。目标样例：
 
-        screen main_menu_button(title='', actions=NullAction()):
+        screen main_menu_button(title='', actions=NullAction(), icon=Null(), activate_sound=None, xysize=(200, 60)):
             button:
                 padding (0, 0, 0, 0)
-                xysize (273, 61)
+                xysize xysize
                 style_prefix 'main_menu_button'
-                background 'main_menu_button_bg'
+                background Frame('main_menu_button_bg', fit_type='fill')
                 text title:
                     align (0.5, 0.5)
                 action actions
@@ -2262,8 +2494,9 @@ class FguiToRenpyConverter:
         # 图片id与name映射关系
         image_id_name_mapping = {}
 
-        if component.extention != 'Button':
-            print("组件类型不是按钮")
+        # 可以生成按钮screen的组件类型列表。
+        if component.extention not in self.button_component_extention_list:
+            print("组件类型不是按钮或下拉框。")
             return
 
         # 默认按钮控制器为button，并且必定有4种状态，顺序分别为idle、hover、selected、selected_hover。
@@ -2278,12 +2511,10 @@ class FguiToRenpyConverter:
             print("按钮控制器状态总数小于4。")
             return
 
-        # 生成按钮组件screen
-        self.screen_definition_head.append("# 按钮screen定义")
-        self.screen_definition_head.append(f"# 从FairyGUI按钮组件{component.name}转换而来")
-
         id = component.id
         button_name = component.name
+        if component.extention == 'ComboBox':
+            button_name = f"{button_name}_button"
         xysize = component.size
         background = self.default_background
 
@@ -2298,6 +2529,12 @@ class FguiToRenpyConverter:
         icon_image = None
 
         default_activate_sound = None
+
+        # 生成按钮组件screen
+        screen_definition_head = []
+        screen_ui_code = []
+        screen_definition_head.append("# 按钮screen定义")
+        screen_definition_head.append(f"# 从FairyGUI按钮组件{button_name}转换而来")
 
         for displayable in component.display_list.displayable_list:
             # 不带显示控制器表示始终显示
@@ -2362,60 +2599,51 @@ class FguiToRenpyConverter:
         # 重置缩进级别
         self.reset_indent_level()
         default_actions = component.custom_data if component.custom_data else 'NullAction()'
-        param_str = self.generate_button_default_parameter(default_title, default_actions, icon_image, default_activate_sound)
-        self.screen_definition_head.append(f"screen {button_name}({param_str}):")
-        # self.screen_definition_head.append(f"screen {button_name}(title='{default_title}', actions={default_actions}, icon=Null()):")
+        param_str = self.generate_button_default_parameter(default_title, default_actions, icon_image, default_activate_sound, xysize)
+        screen_definition_head.append(f"screen {button_name}({param_str}):")
 
         self.indent_level_up()
         # 如果按钮有按下效果，添加自定义组件
         if component.button_down_effect:
-            self.screen_ui_code.append(f"{self.indent_str}button_container:")
+            screen_ui_code.append(f"{self.indent_str}button_container:")
             self.indent_level_up()
-            self.screen_ui_code.append(f"{self.indent_str}pressed_{component.button_down_effect} {component.button_down_effect_value}")
-        self.screen_ui_code.append(f"{self.indent_str}button:")
+            screen_ui_code.append(f"{self.indent_str}pressed_{component.button_down_effect} {component.button_down_effect_value}")
+        screen_ui_code.append(f"{self.indent_str}button:")
         self.indent_level_up()
         # 默认button样式的padding为(6,6,6,6)，可能导致部分子组件位置变化。
-        self.screen_ui_code.append(f"{self.indent_str}padding (0, 0, 0, 0)")
-        self.screen_ui_code.append(f"{self.indent_str}style_prefix '{button_name}'")
-        self.screen_ui_code.append(f"{self.indent_str}xysize {xysize}")
-        self.screen_ui_code.append(f"{self.indent_str}background '{button_name}_[prefix_]background'")
-        # if state_children_dict['idle']:
-        #     self.screen_ui_code.append(f"{self.indent_str}idle_background '{button_name}_idle_background'")
-        # if state_children_dict['selected']:
-        #     self.screen_ui_code.append(f"{self.indent_str}selected_background '{button_name}_selected_background'")
-        # if state_children_dict['hover']:
-        #     self.screen_ui_code.append(f"{self.indent_str}hover_background '{button_name}_hover_background'")
-        # if state_children_dict['selected_hover']:
-        #     self.screen_ui_code.append(f"{self.indent_str}selected_hover_background '{button_name}_selected_hover_background'")
-        # if state_children_dict['insensitive']:
-        #     self.screen_ui_code.append(f"{self.indent_str}insensitive_background '{button_name}_insensitive_background'")
-        self.screen_ui_code.append(f"{self.indent_str}text title:")
-        # Ren'Py中没有文本相对自身组件的垂直对齐方式，尝试用整个文本组件的对齐来凑合。
+        screen_ui_code.append(f"{self.indent_str}padding (0, 0, 0, 0)")
+        screen_ui_code.append(f"{self.indent_str}style_prefix '{button_name}'")
+        screen_ui_code.append(f"{self.indent_str}xysize xysize")
+        screen_ui_code.append(f"{self.indent_str}background Frame('{button_name}_[prefix_]background', fit_type='fill')")
+
+        # 添加一层fixed组件，解决文本组件垂直方向的对齐问题。
+        screen_ui_code.append(f"{self.indent_str}fixed:")
         self.indent_level_up()
-        # self.screen_ui_code.append(f"{self.indent_str}align ({text_xalign},{text_yalign})")
-        self.screen_ui_code.append(f"{self.indent_str}pos {title_pos}")
-        self.screen_ui_code.append(f"{self.indent_str}anchor {title_anchor}")
+        screen_ui_code.append(f"{self.indent_str}pos {title_pos}")
+        screen_ui_code.append(f"{self.indent_str}anchor {title_anchor}")
+        screen_ui_code.append(f"{self.indent_str}text title")
         self.indent_level_down()
-        self.screen_ui_code.append(f"{self.indent_str}action actions")
+        screen_ui_code.append(f"{self.indent_str}action actions")
         # 在最上层加上icon
-        self.screen_ui_code.append(f"{self.indent_str}add icon:")
+        screen_ui_code.append(f"{self.indent_str}add icon:")
         self.indent_level_up()
-        self.screen_ui_code.append(f"{self.indent_str}pos {icon_pos}")
-        self.screen_ui_code.append(f"{self.indent_str}size {icon_size}")
+        screen_ui_code.append(f"{self.indent_str}pos {icon_pos}")
+        screen_ui_code.append(f"{self.indent_str}size {icon_size}")
         self.indent_level_down()
         # 一些按钮特性
         # 点击音效
-        self.screen_ui_code.append(f"{self.indent_str}activate_sound activate_sound")
-        # focus_mask，对应FGUI中的点击“测试”。
+        screen_ui_code.append(f"{self.indent_str}activate_sound activate_sound")
+        # focus_mask，对应FGUI中的“点击测试”。
         if component.hit_test:
             # 根据引用src查找image名
             image_name = self.fgui_assets.get_componentname_by_id(component.hit_test.src)
-            self.screen_ui_code.append(f"{self.indent_str}focus_mask \'{image_name}\' pos {component.hit_test.pos}")
+            screen_ui_code.append(f"{self.indent_str}focus_mask \'{image_name}\' pos {component.hit_test.pos}")
 
-        self.screen_ui_code.append("")
+        screen_ui_code.append("")
 
-        self.screen_code.extend(self.screen_definition_head)
-        self.screen_code.extend(self.screen_ui_code)
+        self.screen_code.extend(screen_definition_head)
+        self.screen_code.extend(screen_ui_code)
+        self.reset_indent_level()
 
     def trans_text_align(self, text_horizontal_align="left", text_vertical_align="top"):
         return self.align_dict.get(text_horizontal_align, 0.5), self.align_dict.get(text_vertical_align, 0.5)
@@ -2547,7 +2775,44 @@ class FguiToRenpyConverter:
         text_displayable_string = f"Text(text='{fgui_text.text}',{text_anchor_param},{text_transformanchor},{text_pos_param},{text_size_param},{text_font_param},{text_font_size_param},{text_font_color_param},{text_min_width_param},{text_textalign_param},{text_bold_param},{text_italic_param},{text_underline_param},{text_strike_param},{text_outlines_parame})"
         return text_displayable_string
 
-    def generate_image_displayable(self, fgui_image : FguiImage) -> list:
+    @staticmethod
+    def get_size_str(displayable : FguiDisplayable, current_size : tuple, current_container : FguiComponent) -> str:
+        """
+        根据displayable的关联属性，生成尺寸字符串。
+        """
+        size_str_list = [f"{current_size[0]}", f"{current_size[1]}"]
+        if len(displayable.relations) == 0:
+            return str(current_size)
+        # 元件关联容器。
+        for relation in displayable.relations:
+            # 如果关联对象是空字符串''，表示关联对象为容器组件。
+            if relation.target == '':
+                side_pair_property = relation.sidepair_property
+                # 高度关联，表示组件与容器的高度差始终不变。
+                if side_pair_property.sidepair_property_dict['height-height']:
+                    size_str_list[1] = f"{displayable.size[1]}+xysize[1]-{current_container.size[1]}"
+                # 宽度关联，表示组件与容器的宽度差始终不变。
+                if side_pair_property.sidepair_property_dict['width-width']:
+                    size_str_list[0] = f"{displayable.size[0]}+xysize[0]-{current_container.size[0]}"
+
+                # TODO 其他关联类型待补充。
+
+        # 容器关联元件。由于Ren'Py无法根据子界面尺寸计算父界面尺寸，只能将此子界面尺寸设为父界面的尺寸，要求父界面的尺寸由更上层的容器计算。
+        if current_container.relations and len(current_container.relations) > 0:
+            for relation in current_container.relations:
+                if relation.target == displayable.id:
+                    side_pair_property = relation.sidepair_property
+                    if side_pair_property.sidepair_property_dict['height-height']:
+                        size_str_list[1] = f"{displayable.size[1]}+xysize[1]-{current_container.size[1]}"
+                    if side_pair_property.sidepair_property_dict['width-width']:
+                        size_str_list[0] = f"{displayable.size[0]}+xysize[0]-{current_container.size[0]}"
+                    break
+
+        # 拼接并两侧添加圆括号，返回字符串。
+        return f"({','.join(size_str_list)})"
+
+
+    def generate_image_displayable(self, fgui_image : FguiImage, current_container : FguiComponent) -> list:
         """
         生成图片组件。
         前提为image对象的定义已经在generate_image_definitions中生成。
@@ -2598,15 +2863,22 @@ class FguiToRenpyConverter:
                     image_code.append(f"{self.indent_str}matrixcolor TintMatrix('{fgui_image.multiply_color}')")
                 if fgui_image.scale != (1.0, 1.0):
                     image_code.append(f"{self.indent_str}xzoom {fgui_image.scale[0]} yzoom {fgui_image.scale[1]}")
-                # 九宫格或平铺图片需要指定尺寸
-                if image.scale:
-                    image_code.append(f"{self.indent_str}xysize {size}")
+
+                # TODO 此处需要根据引用组件的信息修改尺寸。
+                size_str = str(size)
+                # 如果引用组件时无关联属性，则直接使用引用组件的尺寸。
+                if len(fgui_image.relations) == 0:
+                    pass
+                else:
+                    # 如果引用组件时有关联属性，则根据关联属性修改尺寸。
+                    size_str = self.get_size_str(fgui_image, size, current_container)
+                image_code.append(f"{self.indent_str}xysize {size_str}")
                 self.indent_level_down()
                 break
         self.indent_level_down(end_indent_level)
         return image_code
 
-    def generate_graph_displayable(self, fgui_graph : FguiGraph) -> list:
+    def generate_graph_displayable(self, fgui_graph : FguiGraph, component : FguiComponent) -> list:
         """
         由FairyGUI的图形控件生成图形组件。用于screen中。
         FairyGUI的图形控件有多种类别：
@@ -2628,7 +2900,7 @@ class FguiToRenpyConverter:
 
         return graph_code
 
-    def generate_text_displayable(self, fgui_text):
+    def generate_text_displayable(self, fgui_text, component : FguiComponent) -> list:
         """
         生成文本组件。非按钮的组件可能存在多个不同文本，不单独生成样式。
         """
@@ -2806,7 +3078,7 @@ class FguiToRenpyConverter:
         self.indent_level_down(end_indent_level)
         return text_code
 
-    def generate_list_displayable(self, fgui_list : FguiList) -> list[str]:
+    def generate_list_displayable(self, fgui_list : FguiList, component : FguiComponent) -> list[str]:
         """
         生成列表。
         """
@@ -2859,29 +3131,32 @@ class FguiToRenpyConverter:
         pos = (0, 0)
 
         # 根据列表布局计算行数与列数。
+        row_num, column_num = self.get_list_row_column_num(fgui_list, default_item)
         # layout-列表布局：(column)默认-单列竖排，row-单行横排，flow_hz-横向流动，flow_vt-纵向流动、pagination-分页
         # lineItemCount：列表布局为横向流动或分页时，表示列数。列表布局为竖向流动时，表示行数。其他布局中，该参数无效果。
         # lineItemCount2：列表布局为分页时，表示行数。其他布局中，该参数无效果。
-        if fgui_list.layout == "column":
-            column_num = 1
-            row_num = list_length
-        elif fgui_list.layout == "row":
-            row_num = 1
-            column_num = list_length
-        elif fgui_list.layout == 'flow_hz':
-            column_num = fgui_list.line_item_count
-            row_num = math.ceil(list_length / column_num)
-        elif fgui_list.layout == 'flow_vt':
-            row_num = fgui_list.line_item_count
-            column_num = math.ceil(list_length / row_num)
-        else:
-            column_num = fgui_list.line_item_count
-            row_num = fgui_list.line_item_count2
+        # if fgui_list.layout == "column":
+        #     column_num = 1
+        #     row_num = list_length
+        # elif fgui_list.layout == "row":
+        #     row_num = 1
+        #     column_num = list_length
+        # elif fgui_list.layout == 'flow_hz':
+        #     column_num = fgui_list.line_item_count
+        #     row_num = math.ceil(list_length / column_num)
+        # elif fgui_list.layout == 'flow_vt':
+        #     row_num = fgui_list.line_item_count
+        #     column_num = math.ceil(list_length / row_num)
+        # else:
+        #     column_num = fgui_list.line_item_count
+        #     row_num = fgui_list.line_item_count2
 
         xspacing = fgui_list.col_gap
         yspacing = fgui_list.line_gap
         transpose = (fgui_list.layout == 'flow_vt')
-        xysize = fgui_list.size
+        # 根据关联对象的尺寸计算列表的尺寸。
+        xysize = self.get_size_str(fgui_list, component.size, component)
+        # xysize = fgui_list.size
         pos = fgui_list.xypos
         margin = fgui_list.margin
         screen_params = f"overflow='{overflow}', layout='{layout}', row_num={row_num}, column_num={column_num}, transpose={transpose}, xspacing={xspacing}, yspacing={yspacing}, xysize={xysize}, pos={pos}, margin={margin}"
@@ -2910,11 +3185,22 @@ class FguiToRenpyConverter:
                 # pass
             # 默认元素
             else:
+                # 根据列表自身关联对象的尺寸计算默认元素的尺寸。
+                item_size_str_x = f"{default_item.size[0]}"
+                item_size_str_y = f"{default_item.size[1]}"
+                # 仅处理列表与所在容器的关联。
+                # 此处未考虑多行多列和行距、列举问题。待后续补充。
+                if fgui_list.relations[0].target == '':
+                    side_pair_property = fgui_list.relations[0].sidepair_property
+                    if side_pair_property.sidepair_property_dict['height-height']:
+                        item_size_str_y = f"xysize[1]"
+                    if side_pair_property.sidepair_property_dict['width-width']:
+                        item_size_str_x = f"xysize[0]"
                 if default_item_type == "image":
                     list_code.append(f"{self.indent_str}add '{default_item_name}'")
                 elif default_item_type == "Button":
-                    parameter_str = self.generate_button_parameter(item.item_title)
-                    list_code.append(f"{self.indent_str}use {default_item_name}({parameter_str})")
+                    parameter_str = self.generate_button_parameter(button_title=item.item_title)
+                    list_code.append(f"{self.indent_str}use {default_item_name}({parameter_str}, xysize=({item_size_str_x}, {item_size_str_y}))")
                 else:
                     # 非按钮组件可能包含多个子组件，直接引用会出现vpgrid overfull错误
                     list_code.append(f"{self.indent_str}fixed:")
@@ -2938,6 +3224,8 @@ class FguiToRenpyConverter:
         list_screen_template_content = list_screen_template_content.replace('{component_name}', f"{component_name}")
         list_screen_template_content = list_screen_template_content.replace('{list_name}', f"{fgui_list.name}")
         list_screen_template_content = list_screen_template_content.replace('{list_screen_name}', f"{component_name}_{fgui_list.name}")
+        list_screen_template_content = list_screen_template_content.replace('{origin_size}', f"{fgui_list.size}")
+        list_screen_template_content = list_screen_template_content.replace('{origin_pos}', f"{fgui_list.xypos}")
         side_layout = "'c r b'"
         unscrollable_type = None
         if fgui_list.scroll_bar_flags:
@@ -2978,7 +3266,7 @@ class FguiToRenpyConverter:
 
         return True
 
-    def generate_loader_displayable(self, fgui_loader : FguiLoader) -> list[str]:
+    def generate_loader_displayable(self, fgui_loader : FguiLoader, component : FguiComponent) -> list[str]:
         """
         生成装载器对应的Ren'Py代码。
         """
@@ -3109,18 +3397,18 @@ class FguiToRenpyConverter:
             elif component.extention == 'Slider':
                 self.generate_slider_style(component)
             elif component.extention == 'ComboBox':
-                pass
-                # self.generate_combobox_screen(component)
+                self.generate_combobox_screen(component)
             elif component.extention == 'ProgressBar':
                 self.generate_progressbar_style(component)
             else:
                 self.generate_screen(component)
         
-        self.renpy_code.extend(self.game_global_variables_code)
-        self.renpy_code.extend(self.image_definition_code)
-        self.renpy_code.extend(self.graph_definition_code)
-        self.renpy_code.extend(self.style_code)
-        self.renpy_code.extend(self.screen_code)
+        self.generate_screen_global_variable_code()
+        # self.renpy_code.extend(self.game_global_variables_code)
+        # self.renpy_code.extend(self.image_definition_code)
+        # self.renpy_code.extend(self.graph_definition_code)
+        # self.renpy_code.extend(self.style_code)
+        # self.renpy_code.extend(self.screen_code)
 
     def save_to_file(self, filename):
         """
@@ -3245,6 +3533,8 @@ class FguiToRenpyConverter:
             self.graph_definition_code.clear()
             self.image_definition_code.clear()
             self.game_global_variables_code.clear()
+            self.screen_global_variable_dict.clear()
+            self.screen_global_variable_code.clear()
             
             # 重置缩进相关状态
             self.root_indent_level = 0
@@ -3415,6 +3705,8 @@ def convert(argv):
         converter.save_code_to_file(image_definition_output_file, converter.image_definition_code)
         converter.save_code_to_file(sound_definition_output_file, converter.sound_definition_code)
         converter.save_code_to_file(style_output_file, converter.style_code)
+        # converter.generate_screen_global_variable_code()
+        converter.screen_code.extend(converter.screen_global_variable_code)
         converter.save_code_to_file(screen_output_file, converter.screen_code)
 
         # 部分预定义模板文件修改参数并保存
