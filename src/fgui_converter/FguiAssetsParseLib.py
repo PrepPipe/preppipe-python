@@ -407,6 +407,12 @@ class FguiComboBox(FguiComponent):
     """
     def __init__(self, component_etree, id, name, package_desc=None):
         super().__init__(component_etree, id, name, package_desc=package_desc)
+        # 按钮部分标题。
+        self.button_title = ''
+        for displayable in self.display_list.displayable_list:
+            if isinstance(displayable, FguiText) and displayable.name == 'title':
+                self.button_title = displayable.text
+                break
         combobox = component_etree.find("ComboBox")
         dropdown = combobox.get("dropdown")
         # 解析dropdown，dropdown是一个字符串，格式为"ui://" + "packageDescription id" + "component id"。
@@ -719,13 +725,16 @@ class FguiComboBoxListItem:
 class FguiComboBoxProperty(FguiComponentPropertyBase):
     """
     组件子属性中的ComboBox信息。
-    包括下拉框弹出列表的可见元素数量和一个列表内按钮的title、icon信息列表。
+    包括下拉框按钮默认标题、弹出方向、弹出列表的可见元素数量和一个列表内按钮的title、icon信息列表。
     """
     def __init__(self, component_property_tree):
         super().__init__(component_property_tree)
         if self.property_name != "ComboBox" :
             raise ValueError("xml tag is not ComboBox")
+        self.title = self.component_property_tree.get("title")
         self.visible_count = int(self.component_property_tree.get("visibleItemCount", 0))
+        # 默认向下弹出。
+        self.popup_direction = self.component_property_tree.get("direction", "down")
         self.item_list = []
         for item_tree in self.component_property_tree.findall("item"):
             item = FguiComboBoxListItem(item_tree)

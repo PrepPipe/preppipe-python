@@ -928,7 +928,12 @@ class FguiToRenpyConverter:
                         if item.value is not None:
                             popup_item['value'] = item.value
                         popup_list.append(popup_item)
-                    screen_ui_code.append(f"{self.indent_str}use {ref_com.name}(button_xysize={button_xysize}, popup_xysize={popup_xysize}, popup_list={popup_list})")
+                    popup_below_button = displayable.combobox_property.popup_direction == 'down'
+                    # 按钮默认标题使用下拉框组件的按钮标题。
+                    combobox_button_title = ref_com.button_title
+                    if displayable.combobox_property.title:
+                        combobox_button_title = displayable.combobox_property.title
+                    screen_ui_code.append(f"{self.indent_str}use {ref_com.name}(combobox_button_title='{combobox_button_title}', button_xysize={button_xysize}, popup_xysize={popup_xysize}, popup_list={popup_list}, popup_below_button={popup_below_button})")
                     self.indent_level_down(end_indent_level)
                     continue
                 # 标签
@@ -1100,8 +1105,10 @@ class FguiToRenpyConverter:
             if item.item_name is not None:
                 popup_item['value'] = item.item_name
             popup_list.append(popup_item)
-        screen_ui_code.append(f"screen {combobox_name}(button_xysize={xysize}, popup_xysize={popup_xysize}, popup_list={popup_list}):")
+        screen_ui_code.append(f"screen {combobox_name}(combobox_button_title='{component.button_title}', button_xysize={xysize}, popup_xysize={popup_xysize}, popup_list={popup_list}, popup_below_button=True):")
         self.indent_level_up()
+        # 声明按钮标题变量，初始值为界面入参。后续点击弹框按钮后，会修改为对应value的值。
+        screen_ui_code.append(f"{self.indent_str}default button_title = combobox_button_title")
         # 声明一个本地变量，用于控制按钮的选中状态。
         combobox_popup_controller_name = f"{combobox_name}_popup_controller"
         screen_ui_code.append(f"{self.indent_str}default {combobox_popup_controller_name} = False")
@@ -1112,13 +1119,17 @@ class FguiToRenpyConverter:
         screen_ui_code.append(f"{self.indent_str}default yadj = ui.adjustment()")
         screen_ui_code.append(f"{self.indent_str}vbox:")
         self.indent_level_up()
-        screen_ui_code.append(f"{self.indent_str}use {button_screen_name}(actions=ToggleLocalVariable('{combobox_popup_controller_name}'), xysize=button_xysize)")
-
+        # 弹出方向。
+        screen_ui_code.append(f"{self.indent_str}if popup_below_button is not True :")
+        self.indent_level_up()
+        screen_ui_code.append(f"{self.indent_str}box_reverse True")
+        screen_ui_code.append(f"{self.indent_str}yalign 1.0")
+        self.indent_level_down()
+        # 引用按钮。
+        screen_ui_code.append(f"{self.indent_str}use {button_screen_name}(title=button_title, actions=ToggleLocalVariable('{combobox_popup_controller_name}'), xysize=button_xysize)")
         # 添加下拉框的选项列表。
         screen_ui_code.append(f"{self.indent_str}if {combobox_popup_controller_name}:")
         self.indent_level_up()
-        # screen_ui_code.append(f"{self.indent_str}use {component.dropdown_component.name}(xysize=popup_xysize)")
-        # self.indent_level_down()
         # 不引用dropdown组件，直接生成列表组件。
         screen_ui_code.append(f"{self.indent_str}fixed:")
         self.indent_level_up()
