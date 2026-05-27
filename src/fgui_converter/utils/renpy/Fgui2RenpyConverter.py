@@ -1044,6 +1044,7 @@ class FguiToRenpyConverter:
             default xysize = popup_xysize
             default xadj = ui.adjustment()
             default yadj = ui.adjustment()
+            dismiss action SetLocalVariable('TestComboBox_popup_controller', False)
             vbox:
                 if popup_below_button is not True :
                     box_reverse True
@@ -1132,6 +1133,9 @@ class FguiToRenpyConverter:
         # 声明两个ui.adjustment对象，用于控制列表的滚动。
         screen_ui_code.append(f"{self.indent_str}default xadj = ui.adjustment()")
         screen_ui_code.append(f"{self.indent_str}default yadj = ui.adjustment()")
+        # 添加dismiss action，用于关闭弹框。
+        screen_ui_code.append(f"{self.indent_str}dismiss action SetLocalVariable('{combobox_popup_controller_name}', False)")
+        # 生成vbox垂直列表。
         screen_ui_code.append(f"{self.indent_str}vbox:")
         self.indent_level_up()
         # 弹出方向。
