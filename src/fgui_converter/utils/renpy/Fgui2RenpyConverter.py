@@ -1038,20 +1038,35 @@ class FguiToRenpyConverter:
     def generate_combobox_screen(self, component : FguiComponent):
         """
         下拉框组件对应screen。目标样例：
-        screen combobox_screen(title='', xysize=(100, 100)):
-            default combbox_popup_controller = False
+        screen TestComboBox(combobox_button_title='下拉框按钮标题', button_xysize=(360, 60), popup_xysize=(360, 252), popup_list=[{'title': '1'}, {'title': '2'}, {'title': '3'}], popup_below_button=True):
+            default button_title = combobox_button_title
+            default TestComboBox_popup_controller = False
+            default xysize = popup_xysize
+            default xadj = ui.adjustment()
+            default yadj = ui.adjustment()
             vbox:
-                button:
-                    padding (0, 0, 0, 0)
-                    xysize (360, 60)
-                    style_prefix 'combobox_button'
-                    background 'combobox_button_bg'
-                    text title:
-                        align (0.5, 0.5)
-                    selected combbox_popup_controller
-                    action ToggleScreenVariable('combbox_popup_controller')
-                if combbox_popup_controller:
-                    use ComboBox_popup()
+                if popup_below_button is not True :
+                    box_reverse True
+                    yalign 1.0
+                use TestComboBox_button(title=button_title, actions=ToggleLocalVariable('TestComboBox_popup_controller'), xysize=button_xysize)
+                if TestComboBox_popup_controller:
+                    fixed:
+                        xysize popup_xysize
+                        add 'text_box':
+                            pos (0, 0)
+                            anchor (0.0, 0.0)
+                            xoffset 0
+                            yoffset 0
+                            xysize (150+xysize[0]-150,200+xysize[1]-200)
+                        viewport id 'list_vp':
+                            yadjustment yadj
+                            xadjustment xadj
+                            draggable True
+                            mousewheel True
+                            vbox:
+                                spacing 0
+                                for item in popup_list:
+                                    use TestComboBox_item(item['title'], xysize=(360, 84), actions=[SetLocalVariable('button_title', item['title']), SetLocalVariable('TestComboBox_popup_controller', False)])
 
         """
         print("This is combobox screen.")
@@ -1167,6 +1182,8 @@ class FguiToRenpyConverter:
             popup_item_use_args.append("item['value']")
         popup_item_xysize = (xysize[0], popup_list_item_size[1])
         popup_item_use_args.append(f"xysize={popup_item_xysize}")
+        # 添加按钮行为，设置按钮标题为当前选项的value，并关闭弹框。
+        popup_item_use_args.append(f"actions=[SetLocalVariable('button_title', item['value']), SetLocalVariable('{combobox_popup_controller_name}', False)]")
         screen_ui_code.append(f"{self.indent_str}use {popup_component_list_item.name}({', '.join(popup_item_use_args)})")
         self.indent_level_down()
         self.indent_level_down()
