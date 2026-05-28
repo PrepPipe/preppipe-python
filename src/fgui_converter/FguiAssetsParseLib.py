@@ -732,9 +732,11 @@ class FguiComboBoxProperty(FguiComponentPropertyBase):
         if self.property_name != "ComboBox" :
             raise ValueError("xml tag is not ComboBox")
         self.title = self.component_property_tree.get("title")
+        self.title_color = self.component_property_tree.get("titleColor")
         self.visible_count = int(self.component_property_tree.get("visibleItemCount", 0))
         # 默认向下弹出。
         self.popup_direction = self.component_property_tree.get("direction", "down")
+        self.selection_controller = self.component_property_tree.get("selectionController")
         self.item_list = []
         for item_tree in self.component_property_tree.findall("item"):
             item = FguiComboBoxListItem(item_tree)

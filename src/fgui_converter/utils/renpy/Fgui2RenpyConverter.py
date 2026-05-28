@@ -797,7 +797,6 @@ class FguiToRenpyConverter:
         # print(f"list_begin_index: {list_begin_index}, list_end_index: {list_end_index}")
         end_index = len(component.display_list.displayable_list) if (list_end_index == -1) else list_end_index
         for displayable in component.display_list.displayable_list[list_begin_index:end_index]:
-            # print(displayable.name)
             # 图片
             if isinstance(displayable, FguiImage):
                 screen_ui_code.extend(self.generate_image_displayable(displayable, component))
@@ -822,7 +821,7 @@ class FguiToRenpyConverter:
 
                 # 根据显示控制器gearDisplay设置显示条件
                 if displayable.gear_display:
-                    condition_str = f"showif {displayable.gear_display.controller_name} in {displayable.gear_display.controller_index}:"
+                    condition_str = f"if {displayable.gear_display.controller_name} in {displayable.gear_display.controller_index}:"
                     screen_ui_code.append(f"{self.indent_str}{condition_str}")
                     self.indent_level_up()
                     end_indent_level = end_indent_level + 1
@@ -933,7 +932,16 @@ class FguiToRenpyConverter:
                     combobox_button_title = ref_com.button_title
                     if displayable.combobox_property.title:
                         combobox_button_title = displayable.combobox_property.title
-                    screen_ui_code.append(f"{self.indent_str}use {ref_com.name}(combobox_button_title='{combobox_button_title}', button_xysize={button_xysize}, popup_xysize={popup_xysize}, popup_list={popup_list}, popup_below_button={popup_below_button})")
+                    combobox_screen_params = []
+                    combobox_screen_params.append(f"combobox_button_title='{combobox_button_title}'")
+                    combobox_screen_params.append(f"button_xysize={button_xysize}")
+                    combobox_screen_params.append(f"popup_xysize={popup_xysize}")
+                    combobox_screen_params.append(f"popup_list={popup_list}")
+                    combobox_screen_params.append(f"popup_below_button={popup_below_button}")
+                    if displayable.combobox_property.selection_controller:
+                        combobox_screen_params.append(f"parent_controller_name='{displayable.combobox_property.selection_controller}'")
+                    screen_ui_code.append(f"{self.indent_str}use {ref_com.name}({', '.join(combobox_screen_params)})")  
+                    # screen_ui_code.append(f"{self.indent_str}use {ref_com.name}(combobox_button_title='{combobox_button_title}', button_xysize={button_xysize}, popup_xysize={popup_xysize}, popup_list={popup_list}, popup_below_button={popup_below_button})")
                     self.indent_level_down(end_indent_level)
                     continue
                 # 标签
@@ -1038,12 +1046,18 @@ class FguiToRenpyConverter:
     def generate_combobox_screen(self, component : FguiComponent):
         """
         下拉框组件对应screen。目标样例：
-        screen TestComboBox(combobox_button_title='下拉框按钮标题', button_xysize=(360, 60), popup_xysize=(360, 252), popup_list=[{'title': '1'}, {'title': '2'}, {'title': '3'}], popup_below_button=True):
+        screen TestComboBox(combobox_button_title='下拉框按钮标题', button_xysize=(360, 60), popup_xysize=(360, 252), popup_list=[{'title': '1'}, {'title': '2'}, {'title': '3'}], popup_below_button=True, parent_controller_name=None):
             default button_title = combobox_button_title
             default TestComboBox_popup_controller = False
             default xysize = popup_xysize
             default xadj = ui.adjustment()
             default yadj = ui.adjustment()
+            default parent_controller = parent_controller_name
+            python:
+                if parent_controller:
+                    parent_controller_action = SetScreenVariable('index_controller', i)
+                else:
+                    parent_controller_action = NullAction()
             dismiss action SetLocalVariable('TestComboBox_popup_controller', False)
             vbox:
                 if popup_below_button is not True :
@@ -1067,7 +1081,7 @@ class FguiToRenpyConverter:
                             vbox:
                                 spacing 0
                                 for item in popup_list:
-                                    use TestComboBox_item(item['title'], xysize=(360, 84), actions=[SetLocalVariable('button_title', item['title']), SetLocalVariable('TestComboBox_popup_controller', False)])
+                                    use TestComboBox_item(item['title'], xysize=(360, 84), actions=[SetLocalVariable('button_title', item['title']), SetLocalVariable('TestComboBox_popup_controller', False), parent_controller_action])
 
         """
         print("This is combobox screen.")
@@ -1121,7 +1135,7 @@ class FguiToRenpyConverter:
             if item.item_name is not None:
                 popup_item['value'] = item.item_name
             popup_list.append(popup_item)
-        screen_ui_code.append(f"screen {combobox_name}(combobox_button_title='{component.button_title}', button_xysize={xysize}, popup_xysize={popup_xysize}, popup_list={popup_list}, popup_below_button=True):")
+        screen_ui_code.append(f"screen {combobox_name}(combobox_button_title='{component.button_title}', button_xysize={xysize}, popup_xysize={popup_xysize}, popup_list={popup_list}, popup_below_button=True, parent_controller_name=None):")
         self.indent_level_up()
         # 声明按钮标题变量，初始值为界面入参。后续点击弹框按钮后，会修改为对应value的值。
         screen_ui_code.append(f"{self.indent_str}default button_title = combobox_button_title")
@@ -1133,6 +1147,8 @@ class FguiToRenpyConverter:
         # 声明两个ui.adjustment对象，用于控制列表的滚动。
         screen_ui_code.append(f"{self.indent_str}default xadj = ui.adjustment()")
         screen_ui_code.append(f"{self.indent_str}default yadj = ui.adjustment()")
+        # 关联的父组件控制器名称。
+        screen_ui_code.append(f"{self.indent_str}default parent_controller = parent_controller_name")
         # 添加dismiss action，用于关闭弹框。
         screen_ui_code.append(f"{self.indent_str}dismiss action SetLocalVariable('{combobox_popup_controller_name}', False)")
         # 生成vbox垂直列表。
@@ -1175,7 +1191,7 @@ class FguiToRenpyConverter:
         screen_ui_code.append(f"{self.indent_str}vbox:")
         self.indent_level_up()
         screen_ui_code.append(f"{self.indent_str}spacing {popup_component_list.line_gap}")
-        screen_ui_code.append(f"{self.indent_str}for item in popup_list:")
+        screen_ui_code.append(f"{self.indent_str}for i, item in enumerate(popup_list):")
         self.indent_level_up()
         popup_item_use_args = []
         if any(list_item.item_title is not None for list_item in popup_component_list.item_list):
@@ -1186,8 +1202,20 @@ class FguiToRenpyConverter:
             popup_item_use_args.append("item['value']")
         popup_item_xysize = (xysize[0], popup_list_item_size[1])
         popup_item_use_args.append(f"xysize={popup_item_xysize}")
+        # 根据父组件控制器名称，生成父组件控制器行为。
+        screen_ui_code.append(f"{self.indent_str}python:")
+        self.indent_level_up()
+        screen_ui_code.append(f"{self.indent_str}if parent_controller:")
+        self.indent_level_up()
+        screen_ui_code.append(f"{self.indent_str}parent_controller_action = SetScreenVariable(parent_controller, i)")
+        self.indent_level_down()
+        screen_ui_code.append(f"{self.indent_str}else:")
+        self.indent_level_up()
+        screen_ui_code.append(f"{self.indent_str}parent_controller_action = NullAction()")
+        self.indent_level_down()
+        self.indent_level_down()
         # 添加按钮行为，设置按钮标题为当前选项的value，并关闭弹框。
-        popup_item_use_args.append(f"actions=[SetLocalVariable('button_title', item['value']), SetLocalVariable('{combobox_popup_controller_name}', False)]")
+        popup_item_use_args.append(f"actions=[SetLocalVariable('button_title', item['title']), SetLocalVariable('{combobox_popup_controller_name}', False), parent_controller_action]")
         screen_ui_code.append(f"{self.indent_str}use {popup_component_list_item.name}({', '.join(popup_item_use_args)})")
         self.indent_level_down()
         self.indent_level_down()
@@ -2926,10 +2954,17 @@ class FguiToRenpyConverter:
             print("It is not a graph displayable.")
             return graph_code
         component_name = self.current_component_name
+        end_indent_level = 0
 
         self.graph_definition_code.extend(self.generate_graph_definitions(fgui_graph, component_name))
+        # 根据显示控制器gearDisplay设置显示条件。如果为空，则不设置显示条件。
+        if fgui_graph.gear_display:
+            condition_str = f"if {fgui_graph.gear_display.controller_name} in {fgui_graph.gear_display.controller_index}:"
+            graph_code.append(f"{self.indent_str}{condition_str}")
+            self.indent_level_up()
+            end_indent_level = 1
         graph_code.append(f"{self.indent_str}add '{component_name}_{fgui_graph.id}'")
-
+        self.indent_level_down(end_indent_level)
         return graph_code
 
     def generate_text_displayable(self, fgui_text, component : FguiComponent) -> list:
@@ -3161,27 +3196,10 @@ class FguiToRenpyConverter:
         margin = (0, 0, 0, 0)
         xysize = (0, 0)
         pos = (0, 0)
+        end_indent_level = 0
 
         # 根据列表布局计算行数与列数。
         row_num, column_num = self.get_list_row_column_num(fgui_list, default_item)
-        # layout-列表布局：(column)默认-单列竖排，row-单行横排，flow_hz-横向流动，flow_vt-纵向流动、pagination-分页
-        # lineItemCount：列表布局为横向流动或分页时，表示列数。列表布局为竖向流动时，表示行数。其他布局中，该参数无效果。
-        # lineItemCount2：列表布局为分页时，表示行数。其他布局中，该参数无效果。
-        # if fgui_list.layout == "column":
-        #     column_num = 1
-        #     row_num = list_length
-        # elif fgui_list.layout == "row":
-        #     row_num = 1
-        #     column_num = list_length
-        # elif fgui_list.layout == 'flow_hz':
-        #     column_num = fgui_list.line_item_count
-        #     row_num = math.ceil(list_length / column_num)
-        # elif fgui_list.layout == 'flow_vt':
-        #     row_num = fgui_list.line_item_count
-        #     column_num = math.ceil(list_length / row_num)
-        # else:
-        #     column_num = fgui_list.line_item_count
-        #     row_num = fgui_list.line_item_count2
 
         xspacing = fgui_list.col_gap
         yspacing = fgui_list.line_gap
@@ -3192,6 +3210,12 @@ class FguiToRenpyConverter:
         pos = fgui_list.xypos
         margin = fgui_list.margin
         screen_params = f"overflow='{overflow}', layout='{layout}', row_num={row_num}, column_num={column_num}, transpose={transpose}, xspacing={xspacing}, yspacing={yspacing}, xysize={xysize}, pos={pos}, margin={margin}"
+        # 根据显示控制器gearDisplay设置显示条件。如果为空，则不设置显示条件。
+        if fgui_list.gear_display:
+            condition_str = f"if {fgui_list.gear_display.controller_name} in {fgui_list.gear_display.controller_index}:"
+            list_code.append(f"{self.indent_str}{condition_str}")
+            self.indent_level_up()
+            end_indent_level = 1
         # 引用列表组件的screen。
         list_code.append(f"{self.indent_str}use {component_name}_{fgui_list.name}({screen_params}):")
         # 添加元素
@@ -3241,6 +3265,7 @@ class FguiToRenpyConverter:
                     list_code.append(f"{self.indent_str}use {default_item_name}()")
                     self.indent_level_down()
 
+        self.indent_level_down(end_indent_level)
         return list_code
 
     def generate_list_screen(self, fgui_list : FguiList, component_name : str) -> bool:
@@ -3306,7 +3331,7 @@ class FguiToRenpyConverter:
         if not isinstance(fgui_loader, FguiLoader):
             print("It is not a loader displayable.")
             return loader_code
-        
+        end_indent_level = 0
         component_name = self.current_component_name
         loader_screen_result = self.generate_loader_screen(fgui_loader, component_name)
         if not loader_screen_result:
@@ -3315,7 +3340,14 @@ class FguiToRenpyConverter:
         
         params_str = self.generate_loader_screen_params(fgui_loader)
 
+        # 根据显示控制器gearDisplay设置显示条件。如果为空，则不设置显示条件。
+        if fgui_loader.gear_display:
+            condition_str = f"if {fgui_loader.gear_display.controller_name} in {fgui_loader.gear_display.controller_index}:"
+            loader_code.append(f"{self.indent_str}{condition_str}")
+            self.indent_level_up()
+            end_indent_level = 1
         loader_code.append(f"{self.indent_str}use {component_name}_{fgui_loader.name}({params_str})")
+        self.indent_level_down(end_indent_level)
         return loader_code
 
     def generate_loader_screen(self, fgui_loader : FguiLoader, component_name : str) -> bool:
