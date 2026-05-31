@@ -275,6 +275,7 @@ class FguiController:
             self.page_index_dict[int(page_list[i])] = page_list[i+1]
             i += 2
         self.selected = int(selected) if selected else 0
+        self.max_index = max(self.page_index_dict.keys())
 
     def __repr__(self):
         return f"FguiController({self.name}, {self.page_index_dict}, {self.selected})"
@@ -353,6 +354,13 @@ class FguiComponent:
             self.relations.append(FguiRelation(relation))
         # if len(self.relations) > 0:
         #     print(f"component {self.name} relations: {self.relations}")
+
+    # 根据控制器名查找控制器对象。
+    def get_controller_by_name(self, controller_name):
+        for controller in self.controller_list:
+            if controller.name == controller_name:
+                return controller
+        return None
 
     def __repr__(self):
         return f"FguiComponent({self.id}, {self.name}, {self.size}, {self.extention}, {self.mask})"
@@ -603,7 +611,6 @@ class FguiDisplayable:
         # 未明确是否可触摸则默认可以触摸
         self.touchable = not (self.display_item_tree.get("touchable") == "false")
         # 资源包描述id，部分组件需要
-        self.package_desc = package_desc
         self.package_description_id = package_desc.id if package_desc else None
         # BlendMode
         self.blend_mode = self.display_item_tree.get("blend", "normal")
@@ -666,7 +673,7 @@ class FguiDisplayable:
             elif self.display_item_tree[i].tag == "gearIcon" :
                 self.gear_icon = FguiGearIcon(self.display_item_tree[i])
             elif self.display_item_tree[i].tag == "Button" :
-                self.button_property = FguiButtonProperty(self.display_item_tree[i])
+                self.button_property = FguiButtonProperty(self.display_item_tree[i], package_desc=self.package_desc)
             elif self.display_item_tree[i].tag == "relation" :
                 self.relations.append(FguiRelation(self.display_item_tree[i]))
             elif self.display_item_tree[i].tag == "Slider" :
@@ -674,7 +681,7 @@ class FguiDisplayable:
             elif self.display_item_tree[i].tag == "ProgressBar" :
                 self.progressbar_property = FguiProgressBarProperty(self.display_item_tree[i])
             elif self.display_item_tree[i].tag == "Label" :
-                self.label_property = FguiLabelProperty(self.display_item_tree[i])
+                self.label_property = FguiLabelProperty(self.display_item_tree[i], package_desc=self.package_desc)
             elif self.display_item_tree[i].tag == "ComboBox" :
                 self.combobox_property = FguiComboBoxProperty(self.display_item_tree[i])
             else:
@@ -689,9 +696,10 @@ class FguiComponentPropertyBase:
     """
     组件子属性信息基类
     """
-    def __init__(self, component_property_tree):
+    def __init__(self, component_property_tree, package_desc=None):
         self.component_property_tree = component_property_tree
         self.property_name = self.component_property_tree.tag
+        self.package_desc = package_desc
 
 class FguiButtonProperty(FguiComponentPropertyBase):
     """
@@ -699,8 +707,8 @@ class FguiButtonProperty(FguiComponentPropertyBase):
     包括title和icon，分别表示标题(文本)和图标(装载器)。
     若按钮与控制器连接，在此处记录关联控制器名与关联索引。
     """
-    def __init__(self, component_property_tree):
-        super().__init__(component_property_tree)
+    def __init__(self, component_property_tree, package_desc=None):
+        super().__init__(component_property_tree, package_desc)
         if self.property_name != "Button" :
             raise ValueError("xml tag is not Button")
         self.title = self.component_property_tree.get("title")
@@ -716,8 +724,9 @@ class FguiComboBoxListItem:
     """
     下拉框弹出列表的按钮信息。
     """
-    def __init__(self, item_tree):
+    def __init__(self, item_tree, package_desc=None):
         self.item_tree = item_tree
+        self.package_desc = package_desc
         self.title = self.item_tree.get("title")
         self.icon = self.item_tree.get("icon")
         self.value = self.item_tree.get("value")
@@ -749,13 +758,19 @@ class FguiLabelProperty(FguiComponentPropertyBase):
     """
     组件子属性中的Label信息。
     """
-    def __init__(self, component_property_tree):
-        super().__init__(component_property_tree)
+    def __init__(self, component_property_tree, package_desc=None):
+        super().__init__(component_property_tree, package_desc)
         if self.property_name != "Label" :
             raise ValueError("xml tag is not Label")
         self.title = self.component_property_tree.get("title")
         self.text_color = self.component_property_tree.get("titleColor")
         self.font_size = int(self.component_property_tree.get("titleFontSize", 24))
+        icon = self.component_property_tree.get("icon")
+        if icon:
+            # 资源url，格式为“ui://”+“packageDescription id” + “component id”。
+            self.icon_url = icon[icon.find(self.package_desc.id)+len(self.package_desc.id):]
+        else:
+            self.icon_url = None
 
 class FguiGraph(FguiDisplayable):
     """
@@ -843,7 +858,7 @@ class FguiText(FguiDisplayable):
         self.max_length = int(self.display_item_tree.get("maxLength", 0))
         self.restrict = self.display_item_tree.get("restrict") #输入文本规则，正则表达式字符串
         self.is_password = (self.display_item_tree.get("password") == "true")
-        
+
 
 
 class FguiImage(FguiDisplayable):
