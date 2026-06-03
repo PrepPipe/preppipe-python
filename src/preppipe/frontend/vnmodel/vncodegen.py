@@ -1100,7 +1100,7 @@ class VNCodeGen:
           self.destblock.push_back(rm)
           rmfinishtimes.append(rm.get_finish_time())
 
-        chhide = default_scene_dissolve_lit(self.context)
+        chhide = VNDefaultTransitionType.DT_SPRITE_HIDE.get_enum_literal(self.context)
         for ch, d in character_sprites.items():
           for creation, handle in d.items():
             remove_handle(handle, chhide)
