@@ -1079,10 +1079,14 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
         if position := instr.placeat.get(VNPositionSymbol.NAME_SCREEN2D):
           showat = self._get_screen2d_position(position)
         transition = instr.transition.try_get_value()
-        at_sp = self._require_foreground_show_at(transition) if transition else None
+        at_sp = None
+        if transition is not None and self._transition_has_visual_effect(transition):
+          at_sp = self._require_foreground_show_at(transition)
         if at_sp:
           showat = self._chain_show_at(showat, at_sp)
         show = RenPyShowNode.create(context=self.context, imspec=imspec, showat=showat)
+        if transition is not None and at_sp is None and self._transition_has_visual_effect(transition):
+          self._add_image_transition(transition, show)
         show.insert_before(insert_before)
         return show
       case VNStandardDeviceKind.O_SE_AUDIO:
