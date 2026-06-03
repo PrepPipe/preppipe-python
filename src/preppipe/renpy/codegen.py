@@ -1031,7 +1031,7 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
         sec = self._vn_duration_sec(transition.duration)
         return self._foreground_hide_fade_sequence(imspec, sec, insert_before, base_showat=base_showat)
     dt = VNDefaultTransitionType.get_default_transition_type(transition)
-    if dt in (VNDefaultTransitionType.DT_SPRITE_HIDE, VNDefaultTransitionType.DT_IMAGE_HIDE):
+    if dt in (VNDefaultTransitionType.DT_SPRITE_HIDE,):
       return self._foreground_hide_fade_sequence(imspec, _DEFAULT_TRANSITION_SEC, insert_before, base_showat=base_showat)
     if isinstance(transition, VNBackendDisplayableTransitionExpr):
       if transition.backend.get_string().lower() == "renpy":
@@ -1147,6 +1147,10 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
         raise NotImplementedError("TODO")
     return insert_before
 
+  def _is_character_sprite_foreground_content(self, content : Value) -> bool:
+    """前景层上的 ImagePack 立绘走 preppipe_sprite_* 退场序列；插入的 ImageAsset 用 hide … with。"""
+    return isinstance(content, ImagePackElementLiteralExpr)
+
   def gen_remove(self, instrs : list[VNInstruction], insert_before : RenPyNode) -> RenPyNode:
     # VNRemoveInst
     assert len(instrs) == 1
@@ -1158,9 +1162,10 @@ class _RenPyCodeGenHelper(BackendCodeGenHelperBase[RenPyNode]):
         case VNStandardDeviceKind.O_BACKGROUND_DISPLAY | VNStandardDeviceKind.O_FOREGROUND_DISPLAY:
           imspec = self.get_impsec(removevalue, kind)
           transition = instr.transition.try_get_value()
-          if kind == VNStandardDeviceKind.O_FOREGROUND_DISPLAY and transition is not None:
+          is_sprite = self._is_character_sprite_foreground_content(removevalue)
+          if kind == VNStandardDeviceKind.O_FOREGROUND_DISPLAY and transition is not None and is_sprite:
             transition = map_sprite_transition_entry_to_exit(self.context, transition)
-          if self._transition_has_visual_effect(transition) and kind == VNStandardDeviceKind.O_FOREGROUND_DISPLAY:
+          if self._transition_has_visual_effect(transition) and kind == VNStandardDeviceKind.O_FOREGROUND_DISPLAY and is_sprite:
             if hid := self._emit_foreground_hide(imspec, transition, insert_before, instr):
               return hid
             raise PPNotImplementedError(
