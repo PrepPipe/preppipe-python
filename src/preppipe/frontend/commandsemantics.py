@@ -452,6 +452,22 @@ def _is_list_positional_param_annotation(ann: typing.Any) -> bool:
   return typing.get_origin(ann) is list and len(typing.get_args(ann)) == 1
 
 
+def _annotation_includes_list_type(ann: typing.Any) -> bool:
+  if typing.get_origin(ann) is list and len(typing.get_args(ann)) == 1:
+    return True
+  for part in _flatten_union_parts(ann):
+    if typing.get_origin(part) is list and len(typing.get_args(part)) == 1:
+      return True
+  return False
+
+
+def _should_absorb_remaining_positional_args(ann: typing.Any) -> bool:
+  # list[…] 或 list[…] | … 联合类型：剩余按位项一次性绑定（SwitchCharacterState 等）
+  if _is_list_positional_param_annotation(ann):
+    return True
+  return _annotation_includes_list_type(ann) and len(_flatten_union_parts(ann)) > 1
+
+
 def validate_frontend_command_handler_semantics(func: typing.Callable, globalns: dict[str, typing.Any]) -> None:
   """约束：禁止内置 float 标注；按位业务参数至多一个（可为 list[…] 一次吸收多项）。"""
   sig = inspect.signature(func, globals=globalns, eval_str=True)
@@ -996,7 +1012,7 @@ class FrontendParserBase(typing.Generic[ParserStateType]):
           if param.kind == inspect.Parameter.KEYWORD_ONLY:
             first_fatal_error = ('cmdparser-kwarg-using-positional-value', self._tr_kwarg_using_positional_value.format(name=name))
             break
-          if typing.get_origin(param.annotation) is list:
+          if _should_absorb_remaining_positional_args(param.annotation):
             rest = positional_args[positional_arg_index:]
             first_fatal_error = cur_match.try_add_parameter(param, rest)
             if first_fatal_error is not None:
