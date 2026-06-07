@@ -416,6 +416,10 @@ class FguiToRenpyConverter:
         """设置界面相关的全局变量"""
         self.screen_global_variable_dict[variable_name] = variable_value
 
+    def add_screen_variable(self, variable_name : str, variable_value : str):
+        """添加作用域在界面内的变量"""
+        self.screen_variable_code.append(f"    default {variable_name} = {variable_value}")
+
     def generate_progressbar_style(self, fgui_progressbar : FguiProgressBar) -> None:
         """
         生成进度条样式。
@@ -898,6 +902,12 @@ class FguiToRenpyConverter:
                     continue
                 # 下拉框
                 if ref_com.extention == "ComboBox" and ref_com.name != None:
+                    # self.has_dismiss = True
+                    # 声明一个界面变量，用于控制下拉框popup的显示。
+                    combobox_popup_controller_name = f"{component.name}_{displayable.name}_combobox_popup_controller"
+                    self.add_screen_variable(combobox_popup_controller_name, f"False")
+                    # 该变量添加进dismiss的actions中，实现点击空白处关闭popup。
+                    self.dismiss_action_list.append(f"SetScreenVariable('{combobox_popup_controller_name}', False)")
                     # 下拉框尺寸处理
                     button_xysize = xysize
                     popup_xysize = ref_com.dropdown_component.size
@@ -941,6 +951,8 @@ class FguiToRenpyConverter:
                     if displayable.combobox_property.selection_controller:
                         combobox_screen_params.append(f"controller_name='{displayable.combobox_property.selection_controller}'")
                         combobox_screen_params.append(f"controller_max_index={component.get_controller_by_name(displayable.combobox_property.selection_controller).max_index}")
+                    combobox_screen_params.append(f"combobox_popup_controller_name='{combobox_popup_controller_name}'")
+                    combobox_screen_params.append(f"combobox_popup_controller={combobox_popup_controller_name}")
                     screen_ui_code.append(f"{self.indent_str}use {ref_com.name}({', '.join(combobox_screen_params)})")
                     self.indent_level_down(end_indent_level)
                     continue
@@ -1076,25 +1088,21 @@ class FguiToRenpyConverter:
     def generate_combobox_screen(self, component : FguiComponent):
         """
         下拉框组件对应screen。目标样例：
-        screen TestComboBox(combobox_button_title='下拉框按钮标题', button_xysize=(360, 60), popup_xysize=(360, 252), popup_list=[{'title': '1'}, {'title': '2'}, {'title': '3'}], popup_below_button=True, parent_controller_name=None):
+        screen TestComboBox(combobox_button_title='下拉框按钮标题', button_xysize=(360, 60), popup_xysize=(360, 252), popup_list=[{'title': '1'}, {'title': '2'}, {'title': '3'}], popup_below_button=True, controller_name=None, controller_max_index=0, combobox_popup_controller_name=None, combobox_popup_controller=False):
             default button_title = combobox_button_title
-            default TestComboBox_popup_controller = False
+            default TestComboBox_popup_controller = combobox_popup_controller
             default xysize = popup_xysize
             default xadj = ui.adjustment()
             default yadj = ui.adjustment()
-            default parent_controller = parent_controller_name
-            python:
-                if parent_controller:
-                    parent_controller_action = SetScreenVariable('index_controller', i)
-                else:
-                    parent_controller_action = NullAction()
-            dismiss action SetLocalVariable('TestComboBox_popup_controller', False)
+            default parent_controller = controller_name
+            default parent_controller_max_index = controller_max_index
+
             vbox:
                 if popup_below_button is not True :
                     box_reverse True
                     yalign 1.0
-                use TestComboBox_button(title=button_title, actions=ToggleLocalVariable('TestComboBox_popup_controller'), xysize=button_xysize)
-                if TestComboBox_popup_controller:
+                use TestComboBox_button(title=button_title, actions=ToggleScreenVariable(combobox_popup_controller_name), xysize=button_xysize)
+                if combobox_popup_controller:
                     fixed:
                         xysize popup_xysize
                         add 'text_box':
@@ -1110,8 +1118,13 @@ class FguiToRenpyConverter:
                             mousewheel True
                             vbox:
                                 spacing 0
-                                for item in popup_list:
-                                    use TestComboBox_item(item['title'], xysize=(360, 84), actions=[SetLocalVariable('button_title', item['title']), SetLocalVariable('TestComboBox_popup_controller', False), parent_controller_action])
+                                for i, item in enumerate(popup_list):
+                                    python:
+                                        if parent_controller:
+                                            parent_controller_action = SetScreenVariable(parent_controller, min(i, controller_max_index))
+                                        else:
+                                            parent_controller_action = NullAction()
+                                    use TestComboBox_item(item['title'], xysize=(360, 84), actions=[SetLocalVariable('button_title', item['title']), SetScreenVariable(combobox_popup_controller_name, False), parent_controller_action])
 
         """
         print("This is combobox screen.")
@@ -1165,13 +1178,12 @@ class FguiToRenpyConverter:
             if item.item_name is not None:
                 popup_item['value'] = item.item_name
             popup_list.append(popup_item)
-        screen_ui_code.append(f"screen {combobox_name}(combobox_button_title='{component.button_title}', button_xysize={xysize}, popup_xysize={popup_xysize}, popup_list={popup_list}, popup_below_button=True, controller_name=None, controller_max_index=0):")
+        screen_ui_code.append(f"screen {combobox_name}(combobox_button_title='{component.button_title}', button_xysize={xysize}, popup_xysize={popup_xysize}, popup_list={popup_list}, popup_below_button=True, controller_name=None, controller_max_index=0, combobox_popup_controller_name=None, combobox_popup_controller=False):")
         self.indent_level_up()
         # 声明按钮标题变量，初始值为界面入参。后续点击弹框按钮后，会修改为对应value的值。
         screen_ui_code.append(f"{self.indent_str}default button_title = combobox_button_title")
         # 声明一个本地变量，用于控制按钮的选中状态。
         combobox_popup_controller_name = f"{combobox_name}_popup_controller"
-        screen_ui_code.append(f"{self.indent_str}default {combobox_popup_controller_name} = False")
         # 声明一个本地变量，用于控制列表的尺寸。使用xysize便于后续可视组件调整尺寸。
         screen_ui_code.append(f"{self.indent_str}default xysize = popup_xysize")
         # 声明两个ui.adjustment对象，用于控制列表的滚动。
@@ -1182,7 +1194,10 @@ class FguiToRenpyConverter:
         # 关联的父组件控制器最大索引。
         screen_ui_code.append(f"{self.indent_str}default parent_controller_max_index = controller_max_index")
         # 添加dismiss action，用于关闭弹框。
-        screen_ui_code.append(f"{self.indent_str}dismiss action SetLocalVariable('{combobox_popup_controller_name}', False)")
+        # screen_ui_code.append(f"{self.indent_str}dismiss action SetLocalVariable('{combobox_popup_controller_name}', False)")
+        # 由于Ren'Py的界面内只有一个生效的dismiss，下拉框本身不添加dismiss，而在引用此下拉框的界面内添加dismiss。
+        # 同时，用于控制popup显示的变量需要由引用此下拉框的界面传入。
+        # 传入参数分别为表示控制变量名的combobox_popup_controller_name和控制变量combobox_popup_controller。
         # 生成vbox垂直列表。
         screen_ui_code.append(f"{self.indent_str}vbox:")
         self.indent_level_up()
@@ -1193,9 +1208,9 @@ class FguiToRenpyConverter:
         screen_ui_code.append(f"{self.indent_str}yalign 1.0")
         self.indent_level_down()
         # 引用按钮。
-        screen_ui_code.append(f"{self.indent_str}use {button_screen_name}(title=button_title, actions=ToggleLocalVariable('{combobox_popup_controller_name}'), xysize=button_xysize)")
+        screen_ui_code.append(f"{self.indent_str}use {button_screen_name}(title=button_title, actions=ToggleScreenVariable(combobox_popup_controller_name), xysize=button_xysize)")
         # 添加下拉框的选项列表。
-        screen_ui_code.append(f"{self.indent_str}if {combobox_popup_controller_name}:")
+        screen_ui_code.append(f"{self.indent_str}if combobox_popup_controller:")
         self.indent_level_up()
         # 不引用dropdown组件，直接生成列表组件。
         screen_ui_code.append(f"{self.indent_str}fixed:")
@@ -1247,7 +1262,7 @@ class FguiToRenpyConverter:
         self.indent_level_down()
         self.indent_level_down()
         # 添加按钮行为，设置按钮标题为当前选项的value，并关闭弹框。
-        popup_item_use_args.append(f"actions=[SetLocalVariable('button_title', item['title']), SetLocalVariable('{combobox_popup_controller_name}', False), parent_controller_action]")
+        popup_item_use_args.append(f"actions=[SetLocalVariable('button_title', item['title']), SetScreenVariable(combobox_popup_controller_name, False), parent_controller_action]")
         screen_ui_code.append(f"{self.indent_str}use {popup_component_list_item.name}({', '.join(popup_item_use_args)})")
         self.indent_level_down()
         self.indent_level_down()
@@ -1278,6 +1293,7 @@ class FguiToRenpyConverter:
 
         # 界面入参列表
         screen_params = ''
+        screen_params_list = []
 
         # main_menu界面的特殊处理
         if self.is_main_menu_screen(screen_name):
@@ -1317,10 +1333,13 @@ class FguiToRenpyConverter:
 
         # confirm 界面固定入参
         if screen_name == 'confirm':
-            screen_params = f"message, yes_action, no_action, xysize={component.size}"
-        else:
-            screen_params = f"xysize={component.size}"
+            screen_params_list.append("message")
+            screen_params_list.append("yes_action")
+            screen_params_list.append("no_action")
 
+        if component.size:
+            screen_params_list.append(f"xysize={component.size}")
+        screen_params = f", ".join(screen_params_list)
         self.reset_indent_level()
         self.screen_definition_head.append(f"screen {screen_name}({screen_params}):")
         self.indent_level_up()
@@ -1400,6 +1419,7 @@ class FguiToRenpyConverter:
             self.screen_code.append("")
         # 添加只有1个生效的dismiss
         if self.screen_has_dismiss:
+            self.indent_level_down()
             self.screen_ui_code.append(f"{self.indent_str}dismiss:")
             self.indent_level_up()
             self.screen_ui_code.append(f"{self.indent_str}modal False")
@@ -2553,7 +2573,7 @@ class FguiToRenpyConverter:
         self.screen_variable_code.clear()
         self.screen_function_code.clear()
         self.screen_ui_code.clear()
-        self.has_dismiss = False
+        self.screen_has_dismiss = False
         self.dismiss_action_list.clear()
 
         # 4种状态的子组件列表
@@ -3039,15 +3059,12 @@ class FguiToRenpyConverter:
             # 添加InputValue变量。
             if fgui_text.custom_data:
                 self.add_game_global_variables(fgui_text.custom_data, fgui_text.text)
-                self.screen_variable_code.append(f"{self.indent_str}default {fgui_text.name}_input_value = VariableInputValue('{fgui_text.custom_data}', default=False)")
+                self.add_screen_variable(f"{fgui_text.name}_input_value", f"VariableInputValue('{fgui_text.custom_data}', default=False)")
             else:
-                self.screen_variable_code.append(f"{self.indent_str}default {fgui_text.name} = '{fgui_text.text}'")
-                self.screen_variable_code.append(f"{self.indent_str}default {fgui_text.name}_input_value = ScreenVariableInputValue('{fgui_text.name}', default=False)")
-            if self.screen_has_dismiss == False:
-                self.screen_has_dismiss = True
-                # 若prompt不为空，需要在screen中添加一个输入检测函数
-                if fgui_text.prompt:
-                    self.screen_function_code.append("    python:\n        def check_input_length(input_value_object):\n            str_length = len(input_value_object.get_text())\n            current, editable = renpy.get_editable_input_value()\n            return (not editable or current!=input_value_object) and str_length == 0\n")
+                self.add_screen_variable(f"{fgui_text.name}", f"'{fgui_text.text}'")
+                self.add_screen_variable(f"{fgui_text.name}_input_value", f"ScreenVariableInputValue('{fgui_text.name}', default=False)")
+
+            self.screen_has_dismiss = True
             self.dismiss_action_list.append(f"{fgui_text.name}_input_value.Disable()")
             # 用按钮装载input
             text_code.append(f"{self.indent_str}button:")
