@@ -289,7 +289,17 @@ class FguiToRenpyConverter:
 
             if image_info:
                 atlas_index = image_info.atlas_index
-                atlas_key = f"atlas{atlas_index}"
+                if atlas_index == -1:
+                    # 独立图集：sprites 中 atlas_index 为 -1，图集 id 为 atlas_{image_id}
+                    atlas_key = f"atlas_{sprite.image_id}"
+                    if atlas_key not in self.fgui_assets.fgui_atlas_dicts:
+                        for atlas in self.fgui_assets.package_desc.atlas_list:
+                            if atlas.id == atlas_key:
+                                atlas_file_name = self.fgui_assets.fgui_project_name + '@' + atlas.file
+                                self.fgui_assets.fgui_atlas_dicts[atlas_key] = atlas_file_name
+                                break
+                else:
+                    atlas_key = f"atlas{atlas_index}"
                 atlas_file = self.fgui_assets.fgui_atlas_dicts[atlas_key]
                 # 计算在图集中的位置
                 x, y = sprite.x, sprite.y
@@ -298,7 +308,7 @@ class FguiToRenpyConverter:
                 # 生成Ren'Py图像定义
                 # 由于Ren'Py中文件名带 @ 表示过采样，替换为下划线 _
                 atlas_file = atlas_file.replace('@', '_').lower()
-                image_name = image_name.replace('@', '_')
+                image_name = self.sanitize_renpy_image_name(image_name)
                 # 九宫格
                 if image_scale == "9grid":
                     ima_str = f'im.Crop("{atlas_file}", ({x}, {y}, {width}, {height}))'
@@ -456,7 +466,7 @@ class FguiToRenpyConverter:
             # FGUI中进度条的背景
             if displayable.name == 'n0':
                 if isinstance(displayable, FguiImage):
-                    second_bar_name = self.fgui_assets.get_componentname_by_id(displayable.src)
+                    second_bar_name = self.get_renpy_image_name_by_id(displayable.src)
                 elif isinstance(displayable, FguiGraph):
                     bar_image_definition_code.extend(self.generate_graph_definitions(displayable, fgui_progressbar.name))
                     second_bar_name = f"{fgui_progressbar.name}_{displayable.id}"
@@ -466,7 +476,7 @@ class FguiToRenpyConverter:
             # FGUI中水平滑动条的可变bar部分
             if displayable.name == 'bar':
                 if isinstance(displayable, FguiImage):
-                    first_bar_name = self.fgui_assets.get_componentname_by_id(displayable.src)
+                    first_bar_name = self.get_renpy_image_name_by_id(displayable.src)
                 elif isinstance(displayable, FguiGraph):
                     bar_image_definition_code.extend(self.generate_graph_definitions(displayable, fgui_progressbar.name))
                     first_bar_name = f"{fgui_progressbar.name}_{displayable.id}"
@@ -574,7 +584,7 @@ class FguiToRenpyConverter:
             # FGUI中滑动条的背景
             if displayable.name == 'n0':
                 if isinstance(displayable, FguiImage):
-                    second_bar_name = self.fgui_assets.get_componentname_by_id(displayable.src)
+                    second_bar_name = self.get_renpy_image_name_by_id(displayable.src)
                 elif isinstance(displayable, FguiGraph):
                     bar_image_definition_code.extend(self.generate_graph_definitions(displayable, fgui_slider.name))
                     second_bar_name = f"{fgui_slider.name}_{displayable.id}"
@@ -584,7 +594,7 @@ class FguiToRenpyConverter:
             # FGUI中水平滑动条的可变bar部分
             if displayable.name == 'bar':
                 if isinstance(displayable, FguiImage):
-                    first_bar_name = self.fgui_assets.get_componentname_by_id(displayable.src)
+                    first_bar_name = self.get_renpy_image_name_by_id(displayable.src)
                 elif isinstance(displayable, FguiGraph):
                     bar_image_definition_code.extend(self.generate_graph_definitions(displayable, fgui_slider.name))
                     first_bar_name = f"{fgui_slider.name}_{displayable.id}"
@@ -596,7 +606,7 @@ class FguiToRenpyConverter:
             # FGUI中垂直滑动条的可变bar部分
             if displayable.name == 'bar_v':
                 if isinstance(displayable, FguiImage):
-                    first_bar_name = self.fgui_assets.get_componentname_by_id(displayable.src)
+                    first_bar_name = self.get_renpy_image_name_by_id(displayable.src)
                 elif isinstance(displayable, FguiGraph):
                     bar_image_definition_code.extend(self.generate_graph_definitions(displayable, fgui_slider.name))
                     first_bar_name = f"{fgui_slider.name}_{displayable.id}"
@@ -1034,7 +1044,7 @@ class FguiToRenpyConverter:
             if isinstance(displayable, FguiLoader) and displayable.name == 'icon':
                 icon_index = index
                 icon_displayable = displayable
-                icon_displayable_name = self.fgui_assets.get_componentname_by_id(icon_displayable.item_url)
+                icon_displayable_name = self.get_renpy_image_name_by_id(icon_displayable.item_url)
                 continue
 
         # 界面定义
@@ -1683,7 +1693,7 @@ class FguiToRenpyConverter:
             default_item_type = default_item.extention
             default_item_size = default_item.size
         else:
-            default_item_name = self.fgui_assets.get_componentname_by_id(fgui_list.default_item_id)
+            default_item_name = self.get_renpy_image_name_by_id(fgui_list.default_item_id)
             if default_item_name:
                 default_item_type = 'image'
                 default_item_size = self.fgui_assets.get_image_size_by_id(fgui_list.default_item_id)
@@ -2055,7 +2065,7 @@ class FguiToRenpyConverter:
             gallery_button_list_code.append(f"{self.indent_str}gallery_image = gallery_image[0]")
             self.indent_level_down(2)
             # 暂时用按钮的第一个display作为locked状态的显示内容。
-            locked_image = self.fgui_assets.get_componentname_by_id(gallery_button_list_item.display_list.displayable_list[0].src)
+            locked_image = self.get_renpy_image_name_by_id(gallery_button_list_item.display_list.displayable_list[0].src)
             gallery_button_list_code.append(f"{self.indent_str}add g.make_button(gallery_image, gallery_image, locked='{locked_image}') xysize {gallery_button_list_item.size}")
             self.indent_level_down()
         self.screen_ui_code.extend(gallery_button_list_code)
@@ -2274,14 +2284,25 @@ class FguiToRenpyConverter:
         self.screen_code.extend(self.screen_ui_code)
         return
 
-    # 根据图片组件对象获取图片名
+    @staticmethod
+    def sanitize_renpy_image_name(name):
+        """Ren'Py中 @ 表示过采样，Image对象名不可包含 @，需替换为下划线。"""
+        if name is None:
+            return None
+        return name.replace('@', '_')
+
+    # 根据图片组件对象获取 Ren'Py 可用的图片名
     def get_image_name(self, fgui_image):
         if not isinstance(fgui_image, FguiImage):
             print("It is not a Image object.")
             return None
         for image in self.fgui_assets.package_desc.image_list:
             if fgui_image.src == image.id:
-                return image.name
+                return self.sanitize_renpy_image_name(image.name)
+
+    def get_renpy_image_name_by_id(self, image_id):
+        name = self.fgui_assets.get_componentname_by_id(image_id)
+        return self.sanitize_renpy_image_name(name) if name else None
 
     @staticmethod
     def generate_variable_definition_str(variable_name, current_value=None):
@@ -2312,7 +2333,9 @@ class FguiToRenpyConverter:
         if label_property.font_size:
             parameter_list.append(f"title_size={label_property.font_size}")
         if label_property.icon_url:
-            parameter_list.append(f"icon='{fgui_assets.get_componentname_by_id(label_property.icon_url)}'")
+            icon_name = fgui_assets.get_componentname_by_id(label_property.icon_url)
+            if icon_name:
+                parameter_list.append(f"icon='{FguiToRenpyConverter.sanitize_renpy_image_name(icon_name)}'")
         parameter_str = ",".join(parameter_list)
         return parameter_str
 
@@ -2670,10 +2693,9 @@ class FguiToRenpyConverter:
                         continue
             # 图片组件
             if isinstance(displayable, FguiImage):
-                for image in self.fgui_assets.package_desc.image_list:
-                    if displayable.src == image.id:
-                        image_id_name_mapping[displayable.id] = image.name
-                        break
+                renpy_image_name = self.get_renpy_image_name_by_id(displayable.src)
+                if renpy_image_name:
+                    image_id_name_mapping[displayable.id] = renpy_image_name
             elif isinstance(displayable, FguiGraph):
                 self.graph_definition_code.extend(self.generate_graph_definitions(displayable, button_name))
             # 文本组件。只处理名为title的文本组件。其他的文本待后续增加。
@@ -2752,7 +2774,7 @@ class FguiToRenpyConverter:
         # focus_mask，对应FGUI中的“点击测试”。
         if component.hit_test:
             # 根据引用src查找image名
-            image_name = self.fgui_assets.get_componentname_by_id(component.hit_test.src)
+            image_name = self.get_renpy_image_name_by_id(component.hit_test.src)
             screen_ui_code.append(f"{self.indent_str}focus_mask \'{image_name}\' pos {component.hit_test.pos}")
 
         screen_ui_code.append("")
@@ -2780,7 +2802,7 @@ class FguiToRenpyConverter:
         for displayable, displayalbe_type in displayable_list:
             image_definitions.append(f"{self.indent_str}{displayable.xypos},")
             if displayalbe_type == DisplayableChildType.IMAGE:
-                name = self.fgui_assets.get_componentname_by_id(displayable.src)
+                name = self.get_renpy_image_name_by_id(displayable.src)
                 if is_frame:
                     image_definitions.append(f"{self.indent_str}Frame('{name}'),")
                 else:
@@ -2818,7 +2840,7 @@ class FguiToRenpyConverter:
             image_definitions.append(f"{self.indent_str}contains:")
             self.indent_level_up()
             if displayalbe_type == DisplayableChildType.IMAGE:
-                name = self.fgui_assets.get_componentname_by_id(displayable.src)
+                name = self.get_renpy_image_name_by_id(displayable.src)
                 image_definitions.append(f"{self.indent_str}'{name}'")
             elif displayalbe_type == DisplayableChildType.GRAPH:
                 image_definitions.append(f"{self.indent_str}'{component_name}_{displayable.id}'")
@@ -2947,50 +2969,48 @@ class FguiToRenpyConverter:
             self.indent_level_up()
             end_indent_level = 1
 
-        for image in self.fgui_assets.package_desc.image_list:
-            if fgui_image.src == image.id:
-                image_name = image.name
-                image_code.append(f"{self.indent_str}add '{image_name}':")
-                self.indent_level_up()
-                image_code.append(f"{self.indent_str}pos {fgui_image.xypos}")
-                # 必须指定，旋转和缩放都需要使用。
-                image_code.append(f"{self.indent_str}anchor {fgui_image.pivot}")
-                # FairyGUI中锚点固定为(0,0)或与轴心一致，轴心可指定为任意值。
-                # Ren'Py中旋转轴心固定为图片中心(0.5,0.5)或与锚点一致，锚点可指定为任意值。
-                # 若要与FairyGUI资源保持一致，需设置offset。
-                # size可能为None，需要获取
-                if (not fgui_image.size) or (fgui_image.size == (0, 0)):
-                    size = self.fgui_assets.get_image_size_by_id(fgui_image.src)
-                else:
-                    size = fgui_image.size
-                if not fgui_image.pivot_is_anchor:
-                    xoffset = int(fgui_image.pivot[0] * size[0])
-                    yoffset = int(fgui_image.pivot[1] * size[1])
-                    image_code.append(f"{self.indent_str}xoffset {xoffset}")
-                    image_code.append(f"{self.indent_str}yoffset {yoffset}")
-                else:
-                    image_code.append(f"{self.indent_str}transform_anchor {fgui_image.pivot_is_anchor}")
+        image_name = self.get_image_name(fgui_image)
+        if image_name:
+            image_code.append(f"{self.indent_str}add '{image_name}':")
+            self.indent_level_up()
+            image_code.append(f"{self.indent_str}pos {fgui_image.xypos}")
+            # 必须指定，旋转和缩放都需要使用。
+            image_code.append(f"{self.indent_str}anchor {fgui_image.pivot}")
+            # FairyGUI中锚点固定为(0,0)或与轴心一致，轴心可指定为任意值。
+            # Ren'Py中旋转轴心固定为图片中心(0.5,0.5)或与锚点一致，锚点可指定为任意值。
+            # 若要与FairyGUI资源保持一致，需设置offset。
+            # size可能为None，需要获取
+            if (not fgui_image.size) or (fgui_image.size == (0, 0)):
+                size = self.fgui_assets.get_image_size_by_id(fgui_image.src)
+            else:
+                size = fgui_image.size
+            if not fgui_image.pivot_is_anchor:
+                xoffset = int(fgui_image.pivot[0] * size[0])
+                yoffset = int(fgui_image.pivot[1] * size[1])
+                image_code.append(f"{self.indent_str}xoffset {xoffset}")
+                image_code.append(f"{self.indent_str}yoffset {yoffset}")
+            else:
+                image_code.append(f"{self.indent_str}transform_anchor {fgui_image.pivot_is_anchor}")
 
-                if fgui_image.rotation:
-                    image_code.append(f"{self.indent_str}rotate {fgui_image.rotation}")
-                if fgui_image.alpha != 1.0:
-                    image_code.append(f"{self.indent_str}alpha {fgui_image.alpha}")
-                if fgui_image.multiply_color != "#ffffff":
-                    image_code.append(f"{self.indent_str}matrixcolor TintMatrix('{fgui_image.multiply_color}')")
-                if fgui_image.scale != (1.0, 1.0):
-                    image_code.append(f"{self.indent_str}xzoom {fgui_image.scale[0]} yzoom {fgui_image.scale[1]}")
+            if fgui_image.rotation:
+                image_code.append(f"{self.indent_str}rotate {fgui_image.rotation}")
+            if fgui_image.alpha != 1.0:
+                image_code.append(f"{self.indent_str}alpha {fgui_image.alpha}")
+            if fgui_image.multiply_color != "#ffffff":
+                image_code.append(f"{self.indent_str}matrixcolor TintMatrix('{fgui_image.multiply_color}')")
+            if fgui_image.scale != (1.0, 1.0):
+                image_code.append(f"{self.indent_str}xzoom {fgui_image.scale[0]} yzoom {fgui_image.scale[1]}")
 
-                # TODO 此处需要根据引用组件的信息修改尺寸。
-                size_str = str(size)
-                # 如果引用组件时无关联属性，则直接使用引用组件的尺寸。
-                if len(fgui_image.relations) == 0:
-                    pass
-                else:
-                    # 如果引用组件时有关联属性，则根据关联属性修改尺寸。
-                    size_str = self.get_size_str(fgui_image, size, current_container)
-                image_code.append(f"{self.indent_str}xysize {size_str}")
-                self.indent_level_down()
-                break
+            # TODO 此处需要根据引用组件的信息修改尺寸。
+            size_str = str(size)
+            # 如果引用组件时无关联属性，则直接使用引用组件的尺寸。
+            if len(fgui_image.relations) == 0:
+                pass
+            else:
+                # 如果引用组件时有关联属性，则根据关联属性修改尺寸。
+                size_str = self.get_size_str(fgui_image, size, current_container)
+            image_code.append(f"{self.indent_str}xysize {size_str}")
+            self.indent_level_down()
         self.indent_level_down(end_indent_level)
         return image_code
 
@@ -3221,7 +3241,7 @@ class FguiToRenpyConverter:
             default_item_type = default_item.extention
         # 若非组件
         else:
-            default_item_name = self.fgui_assets.get_componentname_by_id(fgui_list.default_item_id)
+            default_item_name = self.get_renpy_image_name_by_id(fgui_list.default_item_id)
             if default_item_name:
                 default_item_type = 'image'
             else:
@@ -3286,7 +3306,7 @@ class FguiToRenpyConverter:
                     list_code.append(f"{self.indent_str}use {item_component.name}()")
                     self.indent_level_down()
                 else:
-                    image_item_name = self.fgui_assets.get_componentname_by_id(item.item_id)
+                    image_item_name = self.get_renpy_image_name_by_id(item.item_id)
                     if image_item_name:
                         list_code.append(f"{self.indent_str}add '{image_item_name}'")
                     else:
