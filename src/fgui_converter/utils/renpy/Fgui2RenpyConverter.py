@@ -73,7 +73,7 @@ def is_valid_hex_color(color: str | None) -> bool:
     return color.lower() in COLOR_NAME_TO_HEX
 
 
-def _parse_main_menu_title_kv(pairs):
+def _parse_main_menu_title_kv(pairs : list[str] | None = None) -> MainMenuTitle | None:
     """
     将 --main-menu-title key1=val1 key2=val2 解析为 MainMenuTitle。
     pairs: 由 argparse 解析得到的字符串列表，如 ['text_str=标题', 'text_color=#ff0000']。
@@ -158,7 +158,7 @@ class FguiToRenpyConverter:
     # 可以生成按钮screen的组件类型元组。
     button_component_extention_list = ['Button', 'ComboBox']
 
-    def __init__(self, fgui_assets):
+    def __init__(self, fgui_assets : FguiAssets) -> None:
         self.fgui_assets = fgui_assets
         self.renpy_code = []
         self.screen_code = []
@@ -246,23 +246,23 @@ class FguiToRenpyConverter:
         self.game_global_variables_code.append(variable_str)
         self.game_global_variables_code.append('')
 
-    def calculate_indent(self):
+    def calculate_indent(self) -> str:
         self.indent_str = self.indent_unit * self.root_indent_level
         return self.indent_str
 
-    def indent_level_up(self, levelup=1):
+    def indent_level_up(self, levelup : int = 1) -> None:
         self.root_indent_level += levelup
         self.indent_str = self.indent_unit * self.root_indent_level
 
-    def indent_level_down(self, leveldown=1):
+    def indent_level_down(self, leveldown : int = 1) -> None:
         self.root_indent_level = max(self.root_indent_level-leveldown, 0)
         self.indent_str = self.indent_unit * self.root_indent_level
 
-    def reset_indent_level(self, indent_level=0):
+    def reset_indent_level(self, indent_level : int = 0) -> None:
         self.root_indent_level = indent_level
         self.indent_str = ''
 
-    def generate_image_definitions(self):
+    def generate_image_definitions(self) -> None:
         """生成图像定义"""
         image_definitions = []
         image_definitions.append("# 图像定义")
@@ -806,9 +806,8 @@ class FguiToRenpyConverter:
     def is_music_room_screen(screen_name : str):
         return screen_name == 'music_room'
 
-    def convert_component_display_list(self, component: FguiComponent, list_begin_index=0, list_end_index=-1) -> list:
+    def convert_component_display_list(self, component: FguiComponent, list_begin_index : int = 0, list_end_index : int = -1) -> list:
         screen_ui_code = []
-        # print(f"list_begin_index: {list_begin_index}, list_end_index: {list_end_index}")
         end_index = len(component.display_list.displayable_list) if (list_end_index == -1) else list_end_index
         for displayable in component.display_list.displayable_list[list_begin_index:end_index]:
             # 图片
@@ -2285,45 +2284,45 @@ class FguiToRenpyConverter:
         return
 
     @staticmethod
-    def sanitize_renpy_image_name(name):
+    def sanitize_renpy_image_name(name : str | None = None) -> str | None:
         """Ren'Py中 @ 表示过采样，Image对象名不可包含 @，需替换为下划线。"""
-        if name is None:
-            return None
-        return name.replace('@', '_')
+        if name :
+            return name.replace('@', '_')
+        return None
 
     # 根据图片组件对象获取 Ren'Py 可用的图片名
-    def get_image_name(self, fgui_image):
+    def get_image_name(self, fgui_image : FguiImage) -> str | None:
         if not isinstance(fgui_image, FguiImage):
             print("It is not a Image object.")
             return None
         for image in self.fgui_assets.package_desc.image_list:
             if fgui_image.src == image.id:
                 return self.sanitize_renpy_image_name(image.name)
+        print(f"Image {fgui_image.src} not found in package_desc.image_list.")
+        return None
 
-    def get_renpy_image_name_by_id(self, image_id):
+    def get_renpy_image_name_by_id(self, image_id : str) -> str | None:
         name = self.fgui_assets.get_componentname_by_id(image_id)
-        return self.sanitize_renpy_image_name(name) if name else None
+        return self.sanitize_renpy_image_name(name)
 
     @staticmethod
-    def generate_variable_definition_str(variable_name, current_value=None):
+    def generate_variable_definition_str(variable_name : str, current_value : str) -> str:
         return f"default {variable_name} = {current_value}"
 
     @staticmethod
-    def generate_uiadjustment_definition_str(name, range=1, value=0):
-        # return f"default {uiadjustment_name} = {adjustment_value}"
-        return f"default {name} = ui.adjustment(range={range}, value={value}, adjustable=False)"
+    def generate_uiadjustment_definition_str(name : str, range : int = 1, value : int = 0, adjustable : bool = False) -> str:
+        return f"default {name} = ui.adjustment(range={range}, value={value}, adjustable={adjustable})"
 
     @staticmethod
-    def generate_barvalue_definition_str(barvalue_name, min_value=0, max_value=100, current_value=0, scope='local'):
+    def generate_barvalue_definition_str(barvalue_name : str, min_value : int = 0, max_value : int = 100, current_value : int = 0, scope : str = 'local') -> str:
         barvalue_str = ''
         barvalue_scope_str = ''
         if scope in ('local', 'screen'):
             barvalue_scope_str = scope.capitalize()
-        barvalue_str = f"{barvalue_scope_str}VariableValue('{barvalue_name}',min={min_value},max={max_value})"
-        return barvalue_str
+        return f"{barvalue_scope_str}VariableValue('{barvalue_name}',min={min_value},max={max_value})"
 
     @staticmethod
-    def generate_label_screen_parameter(label_property, fgui_assets):
+    def generate_label_screen_parameter(label_property: FguiLabelProperty, fgui_assets: FguiAssets) -> str:
         parameter_list = []
         parameter_str = ""
         if label_property.title:
@@ -2336,11 +2335,10 @@ class FguiToRenpyConverter:
             icon_name = fgui_assets.get_componentname_by_id(label_property.icon_url)
             if icon_name:
                 parameter_list.append(f"icon='{FguiToRenpyConverter.sanitize_renpy_image_name(icon_name)}'")
-        parameter_str = ",".join(parameter_list)
-        return parameter_str
+        return ",".join(parameter_list)
 
     @staticmethod
-    def generate_button_default_parameter(button_title=None, original_actions_str=None, icon=None, activate_sound=None, xysize=None):
+    def generate_button_default_parameter(button_title: str | None = None, original_actions_str: str | None = None, icon: str | None = None, activate_sound: str | None = None, xysize: tuple[int, int] | None = None) -> str:
         parameter_str = ""
         title_str = "title=''"
         actions_str = "actions=NullAction()"
@@ -2359,11 +2357,10 @@ class FguiToRenpyConverter:
             activate_sound_str = "activate_sound=None"
         if xysize:
             xysize_str = f"xysize={xysize}"
-        parameter_str = f"{title_str}, {actions_str}, {icon_str}, {activate_sound_str}, {xysize_str}"
-        return parameter_str
+        return f"{title_str}, {actions_str}, {icon_str}, {activate_sound_str}, {xysize_str}"
 
     @staticmethod
-    def generate_button_parameter(button_title=None, original_actions_str=None, icon=None, activate_sound=None, xysize=None):
+    def generate_button_parameter(button_title: str | None = None, original_actions_str: str | None = None, icon: str | None = None, activate_sound: str | None = None, xysize: tuple[int, int] | None = None) -> str:
         parameter_str = ""
         title_str = None
         actions_str = None
@@ -2383,12 +2380,12 @@ class FguiToRenpyConverter:
 
         # 仅生成非None的参数
         parameter_str = ",".join([param for param in [title_str, actions_str, icon_str, activate_sound_str, xysize_str] if param is not None])
-        if parameter_str:
-            parameter_str = f"{parameter_str}"
+        # if parameter_str:
+        #     parameter_str = f"{parameter_str}"
         return parameter_str
 
     @staticmethod
-    def generate_button_callable_parameter(button_title=None, actions=None, icon=None):
+    def generate_button_callable_parameter(button_title: str | None = None, actions: str | None = None, icon: str | None = None) -> str:
         parameter_str = ""
         title_str = "title=''"
         actions_str = "actions=NullAction()"
@@ -2400,25 +2397,20 @@ class FguiToRenpyConverter:
         if icon:
             icon_str = f"icon={icon}"
 
-        parameter_str = f"{title_str}, {actions_str}, {icon_str}"
-        return parameter_str
+        return f"{title_str}, {actions_str}, {icon_str}"
 
     @staticmethod
     def generate_screen_fixed_size_str(component : FguiComponent):
-        size_str = ""
-
         if component.max_width == 0 and component.min_width == 0 and component.max_height == 0 and component.min_height == 0:
-            size_str = f"xysize xysize"
-            return size_str
+            return f"xysize xysize"
 
         max_width = component.max_width if component.max_width > 0 else component.size[0]
         min_width = component.min_width if component.min_width > 0 else component.size[0]
         max_height = component.max_height if component.max_height > 0 else component.size[1]
         min_height = component.min_height if component.min_height > 0 else component.size[1]
-        size_str = f"maximum ({max_width}, {max_height}) minimum ({min_width}, {min_height})"
-        return size_str
+        return f"maximum ({max_width}, {max_height}) minimum ({min_width}, {min_height})"
 
-    def generate_text_style(self, fgui_text : FguiText, style_name : str):
+    def generate_text_style(self, fgui_text : FguiText, style_name : str) -> None:
         """
         生成文本样式，专用于按钮标题，因为按钮中通常只有一个文本组件。
         目标样例：
@@ -2435,8 +2427,7 @@ class FguiToRenpyConverter:
         # self.style_code.clear()
         # FGUI与Ren'Py中的相同的文本对齐方式渲染效果略有不同，Ren'Py的效果更好。
         if not isinstance(fgui_text, FguiText):
-            print("It is not a text displayable.")
-            return
+            raise ValueError("It is not a text displayable.")
         # 样式具有固定一档的缩进
         style_indent = "    "
         self.style_code.append(f"# 文本{fgui_text.name}样式定义")
@@ -2480,7 +2471,7 @@ class FguiToRenpyConverter:
         self.style_code.append("")
 
     @staticmethod
-    def get_child_type(displayable):
+    def get_child_type(displayable : FguiDisplayable) -> DisplayableChildType:
         if isinstance(displayable, FguiImage):
             return DisplayableChildType.IMAGE
         elif isinstance(displayable, FguiText):
@@ -2492,7 +2483,7 @@ class FguiToRenpyConverter:
         else:
             return DisplayableChildType.OTHER
 
-    def generate_button_children(self, fgui_button : FguiButton):
+    def generate_button_children(self, fgui_button : FguiButton) -> dict[str, list[tuple[str, DisplayableChildType]]]:
         """
         生成按钮各状态的子组件。
         """
@@ -2552,7 +2543,6 @@ class FguiToRenpyConverter:
                 if displayable.gear_display and str(i) in displayable.gear_display.controller_index:
                     state_children_dict[state_index_name_dict[i]].append((displayable_id, FguiToRenpyConverter.get_child_type(displayable)))
                     continue
-        # print(state_children_dict)
 
         return state_children_dict
 
@@ -2569,7 +2559,7 @@ class FguiToRenpyConverter:
             return False
         return component.name.endswith('_grip')
 
-    def generate_button_screen(self, component : FguiComponent):
+    def generate_button_screen(self, component : FguiComponent) -> None:
         """
         生成按钮组件screen。目标样例：
 
@@ -2635,20 +2625,18 @@ class FguiToRenpyConverter:
 
         # 可以生成按钮screen的组件类型列表。
         if component.extention not in self.button_component_extention_list:
-            print("组件类型不是按钮或下拉框。")
-            return
+            raise ValueError("组件类型不是按钮或下拉框。")
 
         # 默认按钮控制器为button，并且必定有4种状态，顺序分别为idle、hover、selected、selected_hover。
         # 可扩展为5种，第5种必需为insensitive，表示按钮不激活状态。
         if component.controller_list[0].name != 'button':
-            print("按钮控制器名不是button。")
-            return
+            raise ValueError("按钮控制器名不是button。")
+
         # 检查按钮控制器的状态列表
         state_list = component.controller_list[0].page_index_dict.keys()
         state_number = min(len(state_list), 6) #暂时不处理6种以上的控制器状态
         if state_number < 4:
-            print("按钮控制器状态总数小于4。")
-            return
+            raise ValueError("按钮控制器状态总数小于4。")
 
         id = component.id
         button_name = component.name
@@ -2783,10 +2771,10 @@ class FguiToRenpyConverter:
         self.screen_code.extend(screen_ui_code)
         self.reset_indent_level()
 
-    def trans_text_align(self, text_horizontal_align="left", text_vertical_align="top"):
+    def trans_text_align(self, text_horizontal_align: str = "left", text_vertical_align: str = "top") -> tuple[float, float]:
         return self.align_dict.get(text_horizontal_align, 0.5), self.align_dict.get(text_vertical_align, 0.5)
 
-    def generate_composite_image_object(self, composite_name : str, displayable_list : list, component_name: str, size : tuple[int, int], is_frame : bool = False):
+    def generate_composite_image_object(self, composite_name : str, displayable_list : list, component_name: str, size : tuple[int, int], is_frame : bool = False) -> None:
         """
         生成合成图片对象。
         """
@@ -2828,7 +2816,7 @@ class FguiToRenpyConverter:
         暂时不考虑允许列表中的子组件添加额外transform，只单纯堆叠。
         """
         if len(displayable_list) <= 0:
-            return
+            raise ValueError("displayable_list is empty.")
         image_definitions = []
         image_definitions.append("# image对象定义")
         image_definitions.append("# 使用其他image对象的组合")
@@ -2862,11 +2850,10 @@ class FguiToRenpyConverter:
         self.root_indent_level = indent_level
 
     @staticmethod
-    def generate_text_outline_string(fgui_text):
+    def generate_text_outline_string(fgui_text : FguiText) -> str:
         outline_string = '[]'
         if not isinstance(fgui_text, FguiText):
-            print("It is not a text Displayable.")
-            return outline_string
+            raise ValueError("It is not a text Displayable.")
         has_shadow = fgui_text.shadow_color
         has_outline = fgui_text.stroke_color
         if has_shadow:
@@ -2883,12 +2870,9 @@ class FguiToRenpyConverter:
             outline_string = f"[{shadow_outline}, {extra_shadow}, {stroke_outline}]"
         return outline_string
 
-
-    def generate_text_displayable_string(self, fgui_text):
-        text_displayable_string = ''
+    def generate_text_displayable_string(self, fgui_text : FguiText) -> str:
         if not isinstance(fgui_text, FguiText):
-            print("It is not a text displayable.")
-            return text_displayable_string
+            raise ValueError("It is not a text displayable.")
         text_anchor_param = f"anchor={fgui_text.pivot}"
         text_transformanchor = f"transform_anchor=True"
         text_pos_param = f"pos={fgui_text.xypos}"
@@ -2910,8 +2894,7 @@ class FguiToRenpyConverter:
         text_outline_string = self.generate_text_outline_string(fgui_text)
         text_outlines_parame = 'outlines={text_outline_string}'
 
-        text_displayable_string = f"Text(text='{fgui_text.text}',{text_anchor_param},{text_transformanchor},{text_pos_param},{text_size_param},{text_font_param},{text_font_size_param},{text_font_color_param},{text_min_width_param},{text_textalign_param},{text_bold_param},{text_italic_param},{text_underline_param},{text_strike_param},{text_outlines_parame})"
-        return text_displayable_string
+        return f"Text(text='{fgui_text.text}',{text_anchor_param},{text_transformanchor},{text_pos_param},{text_size_param},{text_font_param},{text_font_size_param},{text_font_color_param},{text_min_width_param},{text_textalign_param},{text_bold_param},{text_italic_param},{text_underline_param},{text_strike_param},{text_outlines_parame})"
 
     @staticmethod
     def get_size_str(displayable : FguiDisplayable, current_size : tuple, current_container : FguiComponent) -> str:
@@ -2950,7 +2933,7 @@ class FguiToRenpyConverter:
         return f"({','.join(size_str_list)})"
 
 
-    def generate_image_displayable(self, fgui_image : FguiImage, current_container : FguiComponent) -> list:
+    def generate_image_displayable(self, fgui_image : FguiImage, current_container : FguiComponent) -> list[str]:
         """
         生成图片组件。
         前提为image对象的定义已经在generate_image_definitions中生成。
@@ -3043,7 +3026,7 @@ class FguiToRenpyConverter:
         self.indent_level_down(end_indent_level)
         return graph_code
 
-    def generate_text_displayable(self, fgui_text, component : FguiComponent) -> list:
+    def generate_text_displayable(self, fgui_text : FguiText, component : FguiComponent) -> list[str]:
         """
         生成文本组件。非按钮的组件可能存在多个不同文本，不单独生成样式。
         """
@@ -3249,7 +3232,7 @@ class FguiToRenpyConverter:
                 print("List default item is None.")
                 # return list_code
 
-        list_length = fgui_list.get_item_list_length()
+        # list_length = fgui_list.get_item_list_length()
 
         # 生成列表组件的screen。
         list_result = self.generate_list_screen(fgui_list, component_name)
@@ -3541,13 +3524,8 @@ class FguiToRenpyConverter:
                 self.generate_screen(component)
 
         self.generate_screen_global_variable_code()
-        # self.renpy_code.extend(self.game_global_variables_code)
-        # self.renpy_code.extend(self.image_definition_code)
-        # self.renpy_code.extend(self.graph_definition_code)
-        # self.renpy_code.extend(self.style_code)
-        # self.renpy_code.extend(self.screen_code)
 
-    def save_to_file(self, filename):
+    def save_to_file(self, filename : str) -> None:
         """
         保存Ren'Py代码
         """
@@ -3567,7 +3545,7 @@ class FguiToRenpyConverter:
 
         print(f"Ren'Py代码已保存到: {filename}")
 
-    def from_templates_to_renpy(self, filename):
+    def from_templates_to_renpy(self, filename : str) -> None:
         """
         读取模板替换字符串并保存至Ren'Py目录
         """
@@ -3580,7 +3558,7 @@ class FguiToRenpyConverter:
         with open(filename, 'w', encoding='utf-8') as f:
             f.write(content)
 
-    def get_template_content(self, filename : str, path : str = None) -> str:
+    def get_template_content(self, filename : str, path : str | None = None) -> str:
         """
         获取模板内容
         """
@@ -3685,8 +3663,7 @@ class FguiToRenpyConverter:
         self.cleanup()
 
 
-
-    def copy_predefine_files(self, source_dir, target_dir):
+    def copy_predefine_files(self, source_dir : str, target_dir : str) -> None:
         """
         复制预定义cdd和cds的文件
         """
@@ -3701,7 +3678,7 @@ class FguiToRenpyConverter:
                 shutil.copy2(source_file_path,target_file_path)
 
 
-    def copy_atlas_files(self, source_dir, target_dir):
+    def copy_atlas_files(self, source_dir : str, target_dir : str) -> int:
         """复制图集文件到目标目录，并将@替换为_"""
 
         # 所有图集文件
@@ -3718,7 +3695,7 @@ class FguiToRenpyConverter:
 
         return len(atlas_files)
 
-    def copy_sound_files(self, source_dir, target_dir):
+    def copy_sound_files(self, source_dir : str, target_dir : str) -> int:
         """复制音频文件到目标目录"""
         # 所有音频文件
         sound_files = self.fgui_assets.fgui_sound_dicts.values()
@@ -3730,7 +3707,7 @@ class FguiToRenpyConverter:
 
         return len(sound_files)
 
-def convert(argv):
+def convert(argv : list[str] | None = None):
     """
     主函数：解析FguiDemoPackage并转换为Ren'Py代码
     """

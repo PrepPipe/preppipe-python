@@ -23,7 +23,7 @@ class FguiPackage():
         path = ''
         size = None # tuple(width, height)
         exported = True
-        def __init__(self, id, name, path, size, exported=True):
+        def __init__(self, id : str, name : str, path : str, size : str, exported : bool = True):
             self.id = id
             self.name = name
             self.path = path
@@ -39,7 +39,7 @@ class FguiPackage():
         scale = ''  # 九宫格：9grid；平铺：tile
         scale9grid = []
         exported = True
-        def __init__(self, id, name, path, size, scale=None, scale9grid=[], exported=True):
+        def __init__(self, id : str, name : str, path : str, size : str, scale : str | None = None, scale9grid : str | None = None, exported : bool = True):
             self.id = id
             self.name = name
             self.path = path
@@ -54,7 +54,7 @@ class FguiPackage():
         id = ''
         size = ()
         file = ''
-        def __init__(self, id, size, file):
+        def __init__(self, id : str, size : str, file : str):
             self.id = id
             size_list = size.split(",")
             self.size = (int(size_list[0]), int(size_list[1]))
@@ -65,13 +65,13 @@ class FguiPackage():
         name = ''
         path = ''
         file = ''
-        def __init__(self, id, name, path, file):
+        def __init__(self, id : str, name : str, path : str, file : str):
             self.id = id
             self.name = name
             self.path = path
             self.file = file
 
-    def __init__(self, package_etree):
+    def __init__(self, package_etree : etree.Element):
         self.package_etree = package_etree
         self.id = package_etree.get("id")
         self.name = package_etree.get("name")
@@ -128,23 +128,20 @@ class FguiPackage():
         self.id_name_mapping.clear()
         self.id_size_mapping.clear()
 
-    def get_image_by_id(self, image_id):
+    def get_image_by_id(self, image_id : str) -> brief_image:
         for image in self.image_list:
             if image.id == image_id:
                 return image
         return None
 
-    def get_component_by_id(self, component_id):
+    def get_component_by_id(self, component_id : str) -> brief_component:
         for component in self.component_list:
             if component.id == component_id:
                 return component
         return None
 
-def TransStrToBoolean(str):
-    if (str == 'true' or str == 'True'):
-        return True
-    else:
-        return False
+def TransStrToBoolean(str : str) -> bool:
+    return str == 'true' or str == 'True'
 
 class FguiSpriteInfo:
     """
@@ -153,7 +150,7 @@ class FguiSpriteInfo:
     - 7个字段：image id、图集编号、x、y、width、height、rotate
     - 11个字段（完整）：再加上offset_x、offset_y、source_width、source_height
     """
-    def __init__(self, image_id, atlas_index, x, y, width, height, rotate, offset_x=0, offset_y=0, source_width=None, source_height=None):
+    def __init__(self, image_id : str, atlas_index : int, x : int, y : int, width : int, height : int, rotate : int, offset_x : int = 0, offset_y : int = 0, source_width : int | None = None, source_height : int | None = None):
         self.image_id = image_id
         self.atlas_index = int(atlas_index)
         self.x = int(x)
@@ -171,7 +168,7 @@ class FguiSpriteInfo:
         return f"FguiSpriteInfo({self.image_id}, {self.atlas_index}, {self.x}, {self.y}, {self.width}, {self.height}, {self.rotate}, {self.offset_x}, {self.offset_y}, {self.source_width}, {self.source_height})"
 
 # 解析纹理集描述文件。文件名通常为“项目名称@sprites.bytes”
-def ParseFguiSpriteDescFile(sprite_desc_file):
+def ParseFguiSpriteDescFile(sprite_desc_file : str) -> list[FguiSpriteInfo]:
     fgui_image_sets = []
     with open(sprite_desc_file, "r", encoding="utf-8") as f:
         for line in f:
@@ -186,13 +183,12 @@ def ParseFguiSpriteDescFile(sprite_desc_file):
     return fgui_image_sets
 
 # 从xml字符串创建lxml的etree对象
-def GetXmlTree(xml_str):
+def GetXmlTree(xml_str : str) -> etree.Element:
     root = etree.fromstring(xml_str.encode('utf-8'))
     return root
 
 # 解析发布资源描述文件。文件名通常为“项目名称.bytes”
-def ParseFguiPackageDescFile(file_name):
-    #f = open("Package1.bytes", "r", encoding='utf-8')
+def ParseFguiPackageDescFile(file_name : str) -> dict[str, etree.Element]:
     with open(file_name, "r", encoding='utf-8') as f:
         ori_str = f.read()
     xml_flag_str = '.xml'
@@ -229,7 +225,7 @@ class OriImage:
     为后续生成目标引擎图像定义的基础数据结构。
     svg生成的图片可能会带有@2x、@3x等后缀，导致图片尺寸有异，此处暂时忽略。
     """
-    def __init__(self, image_id, name, atlas_name, atlas_pos_x, atlas_pos_y, width, height):
+    def __init__(self, image_id : str, name : str, atlas_name : str, atlas_pos_x : int, atlas_pos_y : int, width : int, height : int):
         self.image_id = image_id
         self.name = name
         self.atlas_name = atlas_name
@@ -242,15 +238,19 @@ class OriImage:
         return f"OriImage({self.image_id}, {self.name}, {self.atlas_name}, {self.atlas_pos_x}, {self.atlas_pos_y}, {self.width}, {self.height})"
 
 
-def GetOriImage(image_id, package_desc, fgui_image_sets, fgui_atlas_dicts):
+def GetOriImage(image_id : str, package_desc : FguiPackage, fgui_image_sets : list[FguiSpriteInfo], fgui_atlas_dicts : dict[str, str]) -> OriImage:
     image_set = None
     for item in fgui_image_sets:
         if (item.image_id == image_id):
             image_set = item
-    atlas_name = fgui_atlas_dicts["atlas"+str(item.atlas_index)]
+            break
+    if image_set is None:
+        return None
+    atlas_name = fgui_atlas_dicts["atlas"+str(image_set.atlas_index)]
     for image in package_desc.image_list:
         if (image.id == image_id):
             name =image.name
+            break
     return OriImage(image_id, name, atlas_name, image_set.x, image_set.y, image_set.width, image_set.height)
 
 
@@ -263,19 +263,20 @@ class FguiController:
      page：索引、索引名，字符串，样例"0,up,1,down,2,over,3,selectedOver"。
      selected：初始索引号，字符串 ，样例"0"。
     """
-    def __init__(self, name, homepage_type, homepage, page, selected):
+    def __init__(self, name : str, homepage_type : str | None = None, homepage : str | None = None, page : str | None = None, selected : str | None = None):
         self.name = name
         self.homepage_type = homepage_type
         self.homepage = homepage
         self.page_index_dict = {}
-        page_list = page.split(',')
-        page_num = len(page_list)
-        i = 0
-        while i < page_num:
-            self.page_index_dict[int(page_list[i])] = page_list[i+1]
-            i += 2
-        self.selected = int(selected) if selected else 0
-        self.max_index = max(self.page_index_dict.keys())
+        if page:
+            page_list = page.split(',')
+            page_num = len(page_list)
+            i = 0
+            while i < page_num:
+                self.page_index_dict[int(page_list[i])] = page_list[i+1]
+                i += 2
+        self.selected = int(selected) if selected is not None else 0
+        self.max_index = max(self.page_index_dict.keys()) if self.page_index_dict else 0
 
     def __repr__(self):
         return f"FguiController({self.name}, {self.page_index_dict}, {self.selected})"
@@ -284,7 +285,7 @@ class FguiHitTest:
     """
     点击测试区域类。
     """
-    def __init__(self, hit_test_str):
+    def __init__(self, hit_test_str : str | None = None):
         self.src = None
         self.pos = (0, 0)
         if hit_test_str:
@@ -298,7 +299,7 @@ class FguiComponent:
     id、name、path和size属性与package中brief_component的对应组件信息保持一致
     """
 
-    def __init__(self, component_etree, id, name, package_desc=None):
+    def __init__(self, component_etree : etree.Element, id : str, name : str, package_desc : FguiPackage | None = None):
         self.component_etree = component_etree
         self.id = id
         self.name = name
@@ -356,7 +357,7 @@ class FguiComponent:
         #     print(f"component {self.name} relations: {self.relations}")
 
     # 根据控制器名查找控制器对象。
-    def get_controller_by_name(self, controller_name):
+    def get_controller_by_name(self, controller_name : str) -> FguiController | None:
         for controller in self.controller_list:
             if controller.name == controller_name:
                 return controller
@@ -374,7 +375,7 @@ class FguiButton(FguiComponent):
     downEffect：按下效果。scale-缩放，dark-变暗。
     downEffectValue：按下效果值。缩放值，变暗值。
     """
-    def __init__(self, component_etree, id, name, package_desc=None):
+    def __init__(self, component_etree : etree.Element, id : str, name : str, package_desc : FguiPackage | None = None):
         super().__init__(component_etree, id, name, package_desc=package_desc)
         button = component_etree.find("Button")
         self.button_mode = button.get("mode")
@@ -393,7 +394,7 @@ class FguiScrollBar(FguiComponent):
     相比其他component，多一个ScrollBar标签，只可能有一个属性fixedGripSize，表示滑块是否固定尺寸。
     通常滚动条都会有以个对应的其他组件，为同名带后缀“_grip”的按钮。
     """
-    def __init__(self, component_etree, id, name, package_desc=None):
+    def __init__(self, component_etree : etree.Element, id : str, name : str, package_desc : FguiPackage | None = None):
         super().__init__(component_etree, id, name, package_desc=package_desc)
         scrollbar = component_etree.find("ScrollBar")
         self.fixed_grip_size = scrollbar.get("fixedGripSize")
@@ -403,7 +404,7 @@ class FguiLabel(FguiComponent):
     FairyGUI中的标签lablel。
     目前与FguiComponent完全相同，甚至不具有单独的Label标签。
     """
-    def __init__(self, component_etree, id, name, package_desc=None):
+    def __init__(self, component_etree : etree.Element, id : str, name : str, package_desc : FguiPackage | None = None):
         super().__init__(component_etree, id, name, package_desc=package_desc)
 
 
@@ -413,7 +414,7 @@ class FguiComboBox(FguiComponent):
     类似按钮，多一个ComboBox标签，属性dropdown对应点击后显示的选项列表。
     通常下拉框都会有两个对应的其他组件，分别为同名带后缀“_item”的按钮和同名带后缀“_popup”的组件
     """
-    def __init__(self, component_etree, id, name, package_desc=None):
+    def __init__(self, component_etree : etree.Element, id : str, name : str, package_desc : FguiPackage | None = None):
         super().__init__(component_etree, id, name, package_desc=package_desc)
         # 按钮部分标题。
         self.button_title = ''
@@ -440,7 +441,7 @@ class FguiProgressBar(FguiComponent):
     FairyGUI中的进度条。
     被其他组件引用时，相比其他component，多一个ProgressBar标签，包含最小值、最大值与当前值。
     """
-    def __init__(self, component_etree, id, name, package_desc=None):
+    def __init__(self, component_etree : etree.Element, id : str, name : str, package_desc : FguiPackage | None = None):
         super().__init__(component_etree, id, name, package_desc=package_desc)
         self.progressbar = component_etree.find("ProgressBar")
         self.title_type = self.progressbar.get("titleType")
@@ -451,7 +452,7 @@ class FguiSlider(FguiComponent):
     被其他组件引用时，相比其他component，多一个Slider标签，包含最小值、最大值与当前值。
     滑动条会有一个相应的其他组件，同名带后缀“_grip”的按钮。
     """
-    def __init__(self, component_etree, id, name, package_desc=None):
+    def __init__(self, component_etree : etree.Element, id : str, name : str, package_desc : FguiPackage | None = None):
         super().__init__(component_etree, id, name, package_desc=package_desc)
         self.slider = component_etree.find("Slider")
         self.title_type = self.slider.get("titleType")
@@ -471,7 +472,7 @@ class FguiWindow(FguiComponent):
     Ren'Py中没有FairyGUI的包体处理以上内容，且通常不需要动态创建组件。
     暂定按默认Component处理。可拖拽功能再议。
     """
-    def __init__(self, component_etree, id, name, package_desc=None):
+    def __init__(self, component_etree : etree.Element, id : str, name : str, package_desc : FguiPackage | None = None):
         super().__init__(component_etree, id, name, package_desc=package_desc)
 
 
@@ -480,7 +481,7 @@ class FguiDisplayList:
     FairyGUI组件内部显示列表，xml中displayList标签内容。
     只要一个组件不为空组件，必定会有displayList。
     """
-    def __init__(self, display_list_etree, package_desc=None):
+    def __init__(self, display_list_etree : etree.Element, package_desc : FguiPackage | None = None):
         self.display_list_etree = display_list_etree
         self.package_desc = package_desc
         self.displayable_list = []
@@ -501,7 +502,7 @@ class FguiDisplayList:
                 # 对于未知类型，创建基础的FguiDisplayable对象
                 self.displayable_list.append(FguiDisplayable(displayable, self.package_desc))
 
-def hex_aarrggbb_to_rgba(hex_color):
+def hex_aarrggbb_to_rgba(hex_color : str) -> tuple[int, int, int, int]:
     """
     将一个8位的十六进制颜色字符串(AARRGGBB)或6位的十六进制颜色字符串(RRGGBB)转换为一个 RGBA 元组。
     """
@@ -511,7 +512,7 @@ def hex_aarrggbb_to_rgba(hex_color):
 
     # 检查处理后的字符串长度是否为8或6
     if hex_str_len != 8 and hex_str_len != 6:
-        raise ValueError("Color String must be 8 characters(AARRGGBB) or 6 characters(RRGGBB)")
+        raise ValueError(f"Color String must be 8 characters(AARRGGBB) or 6 characters(RRGGBB), but got {hex_str_len} characters.")
 
     # 6位字符则加上alpha通道的默认值 ff
     if hex_str_len ==6:
@@ -524,11 +525,11 @@ def hex_aarrggbb_to_rgba(hex_color):
         g = int(clean_hex[4:6], 16)
         b = int(clean_hex[6:8], 16)
     except ValueError:
-        raise ValueError("Color Hex String contains invalid character.")
+        raise ValueError(f"Color Hex String contains invalid character: {clean_hex}")
 
     return (r, g, b, a)
 
-def rgba_normalize(rgba_tuple):
+def rgba_normalize(rgba_tuple : tuple[int, int, int, int]) -> tuple[float, float, float, float]:
     r = float(rgba_tuple[0]/255)
     g = float(rgba_tuple[1]/255)
     b = float(rgba_tuple[2]/255)
@@ -539,9 +540,9 @@ class ColorFilterData:
     """
     颜色滤镜数据，总共4项，分别为亮度、对比度、饱和度、色相。
     """
-    def __init__(self, data_string):
+    def __init__(self, data_string : str  = "0,0,0,0"):
         if not data_string:
-            raise ValueError("Color Filter Data is Null.")
+            raise ValueError("Color Filter Data is None.")
         self.brightness, self.contrast, self.saturation, self.hue = map(float, data_string.split(","))
 
 
@@ -567,7 +568,7 @@ class FguiDisplayable:
     gearText-根据控制器决定文本组件显示的文本内容；
     gearIcon-根据控制器决定装载器显示内容。
     """
-    def __init__(self, display_item_tree, package_desc=None):
+    def __init__(self, display_item_tree : etree.Element, package_desc : FguiPackage | None = None):
         self.display_item_tree = display_item_tree
         self.package_desc = package_desc
         # id
@@ -696,7 +697,7 @@ class FguiComponentPropertyBase:
     """
     组件子属性信息基类
     """
-    def __init__(self, component_property_tree, package_desc=None):
+    def __init__(self, component_property_tree : etree.Element, package_desc : FguiPackage | None = None):
         self.component_property_tree = component_property_tree
         self.property_name = self.component_property_tree.tag
         self.package_desc = package_desc
@@ -707,7 +708,7 @@ class FguiButtonProperty(FguiComponentPropertyBase):
     包括title和icon，分别表示标题(文本)和图标(装载器)。
     若按钮与控制器连接，在此处记录关联控制器名与关联索引。
     """
-    def __init__(self, component_property_tree, package_desc=None):
+    def __init__(self, component_property_tree : etree.Element, package_desc : FguiPackage | None = None):
         super().__init__(component_property_tree, package_desc)
         if self.property_name != "Button" :
             raise ValueError("xml tag is not Button")
@@ -724,7 +725,7 @@ class FguiComboBoxListItem:
     """
     下拉框弹出列表的按钮信息。
     """
-    def __init__(self, item_tree, package_desc=None):
+    def __init__(self, item_tree : etree.Element, package_desc : FguiPackage | None = None):
         self.item_tree = item_tree
         self.package_desc = package_desc
         self.title = self.item_tree.get("title")
@@ -736,7 +737,7 @@ class FguiComboBoxProperty(FguiComponentPropertyBase):
     组件子属性中的ComboBox信息。
     包括下拉框按钮默认标题、弹出方向、弹出列表的可见元素数量和一个列表内按钮的title、icon信息列表。
     """
-    def __init__(self, component_property_tree):
+    def __init__(self, component_property_tree : etree.Element):
         super().__init__(component_property_tree)
         if self.property_name != "ComboBox" :
             raise ValueError("xml tag is not ComboBox")
@@ -758,7 +759,7 @@ class FguiLabelProperty(FguiComponentPropertyBase):
     """
     组件子属性中的Label信息。
     """
-    def __init__(self, component_property_tree, package_desc=None):
+    def __init__(self, component_property_tree : etree.Element, package_desc : FguiPackage | None = None):
         super().__init__(component_property_tree, package_desc)
         if self.property_name != "Label" :
             raise ValueError("xml tag is not Label")
@@ -776,7 +777,7 @@ class FguiGraph(FguiDisplayable):
     """
     FairyGUI中的图形。包括空白、矩形(圆边矩形)、圆形(椭圆)、多边形等。
     """
-    def __init__(self, display_item_tree, package_desc=None):
+    def __init__(self, display_item_tree : etree.Element, package_desc : FguiPackage | None = None):
         if display_item_tree.tag != "graph" :
             raise ValueError("xml tag is not graph.")
         super().__init__(display_item_tree, package_desc)
@@ -822,7 +823,7 @@ class FguiText(FguiDisplayable):
     """
     FairyGUI中的文本。
     """
-    def __init__(self, display_item_tree, package_desc=None):
+    def __init__(self, display_item_tree : etree.Element, package_desc : FguiPackage | None = None):
         if display_item_tree.tag != "text" :
             raise ValueError("xml tag is not text.")
         super().__init__(display_item_tree, package_desc)
@@ -874,7 +875,7 @@ class FguiImage(FguiDisplayable):
     样例：
     <image id="n9_z1bv" name="n9" src="ndicp" xy="210,169" alpha="0.67" color="#000000" flip="both" fillMethod="hz" fillOrigin="1" fillAmount="55"/>
     """
-    def __init__(self, display_item_tree, package_desc=None):
+    def __init__(self, display_item_tree : etree.Element, package_desc : FguiPackage | None = None):
         if display_item_tree.tag != "image" :
             raise ValueError("xml tag is not image.")
         super().__init__(display_item_tree, package_desc)
@@ -898,7 +899,7 @@ class FguiListItem():
     样例：
     <item url="ui://jlqvyvtyspct6" title="开坑" icon="ui://jlqvyvty9m682" name="buttonname"/>
     """
-    def __init__(self, list_item_tree, package_description_id=None):
+    def __init__(self, list_item_tree : etree.Element, package_description_id : str | None = None):
         if list_item_tree.tag != "item":
             raise ValueError("xml tag is not item.")
         self.list_item_tree = list_item_tree
@@ -949,7 +950,7 @@ class FguiList(FguiDisplayable):
     colGap：列距。
     defaultItem：默认元素，通常是一个资源url，格式为“ui://”+“packageDescription id” + “component id”。
     """
-    def __init__(self, display_item_tree, package_desc=None):
+    def __init__(self, display_item_tree : etree.Element, package_desc : FguiPackage | None = None):
         if display_item_tree.tag != "list" :
             raise ValueError("xml tag is not list.")
         super().__init__(display_item_tree)
@@ -982,18 +983,18 @@ class FguiList(FguiDisplayable):
                 self.item_list.append(item)
         self.item_list_length = 0
 
-    def get_default_item(self, packageDescription_id):
+    def get_default_item(self, packageDescription_id : str):
         if self.default_item_url:
             self.default_item_id = self.default_item_url[self.default_item_url.find(packageDescription_id)+len(packageDescription_id):]
         return
 
-    def set_item_list_length(self, item_list_length):
+    def set_item_list_length(self, item_list_length : int):
         self.item_list_length = item_list_length
 
     def get_item_list_length(self):
         return self.item_list_length if self.item_list_length > 0 else len(self.item_list)
 
-    def get_scrollbar_res(self, scrollbar_res, packageDescription_id):
+    def get_scrollbar_res(self, scrollbar_res : str, packageDescription_id : str):
         if scrollbar_res:
             # 原始scrollBarRes为一个使用逗号分隔的 fgui 资源url列表，总共有2项。
             # 第1项是垂直滚动条，第2项是水平滚动条。url格式为“ui://”+“packageDescription id” + “component id”。
@@ -1053,7 +1054,7 @@ class FguiLoader(FguiDisplayable):
     fillOrigin-填充原点：0(默认值)、1、2、3。该值根据不同的填充方式有不同的含义。
     fillAmount-填充比例：100(默认值)，一个介于0到100之间的整数。
     """
-    def __init__(self, display_item_tree, package_desc=None):
+    def __init__(self, display_item_tree : etree.Element, package_desc : FguiPackage | None = None):
         if display_item_tree.tag != "loader" :
             raise ValueError("xml tag is not loader.")
         super().__init__(display_item_tree, package_desc)
@@ -1073,7 +1074,7 @@ class FguiLoader(FguiDisplayable):
         self.fill_origin = self.display_item_tree.get("fillOrigin")
         self.fill_amount = self.display_item_tree.get("fillAmount")
 
-    def get_item_id(self, packageDescription_id):
+    def get_item_id(self, packageDescription_id : str):
         self.item_url = self.url[self.url.find(packageDescription_id)+len(packageDescription_id):]
 
 class FguiSidePairProperty:
@@ -1083,7 +1084,7 @@ class FguiSidePairProperty:
     样例数据如下：
     "width-width%,height-height,center-center%,middle-middle,left-left,left-right,left-center,right-left,right-right,right-center,top-top,top-bottom,top-middle,bottom-top,bottom-bottom,bottom-middle,rightext-left,rightext-right,topext-top,topext-bottom,bottomext-top,bottomext-bottom,leftext-left,leftext-right"
     """
-    def __init__(self, sidepair_property_str):
+    def __init__(self, sidepair_property_str : str):
         self.sidepair_property_list = sidepair_property_str.split(",")
         # 初始化字典的24个值为False。
         self.sidepair_property_dict = {
@@ -1157,7 +1158,7 @@ class FguiRelation:
     组件关联属性类。表示与其他组件的相对关系。
     通常是一个target：“关联对象”-sidePair“关联方式”的类字典结构。
     """
-    def __init__(self, relation_item_tree):
+    def __init__(self, relation_item_tree : etree.Element):
         if relation_item_tree.tag != "relation":
             raise ValueError("xml tag is not relation.")
         self.relation_item_tree = relation_item_tree
@@ -1172,7 +1173,7 @@ class FguiProgressBarProperty:
     进度条的数值属性。分别包含最小值、最大值与当前值。
     如果某一项属性未出现则等于默认值0。
     """
-    def __init__(self, progressbar_property_tree):
+    def __init__(self, progressbar_property_tree : etree.Element):
         if progressbar_property_tree.tag != "ProgressBar":
             raise ValueError("xml tag is not ProgressBar.")
         self.progressbar_property_tree = progressbar_property_tree
@@ -1185,7 +1186,7 @@ class FguiSliderProperty:
     滑块的数值属性。分别包含最小值、最大值与当前值。
     如果某一项属性未出现则等于默认值0。
     """
-    def __init__(self, slider_property_tree):
+    def __init__(self, slider_property_tree : etree.Element):
         if slider_property_tree.tag != "Slider":
             raise ValueError("xml tag is not Slider.")
         self.slider_property_tree = slider_property_tree
@@ -1204,7 +1205,7 @@ class FguiGearBase:
     default：默认值。page属性未列出的控制器索引使用该默认值。
     tween：是否启用缓动。
     """
-    def __init__(self, gear_item_tree):
+    def __init__(self, gear_item_tree : etree.Element):
         self.gear_item_tree = gear_item_tree
         self.controller_name = gear_item_tree.get("controller")
         self.controller_index = None
@@ -1230,7 +1231,7 @@ class FguiGearDisplay(FguiGearBase):
     <gearDisplay controller="button" pages="0"/>
     <gearDisplay2 controller="button2" pages="0" condition="0"/>
     """
-    def __init__(self, gear_item_tree):
+    def __init__(self, gear_item_tree : etree.Element):
         if gear_item_tree.tag != "gearDisplay" and gear_item_tree.tag != "gearDisplay2":
             raise ValueError(f"xml tag is {gear_item_tree.tag}, not gearDisplay.")
         super().__init__(gear_item_tree)
@@ -1250,7 +1251,7 @@ class FguiGearPos(FguiGearBase):
     <gearXY controller="ClassController" pages="0,1" values="807,241|823,241"/>
     <gearXY controller="button" default="60,50" tween="true"/>
     """
-    def __init__(self, gear_item_tree):
+    def __init__(self, gear_item_tree : etree.Element):
         if gear_item_tree.tag != "gearXY" :
             raise ValueError("xml tag is not gearXY.")
         super().__init__(gear_item_tree)
@@ -1271,7 +1272,7 @@ class FguiGearLook(FguiGearBase):
     若pages只有一个控制值索引，values是一个使用逗号连接的固定长度4列表，分别对应透明度、旋转、变灰、不可触摸。
     若pages包含多个控制器索引，values则是多个固定长度4列表，使用竖线 ‘|’ 连接。
     """
-    def __init__(self, gear_item_tree):
+    def __init__(self, gear_item_tree : etree.Element):
         if gear_item_tree.tag != "gearLook" :
             raise ValueError("xml tag is not gearLook.")
         super().__init__(gear_item_tree)
@@ -1301,7 +1302,7 @@ class FguiGearSize(FguiGearBase):
     例：
     <gearSize controller="button" default="36,19,1,1"/>
     """
-    def __init__(self, gear_item_tree):
+    def __init__(self, gear_item_tree : etree.Element):
         if gear_item_tree.tag != "gearSize" :
             raise ValueError("xml tag is not gearSize.")
         super().__init__(gear_item_tree)
@@ -1332,7 +1333,7 @@ class FguiGearColor(FguiGearBase):
     例:
     <gearColor controller="button" pages="1,2,3" values="#cccccc|#999999|#333333" default="#ffffff"/>
     """
-    def __init__(self, gear_item_tree):
+    def __init__(self, gear_item_tree : etree.Element):
         if gear_item_tree.tag != "gearColor" :
             raise ValueError("xml tag is not gearColor.")
         super().__init__(gear_item_tree)
@@ -1352,7 +1353,7 @@ class FguiGearText(FguiGearBase):
     例:
     <gearText controller="ClassController" pages="0,1" values="软骨鱼纲|辐鳍鱼纲"/>
     """
-    def __init__(self, gear_item_tree):
+    def __init__(self, gear_item_tree : etree.Element):
         if gear_item_tree.tag != "gearText" :
             raise ValueError("xml tag is not gearText.")
         super().__init__(gear_item_tree)
@@ -1372,7 +1373,7 @@ class FguiGearIcon(FguiGearBase):
     例:
     <gearIcon controller="button" pages="1" values="ui://gs4t1m2tno2rz" default="ui://gs4t1m2tno2r10"/>
     """
-    def __init__(self, gear_item_tree):
+    def __init__(self, gear_item_tree : etree.Element):
         if gear_item_tree.tag != "gearIcon" :
             raise ValueError("xml tag is not gearIcon.")
         super().__init__(gear_item_tree)
@@ -1387,7 +1388,7 @@ class FguiAssets():
     """
     资源解析入口。
     """
-    def __init__(self, fgui_project_path):
+    def __init__(self, fgui_project_path : str):
         if not fgui_project_path:
             raise ValueError("Project path is illegal.")
         self.fgui_project_name = os.path.basename(fgui_project_path)
@@ -1457,13 +1458,14 @@ class FguiAssets():
     def get_componentname_by_id(self, id : str) -> str:
         if id in self.package_desc.id_name_mapping:
             return self.package_desc.id_name_mapping[id]
-        else:
-            return None
+        print(f"Component {id} not found in package_desc.id_name_mapping.")
+        return None
 
     def get_component_by_id(self, id : str) -> FguiComponent:
         for component in self.fgui_component_set:
             if component.id == id:
                 return component
+        print(f"Component {id} not found in fgui_component_set.")
         return None
 
     def get_image_size_by_id(self, id : str):
