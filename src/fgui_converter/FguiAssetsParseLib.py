@@ -293,6 +293,40 @@ class FguiHitTest:
             self.src = src
             self.pos = (int(xpos), int(ypos))
 
+# 获取滚动条标识位字典。
+def get_scrollbar_flags_dict(scroll_bar_flags : int) -> dict[str, bool] | None:
+    if scroll_bar_flags:
+        scrollbar_flags_list = []
+        for i in range(12):
+            scrollbar_flags_list.append((scroll_bar_flags & (1 << i)) >> i)
+        """
+        0-bit：垂直滚动条显示在左边，1-是，0-否。
+        1-bit：滚动位置自动贴近元件，1-是，0-否。
+        2-bit：仅在内容溢出时才显示滚动条，1-是，0-否。
+        3-bit：页面模式，1-是，0-否。
+        4-bit 5-bit：触摸滚动效果，00-默认、01-启用、10-关闭。
+        6-bit 7-bit：边缘回弹效果，00-默认、01-启用、10-关闭。
+        8-bit：禁用惯性，1-是，0-否。
+        9-bit：禁用剪裁，1-是，0-否。
+        10-bit：浮动显示，1-是，0-否。
+        11-bit：禁用剪裁边缘，1-是，0-否。
+        """
+        scrollbar_flags_dict = {
+        "display_on_left": scrollbar_flags_list[0],
+        "snapping_to_item": scrollbar_flags_list[1],
+        "hide_when_not_overflow": scrollbar_flags_list[2],
+        "page_mode": scrollbar_flags_list[3],
+        "touch_scroll": (scrollbar_flags_list[4] << 1) | (scrollbar_flags_list[5]),
+        "bounds_back": (scrollbar_flags_list[6] << 1) | (scrollbar_flags_list[7]),
+        "inertia_disabled": scrollbar_flags_list[8],
+        "mask_disabled": scrollbar_flags_list[9],
+        "floating_display": scrollbar_flags_list[10],
+        "dont_clip_margin": scrollbar_flags_list[11],
+    }
+        return scrollbar_flags_dict
+    return None
+
+
 class FguiComponent:
     """
     FairyGUI组件对应的基类。
@@ -311,6 +345,7 @@ class FguiComponent:
         self.min_width, self.max_width, self.min_height, self.max_height = tuple(map(int, restrict_size.split(",")))
         self.overflow = component_etree.get("overflow", "visible")
         self.scroll = component_etree.get("scroll", "vertical")
+        self.scrollbar_flags_dict = get_scrollbar_flags_dict(int(component_etree.get("scrollBarFlags", "0")))
         self.clip_softness = tuple(map(int, component_etree.get("clipSoftness", "0,0").split(",")))
         self.extention = component_etree.get("extention")
         self.mask = component_etree.get("mask")
@@ -959,8 +994,7 @@ class FguiList(FguiDisplayable):
         self.scroll = self.display_item_tree.get("scroll", "vertical")
         scrollbar_res = self.display_item_tree.get("scrollBarRes")
         self.scrollbar_res = self.get_scrollbar_res(scrollbar_res, package_desc.id)
-        self.scroll_bar_flags = int(self.display_item_tree.get("scrollBarFlags", "0"))
-        self.scrollbar_flags_dict = self.get_scrollbar_flags_dict()
+        self.scrollbar_flags_dict = get_scrollbar_flags_dict(int(self.display_item_tree.get("scrollBarFlags", "0")))
         margin = self.display_item_tree.get("margin")
         self.margin = tuple(map(int, margin.split(","))) if margin else (0,0,0,0)
         self.clip_softness = tuple(map(int, self.display_item_tree.get("clipSoftness", "0,0").split(",")))
@@ -1006,38 +1040,6 @@ class FguiList(FguiDisplayable):
             return (vertical_scrollbar_id, horizontal_scrollbar_id)
         else:
             return None
-
-    def get_scrollbar_flags_dict(self):
-        if self.scroll_bar_flags:
-            scrollbar_flags_list = []
-            for i in range(12):
-                scrollbar_flags_list.append((self.scroll_bar_flags & (1 << i)) >> i)
-            """
-            0-bit：垂直滚动条显示在左边，1-是，0-否。
-            1-bit：滚动位置自动贴近元件，1-是，0-否。
-            2-bit：仅在内容溢出时才显示滚动条，1-是，0-否。
-            3-bit：页面模式，1-是，0-否。
-            4-bit 5-bit：触摸滚动效果，00-默认、01-启用、10-关闭。
-            6-bit 7-bit：边缘回弹效果，00-默认、01-启用、10-关闭。
-            8-bit：禁用惯性，1-是，0-否。
-            9-bit：禁用剪裁，1-是，0-否。
-            10-bit：浮动显示，1-是，0-否。
-            11-bit：禁用剪裁边缘，1-是，0-否。
-            """
-            scrollbar_flags_dict = {
-            "display_on_left": scrollbar_flags_list[0],
-            "snapping_to_item": scrollbar_flags_list[1],
-            "hide_when_not_overflow": scrollbar_flags_list[2],
-            "page_mode": scrollbar_flags_list[3],
-            "touch_scroll": (scrollbar_flags_list[4] << 1) | (scrollbar_flags_list[5]),
-            "bounds_back": (scrollbar_flags_list[6] << 1) | (scrollbar_flags_list[7]),
-            "inertia_disabled": scrollbar_flags_list[8],
-            "mask_disabled": scrollbar_flags_list[9],
-            "floating_display": scrollbar_flags_list[10],
-            "dont_clip_margin": scrollbar_flags_list[11],
-        }
-            return scrollbar_flags_dict
-        return None
 
 class FguiLoader(FguiDisplayable):
     """

@@ -46,12 +46,14 @@ screen {list_screen_name}(overflow=None, layout='row', row_num=1, column_num=1, 
     else:
         frame:
             has side {side_layout}  pos pos xysize xysize
-            viewport id '{list_screen_name}_vp':
+            elastic_viewport id '{list_screen_name}_vp':
                 yadjustment yadj
                 xadjustment xadj
                 at dynamic_edge_virtualization(xadj, yadj, left={left_edge}, right={right_edge}, top={top_edge}, bottom={bottom_edge}, softness=1.0)
                 draggable True
                 mousewheel True
+                scrollable {scrollable}
+                bounds_back {bounds_back}
                 if layout == 'row':
                     hbox:
                         spacing xspacing

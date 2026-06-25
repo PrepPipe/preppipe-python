@@ -64,29 +64,21 @@ python early:
 
     class ElasticViewport(renpy.display.layout.Viewport):
         """
-        带边缘回弹效果的viewport类，删除edegscroll相关功能。
-        可以指定是否启用水平或垂直拖拽，或者同时启用。
+        带边缘回弹效果的 viewport 类，删除 edgescroll 相关功能。
+        draggable 为 True 时响应鼠标拖拽，为 False 时忽略鼠标拖拽。
+        scrollable 控制允许滚动的方向。
+        bounds_back 为 True 时启用边缘回弹，为 False 时禁用。
         """
 
         @staticmethod
-        def _parse_draggable_axes(draggable):
-            if draggable is True:
-                return True, True
+        def _parse_scrollable_axes(scrollable):
+            if scrollable == "horizontal":
+                return True, False
 
-            if draggable is False:
-                return False, False
+            if scrollable == "vertical":
+                return False, True
 
-            if isinstance(draggable, str):
-                if draggable == "horizontal":
-                    return True, False
-                if draggable == "vertical":
-                    return False, True
-                return True, True
-
-            if renpy.variant(draggable):
-                return True, True
-
-            return False, False
+            return True, True
 
         def __init__(
             self,
@@ -105,9 +97,11 @@ python early:
             arrowkeys=False,
             pagekeys=False,
             elastic_damping=0.8,
+            scrollable="both",
+            bounds_back=True,
             **properties,
         ):
-            drag_x_enabled, drag_y_enabled = ElasticViewport._parse_draggable_axes(draggable)
+            scroll_x_enabled, scroll_y_enabled = ElasticViewport._parse_scrollable_axes(scrollable)
 
             super(ElasticViewport, self).__init__(
                 child=child,
@@ -117,7 +111,7 @@ python early:
                 yadjustment=yadjustment,
                 set_adjustments=set_adjustments,
                 mousewheel=mousewheel,
-                draggable=drag_x_enabled or drag_y_enabled,
+                draggable=draggable is True,
                 edgescroll=None,
                 style=style,
                 xinitial=xinitial,
@@ -128,8 +122,9 @@ python early:
                 **properties,
             )
 
-            self.drag_x_enabled = drag_x_enabled
-            self.drag_y_enabled = drag_y_enabled
+            self.scroll_x_enabled = scroll_x_enabled
+            self.scroll_y_enabled = scroll_y_enabled
+            self.bounds_back = bounds_back is True
 
             # 越界拖拽时 dx 的缩放系数，越大越界拉得越远。
             self.elastic_damping = elastic_damping
@@ -144,8 +139,9 @@ python early:
                 self.x_elastic_velocity = replaces.x_elastic_velocity
                 self.y_elastic_velocity = replaces.y_elastic_velocity
                 self.elastic_last_st = replaces.elastic_last_st
-                self.drag_x_enabled = replaces.drag_x_enabled
-                self.drag_y_enabled = replaces.drag_y_enabled
+                self.scroll_x_enabled = replaces.scroll_x_enabled
+                self.scroll_y_enabled = replaces.scroll_y_enabled
+                self.bounds_back = replaces.bounds_back
             else:
                 self.x_elastic = 0.0
                 self.y_elastic = 0.0
@@ -154,15 +150,25 @@ python early:
                 self.elastic_last_st = None
 
         def _clear_disabled_axis_elastic(self):
-            if not self.drag_x_enabled:
+            if not self.bounds_back:
+                self.x_elastic = 0.0
+                self.x_elastic_velocity = 0.0
+                self.y_elastic = 0.0
+                self.y_elastic_velocity = 0.0
+                return
+
+            if not self.scroll_x_enabled:
                 self.x_elastic = 0.0
                 self.x_elastic_velocity = 0.0
 
-            if not self.drag_y_enabled:
+            if not self.scroll_y_enabled:
                 self.y_elastic = 0.0
                 self.y_elastic_velocity = 0.0
 
         def _update_elastic_physics(self, st, dragging):
+            if not self.bounds_back:
+                return False
+
             if self.elastic_last_st is None:
                 dt = 0.0
             else:
@@ -176,13 +182,13 @@ python early:
             need_redraw = False
 
             for name in ("x", "y"):
-                if name == "x" and not self.drag_x_enabled:
+                if name == "x" and not self.scroll_x_enabled:
                     if self.x_elastic != 0.0 or self.x_elastic_velocity != 0.0:
                         self.x_elastic = 0.0
                         self.x_elastic_velocity = 0.0
                     continue
 
-                if name == "y" and not self.drag_y_enabled:
+                if name == "y" and not self.scroll_y_enabled:
                     if self.y_elastic != 0.0 or self.y_elastic_velocity != 0.0:
                         self.y_elastic = 0.0
                         self.y_elastic_velocity = 0.0
@@ -294,7 +300,7 @@ python early:
             else:
                 inside = True
 
-            draggable = (self.drag_x_enabled and self.xadjustment.range) or (self.drag_y_enabled and self.yadjustment.range)
+            draggable = self.draggable and (self.xadjustment.range or self.yadjustment.range)
 
             grab = renpy.display.focus.get_grab()
 
@@ -314,10 +320,7 @@ python early:
 
                     grabbed = getattr(grab, "_draggable", False) and grab.is_focused()
 
-                    edx = x - oldx if self.drag_x_enabled else 0
-                    edy = y - oldy if self.drag_y_enabled else 0
-
-                    if math.hypot(edx, edy) >= renpy.config.viewport_drag_radius and not grabbed:
+                    if math.hypot(oldx - x, oldy - y) >= renpy.config.viewport_drag_radius and not grabbed:
                         rv = renpy.display.focus.force_focus(self)
                         renpy.display.focus.set_grab(self)
                         self.drag_position = (x, y)
@@ -333,14 +336,14 @@ python early:
                 old_yvalue = self.yadjustment.value
 
                 oldx, oldy = self.drag_position
-                dx = x - oldx if self.drag_x_enabled else 0
-                dy = y - oldy if self.drag_y_enabled else 0
+                dx = x - oldx
+                dy = y - oldy
 
                 dt = st - self.drag_position_time
                 if dt > 0:
                     old_xspeed, old_yspeed = self.drag_speed
-                    new_xspeed = (-dx / dt / 60) if self.drag_x_enabled else 0.0
-                    new_yspeed = (-dy / dt / 60) if self.drag_y_enabled else 0.0
+                    new_xspeed = -dx / dt / 60
+                    new_yspeed = -dy / dt / 60
 
                     done = min(1.0, dt / (1 / 60))
 
@@ -358,7 +361,7 @@ python early:
 
                     xspeed, yspeed = self.drag_speed
 
-                    if self.drag_x_enabled:
+                    if self.scroll_x_enabled:
                         if xspeed and renpy.config.viewport_inertia_amplitude and not self.xadjustment.force_step:
                             self.xadjustment.inertia(
                                 renpy.config.viewport_inertia_amplitude * xspeed,
@@ -374,7 +377,7 @@ python early:
                             xvalue = self.xadjustment.round_value(old_xvalue, release=True)
                             self.xadjustment.change(xvalue)
 
-                    if self.drag_y_enabled:
+                    if self.scroll_y_enabled:
                         if yspeed and renpy.config.viewport_inertia_amplitude and not self.yadjustment.force_step:
                             self.yadjustment.inertia(
                                 renpy.config.viewport_inertia_amplitude * yspeed,
@@ -393,9 +396,9 @@ python early:
                     self.drag_position = None
                     self.drag_position_time = None
 
-                    if (
-                        (self.drag_x_enabled and (abs(self.x_elastic) > 0.01 or abs(self.x_elastic_velocity) > 0.1))
-                        or (self.drag_y_enabled and (abs(self.y_elastic) > 0.01 or abs(self.y_elastic_velocity) > 0.1))
+                    if self.bounds_back and (
+                        (self.scroll_x_enabled and (abs(self.x_elastic) > 0.01 or abs(self.x_elastic_velocity) > 0.1))
+                        or (self.scroll_y_enabled and (abs(self.y_elastic) > 0.01 or abs(self.y_elastic_velocity) > 0.1))
                     ):
                         self.elastic_last_st = None
                         renpy.display.render.redraw(self, 0)
@@ -403,42 +406,48 @@ python early:
                     raise renpy.display.core.IgnoreEvent()
 
                 new_xvalue = self.xadjustment.round_value(old_xvalue - dx, release=False)
-                if old_xvalue == new_xvalue:
-                    if old_xvalue <= 0 and dx > 0:
-                        self.x_elastic += dx * self.elastic_damping
-                        self.x_elastic_velocity = dx * 60.0
-                        newx = x
-                    elif old_xvalue >= self.xadjustment.range and dx < 0:
-                        self.x_elastic += dx * self.elastic_damping
-                        self.x_elastic_velocity = dx * 60.0
-                        newx = x
+                if self.scroll_x_enabled:
+                    if old_xvalue == new_xvalue:
+                        if self.bounds_back and old_xvalue <= 0 and dx > 0:
+                            self.x_elastic += dx * self.elastic_damping
+                            self.x_elastic_velocity = dx * 60.0
+                            newx = x
+                        elif self.bounds_back and old_xvalue >= self.xadjustment.range and dx < 0:
+                            self.x_elastic += dx * self.elastic_damping
+                            self.x_elastic_velocity = dx * 60.0
+                            newx = x
+                        else:
+                            newx = oldx
                     else:
-                        newx = oldx
+                        self.xadjustment.change(new_xvalue)
+                        if abs(self.x_elastic) > 0.01:
+                            self.x_elastic = 0.0
+                            self.x_elastic_velocity = 0.0
+                        newx = x
                 else:
-                    self.xadjustment.change(new_xvalue)
-                    if abs(self.x_elastic) > 0.01:
-                        self.x_elastic = 0.0
-                        self.x_elastic_velocity = 0.0
-                    newx = x
+                    newx = oldx
 
                 new_yvalue = self.yadjustment.round_value(old_yvalue - dy, release=False)
-                if old_yvalue == new_yvalue:
-                    if old_yvalue <= 0 and dy > 0:
-                        self.y_elastic += dy * self.elastic_damping
-                        self.y_elastic_velocity = dy * 60.0
-                        newy = y
-                    elif old_yvalue >= self.yadjustment.range and dy < 0:
-                        self.y_elastic += dy * self.elastic_damping
-                        self.y_elastic_velocity = dy * 60.0
-                        newy = y
+                if self.scroll_y_enabled:
+                    if old_yvalue == new_yvalue:
+                        if self.bounds_back and old_yvalue <= 0 and dy > 0:
+                            self.y_elastic += dy * self.elastic_damping
+                            self.y_elastic_velocity = dy * 60.0
+                            newy = y
+                        elif self.bounds_back and old_yvalue >= self.yadjustment.range and dy < 0:
+                            self.y_elastic += dy * self.elastic_damping
+                            self.y_elastic_velocity = dy * 60.0
+                            newy = y
+                        else:
+                            newy = oldy
                     else:
-                        newy = oldy
+                        self.yadjustment.change(new_yvalue)
+                        if abs(self.y_elastic) > 0.01:
+                            self.y_elastic = 0.0
+                            self.y_elastic_velocity = 0.0
+                        newy = y
                 else:
-                    self.yadjustment.change(new_yvalue)
-                    if abs(self.y_elastic) > 0.01:
-                        self.y_elastic = 0.0
-                        self.y_elastic_velocity = 0.0
-                    newy = y
+                    newy = oldy
 
                 self.drag_position = (newx, newy)
                 self.drag_position_time = st
@@ -459,7 +468,9 @@ python early:
                     adjustment = self.yadjustment
                     change = False
 
-                if renpy.display.behavior.map_event(ev, "viewport_wheelup"):
+                scroll_enabled = self.scroll_x_enabled if adjustment is self.xadjustment else self.scroll_y_enabled
+
+                if scroll_enabled and renpy.display.behavior.map_event(ev, "viewport_wheelup"):
                     if change and (adjustment.value == 0):
                         return None
 
@@ -469,7 +480,7 @@ python early:
                     else:
                         raise renpy.display.core.IgnoreEvent()
 
-                if renpy.display.behavior.map_event(ev, "viewport_wheeldown"):
+                if scroll_enabled and renpy.display.behavior.map_event(ev, "viewport_wheeldown"):
                     if change and (adjustment.value == adjustment.range):
                         return None
 
@@ -480,7 +491,7 @@ python early:
                         raise renpy.display.core.IgnoreEvent()
 
             if self.arrowkeys:
-                if renpy.display.behavior.map_event(ev, "viewport_leftarrow"):
+                if self.scroll_x_enabled and renpy.display.behavior.map_event(ev, "viewport_leftarrow"):
                     if self.xadjustment.value == 0:
                         return None
 
@@ -490,7 +501,7 @@ python early:
                     else:
                         raise renpy.display.core.IgnoreEvent()
 
-                if renpy.display.behavior.map_event(ev, "viewport_rightarrow"):
+                if self.scroll_x_enabled and renpy.display.behavior.map_event(ev, "viewport_rightarrow"):
                     if self.xadjustment.value == self.xadjustment.range:
                         return None
 
@@ -500,7 +511,7 @@ python early:
                     else:
                         raise renpy.display.core.IgnoreEvent()
 
-                if renpy.display.behavior.map_event(ev, "viewport_uparrow"):
+                if self.scroll_y_enabled and renpy.display.behavior.map_event(ev, "viewport_uparrow"):
                     if self.yadjustment.value == 0:
                         return None
 
@@ -510,7 +521,7 @@ python early:
                     else:
                         raise renpy.display.core.IgnoreEvent()
 
-                if renpy.display.behavior.map_event(ev, "viewport_downarrow"):
+                if self.scroll_y_enabled and renpy.display.behavior.map_event(ev, "viewport_downarrow"):
                     if self.yadjustment.value == self.yadjustment.range:
                         return None
 
@@ -520,7 +531,7 @@ python early:
                     else:
                         raise renpy.display.core.IgnoreEvent()
 
-            if self.pagekeys:
+            if self.pagekeys and self.scroll_y_enabled:
                 if renpy.display.behavior.map_event(ev, "viewport_pageup"):
                     rv = self.yadjustment.change(self.yadjustment.value - self.yadjustment.page)
                     if rv is not None:
@@ -543,9 +554,9 @@ python early:
                     self.drag_position_time = st
                     self.drag_speed = (0.0, 0.0)
 
-                    if self.drag_x_enabled:
+                    if self.scroll_x_enabled:
                         self.xadjustment.end_animation(instantly=True)
-                    if self.drag_y_enabled:
+                    if self.scroll_y_enabled:
                         self.yadjustment.end_animation(instantly=True)
 
                     if not renpy.display.focus.get_focused():
@@ -576,6 +587,8 @@ python early:
     .add_property("arrowkeys")\
     .add_property("pagekeys")\
     .add_property("elastic_damping")\
+    .add_property("scrollable")\
+    .add_property("bounds_back")\
     .add_property_group("position")\
     .add_property_group("ui")
 

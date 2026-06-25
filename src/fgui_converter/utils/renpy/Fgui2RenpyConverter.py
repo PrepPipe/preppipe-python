@@ -1397,7 +1397,7 @@ class FguiToRenpyConverter:
             self.screen_ui_code.append(f"{self.indent_str}fixed:")
             self.indent_level_up()
         elif component.overflow == "scroll":
-            self.screen_ui_code.append(f"{self.indent_str}viewport:")
+            self.screen_ui_code.append(f"{self.indent_str}elastic_viewport:")
             self.indent_level_up()
             # 添加边缘虚化变换
             self.screen_ui_code.append(f"{self.indent_str}yadjustment yadj")
@@ -1410,6 +1410,10 @@ class FguiToRenpyConverter:
             bottom_edge = top_edge
             self.screen_ui_code.append(f"{self.indent_str}at dynamic_edge_virtualization(xadj, yadj, left={left_edge}, right={right_edge}, top={top_edge}, bottom={bottom_edge}, softness=1.0)")
             self.screen_ui_code.append(f"{self.indent_str}xysize xysize")
+            # 根据可滚动方向和是否启用回弹标识位，决定scrollable和bounds_back特性。
+            self.screen_ui_code.append(f"{self.indent_str}scrollable '{component.scroll}'")
+            if component.scrollbar_flags_dict:
+                self.screen_ui_code.append(f"{self.indent_str}bounds_back {component.scrollbar_flags_dict['bounds_back']}")
             self.screen_ui_code.append(f"{self.indent_str}draggable True")
             # 在Ren'Py中实际可能无法滚动。
             # 需要添加一个fixed组件，并设置一个合适的xysize。该xysize应为容纳所有子组件的包围框。
@@ -3341,7 +3345,7 @@ class FguiToRenpyConverter:
         list_screen_template_content = list_screen_template_content.replace('{origin_pos}', f"{fgui_list.xypos}")
         side_layout = "'c r b'"
         unscrollable_type = None
-        if fgui_list.scroll_bar_flags:
+        if fgui_list.scrollbar_flags_dict:
             if fgui_list.scrollbar_flags_dict['display_on_left']:
                 side_layout = "'c l b'"
             if fgui_list.scrollbar_flags_dict['hide_when_not_overflow']:
@@ -3370,6 +3374,13 @@ class FguiToRenpyConverter:
         else:
             hscrollbar_style = self.default_scrollbar_style
             horizontal_scrollbar_size = (0, 0)
+        scrollable = f"'{fgui_list.scroll}'"
+        if fgui_list.scrollbar_flags_dict:
+            bounds_back = fgui_list.scrollbar_flags_dict['bounds_back']
+        else:
+            bounds_back = True
+        list_screen_template_content = list_screen_template_content.replace('{scrollable}', f"{scrollable}")
+        list_screen_template_content = list_screen_template_content.replace('{bounds_back}', f"{bounds_back}")
         list_screen_template_content = list_screen_template_content.replace('{vscrollbar_style}', f"'{vscrollbar_style}'")
         list_screen_template_content = list_screen_template_content.replace('{hscrollbar_style}', f"'{hscrollbar_style}'")
         list_screen_template_content = list_screen_template_content.replace('{vertical_scrollbar_size}', f"{vertical_scrollbar_size}")
