@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-from re import M
+import re
 import sys
 import os
 from lxml import etree
@@ -8,13 +8,14 @@ from lxml import etree
 class FguiPackage():
     """
     FairyGUI资源包中的Package描述内容。
-    包含component列表、image列表、atlas列表和音频文件列表。
+    包含component列表、image列表、atlas列表、位图字体列表和音频文件列表。
     """
     id = ''
     name = ''
     component_list = []
     image_list = []
     atlas_list = []
+    font_list = []
     sound_list = []
 
     class brief_component:
@@ -71,6 +72,24 @@ class FguiPackage():
             self.path = path
             self.file = file
 
+    class brief_font:
+        id = ''
+        name = ''
+        path = ''
+        size = None # tuple(width, height)
+        exported = True
+        texture = ''
+        font_texture = ''
+        def __init__(self, id : str, name : str, path : str, size : str, exported : bool = True, texture : str | None = None, font_texture : str | None = None):
+            self.id = id
+            self.name = name
+            self.path = path
+            size_list = size.split(",")
+            self.size = (int(size_list[0]), int(size_list[1]))
+            self.exported = exported
+            self.texture = texture or ''
+            self.font_texture = font_texture or ''
+
     def __init__(self, package_etree : etree.Element):
         self.package_etree = package_etree
         self.id = package_etree.get("id")
@@ -120,11 +139,25 @@ class FguiPackage():
                                                 child.get('path'),
                                                 child.get('file')))
                 continue
+            # font类 id, name, path, size, exported=True, texture, fontTexture
+            if (child.tag == 'font'):
+                self.font_list.append(self.brief_font(
+                                                child.get('id'),
+                                                child.get('name'),
+                                                child.get('path'),
+                                                child.get('size'),
+                                                exported=TransStrToBoolean(child.get('exported')),
+                                                texture=child.get('texture'),
+                                                font_texture=child.get('fontTexture')))
+                self.id_name_mapping[child.get('id')] = child.get('name')
+                continue
 
     def clear(self):
         self.component_list.clear()
         self.image_list.clear()
         self.atlas_list.clear()
+        self.font_list.clear()
+        self.sound_list.clear()
         self.id_name_mapping.clear()
         self.id_size_mapping.clear()
 
@@ -139,6 +172,69 @@ class FguiPackage():
             if component.id == component_id:
                 return component
         return None
+
+    def get_font_by_id(self, font_id : str) -> brief_font:
+        for font in self.font_list:
+            if font.id == font_id:
+                return font
+        return None
+
+class FguiBitmapFontChar:
+    """
+    位图字体中的单个字符描述。
+    图片引用型使用 image_id；图集型使用 x、y、width、height、chnl。
+    """
+    def __init__(self, char_id : int, xoffset : int, yoffset : int, xadvance : int,
+                 image_id : str | None = None, x : int | None = None, y : int | None = None,
+                 width : int | None = None, height : int | None = None, chnl : int | None = None):
+        self.char_id = char_id
+        self.image_id = image_id
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+        self.chnl = chnl
+        self.xoffset = xoffset
+        self.yoffset = yoffset
+        self.xadvance = xadvance
+
+class FguiBitmapFontDesc:
+    """
+    .fnt 描述文件内容。
+    """
+    def __init__(self, size : int, colored : bool, chars : list[FguiBitmapFontChar],
+                 face : str | None = None, line_height : int | None = None, base : int | None = None,
+                 alpha_chnl : int | None = None, xadvance : int | None = None):
+        self.face = face
+        self.size = size
+        self.colored = colored
+        self.line_height = line_height
+        self.base = base
+        self.alpha_chnl = alpha_chnl
+        self.xadvance = xadvance
+        self.chars = chars
+
+class FguiBitmapFont:
+    """
+    FairyGUI位图字体。
+    结合packageDescription中的font条目与.fnt描述文件内容。
+    """
+    def __init__(self, font_id : str, name : str, path : str, exported : bool, font_desc : FguiBitmapFontDesc,
+                 texture : str = '', font_texture : str = ''):
+        self.id = font_id
+        self.name = name
+        self.path = path
+        self.exported = exported
+        self.texture = texture
+        self.font_texture = font_texture
+        self.face = font_desc.face
+        self.size = font_desc.size
+        self.colored = font_desc.colored
+        self.line_height = font_desc.line_height
+        self.base = font_desc.base
+        self.alpha_chnl = font_desc.alpha_chnl
+        self.xadvance = font_desc.xadvance
+        self.chars = font_desc.chars
 
 def TransStrToBoolean(str : str) -> bool:
     return str == 'true' or str == 'True'
@@ -187,35 +283,82 @@ def GetXmlTree(xml_str : str) -> etree.Element:
     root = etree.fromstring(xml_str.encode('utf-8'))
     return root
 
+def _ParseFguiDescKeyValuePairs(parts : list[str]) -> dict[str, str]:
+    result = {}
+    for part in parts:
+        key, value = part.split('=', 1)
+        if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
+            value = value[1:-1]
+        result[key] = value
+    return result
+
+def _ParseFguiDescInt(attrs : dict[str, str], key : str) -> int | None:
+    if key not in attrs:
+        return None
+    return int(attrs[key])
+
+# 解析位图字体描述内容。
+def ParseFguiBitmapFontDesc(content : str) -> FguiBitmapFontDesc:
+    face = None
+    font_size = 0
+    colored = False
+    line_height = None
+    base = None
+    alpha_chnl = None
+    xadvance = None
+    chars = []
+    for line in content.strip().split('\n'):
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split()
+        tag = parts[0]
+        if tag == 'info':
+            attrs = _ParseFguiDescKeyValuePairs(parts[1:])
+            face = attrs.get('face')
+            font_size = int(attrs.get('size', 0))
+            colored = attrs.get('colored', 'false') == 'true'
+        elif tag == 'common':
+            attrs = _ParseFguiDescKeyValuePairs(parts[1:])
+            line_height = _ParseFguiDescInt(attrs, 'lineHeight')
+            base = _ParseFguiDescInt(attrs, 'base')
+            alpha_chnl = _ParseFguiDescInt(attrs, 'alphaChnl')
+            xadvance = _ParseFguiDescInt(attrs, 'xadvance')
+        elif tag == 'char':
+            attrs = _ParseFguiDescKeyValuePairs(parts[1:])
+            chars.append(FguiBitmapFontChar(
+                char_id=int(attrs['id']),
+                xoffset=int(attrs.get('xoffset', 0)),
+                yoffset=int(attrs.get('yoffset', 0)),
+                xadvance=int(attrs.get('xadvance', 0)),
+                image_id=attrs.get('img'),
+                x=_ParseFguiDescInt(attrs, 'x'),
+                y=_ParseFguiDescInt(attrs, 'y'),
+                width=_ParseFguiDescInt(attrs, 'width'),
+                height=_ParseFguiDescInt(attrs, 'height'),
+                chnl=_ParseFguiDescInt(attrs, 'chnl'),
+            ))
+    return FguiBitmapFontDesc(font_size, colored, chars, face, line_height, base, alpha_chnl, xadvance)
+
 # 解析发布资源描述文件。文件名通常为“项目名称.bytes”
-def ParseFguiPackageDescFile(file_name : str) -> dict[str, etree.Element]:
+def ParseFguiPackageDescFile(file_name : str) -> tuple[dict[str, etree.Element], dict[str, FguiBitmapFontDesc]]:
     with open(file_name, "r", encoding='utf-8') as f:
         ori_str = f.read()
-    xml_flag_str = '.xml'
-    split_flag_str = '|'
-    xml_length = 0
-    cursor = 0
-    index = 0
-    xml_string = ''
-    xml_name = ''
     object_dict = {}
-    index = ori_str.find(xml_flag_str)
-
-    while index != -1:
-        xml_name = ori_str[cursor:index]
-        cursor= index+len(xml_flag_str)
-        index = ori_str.find(split_flag_str, cursor, -1)
-        cursor = index + len(split_flag_str)
-        index = ori_str.find(split_flag_str, cursor, -1)
-        xml_length = int(ori_str[cursor:index])
-        cursor = index + len(split_flag_str)
-        index = cursor + xml_length
-        xml_string = ori_str[cursor: index]
-        object_dict[xml_name] = GetXmlTree(xml_string)
-        cursor = index
-        index = ori_str.find(xml_flag_str, cursor)
-
-    return object_dict
+    font_desc_dict = {}
+    entry_pattern = re.compile(r'([a-zA-Z0-9]+)\.(xml|fnt)\|(\d+)\|')
+    for match in entry_pattern.finditer(ori_str):
+        entry_id = match.group(1)
+        ext = match.group(2)
+        content_length = int(match.group(3))
+        content_start = match.end()
+        content_end = content_start + content_length
+        content = ori_str[content_start:content_end]
+        if ext == 'xml':
+            object_dict[entry_id] = GetXmlTree(content)
+        elif ext == 'fnt':
+            font_desc_dict[entry_id] = ParseFguiBitmapFontDesc(content)
+    return object_dict, font_desc_dict
 
 
 class OriImage:
@@ -1397,7 +1540,7 @@ class FguiAssets():
         self.package_desc_file = os.path.join(fgui_project_path, f"{self.fgui_project_name}.bytes")
         # 发布的描述文件
         self.package_desc = None
-        self.object_dict = ParseFguiPackageDescFile(self.package_desc_file)
+        self.object_dict, self.font_desc_dict = ParseFguiPackageDescFile(self.package_desc_file)
         # 图集和图像描述文件
         self.sprite_desc_file = os.path.join(fgui_project_path, f"{self.fgui_project_name}@sprites.bytes")
         self.fgui_image_set = []
@@ -1406,6 +1549,8 @@ class FguiAssets():
         self.fgui_component_set = []
         # 音频文件信息
         self.fgui_sound_dicts = {}
+        # 位图字体信息
+        self.fgui_bitmap_font_dicts = {}
         # 先找到packageDescription，解析出component、image和atlas列表
         package_key = 'package'
         if (not self.object_dict.__contains__(package_key)):
@@ -1445,6 +1590,13 @@ class FguiAssets():
         for sound in self.package_desc.sound_list:
             sound_file_name = self.fgui_project_name + '@' + sound.file
             self.fgui_sound_dicts[sound.id] = sound_file_name
+        # 根据font_list与.fnt描述内容建立位图字体信息
+        for font in self.package_desc.font_list:
+            if font.id not in self.font_desc_dict:
+                raise ValueError(f'Could not find bitmap font description for {font.id}.')
+            self.fgui_bitmap_font_dicts[font.id] = FguiBitmapFont(
+                font.id, font.name, font.path, font.exported,
+                self.font_desc_dict[font.id], font.texture, font.font_texture)
 
     def clear(self):
         self.fgui_project_name = ''
@@ -1452,10 +1604,12 @@ class FguiAssets():
         self.sprite_desc_file = ''
         self.package_desc.clear()
         self.object_dict.clear()
+        self.font_desc_dict.clear()
         self.fgui_atlas_dicts.clear()
         self.fgui_component_set.clear()
         self.fgui_image_set.clear()
-        self.fgui_atlas_dicts.clear()
+        self.fgui_sound_dicts.clear()
+        self.fgui_bitmap_font_dicts.clear()
 
     def get_componentname_by_id(self, id : str) -> str:
         if id in self.package_desc.id_name_mapping:

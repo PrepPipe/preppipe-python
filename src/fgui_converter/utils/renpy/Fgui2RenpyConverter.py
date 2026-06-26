@@ -104,6 +104,7 @@ def _parse_main_menu_title_kv(pairs : list[str] | None = None) -> MainMenuTitle 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from fgui_converter.FguiAssetsParseLib import *
+from fgui_converter.utils.renpy.BmFontGenerator import BmFontGenerator
 
 class FguiToRenpyConverter:
     """
@@ -215,6 +216,7 @@ class FguiToRenpyConverter:
         self.scripts_dir = None
         self.images_dir = None
         self.audio_dir = None
+        self.fonts_dir = None
 
         # gallery相关数据
         self.gallery_data = {}
@@ -3718,6 +3720,37 @@ class FguiToRenpyConverter:
 
         return len(sound_files)
 
+    def generate_bitmap_font_files(self, fgui_source_dir : str) -> int:
+        """根据位图字体描述生成 BMFont .fnt 文件与字体纹理。"""
+        if not self.fonts_dir:
+            raise ValueError('fonts_dir is not set.')
+        if not self.images_dir:
+            raise ValueError('images_dir is not set.')
+        count = 0
+        for font in self.fgui_assets.fgui_bitmap_font_dicts.values():
+            texture_filename = BmFontGenerator.get_texture_filename(font.name)
+            texture_path = os.path.join(self.images_dir, texture_filename)
+            BmFontGenerator.save_texture(
+                font,
+                self.fgui_assets.package_desc,
+                self.fgui_assets.fgui_image_set,
+                fgui_source_dir,
+                self.fgui_assets.fgui_atlas_dicts,
+                texture_path,
+            )
+            content = BmFontGenerator.generate(
+                font,
+                self.fgui_assets.package_desc,
+                self.fgui_assets.fgui_image_set,
+                page_file=texture_filename,
+            )
+            fnt_path = os.path.join(self.fonts_dir, f'{font.name}.fnt')
+            with open(fnt_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            print(f"✓ 生成位图字体: {font.name}.fnt, images/{texture_filename}")
+            count += 1
+        return count
+
 def convert(argv : list[str] | None = None):
     """
     主函数：解析FguiDemoPackage并转换为Ren'Py代码
@@ -3786,16 +3819,19 @@ def convert(argv : list[str] | None = None):
         images_dir = os.path.join(game_dir, "images")
         scripts_dir = os.path.join(game_dir, "scripts")
         audio_dir = os.path.join(game_dir, "audio")
+        fonts_dir = os.path.join(game_dir, "fonts")
         # 创建目录
         os.makedirs(game_dir, exist_ok=True)
         os.makedirs(images_dir, exist_ok=True)
         os.makedirs(scripts_dir, exist_ok=True)
         os.makedirs(audio_dir, exist_ok=True)
+        os.makedirs(fonts_dir, exist_ok=True)
         print(f"创建目录结构: {renpy_base_dir}/")
         print(f"├── game/")
         print(f"└── game/images/")
         print(f"└── game/scripts/")
         print(f"└── game/audio/")
+        print(f"└── game/fonts/")
         # 创建FguiAssets对象
         print("\n正在解析FairyGUI资源...")
         fgui_assets = FguiAssets(fgui_project_path)
@@ -3808,6 +3844,7 @@ def convert(argv : list[str] | None = None):
         converter.scripts_dir = scripts_dir
         converter.images_dir = images_dir
         converter.audio_dir = audio_dir
+        converter.fonts_dir = fonts_dir
         # 设置自定义参数，用于替换Fgui发布资源中的值。
         converter.main_menu_title = main_menu_title
         converter.main_menu_logo = args.main_menu_logo
@@ -3851,6 +3888,12 @@ def convert(argv : list[str] | None = None):
         print("\n正在复制音频文件...")
         audio_count = converter.copy_sound_files(fgui_project_path, converter.audio_dir)
         print(f"复制了 {audio_count} 个音频文件")
+
+        # 生成位图字体 .fnt 文件与纹理
+        if converter.fgui_assets.fgui_bitmap_font_dicts:
+            print("\n正在生成位图字体文件...")
+            font_count = converter.generate_bitmap_font_files(fgui_project_path)
+            print(f"生成了 {font_count} 个位图字体文件")
 
         # 一些清理
         fgui_assets.clear()
