@@ -99,16 +99,16 @@ class BmFontGenerator:
 
     @staticmethod
     def _crop_font_texture_from_atlas(atlas_image : Image.Image, sprite : FguiSpriteInfo,
-                                      scale_w : int, scale_h : int) -> Image.Image:
+                                      crop_w : int, crop_h : int, scale_w : int, scale_h : int) -> Image.Image:
         if sprite.rotate:
             raise ValueError(f'Rotated sprite {sprite.image_id} is not supported for bitmap font texture generation.')
         atlas_w, atlas_h = atlas_image.size
-        crop_w = min(scale_w, atlas_w - sprite.x)
-        crop_h = min(scale_h, atlas_h - sprite.y)
+        crop_w = min(crop_w, atlas_w - sprite.x)
+        crop_h = min(crop_h, atlas_h - sprite.y)
         if crop_w <= 0 or crop_h <= 0:
             raise ValueError(
                 f'Font texture crop for {sprite.image_id} is outside atlas bounds: '
-                f'({sprite.x}, {sprite.y}, {scale_w}, {scale_h}) in {atlas_w}x{atlas_h}.')
+                f'({sprite.x}, {sprite.y}, {crop_w}, {crop_h}) in {atlas_w}x{atlas_h}.')
         texture = atlas_image.crop((sprite.x, sprite.y, sprite.x + crop_w, sprite.y + crop_h))
         if texture.size != (scale_w, scale_h):
             canvas = Image.new('RGBA', (scale_w, scale_h), (0, 0, 0, 0))
@@ -205,10 +205,13 @@ class BmFontGenerator:
         sprite = BmFontGenerator._get_sprite(texture_id, sprites)
         if sprite is None:
             raise ValueError(f'Could not find sprite info for font texture {texture_id} in font {font.name}.')
+        texture_image = package_desc.get_image_by_id(texture_id)
+        crop_w, crop_h = texture_image.size
         atlas_key = BmFontGenerator._get_atlas_key(sprite)
         atlas_image = BmFontGenerator._load_atlas_image(
             atlas_source_dir, atlas_dicts, atlas_key, atlas_cache)
-        return BmFontGenerator._crop_font_texture_from_atlas(atlas_image, sprite, scale_w, scale_h)
+        return BmFontGenerator._crop_font_texture_from_atlas(
+            atlas_image, sprite, crop_w, crop_h, scale_w, scale_h)
 
     @staticmethod
     def get_texture_filename(font_name : str) -> str:
@@ -230,12 +233,10 @@ class BmFontGenerator:
         face = font.face or font.name
         line_height = font.line_height or font.size or scale_h
         base = font.base if font.base is not None else line_height
-        alpha_chnl = font.alpha_chnl if font.alpha_chnl is not None else (2 if font.colored else 1)
         png_name = page_file or BmFontGenerator.get_texture_filename(font.name)
-
         lines = [
             f'info face="{face}" size={font.size} bold=0 italic=0 charset="" unicode=1 stretchH=100 smooth=1 aa=1 padding=0,0,0,0 spacing=1,1 outline=0',
-            f'common lineHeight={line_height} base={base} scaleW={scale_w} scaleH={scale_h} pages=1 packed=0 alphaChnl={alpha_chnl} redChnl=0 greenChnl=0 blueChnl=0',
+            f'common lineHeight={line_height} base={base} scaleW={scale_w} scaleH={scale_h} pages=1 packed=0 alphaChnl=0 redChnl=4 greenChnl=4 blueChnl=4',
             f'page id=0 file="{png_name}"',
             f'chars count={len(entries)}',
         ]

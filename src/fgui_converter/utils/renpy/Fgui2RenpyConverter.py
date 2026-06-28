@@ -198,6 +198,7 @@ class FguiToRenpyConverter:
         self.renpy_template_dir = os.environ.get('RENPY_TEMPLATES_DIR',
                              os.path.join(os.path.dirname(os.path.abspath(__file__)), "renpy_templates"))
         self.font_map_template = 'renpy_font_map_definition.txt'
+        self.bmfont_registration_template = 'renpy_bmfont_registration.txt'
         self.graph_template_dict = {}
         self.graph_template_dict['null'] = self.get_template_content('renpy_null_template.txt')
         self.graph_template_dict['rectangle'] = self.get_template_content('renpy_rectangle_template.txt')
@@ -3571,6 +3572,20 @@ class FguiToRenpyConverter:
         with open(filename, 'w', encoding='utf-8') as f:
             f.write(content)
 
+    def generate_bmfont_registration_file(self, filename : str) -> None:
+        """生成位图字体的 register_bmfont 注册脚本。"""
+        registrations = []
+        for font in self.fgui_assets.fgui_bitmap_font_dicts.values():
+            registrations.append(
+                f"    renpy.register_bmfont(name='{font.name}', size={font.size}, filename='fonts/{font.name}.fnt')")
+        with open(os.path.join(self.renpy_template_dir, self.bmfont_registration_template), 'r', encoding='utf-8') as file:
+            content = file.read()
+        registration_block = '\n'.join(registrations) if registrations else '    pass'
+        content = content.replace('{bmfont_registrations}', registration_block)
+        with open(filename, 'w', encoding='utf-8') as f:
+            f.write(content)
+        print(f"✓ 生成位图字体注册: {os.path.basename(filename)}")
+
     def get_template_content(self, filename : str, path : str | None = None) -> str:
         """
         获取模板内容
@@ -3894,6 +3909,8 @@ def convert(argv : list[str] | None = None):
             print("\n正在生成位图字体文件...")
             font_count = converter.generate_bitmap_font_files(fgui_project_path)
             print(f"生成了 {font_count} 个位图字体文件")
+            bmfont_registration_file = os.path.join(converter.scripts_dir, "01_bmfont.rpy")
+            converter.generate_bmfont_registration_file(bmfont_registration_file)
 
         # 一些清理
         fgui_assets.clear()
