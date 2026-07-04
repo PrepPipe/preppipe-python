@@ -3909,7 +3909,7 @@ def convert(argv : list[str] | None = None):
             print("\n正在生成位图字体文件...")
             font_count = converter.generate_bitmap_font_files(fgui_project_path)
             print(f"生成了 {font_count} 个位图字体文件")
-            bmfont_registration_file = os.path.join(converter.scripts_dir, "01_bmfont.rpy")
+            bmfont_registration_file = os.path.join(converter.scripts_dir, "01_bmfont_registration.rpy")
             converter.generate_bmfont_registration_file(bmfont_registration_file)
 
         # 一些清理
