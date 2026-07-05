@@ -73,6 +73,16 @@ def is_valid_hex_color(color: str | None) -> bool:
     return color.lower() in COLOR_NAME_TO_HEX
 
 
+def bounds_back_flag_to_bool(flag_value: int) -> bool:
+    """
+    将 scrollBarFlags 第 6、7 位的边缘回弹标识转换为 Ren'Py 布尔值。
+    00-默认、01-启用 → True；10-关闭 → False。
+    """
+    if flag_value in (0, 1):
+        return True
+    return False
+
+
 def _parse_main_menu_title_kv(pairs : list[str] | None = None) -> MainMenuTitle | None:
     """
     将 --main-menu-title key1=val1 key2=val2 解析为 MainMenuTitle。
@@ -1241,12 +1251,15 @@ class FguiToRenpyConverter:
         # 生成列表之前的元件。
         screen_ui_code.extend(self.convert_component_display_list(dropdown_component, list_begin_index=0, list_end_index=popup_component_list_index))
         # 生成列表。只考虑单列竖排且可滚动的情况。
-        screen_ui_code.append(f"{self.indent_str}viewport id '{popup_component_list.name}_vp':")
+        screen_ui_code.append(f"{self.indent_str}elastic_viewport id '{popup_component_list.name}_vp':")
         self.indent_level_up()
         screen_ui_code.append(f"{self.indent_str}yadjustment yadj")
         screen_ui_code.append(f"{self.indent_str}xadjustment xadj")
         screen_ui_code.append(f"{self.indent_str}draggable True")
         screen_ui_code.append(f"{self.indent_str}mousewheel True")
+        screen_ui_code.append(f"{self.indent_str}scrollable 'vertical'")
+        bounds_back = bounds_back_flag_to_bool(popup_component_list.scrollbar_flags_dict['bounds_back'])
+        screen_ui_code.append(f"{self.indent_str}bounds_back {bounds_back}")
         screen_ui_code.append(f"{self.indent_str}vbox:")
         self.indent_level_up()
         screen_ui_code.append(f"{self.indent_str}spacing {popup_component_list.line_gap}")
@@ -1416,7 +1429,8 @@ class FguiToRenpyConverter:
             # 根据可滚动方向和是否启用回弹标识位，决定scrollable和bounds_back特性。
             self.screen_ui_code.append(f"{self.indent_str}scrollable '{component.scroll}'")
             if component.scrollbar_flags_dict:
-                self.screen_ui_code.append(f"{self.indent_str}bounds_back {component.scrollbar_flags_dict['bounds_back']}")
+                bounds_back = bounds_back_flag_to_bool(component.scrollbar_flags_dict['bounds_back'])
+                self.screen_ui_code.append(f"{self.indent_str}bounds_back {bounds_back}")
             self.screen_ui_code.append(f"{self.indent_str}draggable True")
             # 在Ren'Py中实际可能无法滚动。
             # 需要添加一个fixed组件，并设置一个合适的xysize。该xysize应为容纳所有子组件的包围框。
@@ -1435,7 +1449,7 @@ class FguiToRenpyConverter:
             self.screen_code.append("")
         # 添加只有1个生效的dismiss
         if self.screen_has_dismiss:
-            self.indent_level_down()
+            self.indent_level_down(2)
             self.screen_ui_code.append(f"{self.indent_str}dismiss:")
             self.indent_level_up()
             self.screen_ui_code.append(f"{self.indent_str}modal False")
@@ -3379,7 +3393,7 @@ class FguiToRenpyConverter:
             horizontal_scrollbar_size = (0, 0)
         scrollable = f"'{fgui_list.scroll}'"
         if fgui_list.scrollbar_flags_dict:
-            bounds_back = fgui_list.scrollbar_flags_dict['bounds_back']
+            bounds_back = bounds_back_flag_to_bool(fgui_list.scrollbar_flags_dict['bounds_back'])
         else:
             bounds_back = True
         list_screen_template_content = list_screen_template_content.replace('{scrollable}', f"{scrollable}")

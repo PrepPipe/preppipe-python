@@ -437,7 +437,19 @@ class FguiHitTest:
             self.pos = (int(xpos), int(ypos))
 
 # 获取滚动条标识位字典。
-def get_scrollbar_flags_dict(scroll_bar_flags : int) -> dict[str, bool] | None:
+def get_scrollbar_flags_dict(scroll_bar_flags : int) -> dict[str, bool | int] | None:
+    scrollbar_flags_dict = {
+        "display_on_left": 0,
+        "snapping_to_item": 0,
+        "hide_when_not_overflow": 0,
+        "page_mode": 0,
+        "touch_scroll": 0,
+        "bounds_back": 0,
+        "inertia_disabled": 0,
+        "mask_disabled": 0,
+        "floating_display": 0,
+        "dont_clip_margin": 0
+    }
     if scroll_bar_flags:
         scrollbar_flags_list = []
         for i in range(12):
@@ -464,11 +476,9 @@ def get_scrollbar_flags_dict(scroll_bar_flags : int) -> dict[str, bool] | None:
         "inertia_disabled": scrollbar_flags_list[8],
         "mask_disabled": scrollbar_flags_list[9],
         "floating_display": scrollbar_flags_list[10],
-        "dont_clip_margin": scrollbar_flags_list[11],
+        "dont_clip_margin": scrollbar_flags_list[11]
     }
-        return scrollbar_flags_dict
-    return None
-
+    return scrollbar_flags_dict
 
 class FguiComponent:
     """
@@ -997,6 +1007,15 @@ class FguiGraph(FguiDisplayable):
             iteration = iter(point_list)
             self.points = tuple((float(x), float(y)) for x, y in zip(iteration, iteration))
 
+def get_font_name_by_url(url : str, package_desc : FguiPackage | None = None) -> str:
+    """
+    从资源url中获取字体名称。
+    """
+    if FguiPackage and url:
+        if url.startswith("ui://"):
+            return package_desc.id_name_mapping.get(url[url.find(package_desc.id)+len(package_desc.id):], None)
+    return url
+
 class FguiText(FguiDisplayable):
     """
     FairyGUI中的文本。
@@ -1009,7 +1028,7 @@ class FguiText(FguiDisplayable):
         # 此处的字体与FairyGUI编辑器中的字体属性不同，为字体名称。编辑器中的xml则记录引用项。
         # 另外，FairyGUI发布的资源文件中并不包含字体文件，需要手工放置到游戏引擎对应目录。
         self.text = self.display_item_tree.get("text", "")
-        self.font = self.display_item_tree.get("font")
+        self.font = get_font_name_by_url(self.display_item_tree.get("font"), package_desc)
         self.font_size = int(self.display_item_tree.get("fontSize", 24) )
         self.text_color = self.display_item_tree.get("color", "#000000")
         self.align = self.display_item_tree.get("align", "left") # 共有left、center、right三种
