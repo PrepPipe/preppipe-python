@@ -1,8 +1,12 @@
 # 语涵编译器 PrepPipe Compiler
 
-语涵编译器是一个（仍在开发中的）视觉小说开发工具，使用更符合自然语言（比如中文）书写习惯的剧本格式，提供更低成本更快速的 Demo 构建功能，帮助视觉小说开发者实现“小步快跑”的开发流程。
+**停止维护公告：本项目已停止主要的开发、维护工作，因为(1)项目主要贡献者难以继续投入时间、精力进行迭代，(2)本项目设计想要解决的问题已经可以用AI获得更好的效果。我们推荐有类似需求的视觉小说开发者使用 AI 工具而不是本工具进行视觉小说开发。您仍然可以使用本程序中内嵌的图片资源协助开发，关于素材资源方面的需求我们将酌情进行完善。**
 
-PrepPipe Compiler is a (work-in-progress) visual novel development tool which allows you to use a script format closer to natural language (e.g., English) writing and create demos with minimum cost and effort, enabling visual novel development with a smaller feedback loop (effort to outcome).
+**This project is no longer maintained. Please note that the project is currently not actively maintained and the main contributors are unable to continue investing time and effort into development. The project is also designed to solve a problem that can be better solved with AI. We recommend using AI tools for visual novel development instead of this tool.**
+
+语涵编译器是一个视觉小说开发工具，使用更符合自然语言（比如中文）书写习惯的剧本格式，提供更低成本更快速的 Demo 构建功能，帮助视觉小说开发者实现“小步快跑”的开发流程。
+
+PrepPipe Compiler is a visual novel development tool which allows you to use a script format closer to natural language (e.g., English) writing and create demos with minimum cost and effort, enabling visual novel development with a smaller feedback loop (effort to outcome).
 
 此工具读取以下内容：
 * 剧本 (docx/odt 文档，Markdown, 纯文本 TXT)
